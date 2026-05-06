@@ -1,0 +1,17 @@
+[Unit]
+Description=Companion Discord bot (bridges Discord to `claude -p`)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/companion/bot
+EnvironmentFile=%h/companion/bot/.env
+# Make sure node (and therefore the `claude` CLI) is on PATH.
+Environment=PATH=%h/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/companion/bot/venv/bin/python %h/companion/bot/bot.py
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=default.target
