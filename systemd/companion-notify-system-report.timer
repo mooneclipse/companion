@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily run of system resource report
+
+[Timer]
+OnCalendar=*-*-* 12:00:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=companion-notify-system-report.service
+
+[Install]
+WantedBy=timers.target
