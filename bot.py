@@ -23,6 +23,14 @@ LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
 DISCORD_MAX = 1900  # leave margin under the hard 2000-char limit
 
+_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+if _runtime_dir:
+    NOTIFY_SOCKET = Path(_runtime_dir) / "companion-bot.sock"
+else:
+    _fallback = Path.home() / ".cache" / "companion-bot"
+    _fallback.mkdir(parents=True, exist_ok=True, mode=0o700)
+    NOTIFY_SOCKET = _fallback / "companion-bot.sock"
+
 if not DISCORD_TOKEN:
     print("DISCORD_TOKEN is not set", file=sys.stderr)
     sys.exit(1)
@@ -42,7 +50,6 @@ logger.propagate = False
 intents = discord.Intents.default()
 intents.message_content = True
 intents.dm_messages = True
-client = discord.Client(intents=intents)
 claude_lock = asyncio.Lock()
 
 
@@ -76,6 +83,52 @@ async def run_claude(prompt: str) -> str:
         logger.warning("claude exited %s, stderr_len=%d", proc.returncode, len(err))
         return out or f"[claude exited {proc.returncode}]\n{err[:1500]}"
     return out or "[empty output]"
+
+
+class CompanionClient(discord.Client):
+    async def setup_hook(self):
+        try:
+            NOTIFY_SOCKET.unlink()
+        except FileNotFoundError:
+            pass
+        self._notify_server = await asyncio.start_unix_server(
+            self._handle_notify, path=str(NOTIFY_SOCKET)
+        )
+        os.chmod(NOTIFY_SOCKET, 0o600)
+        logger.info("notify socket listening at %s", NOTIFY_SOCKET)
+
+    async def close(self):
+        server = getattr(self, "_notify_server", None)
+        if server is not None:
+            server.close()
+            await server.wait_closed()
+        try:
+            NOTIFY_SOCKET.unlink()
+        except FileNotFoundError:
+            pass
+        await super().close()
+
+    async def _handle_notify(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            data = await reader.read()
+            text = data.decode("utf-8", errors="replace").strip()
+            if not text:
+                return
+            owner = self.get_user(OWNER_ID) or await self.fetch_user(OWNER_ID)
+            for piece in chunk(text):
+                await owner.send(piece)
+            logger.info("notify forwarded len=%d", len(text))
+        except Exception:
+            logger.exception("notify forward failed")
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+client = CompanionClient(intents=intents)
 
 
 @client.event

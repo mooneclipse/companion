@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-06 10:20
+最終更新: 2026-05-06 12:05
 
 ## 設計メモ
 
@@ -8,18 +8,21 @@
 - DM またはサーバー内ユーザーメンションをトリガに `claude -p` を呼び、出力をチャンネル/DM へ返す
 - OWNER_ID 以外の発言は完全に無視
 - 主要パス:
-  - `bot.py` … 本体（約140行、1ファイル構成）
-  - `companion-bot.service` … systemd user unit（未デプロイ）
+  - `bot.py` … 本体（1ファイル構成、`CompanionClient` で Unix socket listener を兼務）
+  - `companion-bot.service` … systemd user unit（`~/.config/systemd/user/` から symlink で配置 + `enable --now` 済み）
   - `.env` … トークン・OWNER_ID・CLAUDE_BIN・CLAUDE_CWD・CLAUDE_TIMEOUT（chmod 600）
   - `requirements.txt` … `discord.py>=2.3,<2.4`, `python-dotenv>=1.0,<2.0`
   - `venv/` … Python 3.10 で再構築済み
+- 通知投入口: `$XDG_RUNTIME_DIR/companion-bot.sock`（permission 0600）。1 接続 1 メッセージ（UTF-8、EOF で確定）、本文は OWNER への DM に転送。例: `printf '%s' "..." | nc -U $XDG_RUNTIME_DIR/companion-bot.sock`
 - 実行 CWD: `claude -p` は `~/companion/workspace` を CWD として起動
 - ログ: `~/companion/logs/bot.log` (RotatingFileHandler, 5MB×3)
 - `claude` CLI のパスは `.env` の `CLAUDE_BIN` と service ユニットの `Environment=PATH=...` の両方に nvm バージョン依存パスを書いている。Node 更新時は両方追従要
+- git: ローカル `~/companion/bot/.git`、リモート `git@github.com:mooneclipse/companion-bot.git`（プライベート）
+- pre-commit hook: `.git/hooks/pre-commit` で `~/bin/gitleaks git --pre-commit --staged --redact` を実行。秘密情報を含む commit は exit 1 で拒否される
 
 ## TODO
 
-- [ ] git 化検討（CLAUDE.md の方針に沿って `bot/` 配下を `git init`）
+（なし）
 
 ## In progress
 
@@ -40,6 +43,8 @@
 - 2026-05-06 診断ログ削除（`on_ready` を 1 行版に戻す / `on_message` 冒頭の `raw recv` ログ削除 / 認可後の `recv from=...` ログも削除＝対の診断ログかつ `prompt[:40]` の漏出回避）。レビュー OK
 - 2026-05-06 systemd 常駐化（`~/.config/systemd/user/companion-bot.service` を `~/companion/bot/companion-bot.service` への symlink で配置、`systemctl --user enable --now` で起動。Active running / `logged in as renbot#8921` 確認済み）
 - 2026-05-06 linger は不要と判断（PC つけっぱなし + 自動ログイン有効のため、再起動後も user systemd が立ち上がり bot も復帰する）
+- 2026-05-06 git 化完了。GitHub プライベート repo (`mooneclipse/companion-bot`) に push。pre-commit hook で gitleaks v8.30.1 による秘密情報チェックを自動化（`~/bin/gitleaks` 配置）。実弾テスト（`git add -f .env` で hook が exit 1 で commit 拒否）確認済み
+- 2026-05-06 Unix socket listener 追加（`CompanionClient.setup_hook` で `$XDG_RUNTIME_DIR/companion-bot.sock` を 0600 で listen、EOF まで読んだ本文を OWNER の DM に転送、`close()` で sock を unlink、起動時に既存 sock を unlink）。実弾テスト: `printf ... | nc -U -N` で `notify forwarded len=65` ログ + DM 受信を確認。Phase 2 から `nc -U`/`socat` で書くだけで Discord に通知できる入口として運用開始。code-reviewer: 修正必須なし、軽微な提案（STATUS.md 主要パス欄に sock を追記）反映済み
 
 ## 既知の問題
 
