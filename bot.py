@@ -139,6 +139,15 @@ client = CompanionClient(intents=intents)
 @client.event
 async def on_ready():
     logger.info("logged in as %s", client.user)
+    try:
+        ch = client.get_channel(NOTIFY_CHANNEL_ID) or await client.fetch_channel(NOTIFY_CHANNEL_ID)
+    except Exception:
+        logger.exception("notify channel %s could not be resolved", NOTIFY_CHANNEL_ID)
+        return
+    if not isinstance(ch, discord.TextChannel):
+        logger.error("notify channel %s is not a TextChannel: %r", NOTIFY_CHANNEL_ID, ch)
+        return
+    logger.info("notify channel verified: #%s (%s)", ch.name, NOTIFY_CHANNEL_ID)
 
 
 @client.event

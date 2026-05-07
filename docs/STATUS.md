@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-07 21:50
+最終更新: 2026-05-07 22:25
 
 ## 設計メモ
 
@@ -34,6 +34,11 @@
 
 ## Done
 
+- 2026-05-07 起動時に通知チャンネルを verify するヘルスチェックを追加
+  - `on_ready` で `get_channel(NOTIFY_CHANNEL_ID)` → ヒット外しなら `fetch_channel`、`isinstance(ch, discord.TextChannel)` で型確認、失敗時は ERROR ログを出して return（bot は止めず mention/DM 応答は維持）。成功時は `notify channel verified: #<name> (<id>)` の INFO ログ
+  - 目的: チャンネル削除・権限変更・ID 設定ミス等で socket 通知が無音消失するのを早期検出する。`_handle_notify` 経路だけだと except に落ちるだけで Discord 側に何も出ず気づきにくいため、起動時にプロアクティブに検出する
+  - 実弾テスト OK: 再起動後の bot.log に `notify channel verified: #通知 (1501135177223508081)` を確認、`logged in as` 直後 1ms（キャッシュヒットで fetch せず）
+  - code-reviewer 再レビュー: 修正必須なし、軽微提案 2 件（① `TextChannel` 限定 → `Messageable` / `(TextChannel, Thread)` 拡張、② `_handle_notify` との resolve 処理共通化）はユーザー合意で未反映。① は単一テキストチャンネル運用前提に整合、② は 3 箇所目が出るまで保留
 - 2026-05-07 socket 通知の宛先を OWNER DM → サーバーテキストチャンネルへ切り替え
   - `.env` に `NOTIFY_CHANNEL_ID` を追加（必須・isdigit バリデーション、`OWNER_ID` と同パターン）。`.env.example` / `README.md` セットアップ節にも追記
   - `bot.py` の `_handle_notify` で `client.get_channel(NOTIFY_CHANNEL_ID)`（キャッシュヒット）→ ヒット外しなら `fetch_channel` で取得、`await channel.send(piece)` で送信。OWNER DM への送信コードは削除（PROJECT.md / maintenance/STATUS.md の「切り替え」記述に整合）
