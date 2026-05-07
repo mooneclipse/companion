@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-05-06 13:20
+最終更新: 2026-05-07 21:50
 
 ## 設計メモ
 
@@ -17,7 +17,6 @@
 ## TODO
 
 - (後で) Obsidian vault をメイン機からこの機に同期
-- (後で) 通知先を OWNER DM → サーバー通知チャンネルに切り替え
 
 ## In progress
 
@@ -29,6 +28,7 @@
 
 ## Done
 
+- 2026-05-07 通知先を OWNER DM → サーバー通知チャンネルへ切り替え（実装は bot 側、`bot/docs/STATUS.md` 2026-05-07 エントリ参照）。maintenance 配下のスクリプト・systemd unit は無変更（socket protocol が変わらないため）。実弾テストで対象チャンネルへの書き込みを確認、bot.log に `notify forwarded len=32`
 - 2026-05-06 ディスク・メモリ・CPU 温度の日次レポート
   - `scripts/notify-system-report.sh`: `df -h /`、`free -h`（Mem / Swap）、`sensors`（Package id 0）を集約し、本文を `$XDG_RUNTIME_DIR/companion-bot.sock` に nc -U で流し込む。state ファイル `maintenance/.state/last-notified-system-report` に当日日付を記録し同日 2 回目以降は skip
   - `systemd/companion-notify-system-report.service`（oneshot）+ `.timer`（OnCalendar=*-*-* 12:00:00, RandomizedDelaySec=10min, Persistent=true）。`~/.config/systemd/user/` から symlink で配置、`enable --now` 済み。次回発火: 2026-05-07 12:06:50 JST
