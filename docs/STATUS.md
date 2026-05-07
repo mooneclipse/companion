@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-05-07 21:50
+最終更新: 2026-05-07 22:40
 
 ## 設計メモ
 
@@ -16,7 +16,9 @@
 
 ## TODO
 
-- (後で) Obsidian vault をメイン機からこの機に同期
+- `lib/notify.sh` 共通化（PROJECT.md 既定の「2 件目で抽出」しきい値が unattended-upgrades + system-report で発火済み。重複ブロック: 環境変数組み立て + `mkdir -p` / `log()` 関数 / socket 存在チェック / 「送信＋state 更新＋ログ」の最終ブロック。30〜40 行抽出で各スクリプト約半分に縮む。3 件目の保守タスク追加前に着手）
+
+※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
 
 ## In progress
 
