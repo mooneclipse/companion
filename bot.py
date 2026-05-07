@@ -15,6 +15,7 @@ load_dotenv()
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "").strip()
 OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip()
+NOTIFY_CHANNEL_ID_RAW = os.environ.get("NOTIFY_CHANNEL_ID", "").strip()
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude").strip()
 CLAUDE_CWD = os.environ.get("CLAUDE_CWD", str(Path.home() / "companion" / "workspace")).strip()
 CLAUDE_TIMEOUT = float(os.environ.get("CLAUDE_TIMEOUT", "300"))
@@ -38,6 +39,10 @@ if not OWNER_ID_RAW.isdigit():
     print("OWNER_ID must be a numeric Discord user id", file=sys.stderr)
     sys.exit(1)
 OWNER_ID = int(OWNER_ID_RAW)
+if not NOTIFY_CHANNEL_ID_RAW.isdigit():
+    print("NOTIFY_CHANNEL_ID must be a numeric Discord channel id", file=sys.stderr)
+    sys.exit(1)
+NOTIFY_CHANNEL_ID = int(NOTIFY_CHANNEL_ID_RAW)
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logger = logging.getLogger("companion-bot")
@@ -114,9 +119,9 @@ class CompanionClient(discord.Client):
             text = data.decode("utf-8", errors="replace").strip()
             if not text:
                 return
-            owner = self.get_user(OWNER_ID) or await self.fetch_user(OWNER_ID)
+            channel = self.get_channel(NOTIFY_CHANNEL_ID) or await self.fetch_channel(NOTIFY_CHANNEL_ID)
             for piece in chunk(text):
-                await owner.send(piece)
+                await channel.send(piece)
             logger.info("notify forwarded len=%d", len(text))
         except Exception:
             logger.exception("notify forward failed")

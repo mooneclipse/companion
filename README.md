@@ -11,7 +11,9 @@ venv/bin/pip install -U pip
 venv/bin/pip install -r requirements.txt
 ```
 
-`.env` の `DISCORD_TOKEN` を埋める（chmod 600 推奨）:
+`.env` の `DISCORD_TOKEN` / `OWNER_ID` / `NOTIFY_CHANNEL_ID` を埋める（chmod 600 推奨）:
+
+`NOTIFY_CHANNEL_ID` は socket 経由通知（Phase 2 のシステムレポート等）の宛先テキストチャンネル ID。Discord の開発者モードを ON にしてチャンネル右クリック → 「ID をコピー」で取得する。bot がそのギルドに参加していて、対象チャンネルへの送信権限が必要。
 
 ```bash
 chmod 600 .env

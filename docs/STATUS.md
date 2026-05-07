@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-06 12:05
+最終更新: 2026-05-07 21:50
 
 ## 設計メモ
 
@@ -13,7 +13,7 @@
   - `.env` … トークン・OWNER_ID・CLAUDE_BIN・CLAUDE_CWD・CLAUDE_TIMEOUT（chmod 600）
   - `requirements.txt` … `discord.py>=2.3,<2.4`, `python-dotenv>=1.0,<2.0`
   - `venv/` … Python 3.10 で再構築済み
-- 通知投入口: `$XDG_RUNTIME_DIR/companion-bot.sock`（permission 0600）。1 接続 1 メッセージ（UTF-8、EOF で確定）、本文は OWNER への DM に転送。例: `printf '%s' "..." | nc -U $XDG_RUNTIME_DIR/companion-bot.sock`
+- 通知投入口: `$XDG_RUNTIME_DIR/companion-bot.sock`（permission 0600）。1 接続 1 メッセージ（UTF-8、EOF で確定）、本文は `.env` の `NOTIFY_CHANNEL_ID` で指定した Discord テキストチャンネルへ転送。例: `printf '%s' "..." | nc -U $XDG_RUNTIME_DIR/companion-bot.sock`
 - 実行 CWD: `claude -p` は `~/companion/workspace` を CWD として起動
 - ログ: `~/companion/logs/bot.log` (RotatingFileHandler, 5MB×3)
 - `claude` CLI のパスは `.env` の `CLAUDE_BIN` と service ユニットの `Environment=PATH=...` の両方に nvm バージョン依存パスを書いている。Node 更新時は両方追従要
@@ -34,6 +34,11 @@
 
 ## Done
 
+- 2026-05-07 socket 通知の宛先を OWNER DM → サーバーテキストチャンネルへ切り替え
+  - `.env` に `NOTIFY_CHANNEL_ID` を追加（必須・isdigit バリデーション、`OWNER_ID` と同パターン）。`.env.example` / `README.md` セットアップ節にも追記
+  - `bot.py` の `_handle_notify` で `client.get_channel(NOTIFY_CHANNEL_ID)`（キャッシュヒット）→ ヒット外しなら `fetch_channel` で取得、`await channel.send(piece)` で送信。OWNER DM への送信コードは削除（PROJECT.md / maintenance/STATUS.md の「切り替え」記述に整合）
+  - 実弾テスト OK: bot 再起動後 `printf '...' | nc -U -N $XDG_RUNTIME_DIR/companion-bot.sock` で bot.log に `notify forwarded len=32`、対象チャンネルへ書き込み確認
+  - code-reviewer: 修正必須なし、軽微提案 1 件（起動時に TextChannel か verify するヘルスチェック）は reference 実装の OWNER 取得と同程度のガード水準に揃えるため未反映、もう 1 件（`.env.example` 追記）は反映済み
 - 2026-05-06 venv 再構築（Mint アップグレードで Python 3.8→3.10 になり ABI 不一致で壊れていた）
 - 2026-05-06 `.env` の `DISCORD_TOKEN` 修正（Application ID 等が貼られていて 401 Unauthorized だった）
 - 2026-05-06 診断ログ追加（`on_ready` の guilds 一覧 / `on_message` 冒頭の raw recv）— mention 不通の原因切り分け用
