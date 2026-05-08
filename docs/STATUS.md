@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-05-07 22:40
+最終更新: 2026-05-08 20:50
 
 ## 設計メモ
 
@@ -16,7 +16,7 @@
 
 ## TODO
 
-- `lib/notify.sh` 共通化（PROJECT.md 既定の「2 件目で抽出」しきい値が unattended-upgrades + system-report で発火済み。重複ブロック: 環境変数組み立て + `mkdir -p` / `log()` 関数 / socket 存在チェック / 「送信＋state 更新＋ログ」の最終ブロック。30〜40 行抽出で各スクリプト約半分に縮む。3 件目の保守タスク追加前に着手）
+（なし）
 
 ※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
 
@@ -30,6 +30,11 @@
 
 ## Done
 
+- 2026-05-08 `lib/notify.sh` 共通化
+  - `lib/notify.sh` を新設し、`log()` / `state_matches` / `notify_send`（socket 存在チェック + `nc -U -N` 送信 + state 更新 + ログ）を抽出。呼び出し側は `STATE_FILE` / `OUR_LOG` を設定して `source "$(dirname "$0")/../lib/notify.sh"` する形式
+  - `scripts/notify-unattended-upgrades.sh`（82→61 行）と `scripts/notify-system-report.sh`（62→44 行）を lib 経由に書き換え。タスク固有の本文構築だけが残る形に
+  - 実弾テスト OK: skip パス（state あり）と発火パス（state 退避 → system-report 実行で bot.log に `notify forwarded len=117`）両方確認、state 復元後の skip も再確認
+  - code-reviewer: 修正必須なし、軽微提案 2 件反映（ライブラリ冒頭で `${STATE_FILE:?...}` / `${OUR_LOG:?...}` ガード、`STATE_DIR` 廃止して `mkdir -p "$(dirname "$STATE_FILE")"` に揃える）。`exit` をライブラリ内で呼ぶ件は YAGNI で据置、systemd の絶対パス前提コメントは実弾テスト済みのため未追加
 - 2026-05-07 通知先を OWNER DM → サーバー通知チャンネルへ切り替え（実装は bot 側、`bot/docs/STATUS.md` 2026-05-07 エントリ参照）。maintenance 配下のスクリプト・systemd unit は無変更（socket protocol が変わらないため）。実弾テストで対象チャンネルへの書き込みを確認、bot.log に `notify forwarded len=32`
 - 2026-05-06 ディスク・メモリ・CPU 温度の日次レポート
   - `scripts/notify-system-report.sh`: `df -h /`、`free -h`（Mem / Swap）、`sensors`（Package id 0）を集約し、本文を `$XDG_RUNTIME_DIR/companion-bot.sock` に nc -U で流し込む。state ファイル `maintenance/.state/last-notified-system-report` に当日日付を記録し同日 2 回目以降は skip

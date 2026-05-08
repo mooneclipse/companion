@@ -6,22 +6,15 @@
 
 set -euo pipefail
 
-STATE_DIR="${HOME}/companion/maintenance/.state"
-STATE_FILE="${STATE_DIR}/last-notified-system-report"
+STATE_FILE="${HOME}/companion/maintenance/.state/last-notified-system-report"
 OUR_LOG="${HOME}/companion/logs/maintenance/notify-system-report.log"
-SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/companion-bot.sock"
 
-mkdir -p "$STATE_DIR" "$(dirname "$OUR_LOG")"
-
-log() {
-    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$OUR_LOG"
-}
+# shellcheck source=../lib/notify.sh
+source "$(dirname "$0")/../lib/notify.sh"
 
 today=$(date '+%Y-%m-%d')
-last_notified=""
-[[ -f "$STATE_FILE" ]] && last_notified=$(cat "$STATE_FILE")
 
-if [[ "$today" == "$last_notified" ]]; then
+if state_matches "$today"; then
     log "skip: already notified today ($today)"
     exit 0
 fi
@@ -43,19 +36,8 @@ if command -v sensors >/dev/null 2>&1; then
     fi
 fi
 
-if [[ ! -S "$SOCK" ]]; then
-    log "skip send: socket not present ($SOCK)"
-    exit 0
-fi
-
 now=$(date '+%Y-%m-%d %H:%M')
 body=$(printf 'システムレポート %s\n%s\n%s' "$now" "$disk_line" "$mem_lines")
 [[ -n "$temp_line" ]] && body=$(printf '%s\n%s' "$body" "$temp_line")
 
-if printf '%s' "$body" | nc -U -N "$SOCK"; then
-    printf '%s' "$today" > "$STATE_FILE"
-    log "notified for $today"
-else
-    log "send failed"
-    exit 1
-fi
+notify_send "$body" "$today"

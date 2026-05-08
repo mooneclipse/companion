@@ -6,16 +6,11 @@
 set -euo pipefail
 
 LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
-STATE_DIR="${HOME}/companion/maintenance/.state"
-STATE_FILE="${STATE_DIR}/last-notified-unattended-upgrades"
+STATE_FILE="${HOME}/companion/maintenance/.state/last-notified-unattended-upgrades"
 OUR_LOG="${HOME}/companion/logs/maintenance/notify-unattended-upgrades.log"
-SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/companion-bot.sock"
 
-mkdir -p "$STATE_DIR" "$(dirname "$OUR_LOG")"
-
-log() {
-    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$OUR_LOG"
-}
+# shellcheck source=../lib/notify.sh
+source "$(dirname "$0")/../lib/notify.sh"
 
 if [[ ! -r "$LOG_FILE" ]]; then
     log "skip: log not readable ($LOG_FILE)"
@@ -31,10 +26,7 @@ fi
 
 start_ts=$(sed -n "${start_line}p" "$LOG_FILE" | awk '{print $1, $2}')
 
-last_notified=""
-[[ -f "$STATE_FILE" ]] && last_notified=$(cat "$STATE_FILE")
-
-if [[ "$start_ts" == "$last_notified" ]]; then
+if state_matches "$start_ts"; then
     log "skip: already notified ($start_ts)"
     exit 0
 fi
@@ -64,18 +56,7 @@ if [[ -f /var/run/reboot-required ]]; then
     fi
 fi
 
-if [[ ! -S "$SOCK" ]]; then
-    log "skip send: socket not present ($SOCK)"
-    exit 0
-fi
-
 body=$(printf 'unattended-upgrades 結果\n開始: %s\n%s' "$start_ts" "$result_line")
 [[ -n "$reboot_line" ]] && body=$(printf '%s\n%s' "$body" "$reboot_line")
 
-if printf '%s' "$body" | nc -U -N "$SOCK"; then
-    printf '%s' "$start_ts" > "$STATE_FILE"
-    log "notified for $start_ts"
-else
-    log "send failed"
-    exit 1
-fi
+notify_send "$body" "$start_ts"
