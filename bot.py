@@ -64,10 +64,11 @@ def chunk(text: str, size: int = DISCORD_MAX):
     return [text[i : i + size] for i in range(0, len(text), size)]
 
 
-async def run_claude(prompt: str) -> str:
+async def _exec_claude(prompt: str, *extra_args: str) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         CLAUDE_BIN,
         "-p",
+        *extra_args,
         cwd=CLAUDE_CWD,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
@@ -81,12 +82,26 @@ async def run_claude(prompt: str) -> str:
         proc.kill()
         await proc.wait()
         raise
+    return (
+        proc.returncode,
+        stdout.decode("utf-8", errors="replace").strip(),
+        stderr.decode("utf-8", errors="replace").strip(),
+    )
 
-    out = stdout.decode("utf-8", errors="replace").strip()
-    err = stderr.decode("utf-8", errors="replace").strip()
-    if proc.returncode != 0:
-        logger.warning("claude exited %s, stderr_len=%d", proc.returncode, len(err))
-        return out or f"[claude exited {proc.returncode}]\n{err[:1500]}"
+
+def _is_no_prior_session(stderr: str) -> bool:
+    s = stderr.lower()
+    return "no conversation" in s or "no previous" in s or "no session" in s
+
+
+async def run_claude(prompt: str) -> str:
+    rc, out, err = await _exec_claude(prompt, "--continue")
+    if rc != 0 and _is_no_prior_session(err):
+        logger.info("no prior session, retrying without --continue (stderr=%r)", err[:200])
+        rc, out, err = await _exec_claude(prompt)
+    if rc != 0:
+        logger.warning("claude exited %s, stderr_len=%d", rc, len(err))
+        return out or f"[claude exited {rc}]\n{err[:1500]}"
     return out or "[empty output]"
 
 

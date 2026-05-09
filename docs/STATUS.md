@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-07 22:25
+最終更新: 2026-05-09 19:10
 
 ## 設計メモ
 
@@ -33,6 +33,15 @@
 （なし）
 
 ## Done
+
+- 2026-05-09 `claude -p` 呼び出しに `--continue` を導入し多ターン会話を可能化
+  - Phase 3-1 を Discord 経由で動かしたとき、bot が会話を保持せず Phase 3-1 の確認ラリー（重複チェック / 書き込み判断）が破綻する問題が顕在化（claude が「許可します」を受け取っても直前文脈なしで「何の許可？」と返した）
+  - `run_claude` を `_exec_claude` ヘルパーに分割、`--continue` で直近セッション継続を試行 → stderr に `no conversation` / `no previous` / `no session` のいずれかが含まれて rc != 0 のときだけ通常起動でフォールバック（`_is_no_prior_session`）
+  - フォールバック条件を狭めた根拠: rc != 0 全件で再試行すると Web 検索拒否・タイムアウト・認証エラー等「ユーザーへ素直に返すべき失敗」も問答無用で 2 回目が走り、最悪 `CLAUDE_TIMEOUT × 2 = 600s` の待ちを食らう。`--continue` 由来の「直近セッション無し」と判別できる stderr 文言にだけ反応する形に倒した
+  - 既知の制約: bot CWD = `~/companion/workspace` で `--continue` するため、手元 claude code セッションの jsonl が「直近」として拾われ得る。短い対話なら影響限定的、運用で気になったら bot 専用 CWD or session-id 管理（A2 案）への切り替えを検討
+  - 実機 stderr 文言は未確認（実弾テストでパターン未マッチなら fallback されず `[claude exited rc]` が Discord に返る形になる、その時点で文言を観察して `_is_no_prior_session` の語彙を追加する運用）
+  - workspace 側 `.claude/settings.json` の `permissions.allow` に `WebSearch` と `WebFetch` を追加（Phase 3-1 の Web 検索フローで「権限が必要」で詰まる問題の解消）。WebFetch は OWNER_ID 限定運用前提で全 URL 許可（domain 制限なし）。Phase 4 でスケジューラ等が prompt を組み立てるようになったら `WebFetch(domain:*)` の allowlist or `ask` への降格を再判定
+  - code-reviewer: 修正必須 1 件（`rc != 0` 全件で fallback は危険、stderr 判定に絞れ）反映、軽微 2 件（WebFetch ドメイン制限 / `--continue` 側のみ短縮タイムアウト）はユーザー判断で現状維持
 
 - 2026-05-07 起動時に通知チャンネルを verify するヘルスチェックを追加
   - `on_ready` で `get_channel(NOTIFY_CHANNEL_ID)` → ヒット外しなら `fetch_channel`、`isinstance(ch, discord.TextChannel)` で型確認、失敗時は ERROR ログを出して return（bot は止めず mention/DM 応答は維持）。成功時は `notify channel verified: #<name> (<id>)` の INFO ログ
