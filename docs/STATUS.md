@@ -43,7 +43,7 @@
 ### 画面レイアウト（ux 案 A）
 - ダークテーマ既定（冬の 5:30 は真っ暗、5 月でも薄暗い。暗い部屋に白画面は朝に暴力的）。漆黒 `#000` は避ける（TV でバンディング/ギラつき）→ deep navy/ink (`#0e1419`〜`#141a24` 系) ベース＋暖かいオフホワイト文字 (`#e8e3d8` 系)＋抑制した 1 アクセント色（sunrise amber か soft teal を 1 つだけ。天気アイコンとゴミの「あす/きょう」ハイライトにだけ）。auto light/dark 切替は不要（朝のみ運用）。
 - 上端 ~50px はオーバースキャン保険マージン（コンテンツ開始 y≈80px）。fold は y≈580-600 とみなし now-playing baseline は y≈500 までに収める。**`height:540px` を CSS に焼かない**（実 TV の可視域は要実測 B7）。重要要素を上に積む top-anchored 1 カラムで組み、可視域は content priority のガイドラインとして扱う。
-- 案 A: 左 1/3=天気（アイコン / 現在気温 / 天候ラベル / 今日 ↑↓ / 降水%）、中 1/3=時計（最大、HH:MM ~240px tabular figures、秒は ~56px で右肩従属 or コロン点滅のみ — 好み、要ユーザー確認、日付 ~56px「5月13日 (火)」）、右 1/3=ゴミ（アイコン / 種別 / 「あす(水)」/ 「次: プラ 5/16」）。下に now-playing 1 行（~28px、♪ 曲名 — アーティスト、控えめ）。それ以下〜y=1080 はベース色の続き（任意でほぼ知覚不能の縦グラデで僅かに下を暗く）。テクスチャ・画像・動画背景なし。
+- 案 A: 左 1/3=天気（アイコン / 現在気温 / 天候ラベル / 今日 ↑↓ / 降水%）、中 1/3=時計（最大、`HH:MM` のみ ~13vw tabular figures・**秒は出さない**・コロンは静的、日付 ~3vw「5月13日 (火)」）、右 1/3=ゴミ（アイコン / 種別 / 「あす(水)」/ 「次: プラ 5/16」）。下に now-playing 1 行（~1.5vw、♪ 曲名 — アーティスト、控えめ）。それ以下〜y=1080 はベース色の続き（縦グラデで僅かに下を暗く）。テクスチャ・画像・動画背景なし。
 - 案 B（予備）: 時計左寄せ大 + 右に天気/ゴミ縦積み。情報量が将来増えたら右列に積みやすい。今は案 A 推奨。
 - **下半分を恒久的に「飾り」にする判断＝確定**。要素 4 つ + 将来 1 つは 1920×~580px に余裕で収まる。「溢れたら degrade」柔軟設計は存在しない問題への対策＝YAGNI 違反。「手前モニタを下げれば下も見える」は朝の運用（モニタ上げたまま一瞥）では発生しない前提。下に「下げれば見える二次情報」を置くのもナシ（誰も見ない二層 UI を検証できない／「見えないと存在しない」原則に反する）。ただし下半分は「壊れた余り」ではなく「デザインの連続」（1920×1080 全体で 1 つのデザイン、コンテンツは上 ~580px に住む、下はベース色がそのまま続く）。
 - 時間帯で色を変える: punt（朝のみ運用なので便益ゼロ、色替えコード経路を増やさない。将来 afternoon/evening timer が来たら入れる）。
@@ -134,12 +134,11 @@ dashboard/
 - [x] `bin/dashboard-start.sh`
 - [x] systemd 4 ユニット + `~/.config/systemd/user/` symlink + `daemon-reload`（**`enable --now` はまだ。検証後に**）
 - [x] code-reviewer subagent レビュー（修正必須なし。軽微 2 点を反映: firefox 起動オプション表記統一 / `.gitignore` から未使用の `config/weather.env` 削除）
-- [ ] **〔ユーザー〕モックの見た目チェック**: Firefox で `file:///home/miho/companion/dashboard/web/index.html` を開く（時計は動く。天気は file:// から Open-Meteo に届けば実データ、届かなければ「取得できません」表示＝B5 の実地テストにもなる。ゴミは dashboard-config.js のダミールールで計算表示）
-- [ ] 実機検証チェックリスト B1-B16（音が出る/TV が光るものはユーザー在席時 or 音量0。特に B1 音量実体・B4 wmctrl 配置・B5 file://→Open-Meteo CORS・B6 1080i・B7 可視域実測・B8 GUI-from-user-unit が load-bearing）
+- [x] **〔ユーザー〕モックの見た目チェック** — 2026-05-13 実機 TV で確認、OK
+- [x] 秒表示は無し（時計は `HH:MM` のみ、コロンは静的）に決定 → `.time .ss` / `<span class="ss">` / inline script の `ss` を削除済み
+- [ ] **〔ユーザー〕`docs/SETUP.md` の手順を実行**（音楽配置 → dashboard-config.js 記入 → 手動 start/stop テスト → timer enable → git push）。実機検証 B1-B16 は SETUP.md の手順に織り込み済み
 - [ ] **〔ユーザー〕`web/dashboard-config.js` を名古屋市中村区の実収集日・実緯度経度に書き換え**（今はダミー）
-- [ ] **〔ユーザー〕秒表示の好み確認**（右肩に小さく従属 / コロン点滅のみで秒非表示）→ 後者なら `.time .ss` を非表示にし index.html の `<span class="ss">` を落とす
-- [ ] 検証 OK 後: `systemctl --user enable --now dashboard-start.timer dashboard-stop.timer`（`dashboard.service` / `dashboard-stop.service` は `Unit=` で駆動されるので enable 不要）→ `systemctl --user list-timers` で 05:30 / 09:00 を確認
-- [ ] git → GitHub private repo → `git push`（push は `ask` 権限、**ユーザー承認 + repo 作成手段（gh / 手動）確認**）※ローカル commit は 2026-05-13 に実施済み（下記 Done）
+- [ ] git → GitHub private repo → `git push`（repo の粒度をどうするか相談中。詳細は SETUP.md / 会話。push は `ask` 権限）※ローカル commit は 2026-05-13 に実施済み（下記 Done）
 
 ## In progress
 

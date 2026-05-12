@@ -120,14 +120,6 @@ html, body {
   position: relative;
   top: -0.04em;
 }
-.time .ss {                     /* 秒は右肩に小さく従属（チラつきはノイズなので大きく出さない）。好みで非表示にできる */
-  font-size: 3vw;
-  font-weight: 500;
-  color: var(--ink-dim);
-  vertical-align: super;
-  margin-left: 0.12em;
-  letter-spacing: 0;
-}
 .date {
   font-size: 3vw;
   font-weight: 500;

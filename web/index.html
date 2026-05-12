@@ -36,7 +36,7 @@
 
     <!-- 時計（最大・100% クライアント計算・絶対に欠けない） -->
     <section class="panel clock">
-      <div class="time"><span id="hh">07</span><span class="colon">:</span><span id="mm">42</span><span class="ss" id="ss">58</span></div>
+      <div class="time"><span id="hh">07</span><span class="colon">:</span><span id="mm">42</span></div>
       <div class="date" id="date">5月13日 (火)</div>
     </section>
 
@@ -69,7 +69,6 @@
   (function () {
     var hh = document.getElementById('hh'),
         mm = document.getElementById('mm'),
-        ss = document.getElementById('ss'),
         dateEl = document.getElementById('date');
     var WD = ['日', '月', '火', '水', '木', '金', '土'];
     var p2 = function (n) { return n < 10 ? '0' + n : '' + n; };
@@ -78,7 +77,6 @@
       var d = new Date();
       hh.textContent = p2(d.getHours());
       mm.textContent = p2(d.getMinutes());
-      if (ss) ss.textContent = p2(d.getSeconds());
       var dayKey = d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
       if (dayKey !== lastDay) {
         lastDay = dayKey;
