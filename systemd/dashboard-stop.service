@@ -1,0 +1,7 @@
+[Unit]
+Description=Stop morning dashboard
+# dashboard-stop.timer から駆動される。dashboard.service が非 active でも no-op で成功する（無害）。
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user stop dashboard.service

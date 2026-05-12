@@ -1,0 +1,12 @@
+[Unit]
+Description=Start morning dashboard at 05:30
+
+[Timer]
+OnCalendar=*-*-* 05:30:00
+AccuracySec=1s
+# Persistent=true は付けない（寝過ごした朝を昼に遅延起動しない＝目覚まし意味論）。
+# RandomizedDelaySec も付けない（5:30 ちょうどに点けたい）。
+Unit=dashboard.service
+
+[Install]
+WantedBy=timers.target

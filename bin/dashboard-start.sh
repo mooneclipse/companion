@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# dashboard-start.sh — dashboard.service の ExecStart。systemd 経由でのみ起動する想定。
+#
+# シーケンス: 音量固定 → 時間帯フォルダ判定 → mpv(空ならskip) → now-playing helper → firefox(file://) → wmctrl で HDMI-1 全画面 → exec sleep infinity
+# 停止は dashboard-stop.timer(09:00) → systemctl --user stop dashboard.service → cgroup-kill。このスクリプトに kill ロジックは置かない。
+# set -e は掛けない（pactl/wmctrl の非致命ステップで死なせない）。詳細設計は ../docs/STATUS.md。
+
+set -u
+
+# systemd 経由でしか動かさない（cgroup 外で起動すると stop が届かず孤児になる）
+[ -n "${INVOCATION_ID:-}" ] || { echo "dashboard-start.sh: must be run via systemd (no INVOCATION_ID)" >&2; exit 1; }
+
+DASH_DIR="$HOME/companion/dashboard"
+WEB_URL="file://$DASH_DIR/web/index.html"
+FF_PROFILE="$DASH_DIR/.state/ff-profile"
+RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+MPV_SOCK="$RUNTIME/dashboard-mpv.sock"
+SINK_VOL_PCT=50     # PulseAudio sink（マスター）
+MPV_VOL_PCT=100     # mpv ストリーム（stream-restore に上書きされないよう明示。最終実音量 = sink × stream = 50%）
+
+export DISPLAY="${DISPLAY:-:0}"
+
+# ── 1. 音量を固定値にセット（前夜の状態に依存させない）。冪等・同期。読み戻し比較や再 set はしない。
+pactl set-sink-volume @DEFAULT_SINK@ "${SINK_VOL_PCT}%" || echo "dashboard-start.sh: pactl set-sink-volume failed" >&2
+pactl set-sink-mute   @DEFAULT_SINK@ 0                  || echo "dashboard-start.sh: pactl set-sink-mute failed" >&2
+
+# ── 2. 時間帯フォルダ判定（5:30 起動なら morning。境界時刻の特別扱いはしない、起動時に1回確定）
+H=$(date +%H); H=$((10#$H))
+if   [ "$H" -ge 5 ]  && [ "$H" -lt 11 ]; then SLOT=morning
+elif [ "$H" -ge 11 ] && [ "$H" -lt 16 ]; then SLOT=afternoon
+elif [ "$H" -ge 16 ] && [ "$H" -lt 21 ]; then SLOT=evening
+else                                          SLOT=night
+fi
+MUSIC_DIR="$HOME/music/$SLOT"
+echo "dashboard-start.sh: slot=$SLOT music_dir=$MUSIC_DIR"
+
+# ── 3. 音楽: フォルダに音楽ファイルが1つでもあれば mpv 起動（無ければ skip。別フォルダへの fallback はしない）
+HAS_MUSIC=$(find "$MUSIC_DIR" -maxdepth 1 -type f \
+  \( -iname '*.mp3' -o -iname '*.flac' -o -iname '*.ogg' -o -iname '*.opus' -o -iname '*.m4a' -o -iname '*.aac' -o -iname '*.wav' \) \
+  -print -quit 2>/dev/null)
+if [ -n "$HAS_MUSIC" ]; then
+  rm -f "$MPV_SOCK"   # stale socket を掃除（clean state = 原因側。retry ではない）
+  mpv --no-video --no-terminal --shuffle --loop-playlist=inf \
+      --volume="$MPV_VOL_PCT" \
+      --input-ipc-server="$MPV_SOCK" \
+      "$MUSIC_DIR" &
+  echo "dashboard-start.sh: mpv started (pid $!)"
+else
+  echo "dashboard-start.sh: no music files in $MUSIC_DIR — skipping mpv" >&2
+fi
+
+# ── 4. now-playing helper（mpv IPC → http://127.0.0.1:PORT/np。mpv 不在でも {"playing":false} を返すだけ）
+python3 "$DASH_DIR/server/nowplaying-helper.py" &
+echo "dashboard-start.sh: nowplaying-helper started (pid $!)"
+
+# ── 5. firefox（dashboard 専用 profile。--kiosk は使わない＝この後 wmctrl で HDMI-1 に配置するため）
+mkdir -p "$FF_PROFILE"
+rm -f "$FF_PROFILE/.parentlock" "$FF_PROFILE/lock" 2>/dev/null   # 前回の残骸を掃除（clean state）
+cat > "$FF_PROFILE/user.js" <<'FFEOF'
+// dashboard 専用 firefox profile 設定。起動毎に再生成（冪等）。
+// first-run / what's-new / session 復元 / default-browser / telemetry の各種プロンプトを全部抑止。
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("startup.homepage_welcome_url", "");
+user_pref("startup.homepage_welcome_url.additional", "");
+user_pref("browser.startup.page", 0);
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("browser.messaging-system.whatsNewPanel.enabled", false);
+user_pref("browser.sessionstore.resume_from_crash", false);
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("browser.shell.skipDefaultBrowserCheckOnFirstRun", true);
+user_pref("browser.tabs.warnOnClose", false);
+user_pref("browser.warnOnQuit", false);
+user_pref("browser.warnOnQuitShortcut", false);
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("datareporting.healthreport.uploadEnabled", false);
+user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
+user_pref("toolkit.telemetry.enabled", false);
+user_pref("trailhead.firstrun.didSeeAboutWelcome", true);
+user_pref("browser.urlbar.suggest.quicksuggest.sponsored", false);
+user_pref("browser.aboutConfig.showWarning", false);
+user_pref("app.update.auto", false);
+user_pref("browser.discovery.enabled", false);
+user_pref("extensions.getAddons.showPane", false);
+user_pref("full-screen-api.warning.timeout", 0);
+user_pref("full-screen-api.transition-duration.enter", "0 0");
+user_pref("full-screen-api.transition-duration.leave", "0 0");
+user_pref("browser.fullscreen.autohide", true);
+user_pref("dom.disable_open_during_load", false);
+FFEOF
+
+firefox --new-instance --no-remote --profile "$FF_PROFILE" "$WEB_URL" &
+echo "dashboard-start.sh: firefox launched (launcher pid $!)"
+
+# ── 6. firefox ウィンドウを HDMI-1（1920x1080+0+0）へ移動して全画面化
+#   observable state（窓の存在）への上限付き readiness wait → 出なければ benign give-up（service は殺さない）。
+#   ※ ここを「窓が出ない → 回数を増やす / sleep を足す」方向に育てないこと。flaky が続くなら patch #2 を当てず設計引き直し（../docs/STATUS.md 参照）。
+WIN_ID=""
+for _ in $(seq 1 20); do
+  WIN_ID=$(wmctrl -l -x 2>/dev/null | awk 'tolower($3) ~ /firefox/ {print $1; exit}')
+  [ -n "$WIN_ID" ] && break
+  sleep 0.5
+done
+if [ -n "$WIN_ID" ]; then
+  wmctrl -i -r "$WIN_ID" -b remove,maximized_vert,maximized_horz 2>/dev/null
+  wmctrl -i -r "$WIN_ID" -e 0,0,0,1920,1080                       2>/dev/null
+  wmctrl -i -r "$WIN_ID" -b add,fullscreen                        2>/dev/null
+  echo "dashboard-start.sh: placed firefox window $WIN_ID on HDMI-1 (fullscreen)"
+else
+  echo "dashboard-start.sh: firefox window not found within timeout — leaving as-is" >&2
+fi
+
+# ── 7. service を active に保つ。寿命は systemd（dashboard-stop.timer / cgroup-kill）が握る。
+exec sleep infinity

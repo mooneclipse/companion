@@ -1,0 +1,194 @@
+/* dashboard — 夜明け前の静けさ。TV 視聴距離（2-3m）前提、遠目で読める。
+   1920x1080（HDMI-1 は現状 1080i なので hairline を避け太め・大きめ）。
+   コンテンツは画面上半分（~y80〜y580）に住む。下半分はベース色の続き＝意図された静けさ。
+   実 TV の可視域は要実測（B7）。height を焼かない＝top-anchored 1カラムで content priority 順に積む。 */
+
+:root {
+  --bg-top:    #141a24;
+  --bg-bottom: #0b0f15;
+  --ink:       #ece6da;   /* 暖かいオフホワイト */
+  --ink-dim:   #7f8893;   /* 二次情報 */
+  --ink-faint: #4a525c;   /* now-playing 等、ごく控えめ */
+  --accent:    #f3b85f;   /* sunrise amber — 天気アイコンとゴミの「あす/きょう」だけ */
+  --cool:      #8fb6c7;   /* 寒色の従属（降水% など、任意） */
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;            /* kiosk: スクロールバー無し */
+  background: linear-gradient(to bottom, var(--bg-top) 0%, var(--bg-top) 52%, var(--bg-bottom) 100%);
+  color: var(--ink);
+  font-family: 'Inter', 'Noto Sans JP', 'Hiragino Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  cursor: none;                /* kiosk: ポインタ非表示 */
+}
+
+.dashboard {
+  height: 100%;
+  padding: 50px 90px 0;        /* 上端 50px = オーバースキャン保険 */
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  animation: fade-in 700ms ease 120ms forwards;   /* ロード時 1 回だけ。ループしない */
+}
+@keyframes fade-in { to { opacity: 1; } }
+
+/* 将来アドバイス band 用の呼吸スペース（今はただの余白。時計を帯の上寄りに置くため） */
+.advice-space {
+  height: 92px;
+  flex: 0 0 auto;
+}
+
+/* ── 上半分の主行: 左=天気 / 中=時計（最大）/ 右=ゴミ ───────────────── */
+.main-row {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1.25fr 1fr;
+  align-items: start;
+  column-gap: 40px;
+}
+
+.panel { min-width: 0; }
+
+/* 天気 */
+.weather {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding-top: 14px;
+}
+.wx-icon {
+  width: 7.6vw;
+  height: 7.6vw;
+  color: var(--accent);
+}
+.wx-icon .ray { opacity: 0.95; }
+.wx-temp {
+  font-size: 5.4vw;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+.wx-label {
+  font-size: 2.2vw;
+  font-weight: 500;
+  color: var(--ink);
+}
+.wx-sub {
+  font-size: 1.7vw;
+  color: var(--ink-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.wx-hilo .hi { color: var(--ink); }
+.wx-hilo .lo { color: var(--ink-dim); }
+.wx-pop { color: var(--cool); }
+.wx-stamp {
+  font-size: 1.05vw;
+  color: var(--ink-faint);
+  margin-top: 4px;
+  min-height: 1.2em;            /* 「更新 HH:MM」が出ても出なくてもガタつかない */
+}
+
+/* 時計（ドミナント） */
+.clock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.time {
+  font-size: 13vw;              /* ≈ 250px @1920。卓上フリップ時計を部屋の向こうから見る感覚 */
+  font-weight: 600;
+  line-height: 0.92;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.time .colon {
+  margin: 0 0.02em;
+  position: relative;
+  top: -0.04em;
+}
+.time .ss {                     /* 秒は右肩に小さく従属（チラつきはノイズなので大きく出さない）。好みで非表示にできる */
+  font-size: 3vw;
+  font-weight: 500;
+  color: var(--ink-dim);
+  vertical-align: super;
+  margin-left: 0.12em;
+  letter-spacing: 0;
+}
+.date {
+  font-size: 3vw;
+  font-weight: 500;
+  color: var(--ink-dim);
+  margin-top: 0.35em;
+}
+
+/* ゴミの日 */
+.garbage {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  gap: 8px;
+  padding-top: 14px;
+}
+.gb-icon {
+  width: 5.6vw;
+  height: 5.6vw;
+  color: var(--ink-dim);
+}
+.gb-when {
+  font-size: 3.6vw;
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1.05;
+}
+.gb-when .dow { font-size: 0.62em; font-weight: 500; }
+.gb-type {
+  font-size: 2.6vw;
+  font-weight: 500;
+  color: var(--ink);
+}
+.gb-next {
+  font-size: 1.6vw;
+  color: var(--ink-dim);
+  margin-top: 6px;
+}
+
+/* ── now playing（控えめ・fold ギリギリには置かない） ─────────────────── */
+.now-playing {
+  flex: 0 0 auto;
+  margin-top: 3.4vw;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  font-size: 1.5vw;
+  color: var(--ink-faint);
+  font-weight: 400;
+  min-height: 1.4em;            /* 曲なし/取得失敗でもレイアウトを揺らさない */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.now-playing.is-empty { opacity: 0; }
+.np-note { color: var(--ink-faint); }
+.np-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* データ更新時のソフトフェード（pop させない）。要素単位で .updating を一瞬付ける用 */
+.weather, .garbage, .now-playing { transition: opacity 380ms ease; }
+.updating { opacity: 0.35; }
