@@ -138,7 +138,7 @@ dashboard/
 - [x] 秒表示は無し（時計は `HH:MM` のみ、コロンは静的）に決定 → `.time .ss` / `<span class="ss">` / inline script の `ss` を削除済み
 - [ ] **〔ユーザー〕`docs/SETUP.md` の手順を実行**（音楽配置 → dashboard-config.js 記入 → 手動 start/stop テスト → timer enable → git push）。実機検証 B1-B16 は SETUP.md の手順に織り込み済み
 - [ ] **〔ユーザー〕`web/dashboard-config.js` を名古屋市中村区の実収集日・実緯度経度に書き換え**（今はダミー）
-- [ ] git → GitHub private repo → `git push`（repo の粒度をどうするか相談中。詳細は SETUP.md / 会話。push は `ask` 権限）※ローカル commit は 2026-05-13 に実施済み（下記 Done）
+- [x] git → GitHub private repo `mooneclipse/companion-dashboard`（private）→ push 済み（2026-05-13）。※companion repo 群の monorepo 化は someday 候補（`workspace/PROJECT.md` の「将来の保留事項」に記載）
 
 ## In progress
 
