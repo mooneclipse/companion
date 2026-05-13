@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-09 19:10
+最終更新: 2026-05-13 17:50
 
 ## 設計メモ
 
@@ -33,6 +33,19 @@
 （なし）
 
 ## Done
+
+- 2026-05-13 Phase 2.5「土管の耐久化」着手前の準備（bot-workspace 新設 + `--bare` 実機確認）
+  - bot-workspace 新設（`~/companion/workspace/redesign/design.md` §1.1 / §1.2 / §2 確定済の内容）
+    - `~/companion/bot-workspace/` ディレクトリ作成
+    - `bot-workspace/CLAUDE.md`（Discord 経由セッション固有: 口調 / `--session-id` + `--resume` 運用 / 書き込み境界 / OWNER 認可 / 上位 `~/companion/CLAUDE.md` 参照）
+    - `bot-workspace/.claude/settings.json`（§2 確定の bot 用 permissions: WebSearch / WebFetch / vault notes 書き込み / git 通常操作 allow、`git push` ask、deny は workspace と同等、`additionalDirectories` は vault / logs）
+      - §2 確定リストに加え workspace 慣習からの補完 3 件を追補: `Bash(git status)` / `Bash(git diff)`（引数なし形、workspace settings line 42-45 に揃える）、`Bash(claude --version)`（CLI バージョン確認用、副作用なし）
+  - bot.py の CWD は `~/companion/workspace` のまま未変更。bot-workspace は **Phase 2.5 メイン実装で bot.py 側の cwd 切替と同時に活性化** する。現状の bot 動作には影響なし
+  - `--bare` 実機確認（design.md §1.8 #5 + §11.5、N4 の watch 基準値取得）
+    - 実行: `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_EXECPATH -u CLAUDE_CODE_SESSION_ID -u ANTHROPIC_API_KEY claude -p --bare "test"`
+    - 結果: stderr `Not logged in · Please run /login`、rc=1
+    - 観察: Max プラン環境では `--bare` が明示的にエラーで止まる。design.md は `ANTHROPIC_API_KEY not set` 系の文言を想定していたが実際は `Not logged in`（`--bare` が keychain reads を skip → OAuth credentials を読まない → 認証情報なし）。本質（`--bare` がデフォルト化された瞬間に bot 経路が無音破綻する将来リスク）は変わらず、N4「bot.py は明示的に `--bare` を使わない」を継続
+  - claude CLI バージョン: design.md 検証時は 2.1.138、現在 **2.1.140**（2 バージョン分上昇）。S1〜S5 全シナリオの再検証は Phase 2.5 着手時に実施（`~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」+ design.md §10.4 ルール準拠）
 
 - 2026-05-09 `claude -p` 呼び出しに `--continue` を導入し多ターン会話を可能化
   - Phase 3-1 を Discord 経由で動かしたとき、bot が会話を保持せず Phase 3-1 の確認ラリー（重複チェック / 書き込み判断）が破綻する問題が顕在化（claude が「許可します」を受け取っても直前文脈なしで「何の許可？」と返した）
