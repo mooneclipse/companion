@@ -136,7 +136,7 @@ dashboard/
 - [x] code-reviewer subagent レビュー（修正必須なし。軽微 2 点を反映: firefox 起動オプション表記統一 / `.gitignore` から未使用の `config/weather.env` 削除）
 - [x] **〔ユーザー〕モックの見た目チェック** — 2026-05-13 実機 TV で確認、OK
 - [x] 秒表示は無し（時計は `HH:MM` のみ、コロンは静的）に決定 → `.time .ss` / `<span class="ss">` / inline script の `ss` を削除済み
-- [ ] **〔ユーザー〕`docs/SETUP.md` の手順を実行**（音楽配置 → dashboard-config.js 記入 → 手動 start/stop テスト → timer enable → git push）。実機検証 B1-B16 は SETUP.md の手順に織り込み済み
+- [x] **〔ユーザー〕`docs/SETUP.md` の手順を実行**（音楽配置 → dashboard-config.js 記入 → 手動 start/stop テスト → timer enable → git push）— 2026-05-14 完了。dashboard-config.js の中村区実データ書き換えは TODO に残る
 - [ ] **〔ユーザー〕`web/dashboard-config.js` を名古屋市中村区の実収集日・実緯度経度に書き換え**（今はダミー）
 - [x] git → GitHub private repo `mooneclipse/companion-dashboard`（private）→ push 済み（2026-05-13）。※companion repo 群の monorepo 化は someday 候補（`workspace/PROJECT.md` の「将来の保留事項」に記載）
 
@@ -152,3 +152,4 @@ dashboard/
 - 2026-05-13 code-reviewer レビュー（修正必須なし）、軽微 2 点反映
 - 2026-05-13 git init + 初回ローカル commit（push は未。pre-commit hook 配置 + gitleaks 確認込み）
 - 2026-05-14 手動 start 実機検証: TV に全画面表示 OK / 時計・天気・ゴミ表示 OK / mpv は slot=morning 等価コマンドで起動、当初値 sink 50% × stream 100% で `module-stream-restore` による stream 上書きが起きないことを確認（B1 pass）/ `~/music/morning/` の dir→playlist 再生 OK（B2 pass）/ now-playing helper `/np` が `Access-Control-Allow-Origin: *` 付きで正常応答（mpv 起動時は `playing:true`、不在時は `playing:false` を HTTP 200 で返す）。実音量が大きすぎたため `SINK_VOL_PCT` を 50→20 に変更（最終運用値）。
+- 2026-05-14 `dashboard-start.timer` / `dashboard-stop.timer` を `enable --now` で本番化。`list-timers` で次発火 2026-05-15 05:30 (start) / 09:00 (stop) を確認。翌朝の実発火確認（B12 残）と中村区実データへの `web/dashboard-config.js` 書き換え（TODO 残）が残作業。
