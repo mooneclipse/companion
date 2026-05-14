@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14 (T-C 完了 + vault push reject 観察ルール追記)
+最終更新: 2026-05-14 (T-D 前半完了: BudgetGuard / Discord 公式 slash command 化)
 
 ## 設計メモ
 
@@ -22,24 +22,19 @@
 
 ## TODO
 
-Phase 2.5「土管の耐久化（再設計）」T-C 完了、T-D から着手可能 (依存順序 T-D → T-E、各サブタスク = 1 commit)。
+Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半完了、T-D 後半 (2026-06 上旬) → T-E へ。各サブタスク = 1 commit。
 
 設計根拠:
 - `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14)
 - `~/companion/workspace/redesign/questions.md` (UQ-1〜UQ-10 全項目回答済)
 
-### T-D: BudgetGuard / /quota コマンド (2 段階実装)
+### T-D 後半 (2026-06 上旬実施)
 
-- T-D 前半 (Phase 2.5 着手時に実施):
-  - `bot/quota.py` 新設: `BudgetGuard` ABC + `RequestsCountGuard` 実装 (ENV `BOT_REQUESTS_PER_HOUR=20` default、1h スライディング window)
-  - `bot/sessions/ledger.jsonl` に各 prompt の `total_cost_usd` / `usage.*` / `modelUsage` を append
-  - `/quota` `/reset` `/status` の 3 コマンドを実装 (UQ-4.4 案 k、design.md §6.1)
-  - 表示は R 案 z (6/15 想定の表示骨格で書き、6/15 までは月次予算行をプレースホルダで覆う)
-  - キャッシュメトリクス (`cache_creation_input_tokens` / `cache_read_input_tokens`) も集計表示
-- T-D 後半 (2026-06 上旬に実施):
-  - `CreditBudgetGuard` 実装 (月次クレジット $100、月初リセット)
-  - 切替: `bot/.env` の `BOT_BUDGET_GUARD=requests_count|credit_usd` (ENV master)
-- 対応 §: design.md §4 全体 (§4.2 / §4.6 / §4.8)
+- `CreditBudgetGuard` 実装 (月次クレジット $100、月初リセット)
+- 切替: `bot/.env` の `BOT_BUDGET_GUARD=requests_count|credit_usd` (ENV master、`quota.make_budget_guard()` で分岐)
+- 6/15 以降は `/quota` の本月累計行プレースホルダが自動で剥がれる (`MONTHLY_BUDGET_ACTIVE_FROM` 判定、T-D 前半で実装済)
+- Phase 2.5 着手後の実弾 1 週間で `BOT_REQUESTS_PER_HOUR` 実測値を STATUS.md に記録 (現状 default 20)
+- 対応 §: design.md §4.2 (CreditBudgetGuard 仕様)
 
 ### T-E: catch-up + CLAUDE.md 3 層分割
 
@@ -58,6 +53,35 @@ Phase 2.5「土管の耐久化（再設計）」T-C 完了、T-D から着手可
 （なし）
 
 ## Done
+
+- 2026-05-14 Phase 2.5 T-D 前半: BudgetGuard / `/reset` `/quota` `/status` の Discord 公式 slash command 化 (design.md §4 全体 + §6.1)
+  - **新規 `bot/quota.py`** (約 250 行): `BudgetGuard` ABC + `RequestsCountGuard` 単独実装 (1h スライディング window)、`ledger.jsonl` append/read、`BudgetSummary` dataclass (§4.6 R 案 z 表示用スキーマ)、`format_summary()` (Discord 文字列整形)、`make_budget_guard()` factory (ENV `BOT_BUDGET_GUARD` master、design.md §4.2 / §4.6 末尾)。`CreditBudgetGuard` は T-D 後半までは `NotImplementedError` で誘導文を返す
+  - **ledger.jsonl スキーマ**: design.md §4.6 サンプル JSON と完全一致 (`timestamp` / `channel_id` / `session_id` / `total_cost_usd` / `usage.*` / `modelUsage` / `terminal_reason`)。書き込みは `claude_lock` 配下の `BudgetGuard.record()` から append-only、bot 単一プロセス前提で flock 等は省略 (§4.6 + quota.py 内 docstring 注記)
+  - **6/15 切替プレースホルダ**: `MONTHLY_BUDGET_ACTIVE_FROM = datetime(2026, 6, 15, 0, 0, JST)` の境界判定 1 つで `format_summary()` が「本月累計 / $100」行を切替。**BudgetGuard 実装選択は ENV master と独立** (design.md §4.6 注記準拠)。実装ファイル間で日付ハードコードは `quota.py` 1 箇所のみ
+  - **キャッシュヒット率**: `cache_read / (input_tokens + cache_read_input_tokens + cache_creation_input_tokens) * 100` で算出。分母 = Anthropic Messages API の `usage` 慣行に従う「課金対象 input 総量」。design.md §4.8 方針 4 のキャッシュ可視化を /quota 常時表示で実現
+  - **Discord 公式 slash command 化** (途中での仕切り直し、ユーザー指摘 2026-05-14 20:10): 初回実装はメッセージ本文の文字列マッチで `/reset` 等を判定したが、メンション付き `@renbot /quota` で `clean_content` の先頭にメンションが残り SLASH_COMMANDS 集合に一致しない不具合が出た。これを契機に **`discord.app_commands.CommandTree` で 3 コマンド正規登録 + guild sync** へ切り替え:
+    - `CompanionClient.__init__` で `tree = app_commands.CommandTree(self)` を保持、`_synced_guild_id` で起動毎 1 回 sync
+    - `on_ready` で `NOTIFY_CHANNEL_ID` 経由で取れる `ch.guild` に対し `tree.copy_global_to(guild=guild)` → `tree.sync(guild=guild)` で即時反映 (1 サーバ運用前提、`.env` への `GUILD_ID` 追加なしで完結)
+    - `@client.tree.command(name="reset|quota|status")` で 3 つを定義、内部で既存の `cmd_reset/cmd_quota/cmd_status` を呼ぶ。OWNER 認可違反は `interaction.response.send_message("not authorized", ephemeral=True)` で本人にのみ短文返答 (CLAUDE.md「OWNER 以外は完全無視 (沈黙)」との解釈: interaction プロトコルは Discord 仕様上応答必須なので ephemeral 化で他メンバーには見えない形に倒した、bot からの主体的発話とは別レイヤと整理)
+    - `on_message` 側の文字列マッチ分岐 (`SLASH_COMMANDS` 集合) は完全撤去。通常 prompt 経路のみ残す
+    - sync は最初に `tree.sync(guild=...)` 単独で叩いたところ `0 cmds: []` を返した (グローバル登録されたコマンドは guild sync では自動コピーされない discord.py 仕様)。`tree.copy_global_to(guild=...)` を先行させて解消、ログで `(3 cmds): ['reset', 'quota', 'status']` を確認
+  - **bot.py 連動**: `runner` / `budget_guard` を起動時 1 個生成、`run_claude` で `budget_guard.allow(now)` 先行チェック (上限到達時は `[budget guard] 直近 1h あたり N 回の上限...` を即返却、claude 呼ばず)、OK 経路の後で `budget_guard.record()` を呼ぶ。`BOT_START_AT` を JST aware で保持 (`/status` の uptime 計算用)、`_fmt_duration()` で `1h23m` 等のヒト読み表示
+  - **動作確認 (venv ユニット)**: `quota.py` の `allow()` 境界条件 (limit=3 で 0/1/2 件 OK, 3 件目で False)、1h window スライド、`record()` の append スキーマ、`summary()` 集計値、`format_summary()` の 6/15 前後表示分岐、`make_budget_guard()` ENV 切替 (requests_count / credit_usd は NotImplementedError / 不明値で ValueError) を全 pass。bot.py の cmd_* 関数 import スモークで `tree` に 3 コマンド登録済を確認
+  - **実弾確認 OK** (2026-05-14 20:16〜20:22, channel `1501135556703424552`):
+    - 20:16:18 通常 prompt → `send len=308`、`ledger.jsonl` に 1 行追加、`modelUsage` に `claude-sonnet-4-6` + Haiku 4.5 サブエージェント (WebSearch 1 回) まで記録、session_id は T-A 以来の `4df72438-2aec-46c4-a405-0935157c04ca` 継続
+    - 20:21:29 `/quota` → 315 字 (プレースホルダ込みの想定長と整合)
+    - 20:21:58 `/status` → 265 字 (current session 行あり)
+    - 20:22:05 `/reset` → 70 字 (`[reset] 現 channel の session を破棄しました...` メッセージ長と一致)、`sessions/channels/<id>.json` 削除
+    - 20:22:18 `/status` → 195 字 (current session 行が「なし」に縮んで -70 字)
+    - 20:22:26 `/quota` → 315 字 (累積データは reset で変わらないので同長)
+  - **code-reviewer**: 修正必須 1 件 (`cmd_status` の `last_prompt_at` が UTC 表示のまま、`BOT_START_AT` / `summary.last_call_at` は JST で並ぶと混在) 反映済 (`astimezone(quota.JST)`)。軽微提案 A〜F は実害なく未反映 (キャッシュ分母文言は API 慣行で OK、`read_ledger` 2 回呼びは run_claude allow + summary 連鎖だが ledger は単一プロセス append-only 想定 1 日 100 行未満で I/O 軽微、ledger 破損行スキップのログ詳細化は壊れたら追加、`summary()` への naive datetime ガードは YAGNI、SLASH_COMMANDS 完全一致は app_commands 化で moot、socket_ok 判定は Phase 2.5 では十分)
+  - **OWNER 認可ポリシー判断**: slash command interaction で OWNER 以外は `ephemeral` で「not authorized」短文返答。CLAUDE.md「OWNER 以外は完全無視 (沈黙)」の厳密適用 (interaction 放置) だと Discord クライアントに「アプリが応答しませんでした」赤エラーが本人に出る UX 上の壊れに見えるため ephemeral 返答を採用。本人以外には何も見えず、guild メンバーへの存在露出は slash command 一覧表示 (Discord 仕様、bot が join している以上避けられない) と同程度に留まる
+  - **環境変数**: `.env.example` に `BOT_BUDGET_GUARD=requests_count` / `BOT_REQUESTS_PER_HOUR=20` を追記。`GUILD_ID` は追加せず (`NOTIFY_CHANNEL_ID` から `ch.guild` で取得、ENV 増殖を回避)
+  - **将来の見直し候補** (実弾運用で観察):
+    - `BOT_REQUESTS_PER_HOUR=20` は default、1 週間運用で実測してから調整
+    - DM で slash command が使えない (guild sync のみ)。DM で `/quota` を叩きたい需要が出たら `tree.sync()` で global sync 追加 (反映に最大 1h)
+    - キャッシュヒット率の分母文言「total input C tokens」が API 用語 (`input + cache_read + cache_creation`) と読者解釈で乖離する可能性。混乱したら format_summary の文言を「課金対象 input 総量」等に書き換え
+    - OWNER 認可違反時の ephemeral 返答が見えるのを更に隠したくなったら `interaction.response.defer(ephemeral=True)` 後 follow-up なしで実質沈黙化する選択肢あり
 
 - 2026-05-14 Phase 2.5 T-C: Stop フック + vault 同期 (`vault-sync-from-transcript.sh`) (design.md §5 全体、案 A 採用)
   - `~/companion/web/scripts/vault-sync-from-transcript.sh` 新設 (約 50 行 bash、実行権限付き): Discord bot 経由 claude セッション (bot-workspace CWD) の Stop フックとして呼ばれ、claude が `~/companion/vault/notes/` に書いた未 commit 変更を `git add -- notes/` + `git commit` で回収する最終同期処理。push は `permissions.ask` の人手承認フローに任せる

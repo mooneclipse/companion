@@ -5,12 +5,15 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import discord
+from discord import app_commands
 from dotenv import load_dotenv
 
+import quota
 import sessions
 from claude_runner import ClaudeOptions, ClaudeRunner, ErrorKind
 
@@ -59,6 +62,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.dm_messages = True
 runner = ClaudeRunner(CLAUDE_BIN, CLAUDE_CWD)
+budget_guard = quota.make_budget_guard()
+BOT_START_AT = datetime.now(quota.JST)
 
 
 def chunk(text: str, size: int = DISCORD_MAX):
@@ -68,6 +73,19 @@ def chunk(text: str, size: int = DISCORD_MAX):
 
 
 async def run_claude(prompt: str, channel_id: int) -> str:
+    now = datetime.now(quota.JST)
+    if not budget_guard.allow(now):
+        summary = budget_guard.summary(now)
+        logger.warning(
+            "budget exceeded channel_id=%s count_1h=%d/%s",
+            channel_id, summary.count_last_1h, summary.limit_per_hour,
+        )
+        return (
+            f"[budget guard] 直近 1h あたり {summary.limit_per_hour} 回の上限に到達しました "
+            f"(現在 {summary.count_last_1h} 回)。"
+            "古い記録が window から外れるまでお待ちください。"
+        )
+
     meta, is_new = sessions.start_or_resume(channel_id)
     options = ClaudeOptions(timeout_s=CLAUDE_TIMEOUT)
     if is_new:
@@ -79,6 +97,12 @@ async def run_claude(prompt: str, channel_id: int) -> str:
 
     if result.error_kind == ErrorKind.OK:
         sessions.record_usage(meta)
+        budget_guard.record(
+            datetime.now(quota.JST),
+            result,
+            channel_id=channel_id,
+            session_id=meta.session_id,
+        )
         body = result.result_text if result.result_text is not None else result.raw_stdout
         return body or "[empty output]"
 
@@ -94,7 +118,60 @@ async def run_claude(prompt: str, channel_id: int) -> str:
     )
 
 
+def cmd_reset(channel_id: int) -> str:
+    if sessions.reset(channel_id):
+        return "[reset] 現 channel の session を破棄しました。次の prompt で新しい session_id が発番されます。"
+    return "[reset] 現 channel に session は存在しませんでした (no-op)。"
+
+
+def cmd_quota() -> str:
+    summary = budget_guard.summary(datetime.now(quota.JST))
+    return quota.format_summary(summary)
+
+
+def cmd_status(channel_id: int) -> str:
+    now = datetime.now(quota.JST)
+    summary = budget_guard.summary(now)
+    socket_ok = getattr(client, "_notify_server", None) is not None
+    meta = sessions.load(channel_id)
+    lines = [
+        f"bot uptime: {BOT_START_AT.isoformat(timespec='seconds')} ({_fmt_duration(now - BOT_START_AT)} 前から稼働)",
+        f"last claude call: {summary.last_call_at.isoformat(timespec='seconds') if summary.last_call_at else 'なし'}",
+        f"notify socket: {'listening' if socket_ok else 'down'} ({NOTIFY_SOCKET})",
+    ]
+    if meta is not None:
+        last = (
+            meta.last_prompt_at.astimezone(quota.JST).isoformat(timespec="seconds")
+            if meta.last_prompt_at else "未使用"
+        )
+        lines.append(
+            f"current session: {meta.session_id} "
+            f"(prompts={meta.prompt_count}, last_prompt_at={last})"
+        )
+    else:
+        lines.append("current session: なし (次の prompt で新規発番)")
+    return "\n".join(lines)
+
+
+def _fmt_duration(delta) -> str:
+    total = int(delta.total_seconds())
+    if total < 0:
+        total = 0
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{seconds:02d}s"
+    return f"{seconds}s"
+
+
 class CompanionClient(discord.Client):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tree = app_commands.CommandTree(self)
+        self._synced_guild_id: int | None = None
+
     async def setup_hook(self):
         try:
             NOTIFY_SOCKET.unlink()
@@ -140,6 +217,43 @@ class CompanionClient(discord.Client):
 client = CompanionClient(intents=intents)
 
 
+async def _reject_non_owner(interaction: discord.Interaction) -> bool:
+    """Send an ephemeral rejection if the caller isn't the OWNER. Returns True
+    when rejected (handler should bail). Keeps OWNER-only authorization
+    consistent with `on_message`."""
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("not authorized", ephemeral=True)
+        return True
+    return False
+
+
+@client.tree.command(name="reset", description="現 channel の claude セッションを破棄")
+async def slash_reset(interaction: discord.Interaction):
+    if await _reject_non_owner(interaction):
+        return
+    output = cmd_reset(interaction.channel_id or 0)
+    logger.info("cmd=/reset send len=%d", len(output))
+    await interaction.response.send_message(output)
+
+
+@client.tree.command(name="quota", description="bot 経由 prompt の予算 / 集計を表示")
+async def slash_quota(interaction: discord.Interaction):
+    if await _reject_non_owner(interaction):
+        return
+    output = cmd_quota()
+    logger.info("cmd=/quota send len=%d", len(output))
+    await interaction.response.send_message(output)
+
+
+@client.tree.command(name="status", description="bot 稼働状況 / current session を表示")
+async def slash_status(interaction: discord.Interaction):
+    if await _reject_non_owner(interaction):
+        return
+    output = cmd_status(interaction.channel_id or 0)
+    logger.info("cmd=/status send len=%d", len(output))
+    await interaction.response.send_message(output)
+
+
 @client.event
 async def on_ready():
     logger.info("logged in as %s", client.user)
@@ -152,6 +266,19 @@ async def on_ready():
         logger.error("notify channel %s is not a TextChannel: %r", NOTIFY_CHANNEL_ID, ch)
         return
     logger.info("notify channel verified: #%s (%s)", ch.name, NOTIFY_CHANNEL_ID)
+
+    guild = ch.guild
+    if client._synced_guild_id != guild.id:
+        try:
+            client.tree.copy_global_to(guild=guild)
+            synced = await client.tree.sync(guild=guild)
+            logger.info(
+                "slash commands synced to guild #%s (%d cmds): %s",
+                guild.id, len(synced), [c.name for c in synced],
+            )
+            client._synced_guild_id = guild.id
+        except Exception:
+            logger.exception("slash command sync failed for guild %s", guild.id)
 
 
 @client.event
