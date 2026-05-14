@@ -8,6 +8,7 @@ import sys
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from urllib.parse import urlparse
 
 import discord
 from discord import app_commands
@@ -29,6 +30,15 @@ CLAUDE_TIMEOUT = float(os.environ.get("CLAUDE_TIMEOUT", "300"))
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
 DISCORD_MAX = 1900  # leave margin under the hard 2000-char limit
+
+PLAY_ALLOWED_HOSTS = frozenset({
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+})
+PLAY_TIMEOUT_S = 10.0
 
 _runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
 if _runtime_dir:
@@ -127,6 +137,57 @@ def cmd_reset(channel_id: int) -> str:
 def cmd_quota() -> str:
     summary = budget_guard.summary(datetime.now(quota.JST))
     return quota.format_summary(summary)
+
+
+def _normalize_play_url(url: str) -> str | None:
+    if any(ch.isspace() or ord(ch) < 0x20 for ch in url):
+        return None
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    # `https://evil@youtube.com/...` のような userinfo 詐称形を弾く。
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    host = (parsed.hostname or "").lower()
+    if host not in PLAY_ALLOWED_HOSTS:
+        return None
+    return parsed.geturl()
+
+
+async def cmd_play(url: str) -> str:
+    valid_url = _normalize_play_url(url)
+    if valid_url is None:
+        return (
+            "[play] 受け付けない URL です。"
+            "youtube.com / music.youtube.com / youtu.be の https/http のみ対応。"
+        )
+    env = dict(os.environ)
+    env.setdefault("DISPLAY", ":0")
+    env.setdefault("XAUTHORITY", str(Path.home() / ".Xauthority"))
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "xdg-open", valid_url,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+    except FileNotFoundError:
+        return "[play] xdg-open が見つかりません。"
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=PLAY_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return f"[play] xdg-open が {int(PLAY_TIMEOUT_S)}s で応答せず。browser 起動中の可能性: {valid_url}"
+    if proc.returncode == 0:
+        return f"[play] ブラウザで開きました: {valid_url}"
+    return (
+        f"[play] xdg-open rc={proc.returncode}\n"
+        f"{stderr.decode('utf-8', errors='replace')[:500]}"
+    )
 
 
 def cmd_status(channel_id: int) -> str:
@@ -252,6 +313,17 @@ async def slash_status(interaction: discord.Interaction):
     output = cmd_status(interaction.channel_id or 0)
     logger.info("cmd=/status send len=%d", len(output))
     await interaction.response.send_message(output)
+
+
+@client.tree.command(name="play", description="YouTube / YouTube Music URL をこの PC のブラウザで開く")
+@app_commands.describe(url="YouTube / YouTube Music の URL")
+async def slash_play(interaction: discord.Interaction, url: str):
+    if await _reject_non_owner(interaction):
+        return
+    await interaction.response.defer(thinking=True)
+    output = await cmd_play(url)
+    logger.info("cmd=/play send len=%d", len(output))
+    await interaction.followup.send(output)
 
 
 @client.event

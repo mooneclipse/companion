@@ -9,6 +9,9 @@ WorkingDirectory=%h/companion/bot
 EnvironmentFile=%h/companion/bot/.env
 # Make sure node (and therefore the `claude` CLI) is on PATH.
 Environment=PATH=%h/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
+# /play で xdg-open がこの PC の GUI セッションへブラウザを開けるよう X11 接続情報を渡す。
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
 ExecStart=%h/companion/bot/venv/bin/python %h/companion/bot/bot.py
 # bot 起動完了の 15 秒後に maintenance 通知 oneshot を 1 回ずつ catch-up 発火 (design.md §7.2)。
 # 既存の日次 companion-notify-*.service を経由するため起動経路は一元化。

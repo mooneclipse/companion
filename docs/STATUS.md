@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14 (T-E 完了: bot 起動時 catch-up 発火 + CLAUDE.md 3 層分割最終形化)
+最終更新: 2026-05-14 (`/play` 追加: YouTube / YT Music URL をこの PC のブラウザで開く slash command)
 
 ## 設計メモ
 
@@ -45,6 +45,15 @@ Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半 / T-E 完了、
 （なし）
 
 ## Done
+
+- 2026-05-14 `/play` slash command 追加 (Phase 2.5 ロードマップ外、ユーザー要望での追加実装)
+  - **背景**: Discord メンション本文に URL を渡すと bot は `claude -p` セッションに食わせて応答する設計のため、再生用途には不向き。slash command であれば session 文脈と独立して扱える
+  - **`bot.py`**: `urlparse` import / `PLAY_ALLOWED_HOSTS` (youtube.com, www.youtube.com, m.youtube.com, music.youtube.com, youtu.be) と `PLAY_TIMEOUT_S=10.0` 定数 / `_normalize_play_url()` (空白・制御文字拒否 + http/https のみ + userinfo (`https://evil@youtube.com/...`) 拒否 + hostname allowlist) / `async cmd_play()` (`asyncio.create_subprocess_exec("xdg-open", url, env=...)`、`DISPLAY=:0` と `XAUTHORITY=~/.Xauthority` を setdefault、`wait_for` timeout 時は `kill()+wait()` で zombie 回収) / `@client.tree.command(name="play", url:str)` slash command (OWNER チェック → `defer(thinking=True)` → `cmd_play` → `followup.send`)
+  - **`companion-bot.service`**: systemd user unit に `Environment=DISPLAY=:0` と `Environment=XAUTHORITY=%h/.Xauthority` を追加 (デフォルト user unit には GUI セッションの X11 接続情報が無いため明示的に渡す必要がある)
+  - **code-reviewer 軽微提案 2 件反映済み**: userinfo 詐称 URL 拒否、`wait_for` timeout 時 `proc.kill()+wait()` で subprocess の zombie 化を防止
+  - **セキュリティ前提**: `subprocess_exec` (shell=False 相当) + allowlist で shell 注入の余地なし、OWNER_ID チェックは既存 `_reject_non_owner` と共通
+  - **運用前提**: GUI セッションがログインしている前提。ログアウト中は xdg-open が失敗するが bot 側でその旨を返答する。複数 X seat 環境では `DISPLAY=:0` hardcode が破綻するが現状この PC は単一 GUI セッション
+  - **適用手順**: `systemctl --user daemon-reload && systemctl --user restart companion-bot.service` で env 変更を反映。slash command 自体は bot 起動時に `on_ready` 内で guild 同期される
 
 - 2026-05-14 Phase 2.5 T-E: bot 起動時 catch-up 発火 + CLAUDE.md 3 層分割を最終形へ (design.md §7.2 + §1.2)
   - **`~/companion/CLAUDE.md` (共通項)**: skeleton (2026-05-12) → 最終形 (2026-05-14)。「口調基準」章を追加 (手元 claude code セッション = 通常レビュー / 設計議論トーン、Discord 経由 bot セッション = フランクで短く emoji 最小 + Phase 4 で後のせ)、subordinate CLAUDE.md セクションの workspace 行ラベルを 3 層分割後の実体に整合 (Repository State / PROJECT.md 参照 / workspace 直下 git 化方針 / settings.json 解説 / Task Workflow / Agent Teams 運用方針)、最終更新と根拠 § を更新
