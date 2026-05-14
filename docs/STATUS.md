@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14 (T-C 完了)
+最終更新: 2026-05-14 (T-C 完了 + vault push reject 観察ルール追記)
 
 ## 設計メモ
 
@@ -192,3 +192,9 @@ Phase 2.5「土管の耐久化（再設計）」T-C 完了、T-D から着手可
 - レビュー量が多くなったら `bot/docs/reviews/YYYY-MM-DD-<task>.md` に分割
 - 1 タスク完了ごとに「最終更新」日付を更新
 - `~/companion/logs/bot.log` は RotatingFileHandler で自動ローテーション (5MB×3)、`~/companion/logs/vault-sync.log` は append 専用で**手動 truncate 運用** (1 セッション 1-2 行想定、年間数 MB 程度なので逼迫したタイミングで `: > ~/companion/logs/vault-sync.log` でクリア。logrotate 化は maintenance 側で必要性が出た時点で判断)
+- **vault push reject 観察ルール** (T-C 案 A 採用に伴う運用境界、`~/companion/CLAUDE.md`「対症療法 2 周目」と接続):
+  - bot 経由 vault `git push` の non-fast-forward reject が **2 件目** に出た時点で対症療法 2 周目サインとして扱う
+  - 1 件目 (2026-05-14 17:04, Notion ノート、メイン機側で 2026-05-10/05-12 に 3 commits 先行 push、reflog 確認で claude session 内 `git pull --ff-only` 未実施を観察) は web/docs/STATUS.md「失敗リカバリ手順 #1」通りに手動 rebase で復旧、設計仕切り直しは行わない
+  - 2 件目発生時に取る行動: Stop フックでパッチ (`git pull --rebase` 追加 / `--ff-only` 先行試行) を直接当てず、**一段引いて「vault 同期の責務分担」(claude session 内の pull 励行 vs Stop フック側の責務拡張 vs 諦め線) を `bot/docs/STATUS.md` か別途設計議論 (agent teams 含む) で再設計**してから着手する
+  - 監視は ledger 化せず、次回 reject を人間 (or Discord 上のエラー文面) が気付いた時点で本ルールを引いて判断する
+  - 失敗種別の数え方: web/docs/STATUS.md「失敗リカバリ手順 #1」(non-fast-forward reject) のみカウント。#2 (`git pull --ff-only` 落ち) や #3 (frontmatter 規約違反) は別系統の問題なので本ルール対象外
