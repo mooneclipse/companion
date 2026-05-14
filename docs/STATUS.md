@@ -66,6 +66,7 @@ Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半 / T-E 完了、
   - code-reviewer: 修正必須なし、軽微提案 3 件 (a) catch-up 経路を既存 oneshot service 経由に揃える / (b) bot-workspace §Language の口調記述を上位への参照に縮退 / (c) 上位 §subordinate CLAUDE.md の workspace 行ラベル更新 をすべて反映済
   - **既知の運用注意**:
     - notify-unattended-upgrades.sh の state ファイル (`maintenance/.state/last-notified-unattended-upgrades`) が `2026-05-14 06:54:06,187` で固まっていて、その後 unattended-upgrades の result log が `12:17:56,137` に更新されているため、catch-up でも日次 timer (09:06 走行) でも state 更新条件 (詳細は `maintenance/scripts/notify-unattended-upgrades.sh` 内) を満たさず skip。今日の挙動としては Discord に飛ばない方が安全な側なので problem 化しないが、状態が変なら maintenance 側のスクリプトロジックを別途レビューする候補 (T-E スコープ外)
+    - **2026-05-14 追加観察 (T-E 後の skip ロジック検証)**: `/var/log/unattended-upgrades/unattended-upgrades.log` の 12:17:56 セグメントは 4 行 (開始マーカー + Initial blacklist/whitelist 2 行) で停止、`notify-unattended-upgrades.sh` の 3 つの結果マーカー (`更新対象なし` / `パッケージのアップグレードが終了しました` / `ERROR`) は全 0 件。これは同スクリプト L44-46 のコメント通り「apt-daily 起動で u-u 呼出されたが判定途中で停止する」ケースで、設計上の `skip: result not yet logged` 経路に正しく落ちている (state 不更新 = 次回再評価可能)。**catch-up は空打ちではない**: マーカー揃いを待つ待機 skip であり、翌朝の新規 unattended-upgrades 実行で `grep tail -n1` の latest 行が動けば自然解消する。Phase 3-2 着手前の skip ロジック動作確認として記録
     - design.md §7.2 原案 syntax の修正は本 STATUS.md にのみ記録、`workspace/redesign/design.md` 本文は historical record として手を入れない (Phase 2.5 完了時にまとめて見直す)
 
 - 2026-05-14 Phase 2.5 T-D 前半: BudgetGuard / `/reset` `/quota` `/status` の Discord 公式 slash command 化 (design.md §4 全体 + §6.1)
