@@ -10,6 +10,12 @@ EnvironmentFile=%h/companion/bot/.env
 # Make sure node (and therefore the `claude` CLI) is on PATH.
 Environment=PATH=%h/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/companion/bot/venv/bin/python %h/companion/bot/bot.py
+# bot 起動完了の 15 秒後に maintenance 通知 oneshot を 1 回ずつ catch-up 発火 (design.md §7.2)。
+# 既存の日次 companion-notify-*.service を経由するため起動経路は一元化。
+# notify scripts は state_matches で同日二重通知を抑止するため、日次 timer と併走しても重複しない。
+# 失敗無視 (- prefix) + transient unit auto cleanup (--collect) で bot.service の起動を妨げない。
+ExecStartPost=-/usr/bin/systemd-run --user --on-active=15s --unit=companion-bot-catchup-unattended-upgrades --collect /usr/bin/systemctl --user start --no-block companion-notify-unattended-upgrades.service
+ExecStartPost=-/usr/bin/systemd-run --user --on-active=15s --unit=companion-bot-catchup-system-report --collect /usr/bin/systemctl --user start --no-block companion-notify-system-report.service
 Restart=on-failure
 RestartSec=10s
 

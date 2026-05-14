@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14 (T-D 前半完了: BudgetGuard / Discord 公式 slash command 化)
+最終更新: 2026-05-14 (T-E 完了: bot 起動時 catch-up 発火 + CLAUDE.md 3 層分割最終形化)
 
 ## 設計メモ
 
@@ -22,7 +22,7 @@
 
 ## TODO
 
-Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半完了、T-D 後半 (2026-06 上旬) → T-E へ。各サブタスク = 1 commit。
+Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半 / T-E 完了、T-D 後半 (2026-06 上旬実施) のみ残。各サブタスク = 1 commit。
 
 設計根拠:
 - `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14)
@@ -36,14 +36,6 @@ Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半完了、T-D 後
 - Phase 2.5 着手後の実弾 1 週間で `BOT_REQUESTS_PER_HOUR` 実測値を STATUS.md に記録 (現状 default 20)
 - 対応 §: design.md §4.2 (CreditBudgetGuard 仕様)
 
-### T-E: catch-up + CLAUDE.md 3 層分割
-
-- `~/companion/CLAUDE.md` 新設 (共通項: 口調 / vault 書き込み境界 / OWNER 認可 / git 運用 / commit ルール / 対症療法の上限)
-- `~/companion/workspace/CLAUDE.md` を手元 claude code 固有のみに圧縮
-- `~/companion/bot-workspace/CLAUDE.md` を Discord 経由セッション固有のみに圧縮 (2026-05-13 準備版を最終形に)
-- bot 起動時 catch-up: `companion-bot.service` の `ExecStartPost=systemd-run --on-active=15s` で unattended-upgrades / system-report を 1 回発火
-- 対応 §: design.md §7.2 + §1.2
-
 ## In progress
 
 （なし）
@@ -53,6 +45,28 @@ Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半完了、T-D 後
 （なし）
 
 ## Done
+
+- 2026-05-14 Phase 2.5 T-E: bot 起動時 catch-up 発火 + CLAUDE.md 3 層分割を最終形へ (design.md §7.2 + §1.2)
+  - **`~/companion/CLAUDE.md` (共通項)**: skeleton (2026-05-12) → 最終形 (2026-05-14)。「口調基準」章を追加 (手元 claude code セッション = 通常レビュー / 設計議論トーン、Discord 経由 bot セッション = フランクで短く emoji 最小 + Phase 4 で後のせ)、subordinate CLAUDE.md セクションの workspace 行ラベルを 3 層分割後の実体に整合 (Repository State / PROJECT.md 参照 / workspace 直下 git 化方針 / settings.json 解説 / Task Workflow / Agent Teams 運用方針)、最終更新と根拠 § を更新
+  - **`~/companion/workspace/CLAUDE.md`**: 共通項 (Language / git 汎用ルール / Workspace Layout / Project Roadmap の汎用部分) を上位 `~/companion/CLAUDE.md` に移譲して削除。残置は Repository State / Project Roadmap (PROJECT.md 参照) / Workspace 直下の git 方針 (workspace 限定の話のみ) / Security Settings / Task Workflow / Agent Teams 運用方針 (公式仕様参照 + companion 固有の前提 + 落とし穴 A〜F)。冒頭で「上位 `~/companion/CLAUDE.md` 参照」「bot 経路は `~/companion/bot-workspace/CLAUDE.md` 側で動く」の境界を明示
+  - **`~/companion/bot-workspace/CLAUDE.md`**: skeleton (2026-05-13) → 最終形 (2026-05-14)。Language 章の口調記述を上位 §口調基準への参照に縮退 (上位更新時の drift 回避)、それ以外は内容据え置き
+  - **`bot/companion-bot.service` `[Service]` に `ExecStartPost` 2 行追加**: design.md §7.2 表の「過去 log 読取型 (unattended-upgrades)」「時点 snapshot 型 (system-report)」両方を bot 起動完了 + 15 秒 で 1 回発火。`systemd-run --user --on-active=15s --unit=companion-bot-catchup-{unattended-upgrades,system-report} --collect /usr/bin/systemctl --user start --no-block companion-notify-{...}.service` の形で transient timer から既存 oneshot service を蹴る (起動経路を既存日次 timer と一元化)。`-` prefix で ExecStartPost 失敗を無視、`--collect` で transient unit が走り切ったら自動 GC
+  - **design.md §7.2 原案からの調整**: 設計文書では `systemd-run --user --on-active=15s --unit=companion-bot-catchup-... companion-notify-...service` の syntax だったが、これは COMMAND として `companion-notify-...service` を実行ファイルとして exec しようとして `Failed to find executable` で rc=1 になる (実機 2026-05-14 確認)。`--unit=既存ユニット名` で COMMAND 省略する case (既存ユニットを発火する transient timer 単体作成) も既存 `companion-notify-*.timer` (日次) と name 衝突するため不可。code-reviewer の経路一元化指摘 ((a)) を採用して transient unit の COMMAND を `systemctl --user start --no-block companion-notify-*.service` 経由に倒し、既存 oneshot 側の ExecStart 行を唯一の真実として保つ
+  - **二重通知抑止**: `notify-system-report.sh` / `notify-unattended-upgrades.sh` 冒頭の `state_matches "$today"` で同日 2 回目以降は skip exit 0。catch-up 経路と日次 timer 経路が同じ日に併走しても Discord に重複は飛ばない (T-E 実装の前提)
+  - **bot.service 再起動と transient unit 衝突**: Restart=on-failure で再起動した場合、catch-up 用 transient unit (`companion-bot-catchup-*`) が前回起動時のものとして残っていると同名作成で衝突する理屈上の懸念がある。`--collect` で transient unit は run-then-cleanup される + 通常起動完了から transient script 実行終了まで ~20 秒程度なので、bot が 30 秒未満で頻発再起動しない限り衝突しない想定。観察したら設計再考。Restart=on-failure 自体の発火頻度は実弾運用で T-A 以降 0 件
+  - **実弾確認 OK** (2026-05-14 20:51:38 restart, channel `1501135556703424552`):
+    - 20:51:38 `systemctl --user restart companion-bot.service` (rc=0)
+    - 20:51:40 `notify socket listening at /run/user/1000/companion-bot.sock` (bot 起動完了)
+    - 20:51:42 `logged in as renbot#8921` → `notify channel verified` → slash commands synced
+    - 20:51:56 (起動 +18 秒、systemd-run の 15s + systemctl start のディレイ込) 両 transient catch-up が発火
+      - `notify-unattended-upgrades.log`: `2026-05-14 20:51:56 skip: result not yet logged (2026-05-14 12:17:56,137)` (state は 06:54:06 のままで、ログ最新 12:17:56 と一致しないため別 skip 条件で抜けた、Discord 通知なし)
+      - `notify-system-report.log`: `2026-05-14 20:51:56 skip: already notified today (2026-05-14)` (state_matches で skip、Discord 通知なし)
+    - 20:52:03 確認時点: `systemctl --user list-units --all 'companion-bot-catchup-*'` → 0 units (`--collect` で auto GC 完了)
+    - `bot.log` に新規 `notify forwarded` 行なし (Discord に重複通知が飛んでいないこと確認)
+  - code-reviewer: 修正必須なし、軽微提案 3 件 (a) catch-up 経路を既存 oneshot service 経由に揃える / (b) bot-workspace §Language の口調記述を上位への参照に縮退 / (c) 上位 §subordinate CLAUDE.md の workspace 行ラベル更新 をすべて反映済
+  - **既知の運用注意**:
+    - notify-unattended-upgrades.sh の state ファイル (`maintenance/.state/last-notified-unattended-upgrades`) が `2026-05-14 06:54:06,187` で固まっていて、その後 unattended-upgrades の result log が `12:17:56,137` に更新されているため、catch-up でも日次 timer (09:06 走行) でも state 更新条件 (詳細は `maintenance/scripts/notify-unattended-upgrades.sh` 内) を満たさず skip。今日の挙動としては Discord に飛ばない方が安全な側なので problem 化しないが、状態が変なら maintenance 側のスクリプトロジックを別途レビューする候補 (T-E スコープ外)
+    - design.md §7.2 原案 syntax の修正は本 STATUS.md にのみ記録、`workspace/redesign/design.md` 本文は historical record として手を入れない (Phase 2.5 完了時にまとめて見直す)
 
 - 2026-05-14 Phase 2.5 T-D 前半: BudgetGuard / `/reset` `/quota` `/status` の Discord 公式 slash command 化 (design.md §4 全体 + §6.1)
   - **新規 `bot/quota.py`** (約 250 行): `BudgetGuard` ABC + `RequestsCountGuard` 単独実装 (1h スライディング window)、`ledger.jsonl` append/read、`BudgetSummary` dataclass (§4.6 R 案 z 表示用スキーマ)、`format_summary()` (Discord 文字列整形)、`make_budget_guard()` factory (ENV `BOT_BUDGET_GUARD` master、design.md §4.2 / §4.6 末尾)。`CreditBudgetGuard` は T-D 後半までは `NotImplementedError` で誘導文を返す
