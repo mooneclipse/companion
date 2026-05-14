@@ -85,6 +85,7 @@ Phase 2.5「土管の耐久化（再設計）」T-A 完了、T-B から着手可
   - `_claude_env()` を追加し `_exec_claude` に `env=` 経由で渡すように変更。`ANTHROPIC_API_KEY` / `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_CODE_EXECPATH` / `CLAUDE_CODE_SESSION_ID` を pop し、bot 経路でのネスト claude 検出 / API キー誤混入を遮断 (design.md §1.6)
   - `run_claude(prompt, channel_id)` に署名変更、`on_message` で `message.channel.id` を渡す (DM / guild どちらも channel.id は一意なのでそのまま使える)
   - 動作確認: `sessions.py` の roundtrip スモークテスト (new → record_usage → resume → reset → new) と `_claude_env()` の strip 確認を `bot/venv` で実施、全 pass
+  - **実弾確認 OK** (2026-05-14 14:50-14:51, channel `1501135556703424552`): Discord メンションで 2 ターン会話、`sessions/channels/<channel-id>.json` が `prompt_count: 2` / `last_prompt_at` 更新済で生成、`~/.claude/projects/-home-miho-companion-bot-workspace/<uuid>.jsonl` が `--session-id` の uuid そのままで作成 (encoded-cwd 規則 + uuid4 ハンドオフが design.md §1.3 / §1.5 通り)、bot.log は `send len=372` (1 ターン目) → `send len=699` (2 ターン目) で文脈保持を確認
   - **既知の運用注意** (code-reviewer 軽微提案 #1 + #3 反映):
     - T-A 単独完了時点では `/reset` コマンド未実装 (T-D で実装予定)。`SESSION_ALREADY_IN_USE` 等で sessions JSON が現実の jsonl と乖離した場合の自動回復経路はないため、復旧は `rm bot/sessions/channels/<channel-id>.json` の手動操作
     - `bot/sessions/` 配下の構造は将来 T-D の `ledger.jsonl` と共存予定。現状 `channels/` サブディレクトリに分離してあるので衝突しない
