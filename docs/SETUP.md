@@ -58,7 +58,7 @@ journalctl --user -u dashboard.service -f      # 別ペインでログを見る
 これで確認すること（= STATUS.md の B1-B14 の実地版）：
 
 - [ ] **TV にダッシュボードが全画面で出るか**（HDMI-1 側。ノート本体パネルではなく）。chrome（タブバー等）が隠れているか。「全画面モードです」の警告オーバーレイが残っていないか。← 出ない/本体パネルに出る場合は `journalctl` を見て、`firefox window not found within timeout` や wmctrl 行を確認。STATUS.md の B4 / 「対症療法 2 周目ルール」節を読む（=ここで小手先のリトライ追加はせず設計を見直す）
-- [ ] **音が TV から出るか**、音量は 50% 相当か（前夜に何をしていても 50% になる）。`pactl get-sink-volume @DEFAULT_SINK@` で sink が 50%、`pactl list sink-inputs | grep -i volume` で mpv ストリームが 100% か。← ズレてたら STATUS.md の B1（module-stream-restore）
+- [ ] **音が TV から出るか**、音量は 20% 相当か（前夜に何をしていても 20% になる）。`pactl get-sink-volume @DEFAULT_SINK@` で sink が 20%、`pactl list sink-inputs | grep -i volume` で mpv ストリームが 100% か。← ズレてたら STATUS.md の B1（module-stream-restore）
 - [ ] **時計が動くか**（秒は出ない。`HH:MM` と日付）。
 - [ ] **天気が出るか**（アイコン＋現在気温＋今日 ↑↓＋降水%）。「取得できません」なら、Firefox を開いて DevTools のコンソールで `file://` から `api.open-meteo.com` への fetch が CORS で弾かれていないか確認（= B5）。弾かれていたら STATUS.md の「B5 NG 時の contingency」（helper に `/weather` プロキシを足す）を実装する作業が発生する。
 - [ ] **ゴミの日**が config どおりに出ているか。

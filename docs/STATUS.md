@@ -19,7 +19,7 @@
 
 ### 起動シーケンス（`bin/dashboard-start.sh`）
 1. `$INVOCATION_ID` ガード。
-2. **音量固定**: `pactl set-sink-volume @DEFAULT_SINK@ 50%` + `pactl set-sink-mute @DEFAULT_SINK@ 0`。冪等・同期。**読み戻して比較・再 set はしない**（対症療法 2 周目の罠）。音声は PulseAudio 15.99.1、sink は `alsa_output.pci-0000_00_1b.0.hdmi-stereo` の 1 個のみで default。
+2. **音量固定**: `pactl set-sink-volume @DEFAULT_SINK@ 20%` + `pactl set-sink-mute @DEFAULT_SINK@ 0`。冪等・同期。**読み戻して比較・再 set はしない**（対症療法 2 周目の罠）。音声は PulseAudio 15.99.1、sink は `alsa_output.pci-0000_00_1b.0.hdmi-stereo` の 1 個のみで default。値は BGM 量フィットで 50→20% に変更（2026-05-14 実機調整）。
 3. **時間帯フォルダ判定**: `date +%H` → `5..10`=morning / `11..15`=afternoon / `16..20`=evening / else=night。5:30 起動なので morning。これは「正しい関数を最初から書く」だけで先回りの雛形ではない（先回り＝afternoon.timer や `dashboard@.service` テンプレを今作ること。それはしない）。
 4. **音楽**: `~/music/<slot>/` に音楽ファイルが 1 つでもあるか `find -print -quit` でチェック。空なら mpv をスキップ（journal に warn）。非空なら stale socket を `rm -f` してから `mpv --no-video --shuffle --loop-playlist=inf --volume=100 --input-ipc-server="$XDG_RUNTIME_DIR/dashboard-mpv.sock" "$HOME/music/<slot>/" &`。フォルダ別音量は将来 config 値（retry ではない）。**別フォルダへの fallback はしない**。
 5. **now-playing helper**: `python3 server/nowplaying-helper.py &`（127.0.0.1:<固定ポート> で `GET /np` のみ。mpv IPC socket に `{"command":["get_property","media-title"]}` を投げ、`media-title`+`metadata`(artist) を JSON で返す。`Access-Control-Allow-Origin: *`。mpv 不在/死亡＝ENOENT/ECONNREFUSED → `{"playing":false}` を HTTP 200 で返す＝正常状態。1 回の connect-or-empty で確定、リトライしない）。
@@ -61,8 +61,8 @@ x11vnc はシステムサービス（`/etc/systemd/system/x11vnc.service`）で 
 
 > ⚠ 検証で音が出る・TV が光るものは 5:30〜9:00 以外にやると寝てる人を起こす。音量 0 で or ユーザーが起きてる時に。
 
-- **B1 音量 50% 固定が pactl 1 発で成立するか**: PulseAudio の `module-stream-restore` が mpv のストリーム音量を前セッションから復元しうる（最終実音量 = sink音量 × stream音量）。`mpv --volume=100` がそれを上書きするか確認（`pactl list sink-inputs | grep -i volume`, `pactl get-sink-volume @DEFAULT_SINK@`）。上書きしないなら mpv 起動後に sink-input volume も 100% に pin（B1 結果次第の追加、先回りでは入れない）。
-- **B2 mpv 0.34.1 のディレクトリ→playlist 挙動**: ダミー mp3 1-2 個で `mpv --no-video --shuffle --loop-playlist=inf --input-ipc-server=/run/user/1000/dashboard-mpv.sock ~/music/morning/` → 再帰するか / 拡張子フィルタ / 空ディレクトリ時 exit-or-idle / stale socket で起動できるか。空時即 exit なら `find` で playlist を組む実装に倒す。
+- **B1 音量 20% 固定が pactl 1 発で成立するか** ✅ 2026-05-14 pass: PulseAudio の `module-stream-restore` が mpv のストリーム音量を前セッションから復元しうる（最終実音量 = sink音量 × stream音量）。`mpv --volume=100` がそれを上書きするか確認（`pactl list sink-inputs | grep -i volume`, `pactl get-sink-volume @DEFAULT_SINK@`）。検証結果: mpv が stream を 100% で立ち上げ、stream-restore による上書きは観測せず → sink-input volume の追加 pin は不要。
+- **B2 mpv 0.34.1 のディレクトリ→playlist 挙動** ✅ 2026-05-14 pass: ダミー mp3 1-2 個で `mpv --no-video --shuffle --loop-playlist=inf --input-ipc-server=/run/user/1000/dashboard-mpv.sock ~/music/morning/` → 再帰するか / 拡張子フィルタ / 空ディレクトリ時 exit-or-idle / stale socket で起動できるか。空時即 exit なら `find` で playlist を組む実装に倒す。検証結果: `~/music/morning/` (mp3 7 ファイル) を渡して playlist 構築・shuffle・loop 動作 OK、stale socket は事前 `rm -f` で問題なし。
 - **B3 firefox 多重起動**: 常用 firefox 起動中に別端末から `firefox --new-instance --no-remote --profile /tmp/dash-test "file://..."` → 新インスタンスが立つか / `--profile` で dir 自動生成か / `wmctrl -l -x` で WM_CLASS（`Navigator.Firefox` か `firefox` か — polling grep に必要）。
 - **B4 wmctrl で firefox 窓を HDMI-1 に全画面化**: 非 kiosk `--new-window` 起動 → `wmctrl -l -x` で id → `wmctrl -i -r <id> -b remove,maximized_vert,maximized_horz` → `-e 0,0,0,1920,1080` → `-b add,fullscreen` → HDMI-1(0,0) でフル / LVDS にはみ出さない / fullscreen 警告オーバーレイが残らない / Marco の per-monitor fullscreen が効くか。効かないなら設計引き直し（kiosk + 出たモニタで妥協 or 一時 primary 切替＋9:00 復元機構）を STATUS 記録してから。
 - **B5 `file://` origin から Open-Meteo に fetch できるか**: `file:///tmp/t.html` に fetch を書いて firefox で開き CORS で通るか。通れば「天気サーバレス」確定。通らなければ上記 contingency（helper に `/weather` プロキシ）。
@@ -71,7 +71,7 @@ x11vnc はシステムサービス（`/etc/systemd/system/x11vnc.service`）で 
 - **B8 GUI-from-systemd-user-unit**（最重要）: `systemctl --user start dashboard.service` を平日昼に手動実行 → firefox が :0 に開くか。`DISPLAY=:0`（+`XAUTHORITY`?）で足りるか。`journalctl --user -u dashboard.service` に X 接続エラーなし。
 - **B9 firefox `$!` PID 永続性**: `firefox --new-instance --no-remote --profile <path> URL & FF=$!; sleep 8; ps -p $FF` — 落ち着いた後も生きてるか（実装は `exec sleep infinity` にするので致命ではないが挙動把握）。
 - **B10 `systemctl --user stop` の teardown**: firefox（content 全部）+ mpv + helper が `TimeoutStopSec` 内に消えるか。`systemd-cgls --user` で cgroup 空、PID 1 への孤児ゼロ。double-fork する子がいないか（mpv / python / `firefox --new-instance --no-remote` のいずれも無いはず）。
-- **B11 PipeWire→PulseAudio from user service**: `dashboard.service` の中から `pactl set-sink-volume @DEFAULT_SINK@ 50%` が効くか（env に `XDG_RUNTIME_DIR`）、sink SUSPENDED でも。mpv 再生で実際に TV から音が出るか。
+- **B11 PipeWire→PulseAudio from user service**: `dashboard.service` の中から `pactl set-sink-volume @DEFAULT_SINK@ 20%` が効くか（env に `XDG_RUNTIME_DIR`）、sink SUSPENDED でも。mpv 再生で実際に TV から音が出るか。
 - **B12 timer**: `systemctl --user list-timers` に `dashboard-start.timer` が次 05:30、`AccuracySec=1s` で数秒以内発火、`Persistent=true` が無いこと。`dashboard-stop.timer` が次 09:00。
 - **B13 `--profile <path>` 初回 + user.js**: 厳選 `user.js` で default-browser / session 復元 / telemetry プロンプト / what's-new タブが出ないか。
 - **B14 `xset` の有無**: `ExecStartPre` の X-readiness gate で `xset q` を使う想定。無ければ `xdpyinfo` or `[ -e /tmp/.X11-unix/X0 ]` に倒す。
@@ -84,7 +84,7 @@ x11vnc はシステムサービス（`/etc/systemd/system/x11vnc.service`）で 
 
 ```
 dashboard/
-├── bin/dashboard-start.sh         # $INVOCATION_ID ガード → 音量50%+unmute → slot判定 → mpv(空ならskip) → helper → firefox(file://) → wmctrl で HDMI-1 全画面 → exec sleep infinity
+├── bin/dashboard-start.sh         # $INVOCATION_ID ガード → 音量20%+unmute → slot判定 → mpv(空ならskip) → helper → firefox(file://) → wmctrl で HDMI-1 全画面 → exec sleep infinity
 ├── server/nowplaying-helper.py    # ~30行。127.0.0.1:<port> GET /np のみ。mpv IPC → JSON, ACAO:*。mpv不在は {"playing":false} を 200 で。
 ├── web/
 │   ├── index.html
@@ -114,7 +114,7 @@ dashboard/
 - `xset` / `xdpyinfo` は両方インストール済み（B14 は moot）。ただし `dashboard.service` の X-readiness gate は外部バイナリ非依存の `[ -e /tmp/.X11-unix/X0 ]` を使っている。
 
 ## 対症療法 2 周目ルールの先回り（`~/companion/CLAUDE.md` 準拠）
-- 音量: 「50% になってない気がする → sleep して再 set / 読み戻し比較で再 set」をしない。`set-sink-volume`+`set-sink-mute` は冪等・同期、1 回で終わり。
+- 音量: 「20% になってない気がする → sleep して再 set / 読み戻し比較で再 set」をしない。`set-sink-volume`+`set-sink-mute` は冪等・同期、1 回で終わり。
 - 配置: wmctrl の上限付き readiness wait は OK（observable state へのゲート、benign give-up）。「窓が出ない → 回数増やす/sleep 足す」方向に育てない。flaky なら patch #2 ではなく設計引き直しを STATUS 記録してから。
 - プロセス kill: `pkill firefox`/`pkill mpv`/`pkill -f …` は禁止（常用 firefox 巻き込み + `pkill -f` は Bash wrapper 自爆。MEMORY 既出）。cgroup-kill（`systemctl --user stop`）のみ。専用 `--profile <path>` で曖昧さゼロ。
 - 天気 fetch: 「timeout/5xx → retry → backoff → cache TTL hack」をしない。「直近成功値（state）を保持、失敗時はそれを表示、通常スケジュールでのみ再試行」。
@@ -151,3 +151,4 @@ dashboard/
 - 2026-05-13 実装一式（web/ モック + app.js + dashboard-config.js / server/nowplaying-helper.py / bin/dashboard-start.sh / systemd 4 ユニット）作成、構文チェック・symlink・daemon-reload 済み（timer はまだ enable していない）
 - 2026-05-13 code-reviewer レビュー（修正必須なし）、軽微 2 点反映
 - 2026-05-13 git init + 初回ローカル commit（push は未。pre-commit hook 配置 + gitleaks 確認込み）
+- 2026-05-14 手動 start 実機検証: TV に全画面表示 OK / 時計・天気・ゴミ表示 OK / mpv は slot=morning 等価コマンドで起動、当初値 sink 50% × stream 100% で `module-stream-restore` による stream 上書きが起きないことを確認（B1 pass）/ `~/music/morning/` の dir→playlist 再生 OK（B2 pass）/ now-playing helper `/np` が `Access-Control-Allow-Origin: *` 付きで正常応答（mpv 起動時は `playing:true`、不在時は `playing:false` を HTTP 200 で返す）。実音量が大きすぎたため `SINK_VOL_PCT` を 50→20 に変更（最終運用値）。

@@ -15,8 +15,8 @@ WEB_URL="file://$DASH_DIR/web/index.html"
 FF_PROFILE="$DASH_DIR/.state/ff-profile"
 RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 MPV_SOCK="$RUNTIME/dashboard-mpv.sock"
-SINK_VOL_PCT=50     # PulseAudio sink（マスター）
-MPV_VOL_PCT=100     # mpv ストリーム（stream-restore に上書きされないよう明示。最終実音量 = sink × stream = 50%）
+SINK_VOL_PCT=20     # PulseAudio sink（マスター）。BGM 量フィットで 50→20%（2026-05-14 実機調整）。
+MPV_VOL_PCT=100     # mpv ストリーム（stream-restore に上書きされないよう明示。最終実音量 = sink × stream = 20%）
 
 export DISPLAY="${DISPLAY:-:0}"
 
