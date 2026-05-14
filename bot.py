@@ -11,13 +11,15 @@ from pathlib import Path
 import discord
 from dotenv import load_dotenv
 
+import sessions
+
 load_dotenv()
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "").strip()
 OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip()
 NOTIFY_CHANNEL_ID_RAW = os.environ.get("NOTIFY_CHANNEL_ID", "").strip()
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude").strip()
-CLAUDE_CWD = os.environ.get("CLAUDE_CWD", str(Path.home() / "companion" / "workspace")).strip()
+CLAUDE_CWD = os.environ.get("CLAUDE_CWD", str(Path.home() / "companion" / "bot-workspace")).strip()
 CLAUDE_TIMEOUT = float(os.environ.get("CLAUDE_TIMEOUT", "300"))
 
 LOG_DIR = Path.home() / "companion" / "logs"
@@ -64,12 +66,23 @@ def chunk(text: str, size: int = DISCORD_MAX):
     return [text[i : i + size] for i in range(0, len(text), size)]
 
 
+def _claude_env() -> dict[str, str]:
+    # Strip vars that would leak the host's Anthropic auth or fool claude into
+    # thinking it is nested inside another claude-code session (design.md §1.6).
+    env = os.environ.copy()
+    for key in ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
+                "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ID"):
+        env.pop(key, None)
+    return env
+
+
 async def _exec_claude(prompt: str, *extra_args: str) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         CLAUDE_BIN,
         "-p",
         *extra_args,
         cwd=CLAUDE_CWD,
+        env=_claude_env(),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -89,19 +102,16 @@ async def _exec_claude(prompt: str, *extra_args: str) -> tuple[int, str, str]:
     )
 
 
-def _is_no_prior_session(stderr: str) -> bool:
-    s = stderr.lower()
-    return "no conversation" in s or "no previous" in s or "no session" in s
-
-
-async def run_claude(prompt: str) -> str:
-    rc, out, err = await _exec_claude(prompt, "--continue")
-    if rc != 0 and _is_no_prior_session(err):
-        logger.info("no prior session, retrying without --continue (stderr=%r)", err[:200])
-        rc, out, err = await _exec_claude(prompt)
+async def run_claude(prompt: str, channel_id: int) -> str:
+    args, meta = sessions.determine_args(channel_id)
+    rc, out, err = await _exec_claude(prompt, *args)
     if rc != 0:
-        logger.warning("claude exited %s, stderr_len=%d", rc, len(err))
+        logger.warning(
+            "claude exited %s session_id=%s stderr_len=%d",
+            rc, meta.session_id, len(err),
+        )
         return out or f"[claude exited {rc}]\n{err[:1500]}"
+    sessions.record_usage(meta)
     return out or "[empty output]"
 
 
@@ -185,7 +195,7 @@ async def on_message(message: discord.Message):
     async with claude_lock:
         try:
             async with message.channel.typing():
-                output = await run_claude(prompt)
+                output = await run_claude(prompt, message.channel.id)
         except asyncio.TimeoutError:
             logger.warning("claude timed out")
             await message.channel.send(f"[timeout after {int(CLAUDE_TIMEOUT)}s]")

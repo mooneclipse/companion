@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14
+最終更新: 2026-05-14 (T-A 完了)
 
 ## 設計メモ
 
@@ -22,19 +22,11 @@
 
 ## TODO
 
-Phase 2.5「土管の耐久化（再設計）」T-0 完了、T-A から着手可能 (依存順序 T-A → ... → T-E、各サブタスク = 1 commit)。
+Phase 2.5「土管の耐久化（再設計）」T-A 完了、T-B から着手可能 (依存順序 T-B → ... → T-E、各サブタスク = 1 commit)。
 
 設計根拠:
 - `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14)
 - `~/companion/workspace/redesign/questions.md` (UQ-1〜UQ-10 全項目回答済)
-
-### T-A: bot 専用 CWD 分離 + sessions JSON
-
-- bot.py の CWD を `~/companion/workspace` → `~/companion/bot-workspace` に切替 (bot-workspace ディレクトリは 2026-05-13 準備済)
-- `~/companion/bot/sessions.py` 新設: `SessionMeta` dataclass + `load(channel_id)` / `save(meta)` / `reset(channel_id)`
-- `~/companion/bot/sessions/channels/<channel-id>.json` で 1 channel = 1 file 永続化 (gitignore)
-- `--continue` を完全廃止、`--session-id <uuid4>` 初回 + `--resume <uuid4>` 継続に一本化
-- 対応 §: design.md §1 全体、§8.1
 
 ### T-B: ClaudeRunner 抽象 (ClaudeOptions / ClaudeResult / ErrorKind)
 
@@ -85,6 +77,18 @@ Phase 2.5「土管の耐久化（再設計）」T-0 完了、T-A から着手可
 （なし）
 
 ## Done
+
+- 2026-05-14 Phase 2.5 T-A: bot 専用 CWD 分離 + sessions JSON (design.md §1 全体、§8.1)
+  - bot.py の `CLAUDE_CWD` デフォルトを `~/companion/workspace` → `~/companion/bot-workspace` に変更、`.env` / `.env.example` も同値に揃えた (T-0 以前は `.env` で `bot/sessions` を CWD にする暫定対応で手元 claude code の jsonl 混入を回避していたが、本対応で正規の bot-workspace に統一)
+  - `bot/sessions.py` 新設 (≈130 行): `SessionMeta` dataclass + `load(channel_id)` / `save(meta)` / `reset(channel_id)` / `determine_args(channel_id)` / `record_usage(meta)`。永続化先は `bot/sessions/channels/<channel-id>.json` (1 channel = 1 file、gitignore 済)。書き込みは `tempfile.mkstemp` + `os.replace` の atomic write
+  - `--continue` 完全廃止、`_is_no_prior_session` も削除。初回 `--session-id <uuid4>` / 継続 `--resume <uuid4>` の 2 ルートに一本化、stderr マッチ / rc != 0 自動 fallback / subprocess 2 度呼び はすべて消した (design.md §1.4 禁止反パターン準拠、CLAUDE.md「対症療法 2 周目」ルールにも整合)
+  - `_claude_env()` を追加し `_exec_claude` に `env=` 経由で渡すように変更。`ANTHROPIC_API_KEY` / `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_CODE_EXECPATH` / `CLAUDE_CODE_SESSION_ID` を pop し、bot 経路でのネスト claude 検出 / API キー誤混入を遮断 (design.md §1.6)
+  - `run_claude(prompt, channel_id)` に署名変更、`on_message` で `message.channel.id` を渡す (DM / guild どちらも channel.id は一意なのでそのまま使える)
+  - 動作確認: `sessions.py` の roundtrip スモークテスト (new → record_usage → resume → reset → new) と `_claude_env()` の strip 確認を `bot/venv` で実施、全 pass
+  - **既知の運用注意** (code-reviewer 軽微提案 #1 + #3 反映):
+    - T-A 単独完了時点では `/reset` コマンド未実装 (T-D で実装予定)。`SESSION_ALREADY_IN_USE` 等で sessions JSON が現実の jsonl と乖離した場合の自動回復経路はないため、復旧は `rm bot/sessions/channels/<channel-id>.json` の手動操作
+    - `bot/sessions/` 配下の構造は将来 T-D の `ledger.jsonl` と共存予定。現状 `channels/` サブディレクトリに分離してあるので衝突しない
+  - code-reviewer: 修正必須なし、軽微提案 3 件中 2 件 (運用注記) を本 STATUS に反映、残り 1 件 (`_from_iso` の Optional 分離) は実害なく未反映
 
 - 2026-05-14 T-0: claude CLI 2.1.141 で S1-S5 全シナリオ再検証完了 (Phase 2.5 前提条件、`~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」+ design.md §10.4 ルール準拠)
   - CLI バージョン: **2.1.141** (design.md 検証時 2.1.138、STATUS.md 前回確認 2.1.140 から更に 1 上昇)
