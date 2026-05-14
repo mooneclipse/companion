@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14 (T-A 完了)
+最終更新: 2026-05-14 (T-B 完了)
 
 ## 設計メモ
 
@@ -22,22 +22,11 @@
 
 ## TODO
 
-Phase 2.5「土管の耐久化（再設計）」T-A 完了、T-B から着手可能 (依存順序 T-B → ... → T-E、各サブタスク = 1 commit)。
+Phase 2.5「土管の耐久化（再設計）」T-B 完了、T-C から着手可能 (依存順序 T-C → ... → T-E、各サブタスク = 1 commit)。
 
 設計根拠:
 - `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14)
 - `~/companion/workspace/redesign/questions.md` (UQ-1〜UQ-10 全項目回答済)
-
-### T-B: ClaudeRunner 抽象 (ClaudeOptions / ClaudeResult / ErrorKind)
-
-- `bot/claude_runner.py` 新設: `run_discord(prompt, options) -> ClaudeResult`
-- `ClaudeOptions` dataclass (session_id / resume_session / output_format / permission_mode / model / add_dir / timeout_s 等)
-- `ClaudeResult` dataclass (rc / error_kind / raw_stdout / raw_stderr / result_text / session_id / cost_usd / 各 token / model_usage / permission_denials 等)
-- `ErrorKind` enum (OK / NO_PRIOR_SESSION / SESSION_ALREADY_IN_USE / TIMEOUT / RATE_LIMIT / OTHER) — エラー表面化専用、リトライ判定に使わない (design.md §10.3)
-- `claude_lock = asyncio.Lock()` を `ClaudeRunner` instance attribute として所有
-- デフォルトモデル `claude-sonnet-4-6` をハードコード (UQ-10 確定)
-- `prompt` 組み立てで prefix / suffix を明示分離 (キャッシュ ヒット率向上、design.md §4.8 方針 2)
-- 対応 §: design.md §3.1 / §1.7
 
 ### T-C: Stop フック + vault 同期 (`vault-sync-from-transcript.sh`)
 
@@ -77,6 +66,20 @@ Phase 2.5「土管の耐久化（再設計）」T-A 完了、T-B から着手可
 （なし）
 
 ## Done
+
+- 2026-05-14 Phase 2.5 T-B: ClaudeRunner 抽象 (ClaudeOptions / ClaudeResult / ErrorKind) (design.md §3.1 / §3.2 / §3.3 / §1.7 / §4.8 / §1.6)
+  - `bot/claude_runner.py` 新設 (≈220 行): `ClaudeRunner` クラス、`ClaudeOptions` / `ClaudeResult` dataclass、`ErrorKind` enum。`run_discord(prompt, options) -> ClaudeResult` を提供、`run_oneshot` は `NotImplementedError` 雛形のみ (Phase 4 着手時に実装)
+  - `claude_lock = asyncio.Lock()` を `ClaudeRunner` の instance attribute として所有 (bot.py の module-level lock を撤去、design.md §3.3)。lock は spawn + `communicate()` をまたいで保持し、subprocess 二重起動と Max プラン枠の競合を防ぐ
+  - `ClaudeOptions.to_cli_args()`: `-p --session-id <uuid>` または `--resume <uuid>`、`--output-format json --permission-mode default --model claude-sonnet-4-6` をデフォルトで組み立て。`session_id` / `resume_session` を同時指定すると `ValueError`。CLI フラグは claude 2.1.141 で `--help` grep して実在確認済
+  - `ErrorKind` (OK / NO_PRIOR_SESSION / SESSION_ALREADY_IN_USE / TIMEOUT / RATE_LIMIT / OTHER): **エラー表面化専用**、リトライ判定に使わない方針を docstring に明記 (design.md §3.2 / §10.3)。RATE_LIMIT は reserved (stderr 文言未確認、実弾で観察したら追加分類)
+  - `_classify_stderr`: claude 2.1.141 で実機検証済の文言 (`No conversation found with session ID` / `is already in use`) のみマッチ。S3 / S4 以外は OTHER。**用途は ClaudeResult.error_kind を埋めるためだけで、`run_claude` のリトライ判定には一切使われない** (堂々巡り原因 #4 を構造的に排除)
+  - subprocess の env から `ANTHROPIC_API_KEY` / `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_CODE_EXECPATH` / `CLAUDE_CODE_SESSION_ID` を pop (design.md §1.6)。`_claude_env` は claude_runner.py に集約、bot.py からは撤去
+  - `--output-format json` の stdout を `_parse_json_stdout` で dict 化、`ClaudeResult` の `result_text` / `session_id` / `cost_usd` / `input_tokens` / `output_tokens` / `cache_creation_input_tokens` / `cache_read_input_tokens` / `model_usage` / `permission_denials` / `terminal_reason` / `duration_ms` に展開。パース失敗時は `None` フォールバック、例外伝播なし
+  - `ClaudeOptions.prompt_prefix` / `prompt_suffix` フィールドを追加 (design.md §4.8 方針 2 のキャッシュフレンドリ prefix 足場)。T-B 段階では両方とも空文字列、`_compose_prompt` が `prefix + body + suffix` で組み立てる構造のみ準備
+  - `bot/sessions.py`: T-A の `determine_args(channel_id) -> (list[str], SessionMeta)` を撤去し `start_or_resume(channel_id) -> (SessionMeta, is_new: bool)` に置換 (caller が `ClaudeOptions.session_id` か `resume_session` のどちらに入れるかを `is_new` で決める形)
+  - `bot/bot.py`: module-level `claude_lock` / `_claude_env` / `_exec_claude` を撤去、`runner = ClaudeRunner(CLAUDE_BIN, CLAUDE_CWD)` を起動時に 1 個生成。`run_claude` は `start_or_resume` → `ClaudeOptions` 組立 → `runner.run_discord` → `ClaudeResult.error_kind` ベースで Discord 返却文字列を組む形に。`on_message` の `except asyncio.TimeoutError` を削除 (TIMEOUT は `ClaudeResult(error_kind=TIMEOUT)` に畳まれるため呼び出し側で例外扱いしない)、`async with claude_lock` も runner 内へ移動済なので除去
+  - 動作確認: `bot/venv` で `to_cli_args` の組立 (`--session-id` / `--resume` / mutex `ValueError`) と `_classify_stderr` の S3 / S4 / OTHER 振り分け、`_parse_json_stdout` の S5 sample 受け入れ、`_claude_env` の strip、`ClaudeRunner.claude_lock` の async with 全 7 件を実行、全 pass
+  - **Watch 項目** (code-reviewer 軽微提案、コード未反映): `--session-id <uuid>` で渡した uuid と JSON 由来の `session_id` が将来 CLI 仕様変更で乖離した場合の検知が現状ない。`claude_runner.run_discord` 末尾で `result.session_id != options.session_id (or resume_session)` を warning するのは将来 enhancement 候補 (現状 uuid4 + `--session-id` ハンドオフが 2.1.141 実機通り動いているので過剰防御寄り、CLI up 時の再検証で乖離が出た時点で追加)
 
 - 2026-05-14 Phase 2.5 T-A: bot 専用 CWD 分離 + sessions JSON (design.md §1 全体、§8.1)
   - bot.py の `CLAUDE_CWD` デフォルトを `~/companion/workspace` → `~/companion/bot-workspace` に変更、`.env` / `.env.example` も同値に揃えた (T-0 以前は `.env` で `bot/sessions` を CWD にする暫定対応で手元 claude code の jsonl 混入を回避していたが、本対応で正規の bot-workspace に統一)

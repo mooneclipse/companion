@@ -12,6 +12,7 @@ import discord
 from dotenv import load_dotenv
 
 import sessions
+from claude_runner import ClaudeOptions, ClaudeRunner, ErrorKind
 
 load_dotenv()
 
@@ -57,7 +58,7 @@ logger.propagate = False
 intents = discord.Intents.default()
 intents.message_content = True
 intents.dm_messages = True
-claude_lock = asyncio.Lock()
+runner = ClaudeRunner(CLAUDE_BIN, CLAUDE_CWD)
 
 
 def chunk(text: str, size: int = DISCORD_MAX):
@@ -66,53 +67,31 @@ def chunk(text: str, size: int = DISCORD_MAX):
     return [text[i : i + size] for i in range(0, len(text), size)]
 
 
-def _claude_env() -> dict[str, str]:
-    # Strip vars that would leak the host's Anthropic auth or fool claude into
-    # thinking it is nested inside another claude-code session (design.md §1.6).
-    env = os.environ.copy()
-    for key in ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
-                "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ID"):
-        env.pop(key, None)
-    return env
-
-
-async def _exec_claude(prompt: str, *extra_args: str) -> tuple[int, str, str]:
-    proc = await asyncio.create_subprocess_exec(
-        CLAUDE_BIN,
-        "-p",
-        *extra_args,
-        cwd=CLAUDE_CWD,
-        env=_claude_env(),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=prompt.encode("utf-8")), timeout=CLAUDE_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise
-    return (
-        proc.returncode,
-        stdout.decode("utf-8", errors="replace").strip(),
-        stderr.decode("utf-8", errors="replace").strip(),
-    )
-
-
 async def run_claude(prompt: str, channel_id: int) -> str:
-    args, meta = sessions.determine_args(channel_id)
-    rc, out, err = await _exec_claude(prompt, *args)
-    if rc != 0:
-        logger.warning(
-            "claude exited %s session_id=%s stderr_len=%d",
-            rc, meta.session_id, len(err),
-        )
-        return out or f"[claude exited {rc}]\n{err[:1500]}"
-    sessions.record_usage(meta)
-    return out or "[empty output]"
+    meta, is_new = sessions.start_or_resume(channel_id)
+    options = ClaudeOptions(timeout_s=CLAUDE_TIMEOUT)
+    if is_new:
+        options.session_id = meta.session_id
+    else:
+        options.resume_session = meta.session_id
+
+    result = await runner.run_discord(prompt, options)
+
+    if result.error_kind == ErrorKind.OK:
+        sessions.record_usage(meta)
+        body = result.result_text if result.result_text is not None else result.raw_stdout
+        return body or "[empty output]"
+
+    logger.warning(
+        "claude error kind=%s rc=%s session_id=%s stderr_len=%d",
+        result.error_kind.value, result.rc, meta.session_id, len(result.raw_stderr),
+    )
+    if result.error_kind == ErrorKind.TIMEOUT:
+        return f"[timeout after {int(options.timeout_s)}s]"
+    return (
+        f"[claude error: {result.error_kind.value} rc={result.rc}]\n"
+        f"{result.raw_stderr[:1500]}"
+    )
 
 
 class CompanionClient(discord.Client):
@@ -192,18 +171,13 @@ async def on_message(message: discord.Message):
     if not prompt:
         return
 
-    async with claude_lock:
-        try:
-            async with message.channel.typing():
-                output = await run_claude(prompt, message.channel.id)
-        except asyncio.TimeoutError:
-            logger.warning("claude timed out")
-            await message.channel.send(f"[timeout after {int(CLAUDE_TIMEOUT)}s]")
-            return
-        except Exception:
-            logger.exception("claude invocation failed")
-            await message.channel.send("[internal error — see bot.log]")
-            return
+    try:
+        async with message.channel.typing():
+            output = await run_claude(prompt, message.channel.id)
+    except Exception:
+        logger.exception("claude invocation failed")
+        await message.channel.send("[internal error — see bot.log]")
+        return
 
     logger.info("send len=%d", len(output))
     for piece in chunk(output):

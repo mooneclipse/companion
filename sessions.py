@@ -94,12 +94,14 @@ def reset(channel_id: int) -> bool:
         return False
 
 
-def determine_args(channel_id: int) -> tuple[list[str], SessionMeta]:
-    """Build claude CLI args for this channel and persist a fresh meta if new.
+def start_or_resume(channel_id: int) -> tuple[SessionMeta, bool]:
+    """Return ``(meta, is_new)`` for the next claude invocation on this channel.
 
-    First call for a channel allocates a uuid4 and writes the JSON before
-    returning ``--session-id <uuid>``. Subsequent calls return
-    ``--resume <stored uuid>`` without modifying the file.
+    On first call for a channel a uuid4 is allocated and persisted before
+    returning ``is_new=True``; the caller wires it up as
+    ``ClaudeOptions.session_id``. On subsequent calls the stored uuid is
+    returned with ``is_new=False`` and the caller passes it as
+    ``ClaudeOptions.resume_session``.
     """
     meta = load(channel_id)
     if meta is None:
@@ -114,8 +116,8 @@ def determine_args(channel_id: int) -> tuple[list[str], SessionMeta]:
             last_prompt_at=None,
         )
         save(meta)
-        return (["--session-id", new_id], meta)
-    return (["--resume", meta.session_id], meta)
+        return meta, True
+    return meta, False
 
 
 def record_usage(meta: SessionMeta) -> None:
