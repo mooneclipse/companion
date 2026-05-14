@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14 (T-B 完了)
+最終更新: 2026-05-14 (T-C 完了)
 
 ## 設計メモ
 
@@ -22,19 +22,11 @@
 
 ## TODO
 
-Phase 2.5「土管の耐久化（再設計）」T-B 完了、T-C から着手可能 (依存順序 T-C → ... → T-E、各サブタスク = 1 commit)。
+Phase 2.5「土管の耐久化（再設計）」T-C 完了、T-D から着手可能 (依存順序 T-D → T-E、各サブタスク = 1 commit)。
 
 設計根拠:
 - `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14)
 - `~/companion/workspace/redesign/questions.md` (UQ-1〜UQ-10 全項目回答済)
-
-### T-C: Stop フック + vault 同期 (`vault-sync-from-transcript.sh`)
-
-- `~/companion/web/scripts/vault-sync-from-transcript.sh` 新設: stdin JSON で `transcript_path` を受け取り、JSONL を読んで「Web 検索 + summary」型を検出、重複チェック後 `notes/<YYYY-MM-DD>_<slug>.md` 書き出し、git add + commit
-- `bot-workspace/.claude/settings.json` の hooks セクションに Stop フックを追加
-- vault git の `vault_lock = asyncio.Lock()` 排他 (`claude_lock` と分離)
-- `bot.py` 側の `--allowedTools` ハードコード渡しは廃止、`bot-workspace/.claude/settings.json` に一本化
-- 対応 §: design.md §5 全体
 
 ### T-D: BudgetGuard / /quota コマンド (2 段階実装)
 
@@ -66,6 +58,23 @@ Phase 2.5「土管の耐久化（再設計）」T-B 完了、T-C から着手可
 （なし）
 
 ## Done
+
+- 2026-05-14 Phase 2.5 T-C: Stop フック + vault 同期 (`vault-sync-from-transcript.sh`) (design.md §5 全体、案 A 採用)
+  - `~/companion/web/scripts/vault-sync-from-transcript.sh` 新設 (約 50 行 bash、実行権限付き): Discord bot 経由 claude セッション (bot-workspace CWD) の Stop フックとして呼ばれ、claude が `~/companion/vault/notes/` に書いた未 commit 変更を `git add -- notes/` + `git commit` で回収する最終同期処理。push は `permissions.ask` の人手承認フローに任せる
+  - **設計選択 (案 A 採用、ユーザー確認 2026-05-14)**: design.md §5.2 の「JSONL を読んで Web 検索 + summary 型を検出、重複チェック後 notes/<...>.md 書き出し」は claude session 内で完結する責務として外出し (§6.3 のフローと整合)。Stop フックは「claude が書いたが commit し忘れた未 commit 変更を回収する」最終同期に絞ることで、jq 依存・JSONL 解析の脆さを回避。design.md §5.2 本文の JSONL 解析記述は実弾運用で漏れが頻発した時点で再判断 (案 B / 案 C への倒し直し候補)
+  - stdin の Stop フック入力 JSON (`transcript_path` 等) は現状読み捨て (`cat >/dev/null`)、将来必要になった時点で jq 等で抽出
+  - 重複起動防止: `${XDG_RUNTIME_DIR:-/tmp}/companion-vault-sync.lock` で `flock -n` 非ブロッキング取得、並走セッションの Stop フック衝突を排他 (design.md §5.4 vault git 並行制御の cross-process 実装版)
+  - **`vault_lock = asyncio.Lock()` は実装せず**: 案 A 採用で bot プロセスから vault git を直接触らないため、bot 内 asyncio Lock は不要。Stop フックの flock cross-process ロックで十分。design.md §3.3 / §5.4 の `vault_lock` は将来 bot プロセスから vault git を触る経路が出てきたタイミングで追加 (YAGNI)
+  - 書き込み境界の二重防御 (design.md §5.3): claude session 側は `bot-workspace/.claude/settings.json` の `Edit/Write(~/companion/vault/notes/**)` のみ allow、Stop フック側は `git add -- notes/` で pathspec を notes/ 限定。手書きエリア (`aidiary/` / `clips/` / `inbox/` / vault ルート / `templates/` / `.obsidian/` / `CLAUDE.md`) には commit が漏出しない
+  - **`bot.py` 側の `--allowedTools` ハードコード渡しは T-A / T-B 時点で既に廃止済** (`grep -rn 'allowedTools' bot/*.py` で no match 確認、2026-05-14)。settings.json への一本化は完了済
+  - commit メッセージスタイル: vault repo の既存 log (`add: notes <YYYY-MM-DD> (<件名>)`) に揃え、`add: notes <today> (bot session auto-sync, N file(s))` 形式。`git log --oneline` で bot 由来 commit を件名で grep 可能
+  - ログ出力先: `~/companion/logs/vault-sync.log` (append 専用、RotatingFileHandler 非経由)。1 セッション 1-2 行想定で年間でも数 MB 程度、bot.log と同じ手動 truncate 運用 (運用ルール参照)
+  - vault repo の pre-commit hook (gitleaks) は staged diff 経由で Stop フック commit にも自動適用、秘密混入は git 側で止まり `git commit` rc != 0 → `error: git commit failed` がログに残る経路を確認
+  - `bot-workspace/.claude/settings.json` に hooks セクション追加: `Stop` イベントで `/home/miho/companion/web/scripts/vault-sync-from-transcript.sh` を呼ぶ。matcher は空文字 (全 Stop event 対象)。command は絶対パスで記述 (`~` 展開のクライアント依存回避)
+  - 動作確認: 空 vault (変更なし) で `echo '{...}' | vault-sync-from-transcript.sh` → rc=0 / ログ空で noop 抜け確認。一時 git repo で notes/ 配下に 2 ファイル変更 (新規 1 + 既存編集 1) を作って実行 → rc=0、commit `add: notes 2026-05-14 (bot session auto-sync, 2 file(s))` が作られ working tree clean。flock の lock ファイル (`/run/user/1000/companion-vault-sync.lock`) は exit 時に解放される (0 byte で残るのみ)
+  - **実弾確認は次の Discord 経由 vault 書き込みセッションで実施** (現時点でユーザー側からの「○○調べてノートにして」発火が来た時に Stop フック発火 → bot.log + vault-sync.log + vault commit を確認)
+  - code-reviewer: 修正必須 1 件 (commit メッセージスタイルを既存 log に揃え) を反映済。軽微提案 4 件のうち git config 前提と log 手動 truncate 運用は本 STATUS.md に明記、残り 2 件 (stdin `|| true` 削除 / `XDG_RUNTIME_DIR` fallback 注記) は実害なく未反映
+  - 初回環境セットアップ前提: vault repo の `user.email` / `user.name` が `~/companion/vault/.git/config` に設定済であること (Phase 2.5 着手時点で設定済 = `git log` に既存 commit があるため確認不要)。新規環境構築時は vault repo の git config を先に整える運用
 
 - 2026-05-14 Phase 2.5 T-B: ClaudeRunner 抽象 (ClaudeOptions / ClaudeResult / ErrorKind) (design.md §3.1 / §3.2 / §3.3 / §1.7 / §4.8 / §1.6)
   - `bot/claude_runner.py` 新設 (≈220 行): `ClaudeRunner` クラス、`ClaudeOptions` / `ClaudeResult` dataclass、`ErrorKind` enum。`run_discord(prompt, options) -> ClaudeResult` を提供、`run_oneshot` は `NotImplementedError` 雛形のみ (Phase 4 着手時に実装)
@@ -177,3 +186,4 @@ Phase 2.5「土管の耐久化（再設計）」T-B 完了、T-C から着手可
 - レビュー結果は **Review pending** 欄に追記 → 必要な修正を実施 → 該当タスクを **Done** へ移動
 - レビュー量が多くなったら `bot/docs/reviews/YYYY-MM-DD-<task>.md` に分割
 - 1 タスク完了ごとに「最終更新」日付を更新
+- `~/companion/logs/bot.log` は RotatingFileHandler で自動ローテーション (5MB×3)、`~/companion/logs/vault-sync.log` は append 専用で**手動 truncate 運用** (1 セッション 1-2 行想定、年間数 MB 程度なので逼迫したタイミングで `: > ~/companion/logs/vault-sync.log` でクリア。logrotate 化は maintenance 側で必要性が出た時点で判断)
