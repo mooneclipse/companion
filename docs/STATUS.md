@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14 (`/play` 追加: YouTube / YT Music URL をこの PC のブラウザで開く slash command)
+最終更新: 2026-05-14 (`/play` の診断 log 追加 + bot.log 0o600 化)
 
 ## 設計メモ
 
@@ -19,6 +19,7 @@
 - `claude` CLI のパスは `.env` の `CLAUDE_BIN` と service ユニットの `Environment=PATH=...` の両方に nvm バージョン依存パスを書いている。Node 更新時は両方追従要
 - git: ローカル `~/companion/bot/.git`、リモート `git@github.com:mooneclipse/companion-bot.git`（プライベート）
 - pre-commit hook: `.git/hooks/pre-commit` で `~/bin/gitleaks git --pre-commit --staged --redact` を実行。秘密情報を含む commit は exit 1 で拒否される
+- log 方針: `~/companion/logs/bot.log` は `os.umask(0o077)` + 起動時 chmod で 0o600 を維持。`/play` 等の URL を `%r` で本文記録する。**OWNER 限定経路前提**: 将来 OWNER 以外のコマンドを追加する際は URL / 本文 log の取り扱いを再評価すること (個別 mask / 集計のみに切替など)
 
 ## TODO
 
@@ -45,6 +46,14 @@ Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半 / T-E 完了、
 （なし）
 
 ## Done
+
+- 2026-05-14 `/play` 追加実装の周辺改善 (診断 log + log 権限厳格化)
+  - **背景**: `/play` の allowlist 拒否時に bot.log で原 URL が判別できず原因切り分けが効かなかった (短縮 URL を渡して拒否されたが、log 側からは `cmd=/play send len=82` のみで内容不明)。
+  - **`bot.py` `/play` log**: `logger.info("cmd=/play url=%r send len=%d", url, len(output))` で URL 本文を残す。`%r` で改行 / 制御文字 / 引用符を含む攻撃的入力でも 1 行に収まり log forging されない。
+  - **`bot.py` log 権限**: `os.umask(0o077)` を起動時に設定し、RotatingFileHandler が作る初期 / rotation 後 active log を 0o600 で開かせる。起動時に既存 `bot.log` および `bot.log.*` rotated backup を explicit `os.chmod(..., 0o600)` で 0o600 へ寄せる。副次的に `sessions/` / `quota.py` の state file 新規作成分も 0o600 になる (内部 state なので破綻なし)。
+  - **`docs/STATUS.md` 設計メモ**: 「log 方針」行を追加。URL log は OWNER 限定経路前提の方針であることを明記。将来 OWNER 以外コマンドを追加する際は再評価すること。
+  - **code-reviewer 軽微提案 2 件反映済み**: log 権限 0o600 化、STATUS.md 注意書き追加。
+  - **適用手順**: `systemctl --user restart companion-bot.service` で適用。新しい log は 0o600 で書かれ、既存 9KB 程度の bot.log も即座に 0o600 になる。
 
 - 2026-05-14 `/play` slash command 追加 (Phase 2.5 ロードマップ外、ユーザー要望での追加実装)
   - **背景**: Discord メンション本文に URL を渡すと bot は `claude -p` セッションに食わせて応答する設計のため、再生用途には不向き。slash command であれば session 文脈と独立して扱える

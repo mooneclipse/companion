@@ -61,6 +61,15 @@ if not NOTIFY_CHANNEL_ID_RAW.isdigit():
 NOTIFY_CHANNEL_ID = int(NOTIFY_CHANNEL_ID_RAW)
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+# bot.log は OWNER 限定経路の URL 等を含む。本プロセスが作る file は 0o600 にする
+# (rotation 後の新規 active log や sessions/quota state file にも適用)。
+os.umask(0o077)
+# 過去 0o644 で作られた既存ファイルがあれば 0o600 へ寄せる。
+for _existing in [LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*")]:
+    try:
+        os.chmod(_existing, 0o600)
+    except FileNotFoundError:
+        pass
 logger = logging.getLogger("companion-bot")
 logger.setLevel(logging.INFO)
 _handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
@@ -322,7 +331,8 @@ async def slash_play(interaction: discord.Interaction, url: str):
         return
     await interaction.response.defer(thinking=True)
     output = await cmd_play(url)
-    logger.info("cmd=/play send len=%d", len(output))
+    # URL は OWNER 限定経路のため log に残してよい。allowlist 拒否時の原因切り分けに使う。
+    logger.info("cmd=/play url=%r send len=%d", url, len(output))
     await interaction.followup.send(output)
 
 
