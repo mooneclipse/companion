@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-13 17:50
+最終更新: 2026-05-14
 
 ## 設計メモ
 
@@ -22,7 +22,59 @@
 
 ## TODO
 
-（なし）
+Phase 2.5「土管の耐久化（再設計）」T-0 完了、T-A から着手可能 (依存順序 T-A → ... → T-E、各サブタスク = 1 commit)。
+
+設計根拠:
+- `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14)
+- `~/companion/workspace/redesign/questions.md` (UQ-1〜UQ-10 全項目回答済)
+
+### T-A: bot 専用 CWD 分離 + sessions JSON
+
+- bot.py の CWD を `~/companion/workspace` → `~/companion/bot-workspace` に切替 (bot-workspace ディレクトリは 2026-05-13 準備済)
+- `~/companion/bot/sessions.py` 新設: `SessionMeta` dataclass + `load(channel_id)` / `save(meta)` / `reset(channel_id)`
+- `~/companion/bot/sessions/channels/<channel-id>.json` で 1 channel = 1 file 永続化 (gitignore)
+- `--continue` を完全廃止、`--session-id <uuid4>` 初回 + `--resume <uuid4>` 継続に一本化
+- 対応 §: design.md §1 全体、§8.1
+
+### T-B: ClaudeRunner 抽象 (ClaudeOptions / ClaudeResult / ErrorKind)
+
+- `bot/claude_runner.py` 新設: `run_discord(prompt, options) -> ClaudeResult`
+- `ClaudeOptions` dataclass (session_id / resume_session / output_format / permission_mode / model / add_dir / timeout_s 等)
+- `ClaudeResult` dataclass (rc / error_kind / raw_stdout / raw_stderr / result_text / session_id / cost_usd / 各 token / model_usage / permission_denials 等)
+- `ErrorKind` enum (OK / NO_PRIOR_SESSION / SESSION_ALREADY_IN_USE / TIMEOUT / RATE_LIMIT / OTHER) — エラー表面化専用、リトライ判定に使わない (design.md §10.3)
+- `claude_lock = asyncio.Lock()` を `ClaudeRunner` instance attribute として所有
+- デフォルトモデル `claude-sonnet-4-6` をハードコード (UQ-10 確定)
+- `prompt` 組み立てで prefix / suffix を明示分離 (キャッシュ ヒット率向上、design.md §4.8 方針 2)
+- 対応 §: design.md §3.1 / §1.7
+
+### T-C: Stop フック + vault 同期 (`vault-sync-from-transcript.sh`)
+
+- `~/companion/web/scripts/vault-sync-from-transcript.sh` 新設: stdin JSON で `transcript_path` を受け取り、JSONL を読んで「Web 検索 + summary」型を検出、重複チェック後 `notes/<YYYY-MM-DD>_<slug>.md` 書き出し、git add + commit
+- `bot-workspace/.claude/settings.json` の hooks セクションに Stop フックを追加
+- vault git の `vault_lock = asyncio.Lock()` 排他 (`claude_lock` と分離)
+- `bot.py` 側の `--allowedTools` ハードコード渡しは廃止、`bot-workspace/.claude/settings.json` に一本化
+- 対応 §: design.md §5 全体
+
+### T-D: BudgetGuard / /quota コマンド (2 段階実装)
+
+- T-D 前半 (Phase 2.5 着手時に実施):
+  - `bot/quota.py` 新設: `BudgetGuard` ABC + `RequestsCountGuard` 実装 (ENV `BOT_REQUESTS_PER_HOUR=20` default、1h スライディング window)
+  - `bot/sessions/ledger.jsonl` に各 prompt の `total_cost_usd` / `usage.*` / `modelUsage` を append
+  - `/quota` `/reset` `/status` の 3 コマンドを実装 (UQ-4.4 案 k、design.md §6.1)
+  - 表示は R 案 z (6/15 想定の表示骨格で書き、6/15 までは月次予算行をプレースホルダで覆う)
+  - キャッシュメトリクス (`cache_creation_input_tokens` / `cache_read_input_tokens`) も集計表示
+- T-D 後半 (2026-06 上旬に実施):
+  - `CreditBudgetGuard` 実装 (月次クレジット $100、月初リセット)
+  - 切替: `bot/.env` の `BOT_BUDGET_GUARD=requests_count|credit_usd` (ENV master)
+- 対応 §: design.md §4 全体 (§4.2 / §4.6 / §4.8)
+
+### T-E: catch-up + CLAUDE.md 3 層分割
+
+- `~/companion/CLAUDE.md` 新設 (共通項: 口調 / vault 書き込み境界 / OWNER 認可 / git 運用 / commit ルール / 対症療法の上限)
+- `~/companion/workspace/CLAUDE.md` を手元 claude code 固有のみに圧縮
+- `~/companion/bot-workspace/CLAUDE.md` を Discord 経由セッション固有のみに圧縮 (2026-05-13 準備版を最終形に)
+- bot 起動時 catch-up: `companion-bot.service` の `ExecStartPost=systemd-run --on-active=15s` で unattended-upgrades / system-report を 1 回発火
+- 対応 §: design.md §7.2 + §1.2
 
 ## In progress
 
@@ -33,6 +85,30 @@
 （なし）
 
 ## Done
+
+- 2026-05-14 T-0: claude CLI 2.1.141 で S1-S5 全シナリオ再検証完了 (Phase 2.5 前提条件、`~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」+ design.md §10.4 ルール準拠)
+  - CLI バージョン: **2.1.141** (design.md 検証時 2.1.138、STATUS.md 前回確認 2.1.140 から更に 1 上昇)
+  - 検証 CWD: `/tmp/bot-cli-verify-2026-05-14/` (bot-workspace / workspace の jsonl を汚さない)
+  - 環境: `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_EXECPATH -u CLAUDE_CODE_SESSION_ID -u ANTHROPIC_API_KEY` (design.md §1.6 準拠)
+  - モデル: `--model claude-haiku-4-5` (検証コスト最小化、S5 で `total_cost_usd=0.01267595`)
+  - 結果 (design.md §1.5 の表と完全一致):
+
+  | シナリオ | コマンド | 結果 (2.1.141) | design.md 一致 |
+  |---|---|---|---|
+  | S1 新規 | `--session-id $(uuidgen) "..."` | rc=0、`~/.claude/projects/-tmp-bot-cli-verify-2026-05-14/<uuid>.jsonl` 作成、stdout=`ALPHA` | ✓ |
+  | S2 継続 | `--resume <uuid> "..."` | rc=0、直前 ALPHA を想起 = 文脈保持 | ✓ |
+  | S3 lost | `--resume <存在しない uuid>` | rc=1、stderr `No conversation found with session ID: <uuid>` | ✓ 完全一致 |
+  | S4 in-use | `--session-id <既存uuid>` | rc=1、stderr `Error: Session ID <uuid> is already in use.` | ✓ 完全一致 |
+  | S5 json | `--output-format json --session-id <new> "..."` | rc=0、JSON 単一オブジェクト | ✓ + 追加情報 |
+
+  - encoded-cwd 規則: `/tmp/bot-cli-verify-2026-05-14` → `-tmp-bot-cli-verify-2026-05-14` 確認、JSONL 保存先 = `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`
+  - S5 JSON キー実機観察 (`--output-format json` の **stdout 単一オブジェクト由来**、生データは `bot/docs/reviews/2026-05-14-cli-2.1.141-S5-stdout.json` に保管。transcript jsonl とは別レイヤなので混同しない):
+    - design.md §1.5 で確定済キー (stdout): `result` / `session_id` / `total_cost_usd` / `usage.{input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens}` / `modelUsage` / `permission_denials` / `terminal_reason` / `duration_ms`
+    - 2.1.141 で stdout トップレベルに追加観察: `type` / `subtype` / `is_error` / `api_error_status` / `duration_api_ms` / `num_turns` / `stop_reason` / `fast_mode_state` / `uuid`
+    - 2.1.141 で stdout の `usage` 配下に追加観察: `server_tool_use.{web_search_requests, web_fetch_requests}` / `service_tier` / `cache_creation.{ephemeral_1h_input_tokens, ephemeral_5m_input_tokens}` / `inference_geo` / `iterations[]` (per-iteration tokens) / `speed`
+    - 設計影響: ClaudeResult dataclass は design.md §3.1 の確定 7 項目で十分 (追加キーは将来必要になれば取り込む、現時点で未使用)
+  - `claude -p --help` 確認 (§1.8 #5、`--bare` 監視): `--bare` の説明 = "Minimal mode: skip hooks, LSP, plugin sync, attribution, auto-memory, background prefetches, keychain reads, and CLAUDE.md auto-discovery. Sets CLAUDE_CODE_SIMPLE=1. Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are never read)." → **オプトインのまま**、デフォルト動作変更なし。N4「bot.py は明示的に `--bare` を使わない」継続
+  - 検証 jsonl は `~/.claude/projects/-tmp-bot-cli-verify-2026-05-14/` 配下に残置 (S3/S4 の stderr 文言を後から確認可能にするため、Phase 2.5 完了後に削除予定)。S5 stdout 生 JSON は `bot/docs/reviews/2026-05-14-cli-2.1.141-S5-stdout.json` に保管 (次回 CLI up 時の比較根拠)
 
 - 2026-05-13 Phase 2.5「土管の耐久化」着手前の準備（bot-workspace 新設 + `--bare` 実機確認）
   - bot-workspace 新設（`~/companion/workspace/redesign/design.md` §1.1 / §1.2 / §2 確定済の内容）
