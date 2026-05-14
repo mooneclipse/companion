@@ -72,7 +72,12 @@ Phase 2.5「土管の耐久化（再設計）」T-C 完了、T-D から着手可
   - vault repo の pre-commit hook (gitleaks) は staged diff 経由で Stop フック commit にも自動適用、秘密混入は git 側で止まり `git commit` rc != 0 → `error: git commit failed` がログに残る経路を確認
   - `bot-workspace/.claude/settings.json` に hooks セクション追加: `Stop` イベントで `/home/miho/companion/web/scripts/vault-sync-from-transcript.sh` を呼ぶ。matcher は空文字 (全 Stop event 対象)。command は絶対パスで記述 (`~` 展開のクライアント依存回避)
   - 動作確認: 空 vault (変更なし) で `echo '{...}' | vault-sync-from-transcript.sh` → rc=0 / ログ空で noop 抜け確認。一時 git repo で notes/ 配下に 2 ファイル変更 (新規 1 + 既存編集 1) を作って実行 → rc=0、commit `add: notes 2026-05-14 (bot session auto-sync, 2 file(s))` が作られ working tree clean。flock の lock ファイル (`/run/user/1000/companion-vault-sync.lock`) は exit 時に解放される (0 byte で残るのみ)
-  - **実弾確認は次の Discord 経由 vault 書き込みセッションで実施** (現時点でユーザー側からの「○○調べてノートにして」発火が来た時に Stop フック発火 → bot.log + vault-sync.log + vault commit を確認)
+  - **実弾確認 OK** (2026-05-14 17:00, ユーザー側からの「別テーマでノート化」依頼で発火、お題: Notion developer platform):
+    - `bot.log` 17:00:34: `send len=265` (claude session 完了で Discord 返信)
+    - `vault-sync.log` 17:00:33: `ok: committed 1 file(s) under notes/` (Stop フック発火 + gitleaks `no leaks found` + commit 作成のフルパス)
+    - vault repo: `1ec363d add: notes 2026-05-14 (bot session auto-sync, 1 file(s))`、`notes/2026-05-14_notion-developer-platform.md` (2682 bytes) 新規追加
+    - `develop` ブランチが `origin/develop` に対して 1 commit ahead で **push 未実施** (今回の確認では claude session 内で commit / push までは行われず、Stop フックが「漏れた未 commit を回収」する案 A の挙動が事実そのまま観測された形)
+    - 押さえどころ: claude が notes/ に書き込みだけで commit / push まで進めなかったケースでも、Stop フックが commit までは確実に回収する。push は引き続きユーザーの 1 回承認フロー (案 A 設計通り)。実弾運用で claude が頻繁に push まで行く / 行かないのパターンが見えてきたら、Stop フック側で push までやるか UX 上の判断点として再検討候補
   - code-reviewer: 修正必須 1 件 (commit メッセージスタイルを既存 log に揃え) を反映済。軽微提案 4 件のうち git config 前提と log 手動 truncate 運用は本 STATUS.md に明記、残り 2 件 (stdin `|| true` 削除 / `XDG_RUNTIME_DIR` fallback 注記) は実害なく未反映
   - 初回環境セットアップ前提: vault repo の `user.email` / `user.name` が `~/companion/vault/.git/config` に設定済であること (Phase 2.5 着手時点で設定済 = `git log` に既存 commit があるため確認不要)。新規環境構築時は vault repo の git config を先に整える運用
 
