@@ -164,19 +164,15 @@ dashboard/
 - [x] **〔ユーザー〕`docs/SETUP.md` の手順を実行**（音楽配置 → dashboard-config.js 記入 → 手動 start/stop テスト → timer enable → git push）— 2026-05-14 完了。dashboard-config.js の中村区実データ書き換えは TODO に残る
 - [ ] **〔ユーザー〕`web/dashboard-config.js` を名古屋市中村区の実収集日・実緯度経度に書き換え**（今はダミー）
 - [x] git → GitHub private repo `mooneclipse/companion-dashboard`（private）→ push 済み（2026-05-13）。※companion repo 群の monorepo 化は someday 候補（`workspace/PROJECT.md` の「将来の保留事項」に記載）
-- [ ] (B12 残) 2026-05-15 05:30 発火検証 → **失敗**、root cause = WM_CLASS-grep が前夜 22:14 起動の常用 firefox 窓（PID 158734、YouTube タブ）を拾った。修正案: `bin/dashboard-start.sh` の窓同定を `wmctrl -l -p` の PID 一致（`$3 == $FF_PID`）に置換（~3 行差分）。再 enable は B3 改訂 / B4 改訂 / B17-B23 検証 pass 後。
-- [ ] **〔ユーザー〕現状回復**（window `0x02000003` = 常用 firefox YouTube タブが HDMI-1 全面残置中）:
-  - **推奨（案 1）**: 常用 firefox を一旦閉じて再起動（data loss なし、自然な操作、タブ復元 ON 前提）
-  - 案 2（コマンド慣れているユーザーの選択肢）: `DISPLAY=:0 wmctrl -i -r 0x02000003 -b remove,fullscreen && wmctrl -i -r 0x02000003 -e 0,1920,83,1366,710` で LVDS-1 元位置に戻す
-  - **dashboard 再 enable 前の 1 回限りの後片付け**、毎朝のルーチンとしては書かない
-  - dashboard.service 経由は不採用（関心分離違反）
-- [ ] **〔ユーザー〕実機検証** B3 改訂 / B4 改訂 / B17-B23（平日昼・在席時に実施、音が出る系・寝てる人を起こす系は避ける）。検証結果を該当 B 項目に「✅ pass」付記して commit。
-- [ ] patch 適用（実機検証 pass 後）: `bin/dashboard-start.sh` line 91 で `FF_PID=$!` 追加 / line 99 の `wmctrl -l -x | awk 'tolower($3) ~ /firefox/'` を `wmctrl -l -p | awk -v p="$FF_PID" '$3==p'` に置換。commit → push。
-- [ ] timer は既に enable 済（2026-05-14）、patch 適用後の翌朝 5:30 発火を観察。
+- [x] (B12 残) 2026-05-15 05:30 発火検証 → **失敗**、root cause = WM_CLASS-grep が前夜 22:14 起動の常用 firefox 窓（PID 158734、YouTube タブ）を拾った。team `dashboard-redesign` で設計引き直し、PID 一致への置換確定。
+- [x] **〔ユーザー〕現状回復** — 2026-05-16 完了（常用 firefox を閉じて HDMI-1 占拠解消）。
+- [x] patch 適用 — 2026-05-16 完了（`bin/dashboard-start.sh` line 91 で `FF_PID=$!` 追加 / line 100 の predicate を `wmctrl -l -p | awk -v p="$FF_PID" '$3==p'` に置換、code-reviewer pass、commit + push 済み）。判断: B3/B4/B17-B23 実機検証 pass を待たず先当て（理由: 設計引き直しは redesign team で確定済、patch は実装 1 周目、明朝 05:30 までの空白を埋めるため）。
+- [ ] **〔ユーザー〕明朝 2026-05-17 05:30 発火観察**（patch 後の初発火、本番観察）。失敗時は STATUS L73「3 朝連続失敗で再設計判断」に従い夜診断、3 朝連続なら G 系列移行。
+- [ ] **〔ユーザー〕実機検証** B3 改訂 / B4 改訂 / B17-B23（平日昼・在席時に実施、patch 後でも観察データ収集として有効。検証結果を該当 B 項目に「✅ pass」付記して commit）。
 
 ## In progress
 
-- ユーザー実機検証 B3 改訂 / B4 改訂 / B17-B23 + 〔ユーザー〕現状回復 + `bin/dashboard-start.sh` patch + 翌朝 5:30 発火再観察。`web/dashboard-config.js` 中村区実データ書き換えも継続。
+- 明朝 2026-05-17 05:30 発火観察（patch 後の初発火、本番）。`web/dashboard-config.js` 中村区実データ書き換えと B3/B4/B17-B23 実機検証は並行。
 
 ## Done
 
@@ -192,3 +188,4 @@ dashboard/
   - **B23 z-top 保証**（実機検証で必要なら）: `add,fullscreen` 直後に `wmctrl -i -a <id>` 1 行追加（ux 元案 `-b add,above` は always-on-top 固定 race リスクで不採用）。
   - **案 A 不成立観測時の引き直し先**: G（`firefox --kiosk --kiosk-monitor=<N>`）、3 朝連続失敗観測で移行。中間段（i-TITLE 等）は持たない。
   - 設計議論で z-top 対応案・補欠階段で方針反転 4 周目に到達、`~/companion/CLAUDE.md`「3 度目を打たずに一段引いて設計を見直す」適用、lead が「これ以上の方針反転は受理しない」closure 強制で確定。team archive: `~/.claude/plans/dashboard-redesign-architect.md` / `-ux.md` / `-devil.md`（後の Phase 2.5 着手者リファレンスとして残置、本 STATUS が center of truth）。
+- 2026-05-16 patch 適用: `bin/dashboard-start.sh` line 91 で `FF_PID=$!` 追加、`echo` の `$!` → `$FF_PID`、line 100 の `wmctrl -l -x` WM_CLASS-grep を `wmctrl -l -p` の PID 一致に置換、コメントに 2026-05-15 事故 root cause + PID 一致採用根拠を 1 行追記。`bash -n` 構文 OK、code-reviewer 修正必須なし。実機検証 B3/B4/B17-B23 pass を待たず先当て（理由は TODO 該当行参照）。明朝 2026-05-17 05:30 が本番初発火、観察結果は本 STATUS に追記。

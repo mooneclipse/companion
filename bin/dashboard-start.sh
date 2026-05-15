@@ -89,14 +89,16 @@ user_pref("dom.disable_open_during_load", false);
 FFEOF
 
 firefox --new-instance --no-remote --profile "$FF_PROFILE" "$WEB_URL" &
-echo "dashboard-start.sh: firefox launched (launcher pid $!)"
+FF_PID=$!
+echo "dashboard-start.sh: firefox launched (launcher pid $FF_PID)"
 
 # ── 6. firefox ウィンドウを HDMI-1（1920x1080+0+0）へ移動して全画面化
 #   observable state（窓の存在）への上限付き readiness wait → 出なければ benign give-up（service は殺さない）。
+#   窓同定は `wmctrl -l -p` の PID 一致（$3 == FF_PID）。WM_CLASS-grep は常用 firefox 並走時に他窓を拾うため不採用（2026-05-15 事故 root cause）。
 #   ※ ここを「窓が出ない → 回数を増やす / sleep を足す」方向に育てないこと。flaky が続くなら patch #2 を当てず設計引き直し（../docs/STATUS.md 参照）。
 WIN_ID=""
 for _ in $(seq 1 20); do
-  WIN_ID=$(wmctrl -l -x 2>/dev/null | awk 'tolower($3) ~ /firefox/ {print $1; exit}')
+  WIN_ID=$(wmctrl -l -p 2>/dev/null | awk -v p="$FF_PID" '$3==p {print $1; exit}')
   [ -n "$WIN_ID" ] && break
   sleep 0.5
 done
