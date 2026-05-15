@@ -99,6 +99,47 @@ html, body {
   min-height: 1.2em;            /* 「更新 HH:MM」が出ても出なくてもガタつかない */
 }
 
+/* 時間ごと予報 strip（6/9/12/15/18/21 時の 6 スロット）。weather panel 下端、wx-stamp の上。 */
+.wx-hourly {
+  width: 100%;
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  min-height: 7.2vw;            /* fetch 失敗で空でもレイアウトを揺らさない */
+}
+.wx-h-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+.wx-h-time {
+  font-size: 1.1vw;
+  font-weight: 500;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.wx-h-icon {
+  width: 2.6vw;
+  height: 2.6vw;
+  color: var(--accent);
+  line-height: 0;
+}
+.wx-h-temp {
+  font-size: 1.45vw;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  line-height: 1.1;
+}
+.wx-h-pop {
+  font-size: 0.95vw;
+  color: var(--cool);
+  font-variant-numeric: tabular-nums;
+}
+
 /* 時計（ドミナント） */
 .clock {
   display: flex;

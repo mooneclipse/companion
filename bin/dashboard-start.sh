@@ -17,10 +17,23 @@ RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 MPV_SOCK="$RUNTIME/dashboard-mpv.sock"
 SINK_VOL_PCT=20     # PulseAudio sink（マスター）。BGM 量フィットで 50→20%（2026-05-14 実機調整）。
 MPV_VOL_PCT=100     # mpv ストリーム（stream-restore に上書きされないよう明示。最終実音量 = sink × stream = 20%）
+PREV_VOL_FILE="$DASH_DIR/.state/prev-sink-volume"
+PREV_MUTE_FILE="$DASH_DIR/.state/prev-sink-mute"
 
 export DISPLAY="${DISPLAY:-:0}"
 
 # ── 1. 音量を固定値にセット（前夜の状態に依存させない）。冪等・同期。読み戻し比較や再 set はしない。
+#   停止時に dashboard-restore-volume.sh (ExecStopPost) で元値へ戻すため、現値を .state/ に保存。
+#   保存失敗は警告のみで進む（復元側がファイル不在で no-op に流れる＝20% のまま残るが、無音破綻はしない）。
+mkdir -p "$DASH_DIR/.state"
+# pactl の出力は日本語ロケールで "Mute: いいえ" 等になるため LC_ALL=C で英語固定（volume も念のため）。
+LC_ALL=C pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null \
+  | awk '/^Volume:/ {for(i=1;i<=NF;i++) if($i ~ /%/){gsub(",","",$i); print $i; exit}}' \
+  > "$PREV_VOL_FILE"
+[ -s "$PREV_VOL_FILE" ] || { rm -f "$PREV_VOL_FILE"; echo "dashboard-start.sh: failed to capture prev sink volume" >&2; }
+LC_ALL=C pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | awk '{print $2}' > "$PREV_MUTE_FILE"
+[ -s "$PREV_MUTE_FILE" ] || { rm -f "$PREV_MUTE_FILE"; echo "dashboard-start.sh: failed to capture prev sink mute" >&2; }
+
 pactl set-sink-volume @DEFAULT_SINK@ "${SINK_VOL_PCT}%" || echo "dashboard-start.sh: pactl set-sink-volume failed" >&2
 pactl set-sink-mute   @DEFAULT_SINK@ 0                  || echo "dashboard-start.sh: pactl set-sink-mute failed" >&2
 

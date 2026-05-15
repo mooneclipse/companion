@@ -48,6 +48,45 @@
 
   var WX_LS_KEY = 'dashboard.weather.lastgood';
 
+  // 時間ごと予報のスロット（5:30〜9:00 運用の朝に今日の流れを一望できる範囲）。
+  var HOURLY_SLOTS = [6, 9, 12, 15, 18, 21];
+
+  function renderHourly(hourly, base) {
+    var strip = $('wx-hourly');
+    if (!strip) return;
+    var times = hourly.time || [];
+    var temps = hourly.temperature_2m || [];
+    var codes = hourly.weather_code || [];
+    var pops  = hourly.precipitation_probability || [];
+    var y = base.getFullYear(), m = base.getMonth(), d = base.getDate();
+    var html = '';
+    for (var s = 0; s < HOURLY_SLOTS.length; s++) {
+      var h = HOURLY_SLOTS[s];
+      var idx = -1;
+      for (var j = 0; j < times.length; j++) {
+        var t = new Date(times[j]);
+        if (t.getFullYear() === y && t.getMonth() === m && t.getDate() === d && t.getHours() === h) { idx = j; break; }
+      }
+      if (idx < 0) continue;
+      var temp = temps[idx];
+      var code = codes[idx];
+      var pop = pops[idx];
+      var kind = wxKind(typeof code === 'number' ? code : 3);
+      html += '<div class="wx-h-slot">'
+           +   '<div class="wx-h-time">' + h + '時</div>'
+           +   '<div class="wx-h-icon">' + svgWrap(WX_SVG[kind.k] || WX_SVG.cloud) + '</div>'
+           +   '<div class="wx-h-temp">' + (typeof temp === 'number' ? Math.round(temp) + '°' : '–') + '</div>'
+           +   '<div class="wx-h-pop">' + (typeof pop === 'number' ? pop + '%' : '–%') + '</div>'
+           + '</div>';
+    }
+    strip.innerHTML = html;
+  }
+
+  function renderHourlyUnavailable() {
+    var strip = $('wx-hourly');
+    if (strip) strip.innerHTML = '';
+  }
+
   function renderWeather(data, stale) {
     var cur = data.current || {};
     var hourly = data.hourly || {};
@@ -79,6 +118,7 @@
     $('wx-label').textContent = kind.label;
     $('wx-hilo').innerHTML = '今日 <span class="hi">↑' + (hi === null ? '–' : Math.round(hi)) + '°</span> <span class="lo">↓' + (lo === null ? '–' : Math.round(lo)) + '°</span>';
     $('wx-pop').textContent = '降水 ' + (popMax === null ? '–' : popMax) + '%';
+    renderHourly(hourly, todayStr);
     var ft = data._fetchedAt ? new Date(data._fetchedAt) : new Date();
     $('wx-stamp').textContent = stale ? ('更新 ' + p2(ft.getHours()) + ':' + p2(ft.getMinutes())) : '';
   }
@@ -90,6 +130,7 @@
     $('wx-label').textContent = '取得できません';
     $('wx-hilo').innerHTML = '今日 <span class="hi">↑–°</span> <span class="lo">↓–°</span>';
     $('wx-pop').textContent = '降水 –%';
+    renderHourlyUnavailable();
     $('wx-stamp').textContent = '';
   }
 

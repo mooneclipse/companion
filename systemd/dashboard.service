@@ -16,6 +16,10 @@ ExecStartPre=/bin/sh -c 'i=0; while [ "$i" -lt 20 ]; do [ -e /tmp/.X11-unix/X0 ]
 
 ExecStart=%h/companion/dashboard/bin/dashboard-start.sh
 
+# 停止後: 起動時に保存した sink 音量・mute 状態を復元。手動 stop / 9:00 自動 stop / 異常終了どれでも経由する。
+# ExecStopPost は main 終了状態に関わらず実行されるため、復元の取りこぼしを防ぐ。
+ExecStopPost=%h/companion/dashboard/bin/dashboard-restore-volume.sh
+
 # 停止: systemctl --user stop が main(sleep) + cgroup 全体に SIGTERM、15s 後 SIGKILL。
 KillMode=control-group
 TimeoutStopSec=15s
