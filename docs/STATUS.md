@@ -45,14 +45,55 @@
 - **now-playing**: クライアント JS が `http://127.0.0.1:<port>/np` を ~2-3s ポーリング（helper が ACAO:* を返すので `file://` から OK）。曲なし/mpv 不在/fetch 失敗 → ごく薄く「♪ —」or 非表示。**絶対にレイアウトを揺らさない・エラーを上げない**。最も使い捨て可能な要素。fetch 失敗時は前状態保持 or 静かにクリア。
 - **〔将来〕アドバイス枠**: 今回は実装しない。**markup/ファイルの予約もしない**（PROJECT.md が禁じる「先回りの雛形増やし」）。やってよいのは「将来 1 要素増えても再設計せず吸収できる柔らかいレイアウト」方針のみ。可視帯の上 ~100px を「呼吸スペース（ただのマージン）」として空け、時計を帯の上寄りに置く（垂直中央には置かない＝後でアドバイス band を足したとき時計が下にずれて fold に近づくのを防ぐ）。HTML に `<!-- 将来: アドバイス band はここ -->` のコメント 1 行のみ。
 
-### 画面レイアウト（ux 案 A）
-- ダークテーマ既定（冬の 5:30 は真っ暗、5 月でも薄暗い。暗い部屋に白画面は朝に暴力的）。漆黒 `#000` は避ける（TV でバンディング/ギラつき）→ deep navy/ink (`#0e1419`〜`#141a24` 系) ベース＋暖かいオフホワイト文字 (`#e8e3d8` 系)＋抑制した 1 アクセント色（sunrise amber か soft teal を 1 つだけ。天気アイコンとゴミの「あす/きょう」ハイライトにだけ）。auto light/dark 切替は不要（朝のみ運用）。
-- 上端 ~50px はオーバースキャン保険マージン（コンテンツ開始 y≈80px）。fold は y≈580-600 とみなし now-playing baseline は y≈500 までに収める。**`height:540px` を CSS に焼かない**（実 TV の可視域は要実測 B7）。重要要素を上に積む top-anchored 1 カラムで組み、可視域は content priority のガイドラインとして扱う。
-- 案 A: 左 1/3=天気（アイコン / 現在気温 / 天候ラベル / 今日 ↑↓ / 降水%）、中 1/3=時計（最大、`HH:MM` のみ ~13vw tabular figures・**秒は出さない**・コロンは静的、日付 ~3vw「5月13日 (火)」）、右 1/3=ゴミ（アイコン / 種別 / 「あす(水)」/ 「次: プラ 5/16」）。下に now-playing 1 行（~1.5vw、♪ 曲名 — アーティスト、控えめ）。それ以下〜y=1080 はベース色の続き（縦グラデで僅かに下を暗く）。テクスチャ・画像・動画背景なし。
-- 案 B（予備）: 時計左寄せ大 + 右に天気/ゴミ縦積み。情報量が将来増えたら右列に積みやすい。今は案 A 推奨。
-- **下半分を恒久的に「飾り」にする判断＝確定**。要素 4 つ + 将来 1 つは 1920×~580px に余裕で収まる。「溢れたら degrade」柔軟設計は存在しない問題への対策＝YAGNI 違反。「手前モニタを下げれば下も見える」は朝の運用（モニタ上げたまま一瞥）では発生しない前提。下に「下げれば見える二次情報」を置くのもナシ（誰も見ない二層 UI を検証できない／「見えないと存在しない」原則に反する）。ただし下半分は「壊れた余り」ではなく「デザインの連続」（1920×1080 全体で 1 つのデザイン、コンテンツは上 ~580px に住む、下はベース色がそのまま続く）。
-- 時間帯で色を変える: punt（朝のみ運用なので便益ゼロ、色替えコード経路を増やさない。将来 afternoon/evening timer が来たら入れる）。
-- フロント方向性: 「夜明け前の静けさ」。余白贅沢（コンテンツは可視帯の 6 割程度）、大きく幾何学的な humanist sans（system stack: Inter / Noto Sans JP / system-ui）、時計だけ tabular-figures で tight。天気/ゴミは大きめ角丸カード or カード無しの浮遊テキスト群（後者の方が静か — 実装で判断）。データ更新は 300-500ms のソフトフェード、何も pop しない。アニメーション禁欲的（GPU 無し Ivy Bridge + x11vnc が dirty frame を毎回再エンコードするので全画面アニメ/動くグラデは CPU・VNC 帯域を食う。毎秒の時計更新＝小 dirty rect は OK）。
+### 画面レイアウト（v0.2: industrial-refined / dashboard-redesign-2 team で確定）
+
+2026-05-16 に v0.1 から v0.2 へリセット（ユーザー報告「情報密度が合っていない、リセットして再配置」+「Claude Code のデザインシステムを利用」=`frontend-design` skill 採用）。team `dashboard-redesign-2`（architect / ux / devil's advocate）で議論、本ファイルが確定形。
+
+#### 美的方向（ux plan §0）
+**Tone: "industrial-refined" — 制御室の静けさ**。13vw 時計が空白の海に浮かぶ「主役の不在」。記憶に残るのは「Josefin Sans の太いジオメトリック数字が暗い画面に浮かぶ、制御室の時計板感」。
+
+#### カラー（値は v0.1 から不変、役割を明示整理）
+- Dominant: `--bg-top #141a24` / `--bg-bottom #0b0f15`（deep navy）
+- Text hierarchy: `--ink #ece6da`（一次）/ `--ink-dim #7f8893`（二次）/ `--ink-faint #4a525c`（三次）
+- Sharp accents: `--accent #f3b85f`（amber、`.gb-when` + `.wx-icon` primary）/ `--cool #8fb6c7`（teal、`.wx-pop` + `.wx-h-pop` のみ）。範囲を広げない。
+
+#### タイポグラフィ
+**generic AI font 全廃** (skill 指針)。Inter / system-ui を撤去:
+- Display (`--font-display`): `'Josefin Sans', 'Noto Sans CJK JP', sans-serif` — `.time` / `.wx-temp` / `.gb-when` に適用
+- Body (`--font-body`): `'DM Sans', 'Noto Sans CJK JP', sans-serif` — 他全要素
+- 自己ホスト: `web/fonts/` に `JosefinSans-SemiBold.ttf` / `DMSans-Regular.ttf` / `DMSans-Medium.ttf` 配置（OFL 1.1 ライセンス同梱）。kiosk `file://` 安全。
+- 日本語: `Noto Sans CJK JP` を `local()` 参照（`fonts-noto-cjk` パッケージ前提）。Mint 21.3 確認: Regular(400) / Bold(700) のみ存在 → weight 500/600 指定は近 weight にスナップ（視聴距離 2-3m で知覚不能、対症療法 2 周目を呼ばない設計）。
+- letter-spacing: `.time -0.02em` / `.wx-temp` `.gb-when -0.01em`（Josefin の geometry に合わせて引く）。
+
+#### 寸法と配置
+- 画面: `padding: 50px 90px 0`（上端 50px = オーバースキャン保険）
+- advice-space: 60px（v0.1 92px → 圧縮、将来 band 用余白は維持）
+- main-row: `grid-template-columns: 1fr 1.25fr 1fr`、`column-gap: 60px`（v0.1 40px → 余白を効かせる）、`align-items: start`
+- 時計 13vw（変更なし、確定）/ 日付 3vw / 天気 icon 5.2vw・temp 3.8vw・label 1.9vw・sub 1.5vw / ゴミ icon 4.0vw・when 3.6vw（amber）・type 2.6vw・next 1.4vw / hourly-strip スロット time 1.1vw・icon 2.4vw・temp 1.35vw・pop 0.95vw / now-playing 1.5vw（margin-top 2.0vw）
+- **時間ごと予報 strip を weather panel から独立全幅行へ移動**: v0.1 で weather 内に置いた結果 3 カラム高さが崩壊（weather ~594px vs garbage ~295px）→ v0.2 で `<div class="hourly-strip"><div class="wx-hourly">` の独立行にして 3 カラムバランス回復。`wx-hourly` ID は保持して `app.js` 変更ゼロ。
+- **`.gb-type` に `white-space: nowrap; overflow: hidden; text-overflow: ellipsis`**: 列幅縮小で「燃やすごみ・プラ容器」等が折れるのを防ぐ（pre-existing 問題の同時解消、architect 提案）
+
+#### Atmosphere
+- 周辺ビネット (`.dashboard::before`): `radial-gradient(ellipse 120% 90% at 50% 40%, transparent 40%, rgba(11,15,21,0.55) 100%)`、`position: fixed` で全画面。**center `50% 40%` は B7 仮値**、実測後に調整候補。
+- 不採用: **grain overlay** (`.dashboard::after` SVG noise opacity 0.03)。devil 反証採用: opacity 0.03 は視聴距離 2-3m で JND 以下＋1080i のコーミングラインとモアレ干渉リスク＋skill「Match complexity to aesthetic vision」違反。再導入時はモアレ確認必須。
+- 不採用: **hourly-strip 上端の `border-top: 2px solid rgba(255,255,255,0.05)`**。devil 反証採用: 5% 白 overlay の `#141a24` 上コントラスト比 ≈ 1.05:1 で実質不可視。`margin-top: 16px` の近接性で接続感は十分。
+
+#### Motion
+- `.dashboard` の fade-in 700ms（ロード時 1 回のみ）維持
+- `.now-playing transition: opacity 200ms`（v0.1 380ms → 短縮、2.5s ポーリングで連続 transition を避ける）
+- 全画面アニメ・hover / focus は禁止（kiosk、x11vnc CPU 事故防止）
+
+#### fold 高さ予測
+- v0.1 hourly 追加後 ~841px → v0.2 ~696px（architect §10 補正値、line-height 継承考慮）。fold が ~700px 以上なら全要素可視帯に収まる。strict y580 想定なら advice-space 40px or hourly min-height 5vw で追調整（B7 実測後判断）。
+
+#### 下半分の扱い（v0.1 から継承）
+**恒久的に「飾り」=確定**。コンテンツは上 ~580-700px に住み、下はベース色の続き（縦グラデで僅かに下を暗く + vignette overlay）。テクスチャ・画像・動画背景なし。時間帯で色を変えるのは punt（朝のみ運用）。
+
+#### 撤回した設計選択（teammate plan archive）
+- v0.1 の「Inter / Noto Sans JP / system-ui」font stack: 撤回（generic AI font として skill が禁じる）
+- v0.1 の「hourly-strip を `.weather` 内に置く」: 撤回（3 カラム高さ崩壊の根本原因）
+- ux 提案だった `grain overlay` / `border-top 2px`: devil 反証で不採用
+- 案 B（時計左寄せ + 右縦積み）: 言及廃止（v0.1 のみの予備案、v0.2 で言及しない）
 
 ### x11vnc 非干渉
 x11vnc はシステムサービス（`/etc/systemd/system/x11vnc.service`）で `-display :0` を framebuffer キャプチャ + 入力注入してるだけ。ウィンドウ管理には関与しない。今回足すのは user unit で :0 にウィンドウを出すだけ → 衝突なし。**x11vnc の unit には一切触らない**。
@@ -173,10 +214,16 @@ dashboard/
 - [x] **〔ユーザー〕実機検証** B3 改訂 / B4 改訂 / B10 / B17 (短期) / B19 (warm) / B22 / B23 (限定条件) — 2026-05-16 00:55 事故再現条件下で `systemctl --user start dashboard.service` 実行、pass。残り B5 / B7 / B11 / B13 / B15 / B16 / B18 / B20 / B21 は別途。
 - [x] **停止時の音量復元** — 2026-05-16 実装。`bin/dashboard-start.sh` で起動時に現音量・mute を `.state/prev-sink-volume{,mute}` に保存（`LC_ALL=C` でロケール固定）、新規 `bin/dashboard-restore-volume.sh` を `dashboard.service` の `ExecStopPost=` で呼んで復元。要 `systemctl --user daemon-reload`。
 - [x] **時間ごと予報 strip** — 2026-05-16 実装。天気パネル下端に 6/9/12/15/18/21 時の 6 スロット (時刻 / アイコン / 気温 / 降水%) を追加。既存 `forecast_days=1` のレスポンスで賄える。`index.html` / `app.js` (renderHourly) / `style.css` (.wx-hourly grid) 更新。
+- [x] **v0.2 redesign（industrial-refined）** — 2026-05-16 実装。team `dashboard-redesign-2` (architect / ux / devil) で議論し本 STATUS の画面レイアウト section を全面書き換え。Inter / Noto Sans JP を撤去し Josefin Sans + DM Sans + Noto Sans CJK JP を自己ホスト (`web/fonts/`)。サイズリセット (weather/garbage 縮小・hourly 独立行)・column-gap 60px・vignette overlay・letter-spacing 精緻化を反映。grain と border-top は devil 反証で不採用。`app.js` 変更ゼロ。
+- [ ] **B7 拡張系（v0.2 redesign 用の実機確認）**: 下記 B24-B27 を本番初発火 or 手動 start で目視
+  - B24: fold 高さ実測（v0.2 予測 ~696px が可視域内か）
+  - B25: vignette 中心 `50% 40%` で端部の wx-sub / gb-next が暗くなりすぎないか
+  - B26: `.gb-when` の日本語+ASCII 混在見た目（"あす(水)" のひらがな・漢字は Noto fallback、括弧 2 文字のみ Josefin）。NG なら `.gb-when` を `var(--font-body)` に 1 行変更（対症療法 2 周目ルール抵触なし）
+  - B27: Noto Sans CJK JP weight 700 スナップ表示（`.gb-when` `.wx-temp` `.time` の日本語要素、ただし数字主体なので影響軽微）
 
 ## In progress
 
-- 明朝 2026-05-17 05:30 発火観察（patch 後の本番初発火）。`web/dashboard-config.js` 中村区実データ書き換えは並行。stop 時の音量復元と時間ごと予報も本番初発火で観察対象。
+- 明朝 2026-05-17 05:30 発火観察（patch 後の本番初発火）。`web/dashboard-config.js` 中村区実データ書き換えは並行。stop 時の音量復元と時間ごと予報も本番初発火で観察対象。v0.2 redesign の B24-B27 も同タイミングで確認。
 
 ## Done
 
@@ -194,5 +241,6 @@ dashboard/
   - 設計議論で z-top 対応案・補欠階段で方針反転 4 周目に到達、`~/companion/CLAUDE.md`「3 度目を打たずに一段引いて設計を見直す」適用、lead が「これ以上の方針反転は受理しない」closure 強制で確定。team archive: `~/.claude/plans/dashboard-redesign-architect.md` / `-ux.md` / `-devil.md`（後の Phase 2.5 着手者リファレンスとして残置、本 STATUS が center of truth）。
 - 2026-05-16 patch 適用: `bin/dashboard-start.sh` line 91 で `FF_PID=$!` 追加、`echo` の `$!` → `$FF_PID`、line 100 の `wmctrl -l -x` WM_CLASS-grep を `wmctrl -l -p` の PID 一致に置換、コメントに 2026-05-15 事故 root cause + PID 一致採用根拠を 1 行追記。`bash -n` 構文 OK、code-reviewer 修正必須なし。commit `1a44ee2` → push 完了 (2026-05-16 00:30 頃)。
 - 2026-05-16 00:55 B 検証実機 pass: 事故再現条件下（常用 firefox PID 251413 / 0x02000003 YouTube タブ desktop 0 起動中）で `systemctl --user start dashboard.service` → 8 秒で新窓 0x02400003 (PID 252288) を HDMI-1 全画面化、TV 目視 OK、常用窓は触られず desktop 0 に残存。続けて stop → 3 秒で teardown clean (cgroup-kill, 孤児なし)。pass 項目: B3 改訂 / B4 改訂 / B10 / B17 (短期) / B19 (warm 8s) / B22 / B23 (限定条件: 常用窓が別モニタ条件のみ)。残課題は明朝 2026-05-17 05:30 で cold boot 系 B19 と長期持続性 B17 / BGM (B11) を本番観察。
-- 2026-05-16 停止時の音量復元実装。経緯: ユーザー報告「画面終了後に音量が元に戻らない」。`dashboard-start.sh` は起動時に sink を 20% 固定するが、停止時に元値に戻す経路が無かった。実装: 起動時 `pactl get-sink-volume/mute @DEFAULT_SINK@` の現値を `.state/prev-sink-volume{,mute}` に保存（`LC_ALL=C` 必須＝ja_JP では `Mute: いいえ` でパース破綻する地雷を踏みかけた）、`dashboard.service` に `ExecStopPost=%h/companion/dashboard/bin/dashboard-restore-volume.sh` を追加（手動 stop / 9:00 自動 stop / 異常終了どれでも経由する）、復元側は状態ファイル不在で no-op (20% のまま残るが無音破綻はしない＝対症療法 2 周目を呼ばない設計)。
+- 2026-05-16 停止時の音量復元実装。経緯: ユーザー報告「画面終了後に音量が元に戻らない」。`dashboard-start.sh` は起動時に sink を 20% 固定するが、停止時に元値に戻す経路が無かった。実装: 起動時 `pactl get-sink-volume/mute @DEFAULT_SINK@` の現値を `.state/prev-sink-volume{,mute}` に保存（`LC_ALL=C` 必須＝ja_JP では `Mute: いいえ` でパース破綻する地雷を踏みかけた）、`dashboard.service` に `ExecStopPost=%h/companion/dashboard/bin/dashboard-restore-volume.sh` を追加（手動 stop / 9:00 自動 stop / 異常終了どれでも経由する）、復元側は状態ファイル不在で no-op (20% のまま残るが無音破綻はしない＝対症療法 2 周目を呼ばない設計)。**ユーザー手動検証 pass** (2026-05-16): `systemctl --user daemon-reload` 後に start → 5s → stop で元の音量に戻ることを目視確認。
+- 2026-05-16 v0.2 redesign（industrial-refined）。経緯: ユーザー報告「情報密度が合っていない、一度リセットしてきれいに配置し直してほしい / 上半分維持 / 色は現状 / Claude Code のデザインシステム (=`frontend-design` skill) を利用 / agent team モードは auto」。team `dashboard-redesign-2` (architect / ux / devil's advocate、in-process / auto モード) で議論。ユーザー Q&A 2 点を中継 (Q1: skill 解釈=frontend-design plugin / Q2: 密度ミスマッチ方向=サイズが情報価値と不釣合い)。architect 案 (vw 縮小 + hourly 独立行) + ux 案 (Josefin Sans / DM Sans / Noto Sans CJK JP 自己ホスト + vignette + letter-spacing 精緻化) + devil 反証 (grain と border-top 削除、`.gb-type` ellipsis 追加) を統合し v0.2 確定。teammate plan archive: `~/.claude/plans/dashboard-redesign-2-{architect,ux,devil}.md`。実装差分: CSS ~95 行書き換え (`web/style.css` 全面再構成) / HTML ~7 行 (hourly を main-row 外へ移動) / JS ゼロ / 新規 `web/fonts/` 3 ttf + 2 OFL ライセンス。B7 拡張系 B24-B27 は本番初発火で観察。
 - 2026-05-16 時間ごと予報 strip 実装。経緯: ユーザー報告「時間ごとの予報がみたい」。既存 app.js は Open-Meteo hourly レスポンスを取得していたが、UI は今日の hi/lo と降水 max を集約していただけ。実装: 天気パネル下端に 6/9/12/15/18/21 時の 6 スロット (時刻 / アイコン / 気温 / 降水%) を grid で描画 (`renderHourly`)。スロット時刻は hardcode、CFG 化はしない (`先回りの雛形`)。fetch 失敗時は空＋ `min-height: 7.2vw` で骨格維持。weather panel 縦長化で fold 近傍に伸びるため、`web/style.css` のサイズは控えめ (時刻 1.1vw / アイコン 2.6vw / 気温 1.45vw / 降水 0.95vw)。本番 TV での読みやすさ確認は明朝の本番初発火時の観察対象。

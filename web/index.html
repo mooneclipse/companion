@@ -31,8 +31,6 @@
         <span class="wx-hilo" id="wx-hilo">今日 <span class="hi">↑22°</span> <span class="lo">↓14°</span></span>
         <span class="wx-pop" id="wx-pop">降水 20%</span>
       </div>
-      <!-- 時間ごと予報（6/9/12/15/18/21時）。app.js が hourly レスポンスから 6 スロット生成 -->
-      <div class="wx-hourly" id="wx-hourly" aria-hidden="true"></div>
       <div class="wx-stamp" id="wx-stamp"></div>
     </section>
 
@@ -57,6 +55,12 @@
     </section>
 
   </main>
+
+  <!-- 時間ごと予報（6/9/12/15/18/21時）。weather panel から独立した全幅行へ移動して 3 列高さバランス回復。
+       app.js が hourly レスポンスから 6 スロット生成（ID wx-hourly は変更なし、JS 互換）。 -->
+  <div class="hourly-strip">
+    <div class="wx-hourly" id="wx-hourly" aria-hidden="true"></div>
+  </div>
 
   <!-- now playing（最も控えめ・最も使い捨て可・レイアウトを揺らさない） -->
   <footer class="now-playing" id="now-playing">
