@@ -26,7 +26,11 @@
 6. **firefox**: `.state/ff-profile/user.js` を heredoc で（再）生成（session 復元 OFF / first-run・what's-new・default-browser・telemetry プロンプト全 OFF / `full-screen-api.warning.timeout=0` / `browser.fullscreen.autohide=true`）。`firefox --new-instance --no-remote --profile "$HOME/companion/dashboard/.state/ff-profile" "file://$HOME/companion/dashboard/web/index.html" &`。
    - **`--kiosk` は使わない**（kiosk の EWMH fullscreen 状態は WM が wmctrl の move を無視しがち＋窓が primary=LVDS-1 に出て事故る）。
    - **`-P <name>` ではなく `--profile <絶対パス>`**（self-contained、profile-manager レジストリに依存しない、未登録時に Profile Manager GUI が出ない）。
-7. **配置**: firefox ウィンドウ出現を `wmctrl -l -x | grep -i firefox` で上限付き待ち（~10s, 0.5s 刻み）。出たら `wmctrl -i -r <id> -b remove,maximized_vert,maximized_horz` → `wmctrl -i -r <id> -e 0,0,0,1920,1080`（HDMI-1 は `+0+0` なので原点へ置けば TV に乗る）→ `wmctrl -i -r <id> -b add,fullscreen`。出なければ warn して諦め（service は殺さない。何か出てる方がマシ）。**この上限待ちを「窓が出ない → 回数増やす/sleep 足す」方向に育てない**。flaky が続いたら patch #2 を当てず設計引き直し（候補: 極小 openbox session / marco 設定 / 諦めて手動修正）を本ファイルに根拠付き記録してから着手。
+7. **配置**: firefox を `firefox --new-instance --no-remote --profile <path> URL &; FF_PID=$!` で起動し、`wmctrl -l -p` で `_NET_WM_PID == $FF_PID` の窓 ID を上限付き待ち (~10s, 0.5s 刻み)。出たら `wmctrl -i -r <id> -b remove,maximized_vert,maximized_horz` → `wmctrl -i -r <id> -e 0,0,0,1920,1080` → `wmctrl -i -r <id> -b add,fullscreen`。出なければ warn して諦め (service は殺さない)。
+   - **WM_CLASS マッチは使わない**（常用 firefox 起動中だと「WM_CLASS に firefox を含む最初の窓」= 常用 firefox 窓を拾ってしまい、2026-05-15 05:30 初発火事故の root cause になった。`~/companion/CLAUDE.md` 対症療法 2 周目ルール準拠で WM_CLASS-grep → PID-match の 1 度の引き直しで確定）。
+   - **背景**: 常用 firefox を前夜から開いた状態で寝る生活（前夜タブ/YouTube 再生位置を残す）を破壊しないため、社会的解決は採らず技術修正で根治。
+   - **z-top 保証**（B23 検証で常用窓が前面に残る場合のみ）: `add,fullscreen` の直後に `wmctrl -i -a <id>` を 1 行追加（`_NET_ACTIVE_WINDOW` 経由で raise+focus、`_NET_WM_STATE` 不変、副作用ゼロ、9:00 cgroup-kill で残り火なし）。ux 元案 `-b add,above` は不採用（`_NET_WM_STATE_ABOVE` 固定 race、9:00 stop 前にユーザー触れたら state 永続化リスク）。
+   - 配置の上限待ちを「窓が出ない → 回数増やす/sleep 足す」方向に育てない。「PID 一致でも見つからない」観測時の引き直し先は § 対症療法 2 周目ルールの先回り 9 項目目を参照（i-TITLE 等の中間段を経ず G 系列に 1 度で引き直し）。
 8. `exec sleep infinity`。9:00 の stop で cgroup ごと落ちる。
 
 ### ダッシュボード（`web/`、サーバレス）
@@ -57,14 +61,26 @@ x11vnc はシステムサービス（`/etc/systemd/system/x11vnc.service`）で 
 
 ---
 
+## 朝の運用ルール
+
+dashboard.service の朝の運用は以下の制約に従う。窓配置失敗時のリカバリ動線は **設計に含めない**。
+
+- **C0**: 朝の本人操作要求は **TV リモコン ON のみ**。マウス/キーボードでの復旧は要求しない（寝起き不機嫌閾値の対策）。
+- **学習信号**: BGM 鳴 + TV 黒/前夜状態 = 「絵だけ失敗、夜に診断」と即判断できる状態を本人が学習している前提で運用。
+- **夜手動診断**: 失敗観測時は当夜 `journalctl --user -u dashboard.service --since today` で確認 → 本 STATUS の「既知の問題」セクションに追記。
+- **3 朝連続失敗で再設計判断**: 単発失敗を patch しない（`~/companion/CLAUDE.md` 2 周目ルール準拠、修正効果観察に最低 3 朝必要）。3 連続失敗観測時は § 対症療法 2 周目ルールの先回り 9 項目目に従い G 系列（`--kiosk --kiosk-monitor=<N>`）へ移行。
+- **朝の compensating control は採らない**: Discord bot 経由通知 / now-playing helper にステータス追加 等の朝通知は **不採用**（寝てる本人を起こす方向、目覚まし系の信頼喪失、Phase 4 無口な相棒像と逆向き）。
+
+---
+
 ## 実機検証チェックリスト（build/test フェーズで実施。一部の設計選択はこれ待ちの暫定）
 
 > ⚠ 検証で音が出る・TV が光るものは 5:30〜9:00 以外にやると寝てる人を起こす。音量 0 で or ユーザーが起きてる時に。
 
 - **B1 音量 20% 固定が pactl 1 発で成立するか** ✅ 2026-05-14 pass: PulseAudio の `module-stream-restore` が mpv のストリーム音量を前セッションから復元しうる（最終実音量 = sink音量 × stream音量）。`mpv --volume=100` がそれを上書きするか確認（`pactl list sink-inputs | grep -i volume`, `pactl get-sink-volume @DEFAULT_SINK@`）。検証結果: mpv が stream を 100% で立ち上げ、stream-restore による上書きは観測せず → sink-input volume の追加 pin は不要。
 - **B2 mpv 0.34.1 のディレクトリ→playlist 挙動** ✅ 2026-05-14 pass: ダミー mp3 1-2 個で `mpv --no-video --shuffle --loop-playlist=inf --input-ipc-server=/run/user/1000/dashboard-mpv.sock ~/music/morning/` → 再帰するか / 拡張子フィルタ / 空ディレクトリ時 exit-or-idle / stale socket で起動できるか。空時即 exit なら `find` で playlist を組む実装に倒す。検証結果: `~/music/morning/` (mp3 7 ファイル) を渡して playlist 構築・shuffle・loop 動作 OK、stale socket は事前 `rm -f` で問題なし。
-- **B3 firefox 多重起動**: 常用 firefox 起動中に別端末から `firefox --new-instance --no-remote --profile /tmp/dash-test "file://..."` → 新インスタンスが立つか / `--profile` で dir 自動生成か / `wmctrl -l -x` で WM_CLASS（`Navigator.Firefox` か `firefox` か — polling grep に必要）。
-- **B4 wmctrl で firefox 窓を HDMI-1 に全画面化**: 非 kiosk `--new-window` 起動 → `wmctrl -l -x` で id → `wmctrl -i -r <id> -b remove,maximized_vert,maximized_horz` → `-e 0,0,0,1920,1080` → `-b add,fullscreen` → HDMI-1(0,0) でフル / LVDS にはみ出さない / fullscreen 警告オーバーレイが残らない / Marco の per-monitor fullscreen が効くか。効かないなら設計引き直し（kiosk + 出たモニタで妥協 or 一時 primary 切替＋9:00 復元機構）を STATUS 記録してから。
+- **B3 (改訂) 常用 firefox 並走時の `--new-instance --no-remote --profile` 同定**: 常用 firefox を起動した状態で `firefox --new-instance --no-remote --profile /tmp/dash-test "file:///tmp/t.html" & FF=$!; sleep 12; wmctrl -l -p | awk -v p=$FF '$3==p'` が新窓 1 行を返すか、`xprop -id <id> _NET_WM_PID` が `$FF` と一致するか。
+- **B4 (改訂) wmctrl で firefox 窓を HDMI-1 に全画面化**: 上の窓に `wmctrl -i -r <id> -b remove,maximized_vert,maximized_horz` → `-e 0,0,0,1920,1080` → `-b add,fullscreen` が Marco で HDMI-1 全面化、LVDS-1 にはみ出さないか。kiosk なしなので EWMH fullscreen は WM 制御下、Marco の per-monitor fullscreen が効く前提。効かないなら設計引き直し（案 A 不成立 → G 系列 `--kiosk --kiosk-monitor` へ移行）を § 対症療法 2 周目ルール 9 項目目に追記してから着手。
 - **B5 `file://` origin から Open-Meteo に fetch できるか**: `file:///tmp/t.html` に fetch を書いて firefox で開き CORS で通るか。通れば「天気サーバレス」確定。通らなければ上記 contingency（helper に `/weather` プロキシ）。
 - **B6 HDMI-1 のモード（インターレース）**: 現状 `1920x1080i`（progressive 最大は 1280x720）。`xrandr` の `*` が 1080i。細い横線・小文字でコーミング/ちらつき。`xrandr --output HDMI-1 --mode 1280x720` に切り替えて TV で文字の見え方を比較。デフォルト方針: 1080i のまま太字・hairline なし・大文字で運用、アプリは解像度を触らない。1080i の文字が許容不能 & 720p が大幅改善なら → ユーザーが恒久的に 720p に設定（アプリ scope 外）or 再検討。**解像度切替はアプリに焼かない**（切替えると 9:00 復元機構が要る = devil A1 系の複雑化、MATE パネル/アイコン再配置の副作用）。
 - **B7 TV の物理可視域の実測**: firefox で「縦に 0/270/540/810/1080px の目盛りページ」を全画面表示し、実配置で何 px〜何 px 見えるか現物で測る。「上半分=540px」は思い込みかも（家具で下が隠れてるだけなら ~700px、額縁で上下削れて ~450px かも）。実測値が出るまで CSS に高さを焼かない。clock+weather+garbage(+nowplaying) が実測可視域で「部屋の向こうから読める」字サイズに収まるかモックで現物確認（収まらないなら nowplaying 落とす / garbage 1 行に圧縮）。
@@ -77,6 +93,13 @@ x11vnc はシステムサービス（`/etc/systemd/system/x11vnc.service`）で 
 - **B14 `xset` の有無**: `ExecStartPre` の X-readiness gate で `xset q` を使う想定。無ければ `xdpyinfo` or `[ -e /tmp/.X11-unix/X0 ]` に倒す。
 - **B15 `loginctl show-user miho | grep Linger`**: linger 無効なら user timer は session 依存（auto-login で常時 session ありなので実害薄い）。`loginctl enable-linger miho` は安い保険（要 sudo はユーザー側端末）。やるか判断。
 - **B16 garbage の nth-weekday 計算テスト**（実装時必須）: 第 n 曜日の月境界 / 第 5 週が無い月 / 「今日が収集日」のとき next 判定（収集時刻 前/後）/ 月跨ぎ。
+- **B17 (新規) `$!` = `_NET_WM_PID` 同一性 + 持続性**: `/usr/bin/firefox` は `exec /usr/lib/firefox/firefox "$@"`（5 行 shell wrapper、確認済）。dashboard 専用 profile で launcher PID が新窓の `_NET_WM_PID` と一致し続けるか、起動後 10s/60s/300s 後に観察 + `ps -o pid,ppid,cmd --ppid <FF_PID>` で fork tree 確認。`/usr/bin/firefox` の中身は package update で変わる可能性があるため、firefox update 時にも本検証を再走させる。
+- **B18 (新規) `_NET_WM_PID` カバレッジ + first-run wizard**: 全 firefox 窓（本窓 / Profile Manager / splash / first-run wizard / what's-new tab）で `_NET_WM_PID` がセットされるか、`xprop` で目視。dashboard 専用 profile の初回起動で wizard / what's-new tab が新窓として現れないか確認。
+- **B19 (新規) cold boot 起動所要時間**: laptop 起動 5 分後 + auto-login session で `--new-instance --no-remote --profile` 起動 → 新窓出現まで何秒。10s 上限（`seq 1 20 × sleep 0.5`）で間に合うか判定材料。**上限を観察せずに増やすのは 2 周目該当 = 採らない**。
+- **B20 (新規) firefox crash → restart 時の挙動**: 新インスタンスが crash recovery で auto-restart した場合、`$!` PID は古い PID で残り、新 PID の窓は polling timeout → benign give-up。9:00 stop で cgroup-kill されるまで「窓不在」状態が固定化しないか確認。
+- **B21 (新規) `_NET_WM_PID` セット遅延 race**: window create と `_NET_WM_PID` セットの間に race、初出 iter 観測。`for i in $(seq 1 30); do wmctrl -l -p | awk -v p=$FF '$3==p {print $1, NR; exit}'; sleep 0.2; done` で何 iter 目から PID 列に出るか観察（B19 と統合可）。
+- **B22 (新規) 3 重指定独立 process 保証**: `ps -ef | grep firefox` で常用 firefox PID と新 firefox PID が別、新 PID の `lstart` が新しいことを確認。profile dir 内の lock 残骸が cleanup されているか（現行 `dashboard-start.sh:58` の `rm -f "$FF_PROFILE/.parentlock" "$FF_PROFILE/lock"` 対策済）。
+- **B23 (新規) Marco fullscreen 化窓の z-order 保証**: 常用 firefox 窓が HDMI-1 全面残置時、別 PID の dashboard 窓を `-e 0,0,0,1920,1080 → -b add,fullscreen` 後、`xwininfo -root -tree` で stacking order 確認 + TV 目視。常用窓が前面に残るなら `wmctrl -i -a "$WIN_ID"` を fullscreen 直後に 1 行追加（採用）。ux 元案 `-b add,above` は不採用（always-on-top 固定 race、9:00 stop 前のユーザータッチで state 永続化リスク）。
 
 ---
 
@@ -121,6 +144,8 @@ dashboard/
 - slot 判定: 境界時刻の特別扱いをしない。start 時に 1 回確定、途中再評価しない。slot #2 が来たら時計監視ループを足すのではなく `dashboard@<slot>.service` テンプレ化に移行。
 - now-playing: mpv IPC は 1 回の connect-or-empty で確定。「mpv 起動待ちで数回リトライ」をしない。
 - respawn: `while true; do firefox …; done` 系禁止。`Restart=` 付けない。子が 1 個落ちても残りは degrade、9:00 に cgroup kill で掃除。
+- **窓識別**: `wmctrl -l -p` の PID 一致のみで確定。WM_CLASS マッチへの fallback / 多重述語（WM_CLASS AND PID）/ 配置後の geometry read-back / stderr 文言マッチは足さない。PID 一致で 0 件 = benign give-up。firefox launch 失敗時は `$!` が前ジョブ PID（nowplaying-helper or mpv）を返し、helper/mpv は X11 窓を持たない → wmctrl で見つからず timeout → benign give-up に流れる。
+- **案 A 不成立観測時の引き直し先 = G（placement 軸移行）**: 「PID 一致でも見つからない」観測時（3 朝連続失敗、§ 朝の運用ルール準拠）は polling 上限（10s → 20s）を増やす **2 周目を打たず**、identity 軸 → placement 軸へ 1 度で引き直し: G（`firefox --kiosk --kiosk-monitor=<N>` + wmctrl 撤去）。最小覆しデータは monitor index 決定論性 / HDMI-1 占有 / 9:00 panel 復帰 / fullscreen-warning 抑止 / `--new-instance --kiosk` 干渉 / xrandr disconnect 挙動。**同一軸の中間段（i-TITLE 等）は持たない** — 補欠複数を持つと patch #2/#3 を呼び込み「3 度目を打たずに一段引いて設計を見直す」上限を浪費（`~/companion/CLAUDE.md` 抵触）。G への移行は判断根拠を本欄に追記してから着手。
 
 ---
 
@@ -139,10 +164,19 @@ dashboard/
 - [x] **〔ユーザー〕`docs/SETUP.md` の手順を実行**（音楽配置 → dashboard-config.js 記入 → 手動 start/stop テスト → timer enable → git push）— 2026-05-14 完了。dashboard-config.js の中村区実データ書き換えは TODO に残る
 - [ ] **〔ユーザー〕`web/dashboard-config.js` を名古屋市中村区の実収集日・実緯度経度に書き換え**（今はダミー）
 - [x] git → GitHub private repo `mooneclipse/companion-dashboard`（private）→ push 済み（2026-05-13）。※companion repo 群の monorepo 化は someday 候補（`workspace/PROJECT.md` の「将来の保留事項」に記載）
+- [ ] (B12 残) 2026-05-15 05:30 発火検証 → **失敗**、root cause = WM_CLASS-grep が前夜 22:14 起動の常用 firefox 窓（PID 158734、YouTube タブ）を拾った。修正案: `bin/dashboard-start.sh` の窓同定を `wmctrl -l -p` の PID 一致（`$3 == $FF_PID`）に置換（~3 行差分）。再 enable は B3 改訂 / B4 改訂 / B17-B23 検証 pass 後。
+- [ ] **〔ユーザー〕現状回復**（window `0x02000003` = 常用 firefox YouTube タブが HDMI-1 全面残置中）:
+  - **推奨（案 1）**: 常用 firefox を一旦閉じて再起動（data loss なし、自然な操作、タブ復元 ON 前提）
+  - 案 2（コマンド慣れているユーザーの選択肢）: `DISPLAY=:0 wmctrl -i -r 0x02000003 -b remove,fullscreen && wmctrl -i -r 0x02000003 -e 0,1920,83,1366,710` で LVDS-1 元位置に戻す
+  - **dashboard 再 enable 前の 1 回限りの後片付け**、毎朝のルーチンとしては書かない
+  - dashboard.service 経由は不採用（関心分離違反）
+- [ ] **〔ユーザー〕実機検証** B3 改訂 / B4 改訂 / B17-B23（平日昼・在席時に実施、音が出る系・寝てる人を起こす系は避ける）。検証結果を該当 B 項目に「✅ pass」付記して commit。
+- [ ] patch 適用（実機検証 pass 後）: `bin/dashboard-start.sh` line 91 で `FF_PID=$!` 追加 / line 99 の `wmctrl -l -x | awk 'tolower($3) ~ /firefox/'` を `wmctrl -l -p | awk -v p="$FF_PID" '$3==p'` に置換。commit → push。
+- [ ] timer は既に enable 済（2026-05-14）、patch 適用後の翌朝 5:30 発火を観察。
 
 ## In progress
 
-- ユーザーレビュー待ち（モック見た目 / dashboard-config.js 記入 / 秒表示の好み）+ 実機検証 B1-B16
+- ユーザー実機検証 B3 改訂 / B4 改訂 / B17-B23 + 〔ユーザー〕現状回復 + `bin/dashboard-start.sh` patch + 翌朝 5:30 発火再観察。`web/dashboard-config.js` 中村区実データ書き換えも継続。
 
 ## Done
 
@@ -153,3 +187,8 @@ dashboard/
 - 2026-05-13 git init + 初回ローカル commit（push は未。pre-commit hook 配置 + gitleaks 確認込み）
 - 2026-05-14 手動 start 実機検証: TV に全画面表示 OK / 時計・天気・ゴミ表示 OK / mpv は slot=morning 等価コマンドで起動、当初値 sink 50% × stream 100% で `module-stream-restore` による stream 上書きが起きないことを確認（B1 pass）/ `~/music/morning/` の dir→playlist 再生 OK（B2 pass）/ now-playing helper `/np` が `Access-Control-Allow-Origin: *` 付きで正常応答（mpv 起動時は `playing:true`、不在時は `playing:false` を HTTP 200 で返す）。実音量が大きすぎたため `SINK_VOL_PCT` を 50→20 に変更（最終運用値）。
 - 2026-05-14 `dashboard-start.timer` / `dashboard-stop.timer` を `enable --now` で本番化。`list-timers` で次発火 2026-05-15 05:30 (start) / 09:00 (stop) を確認。翌朝の実発火確認（B12 残）と中村区実データへの `web/dashboard-config.js` 書き換え（TODO 残）が残作業。
+- 2026-05-15 dashboard 初発火（05:30）で TV に dashboard 窓が出ず、LVDS-1 に小窓 firefox が出る事故が発生。journal の `placed firefox window 0x02000003 on HDMI-1 (fullscreen)` は新規 dashboard 窓ではなく前夜 22:14 起動の常用 firefox YouTube 窓（PID 158734）を動かしていた（root cause: `bin/dashboard-start.sh:99` の WM_CLASS-grep が同一バイナリ起動の全窓を区別不能）。team `dashboard-redesign`（architect / ux / devil's advocate）で設計引き直し:
+  - **採用**: 窓同定を `wmctrl -l -p` の PID 一致（`$3 == $FF_PID`）に置換。差分 ~3 行（`bin/dashboard-start.sh` line 91 で `FF_PID=$!` 追加 / line 99 predicate 置換）。
+  - **B23 z-top 保証**（実機検証で必要なら）: `add,fullscreen` 直後に `wmctrl -i -a <id>` 1 行追加（ux 元案 `-b add,above` は always-on-top 固定 race リスクで不採用）。
+  - **案 A 不成立観測時の引き直し先**: G（`firefox --kiosk --kiosk-monitor=<N>`）、3 朝連続失敗観測で移行。中間段（i-TITLE 等）は持たない。
+  - 設計議論で z-top 対応案・補欠階段で方針反転 4 周目に到達、`~/companion/CLAUDE.md`「3 度目を打たずに一段引いて設計を見直す」適用、lead が「これ以上の方針反転は受理しない」closure 強制で確定。team archive: `~/.claude/plans/dashboard-redesign-architect.md` / `-ux.md` / `-devil.md`（後の Phase 2.5 着手者リファレンスとして残置、本 STATUS が center of truth）。
