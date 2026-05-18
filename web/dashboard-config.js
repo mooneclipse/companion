@@ -12,9 +12,9 @@
  */
 window.DASHBOARD_CONFIG = {
   weather: {
-    // 名古屋市中村区（おおよそ。名古屋駅周辺）
-    lat: 35.170,
-    lon: 136.882,
+    // 名古屋市中村区（N35°10'25.38" E136°52'16.87"）
+    lat: 35.173717,
+    lon: 136.871353,
     tz: 'Asia/Tokyo'
   },
   garbage: {
