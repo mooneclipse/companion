@@ -101,10 +101,13 @@ class BudgetSummary:
 
 def _aggregate(ledger_path: Path, now: datetime) -> dict:
     """Aggregate ledger entries into the shared §4.6 schema fields."""
+    # 入口で JST 正規化。CLI / テスト経由で UTC aware datetime が渡された場合でも、
+    # month_start / 1h / 5h window が JST 基準で揃う (B2-2)。
+    now = now.astimezone(JST)
     entries = read_ledger(ledger_path)
     recent_1h = _entries_since(entries, now - timedelta(hours=1))
     recent_5h = _entries_since(entries, now - timedelta(hours=5))
-    month_entries = _entries_since(entries, _month_start(now.astimezone(JST)))
+    month_entries = _entries_since(entries, _month_start(now))
 
     cost_5h = sum(float(e.get("total_cost_usd") or 0.0) for e in recent_5h)
     cost_month = sum(float(e.get("total_cost_usd") or 0.0) for e in month_entries)
@@ -264,6 +267,9 @@ class CreditBudgetGuard(BudgetGuard):
         month_start = _month_start(now.astimezone(JST))
         entries = _entries_since(read_ledger(self.ledger_path), month_start)
         cost_month = sum(float(e.get("total_cost_usd") or 0.0) for e in entries)
+        # `<` 採用 = 月次予算到達ぴったり ($100.00) で拒否する仕様。float 累計の
+        # 丸め誤差 (例: $100.0000001) は 1 セント未満で実質影響なし、Decimal 化
+        # までは過剰 (B2-1)。
         return cost_month < self.monthly_budget_usd
 
     def record(
@@ -350,12 +356,37 @@ def format_summary(s: BudgetSummary) -> str:
 
 
 def make_budget_guard() -> BudgetGuard:
-    """Construct the BudgetGuard configured via env (design.md §4.2)."""
+    """Construct the BudgetGuard configured via env (design.md §4.2).
+
+    `BOT_REQUESTS_PER_HOUR` / `BOT_MONTHLY_CREDIT_USD` は整数 / 正の float の
+    early validation を行う。誤設定 (負値・非数値) で bot が黙って全 deny に
+    倒れたり、ValueError を遅延発火 (allow() 呼び出し時) するのを防ぐ (B2-4)。
+    """
     kind = os.environ.get("BOT_BUDGET_GUARD", "requests_count").strip()
     if kind == "requests_count":
-        limit = int(os.environ.get("BOT_REQUESTS_PER_HOUR", "20"))
+        limit_raw = os.environ.get("BOT_REQUESTS_PER_HOUR", "20")
+        try:
+            limit = int(limit_raw)
+        except ValueError as e:
+            raise ValueError(
+                f"BOT_REQUESTS_PER_HOUR must be a positive integer, got: {limit_raw!r}"
+            ) from e
+        if limit <= 0:
+            raise ValueError(
+                f"BOT_REQUESTS_PER_HOUR must be > 0, got: {limit}"
+            )
         return RequestsCountGuard(limit_per_hour=limit)
     if kind == "credit_usd":
-        budget = float(os.environ.get("BOT_MONTHLY_CREDIT_USD", "100"))
+        budget_raw = os.environ.get("BOT_MONTHLY_CREDIT_USD", "100")
+        try:
+            budget = float(budget_raw)
+        except ValueError as e:
+            raise ValueError(
+                f"BOT_MONTHLY_CREDIT_USD must be a positive number, got: {budget_raw!r}"
+            ) from e
+        if budget <= 0:
+            raise ValueError(
+                f"BOT_MONTHLY_CREDIT_USD must be > 0, got: {budget}"
+            )
         return CreditBudgetGuard(monthly_budget_usd=budget)
     raise ValueError(f"unknown BOT_BUDGET_GUARD: {kind!r}")

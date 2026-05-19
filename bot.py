@@ -97,12 +97,17 @@ async def run_claude(prompt: str, channel_id: int) -> str:
     now = datetime.now(quota.JST)
     if not budget_guard.allow(now):
         summary = budget_guard.summary(now)
-        logger.warning(
-            "budget exceeded channel_id=%s kind=%s count_1h=%d/%s cost_month=%.4f/%.2f",
-            channel_id, summary.guard_kind,
-            summary.count_last_1h, summary.limit_per_hour,
-            summary.cost_month, summary.monthly_budget_usd,
-        )
+        if summary.guard_kind == "requests_count":
+            logger.warning(
+                "budget exceeded channel_id=%s kind=requests_count count_1h=%d/%d",
+                channel_id, summary.count_last_1h, summary.limit_per_hour,
+            )
+        else:
+            logger.warning(
+                "budget exceeded channel_id=%s kind=%s cost_month=%.4f/%.2f",
+                channel_id, summary.guard_kind,
+                summary.cost_month, summary.monthly_budget_usd,
+            )
         return budget_guard.exceeded_message(summary)
 
     meta, is_new = sessions.start_or_resume(channel_id)
@@ -266,7 +271,10 @@ class CompanionClient(discord.Client):
 
     async def _handle_notify(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
-            data = await reader.read()
+            # 同 UID 内の bug / 暴走による無制限メモリ消費を物理的に止める。
+            # Discord chunk(DISCORD_MAX=1900) で分割しても rate limit を踏みかね
+            # ない巨大 push を socket 受信段階で打ち切る (B4-4)。
+            data = await reader.read(1_000_000)
             text = data.decode("utf-8", errors="replace").strip()
             if not text:
                 return

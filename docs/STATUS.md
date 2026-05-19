@@ -33,6 +33,10 @@ Phase 2.5「土管の耐久化（再設計）」T-A〜T-E 全完了 (T-D 後半 
 
 CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR/WARN / `/quota` `[guard: credit_usd]` 表示 / Discord 経由 prompt 計測値を観察。観察結果は PROJECT.md 健全性チェック履歴に時点記録。Phase 4 着手条件 #2 (PROJECT.md L213) 判定の起点となる。
 
+追加観察項目 (2026-05-20 全体レビューで追記):
+- **`claude_runner.ClaudeOptions` 未使用 7 フィールド + `to_sdk_kwargs()` の判定** (B4-1): `add_dir` / `no_session_persistence` / `disable_slash_commands` / `exclude_dynamic_system_prompt_sections` / `setting_sources` / `prompt_prefix` / `prompt_suffix` は SDK 移行耐性 / cache framing 用に T-B で先行設置、現状 bot.py からは `timeout_s` のみ代入。観察期間中に prompt-cache hit 率データ (`/quota` キャッシュ表示) が出揃ったタイミングで「`prompt_prefix` 実装するか、空のまま削るか」を判定。Phase 3 着手者の混乱コストを削るため期間内に決定する
+- **`web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ** (B4-5): rotation 不在の意図設計 (年間数 MB 想定) が観察期間中の Stop フック発火頻度で破綻していないか、行数 + ファイルサイズを 2026-06-02 集計時にチェック
+
 ## In progress
 
 （なし）
@@ -42,6 +46,21 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 （なし）
 
 ## Done
+
+- 2026-05-20 全体コードレビュー (Phase 2.5/3-2 直後 fresh-eye) で発覚した bot/ 側 修正必須 2 件 + 軽微 5 件 を反映
+  - **背景**: 健全性 2 週間観察期間 (2026-05-19〜2026-06-02) の起点で、Phase 2.5 + Phase 3-2 voice/ 側完了直後の fresh-eye として全体レビュー (Claude 直接 + code-reviewer subagent × 3 並列 / agent team 1 軸 punt 可) を実施 (PROJECT.md 健全性履歴 2026-05-20 entry 参照)
+  - **修正必須 A-1**: `bot/tests/test_quota.py` が repo 不在 → 新規追加 (17 テスト全 pass。`_aggregate` JST 正規化 / RequestsCountGuard `<` 境界 / CreditBudgetGuard 月初リセット境界 / make_budget_guard env 切替 + 値バリデーション / exceeded_message 文言を網羅)
+  - **修正必須 A-2**: `bot/bot.py:101` の旧 `logger.warning` が credit_usd 経路で `count_1h=0/None` と読めない文字列を出力 → `guard_kind` 別の 2 分岐に修正、観察期間中の log S/N を回復
+  - **軽微 B2-1**: `quota.py` `CreditBudgetGuard.allow` の float 直接比較 `<` に「丸め誤差は 1 セント未満で実質影響なし、Decimal 化までは過剰」コメント 1 行
+  - **軽微 B2-2**: `quota.py` `_aggregate` 入口で `now = now.astimezone(JST)` 1 行正規化。bot.py 経由では JST 揃いだが、テスト / 将来 UTC 入力でも month_start / 1h / 5h window が JST 基準で揃う
+  - **軽微 B2-4**: `quota.py` `make_budget_guard()` で `BOT_REQUESTS_PER_HOUR` / `BOT_MONTHLY_CREDIT_USD` の早期バリデーション (非数値 / 負値で `ValueError`)。誤設定で全 deny / allow() 呼び出し時遅延発火を防止
+  - **軽微 B4-3**: `design.md` §3.4 `sessions.reset(channel_id) -> SessionMeta` 表記を `-> bool` に訂正 (実装は bool、bot.py L141 で bool 評価のみ、設計の単純化と整合)
+  - **軽微 B4-4**: `bot/bot.py` `_handle_notify` の `reader.read()` を `reader.read(1_000_000)` 上限付与。同 UID bug / 暴走による無制限メモリ消費を物理的に止める
+  - **不採用**: B2-3 (`last_call_at` dead carry → 将来 `/status` 拡張で使う可能性、残置) / B2-5 (.env.example 重複説明 → 読みやすさ優先)
+  - **対症療法 2 周目候補 (事前警戒、修正対象外)**: (1) `claude_runner._STDERR_PATTERNS` 現 2 件、3 件目を増やしたら 2 周目 (CLAUDE.md「stderr 文言マッチ / エラー分類 enum case を増やす修正」)。次は「sessions JSON の state を引けば一意に決まらないか」を先に問う。(2) `bot.py CLAUDE_TIMEOUT` 既定 300s 1 周目、次に伸ばす修正が来たら設計に戻る。長時間応答は MCP/tool 起動が原因のことが多く、`permission_mode` / tool allowlist 側で短絡するのが筋。(3) `vault-sync-from-transcript.sh` rc!=0 後処理に「stderr マッチでリトライ」「自動 reset」追加は 2 周目
+  - **作業範囲**: `bot/bot.py` + `bot/quota.py` + `bot/tests/__init__.py` (新) + `bot/tests/test_quota.py` (新) + `bot/docs/STATUS.md` 本エントリ + `workspace/redesign/design.md` §3 図差分追記 + §3.4 戻り型訂正。design.md / PROJECT.md 修正は workspace 直下 (git 化なし) で同期、bot/ commit には含まない
+  - **code-reviewer**: 軸 2/3/4 で並列実施済 (本エントリ 反映の根拠)、再レビュー不要
+  - **次タスク**: 観察期間 (2026-05-19〜2026-06-02) 継続観察、追加観察項目は本台帳 L37-39 参照
 
 - 2026-05-19 STATUS.md L29 drift 解消 (design.md §4 反映済表記への更新、`2611ee9` push 済)
   - **背景**: 同日中の T-D 後半 CreditBudgetGuard 即時前倒し完了で design.md §4.2 / §4.5 / §4.6 / §15 が反映済になったが、本台帳 L29 設計根拠行が「§4 は ... voice 系作業と同じ commit で別途反映予定」のまま drift 残置
