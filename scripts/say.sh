@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# voice/scripts/say.sh - VOICEVOX 合成 + 発話 consumer API
+# 仕様: ~/companion/workspace/redesign/voice-design.md v2.0 §1.4
+# 合成フローは 1 回で確定 (リトライ自動化禁止、CLAUDE.md「1 回で確定」原則)
+
+set -u
+
+VOICE_HOME="${VOICE_HOME:-$HOME/companion/voice}"
+
+if [ -f "$VOICE_HOME/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$VOICE_HOME/.env"
+    set +a
+fi
+
+ENGINE_HOST="${ENGINE_HOST:-127.0.0.1}"
+ENGINE_PORT="${ENGINE_PORT:-50021}"
+ENGINE_URL="http://${ENGINE_HOST}:${ENGINE_PORT}"
+DEFAULT_SPEAKER="${VOICE_DEFAULT_SPEAKER:-2}"
+
+STATE_DIR="$VOICE_HOME/.state"
+LOCK_FILE="$STATE_DIR/engine.lock"
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/companion-bot.sock"
+
+MAX_TEXT_LEN=2000
+LOCK_TIMEOUT_SEC=5
+
+usage() {
+    cat <<EOF
+Usage: ${0##*/} "TEXT" [SPEAKER_ID]
+       ${0##*/} -h
+
+VOICEVOX engine ($ENGINE_URL) で TEXT を合成 + 発話する。
+
+Arguments:
+  TEXT         発話テキスト (1..${MAX_TEXT_LEN} chars)
+  SPEAKER_ID   VOICEVOX speaker_id (default: $DEFAULT_SPEAKER)
+
+Exit codes:
+  0  OK
+  1  ENGINE_UNREACHABLE
+  2  ARGS_INVALID
+  3  LOCK_TIMEOUT
+  4  SYNTHESIS_FAILED
+  5  AUDIO_PLAYBACK_FAILED
+
+副作用 (常時、exit code 問わず):
+  voice/.state/last-result-YYYY-MM-DD に「OK | FAIL ...」を 0600 で atomic write
+  exit != 0 時 $SOCK へ「[voice] FAIL <reason> (exit N)」送信
+  (socket 不在 / 送信失敗は last-result に追記して握りつぶす)
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
+
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR"
+
+TODAY="$(date +%F)"
+LAST_RESULT="$STATE_DIR/last-result-$TODAY"
+
+ts() { date '+%Y-%m-%d %H:%M:%S%z'; }
+
+write_last_result() {
+    local body="$1"
+    local tmp
+    tmp="$(mktemp "$STATE_DIR/.last-result.XXXXXX")" || return 1
+    chmod 600 "$tmp"
+    printf '%s\n' "$body" > "$tmp"
+    mv -f "$tmp" "$LAST_RESULT"
+}
+
+append_last_result() {
+    local body="$1"
+    if [ -f "$LAST_RESULT" ]; then
+        printf '%s\n' "$body" >> "$LAST_RESULT"
+    else
+        write_last_result "$body"
+    fi
+}
+
+notify_socket() {
+    local msg="$1"
+    if [ ! -S "$SOCK" ]; then
+        append_last_result "socket unreachable (no $SOCK) @ $(ts)"
+        return
+    fi
+    if ! printf '%s' "$msg" | nc -U -N "$SOCK" 2>/dev/null; then
+        append_last_result "socket send failed @ $(ts)"
+    fi
+}
+
+fail() {
+    local code="$1" reason="$2"
+    write_last_result "FAIL $reason (exit $code) @ $(ts)"
+    notify_socket "[voice] FAIL $reason (exit $code)"
+    exit "$code"
+}
+
+if [ "$#" -lt 1 ]; then
+    usage >&2
+    fail 2 "ARGS_INVALID: TEXT required"
+fi
+
+TEXT="$1"
+SPEAKER="${2:-$DEFAULT_SPEAKER}"
+
+if [ -z "$TEXT" ]; then
+    fail 2 "ARGS_INVALID: empty text"
+fi
+TEXT_LEN="${#TEXT}"
+if [ "$TEXT_LEN" -gt "$MAX_TEXT_LEN" ]; then
+    fail 2 "ARGS_INVALID: text too long ($TEXT_LEN > $MAX_TEXT_LEN)"
+fi
+if ! [[ "$SPEAKER" =~ ^[0-9]+$ ]]; then
+    fail 2 "ARGS_INVALID: speaker_id not integer: $SPEAKER"
+fi
+
+exec 9>"$LOCK_FILE"
+if ! flock -w "$LOCK_TIMEOUT_SEC" 9; then
+    fail 3 "LOCK_TIMEOUT: flock -w $LOCK_TIMEOUT_SEC failed on $LOCK_FILE"
+fi
+
+TMP_DIR="$(mktemp -d -t voice-say.XXXXXX)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+QUERY_JSON="$TMP_DIR/query.json"
+SYNTH_WAV="$TMP_DIR/synth.wav"
+PADDED_WAV="$TMP_DIR/padded.wav"
+CURL_ERR="$TMP_DIR/curl.err"
+FFMPEG_ERR="$TMP_DIR/ffmpeg.err"
+
+HTTP_CODE="$(curl -sS \
+    -X POST --get \
+    --data-urlencode "speaker=$SPEAKER" \
+    --data-urlencode "text=$TEXT" \
+    -o "$QUERY_JSON" -w '%{http_code}' \
+    "$ENGINE_URL/audio_query" 2>"$CURL_ERR")"
+CURL_RC=$?
+if [ "$CURL_RC" -ne 0 ]; then
+    fail 1 "ENGINE_UNREACHABLE: audio_query curl rc=$CURL_RC ($(head -n1 "$CURL_ERR" 2>/dev/null))"
+fi
+if [ "$HTTP_CODE" != "200" ]; then
+    fail 4 "SYNTHESIS_FAILED: audio_query http=$HTTP_CODE"
+fi
+
+HTTP_CODE="$(curl -sS \
+    -H "Content-Type: application/json" \
+    -X POST -d @"$QUERY_JSON" \
+    -o "$SYNTH_WAV" -w '%{http_code}' \
+    "$ENGINE_URL/synthesis?speaker=$SPEAKER" 2>"$CURL_ERR")"
+CURL_RC=$?
+if [ "$CURL_RC" -ne 0 ]; then
+    fail 1 "ENGINE_UNREACHABLE: synthesis curl rc=$CURL_RC ($(head -n1 "$CURL_ERR" 2>/dev/null))"
+fi
+if [ "$HTTP_CODE" != "200" ]; then
+    fail 4 "SYNTHESIS_FAILED: synthesis http=$HTTP_CODE"
+fi
+
+PADDING_SKIPPED=""
+if ffmpeg -loglevel error -y -i "$SYNTH_WAV" -af "adelay=1000" "$PADDED_WAV" 2>"$FFMPEG_ERR"; then
+    PLAY_WAV="$PADDED_WAV"
+else
+    PADDING_SKIPPED="$(head -n1 "$FFMPEG_ERR" 2>/dev/null || echo "ffmpeg unknown error")"
+    PLAY_WAV="$SYNTH_WAV"
+fi
+
+paplay "$PLAY_WAV"
+PAPLAY_RC=$?
+if [ "$PAPLAY_RC" -ne 0 ]; then
+    fail 5 "AUDIO_PLAYBACK_FAILED: paplay rc=$PAPLAY_RC"
+fi
+
+write_last_result "OK @ $(ts)"
+if [ -n "$PADDING_SKIPPED" ]; then
+    append_last_result "padding skipped: $PADDING_SKIPPED"
+fi
+
+exit 0
