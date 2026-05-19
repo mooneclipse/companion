@@ -1,6 +1,6 @@
 # companion-voice 開発台帳（Phase 3-2: TTS (VOICEVOX) + bot 駆動先行 v2.0）
 
-最終更新: 2026-05-19 (voice/scripts/say.sh 実装完了、consumer API v2.0 §1.4 確定形)
+最終更新: 2026-05-19 (voice/ engine 起動経路実装完了、symlink + daemon-reload 済、enable/start は user 判断段階)
 
 ## 設計メモ
 
@@ -301,6 +301,24 @@ team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省 (Pha
 ---
 
 ## Done
+
+- 2026-05-19 voice/ engine 起動経路実装 (voice-design.md v2.0 §1.6 + §1.6.1 確定形)
+  - **背景**: TODO #1 voice/ 側前倒し着手の engine 常駐手段。say.sh が依存する VOICEVOX engine 0.25.2 を systemd user service で起動できる状態にする。完了基準 (i)「say.sh CLI 手動 invoke で発話成功」の前提
+  - **実装内容** (3 ファイル、83 行):
+    - `bin/voice-engine-up.sh` (34 行): foreground 実行 wrapper、systemd ExecStart + 手動デバッグ両用。`cd engine/linux-cpu-x64 && exec ./run --host=127.0.0.1 --port=50021 --cpu_num_threads=2 --output_log_utf8` (§1.6.1 確定オプション、`--use_gpu` / `--speaker=<id>` は付けない)。.env / ENV (`ENGINE_HOST` / `ENGINE_PORT` / `VOICE_ENGINE_THREADS`) override 可、engine バイナリ不在ガード (rc=1 + SETUP.md 誘導)
+    - `bin/voice-engine-ready.sh` (35 行): /version 200 polling 30s benign give-up。`curl -sSf -m 2` で 200 のみ成功扱い、`VOICE_READY_TIMEOUT_SEC` / `VOICE_READY_INTERVAL_SEC` override 可。timeout でも exit 0 + stdout に `ready`/`timeout (Ns)` (systemd 後段 chain fail 防止 + 手動デバッグ判別)
+    - `systemd/companion-voice-engine.service` (14 行): Type=simple / Restart=no (voice-design.md §1.6 + CLAUDE.md「失敗時の回復は state 引き or ユーザー介入」、SIGILL 等は症状隠蔽せず user 介入要求) / WorkingDirectory=engine/linux-cpu-x64 / ExecStart=bin/voice-engine-up.sh / [Install] WantedBy=default.target (24h 受付想定の常駐 daemon、bot.service 類似)
+  - **配置**: `~/.config/systemd/user/companion-voice-engine.service` に symlink (既存 maintenance / dashboard と同パターン) + `systemctl --user daemon-reload` 済、`systemctl --user status` で `Loaded: linked` + `Active: inactive (dead)` 確認 (enable / start はせず、user 判断段階に保留)
+  - **smoke test** (静的):
+    - `bash -n` syntax pass (両 .sh)
+    - voice-engine-ready.sh: `VOICE_READY_TIMEOUT_SEC=2` で benign give-up → stdout `timeout (2s)` + rc=0 確認
+    - voice-engine-up.sh: `ENGINE_DIR=/nonexistent` で engine 不在ガード発火 → stderr error + rc=1 確認
+    - `systemd-analyze --user verify` で unit 構文 pass (無音)
+  - **未テスト経路** (engine 実起動が user 承認段階のため後段):
+    - `systemctl --user start companion-voice-engine.service` → engine 起動 → ready.sh で `ready` 確認 → say.sh 実弾 (V-S1)
+    - SIGILL 等 engine fail 時の Restart=no 観察 (unit が failed のまま残るか確認)
+  - **code-reviewer**: 修正必須なし。軽微提案 (a)(b)(c) はいずれも採用見送り / 取り下げ (現状で運用可)。dashboard.service の `ExecStartPre` / `KillMode=control-group` / `TimeoutStopSec` は voice engine では不要 (GUI 依存なし、子プロセス分岐なし、systemd default の SIGTERM → 90s → SIGKILL で十分) と確認
+  - **次タスク**: user が `systemctl --user start companion-voice-engine.service` で engine 起動 → voice-engine-ready.sh で ready 確認 → say.sh 実弾 (V-S1)。TODO #1 完了基準 (i) 達成判定 + T-1 sprint #1 残「発話確認 user 物理確認」(TV 前で 4 短文 paplay) と合わせて消化
 
 - 2026-05-19 voice/scripts/say.sh 実装 (consumer API、voice-design.md v2.0 §1.4 確定形)
   - **背景**: TODO #1 voice/ 側前倒し着手の主要部品。bot 駆動 `/say` slash command + CLI 手動デバッグの両方が直接呼び出す consumer。完了基準 (i)「say.sh CLI 手動 invoke で発話成功」の準備
