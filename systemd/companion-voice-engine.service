@@ -1,0 +1,14 @@
+[Unit]
+Description=companion VOICEVOX engine (Phase 3-2 TTS bot 駆動先行)
+Documentation=file://%h/companion/voice/docs/STATUS.md
+Documentation=file://%h/companion/workspace/redesign/voice-design.md
+
+[Service]
+Type=simple
+WorkingDirectory=%h/companion/voice/engine/linux-cpu-x64
+ExecStart=%h/companion/voice/bin/voice-engine-up.sh
+# Restart=no: 自動再起動禁止 (voice-design.md v2.0 §1.6、CLAUDE.md「失敗時の回復は state 引き or ユーザー介入」)
+Restart=no
+
+[Install]
+WantedBy=default.target
