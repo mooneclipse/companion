@@ -206,12 +206,12 @@ dashboard/
 - [x] 秒表示は無し（時計は `HH:MM` のみ、コロンは静的）に決定 → `.time .ss` / `<span class="ss">` / inline script の `ss` を削除済み
 - [x] **〔ユーザー〕`docs/SETUP.md` の手順を実行**（音楽配置 → dashboard-config.js 記入 → 手動 start/stop テスト → timer enable → git push）— 2026-05-14 完了。dashboard-config.js の中村区実データ書き換えは TODO に残る
 - [x] **〔ユーザー〕`web/dashboard-config.js` の緯度経度を中村区実値に書き換え** — 2026-05-19 (N35°10'25.38" E136°52'16.87" → lat 35.173717 / lon 136.871353)
-- [ ] **〔ユーザー〕`web/dashboard-config.js` の garbage.rules を中村区の自分の地区の実収集日に書き換え**（現状ダミー）
+- [ ] **〔ユーザー実機作業 / 観察対象外〕`web/dashboard-config.js` の garbage.rules を中村区の自分の地区の実収集日に書き換え**（現状ダミー、機能的支障なし）
 - [x] git → GitHub private repo `mooneclipse/companion-dashboard`（private）→ push 済み（2026-05-13）。※companion repo 群の monorepo 化は someday 候補（`workspace/PROJECT.md` の「将来の保留事項」に記載）
 - [x] (B12 残) 2026-05-15 05:30 発火検証 → **失敗**、root cause = WM_CLASS-grep が前夜 22:14 起動の常用 firefox 窓（PID 158734、YouTube タブ）を拾った。team `dashboard-redesign` で設計引き直し、PID 一致への置換確定。
 - [x] **〔ユーザー〕現状回復** — 2026-05-16 完了（常用 firefox を閉じて HDMI-1 占拠解消）。
 - [x] patch 適用 — 2026-05-16 完了（`bin/dashboard-start.sh` line 91 で `FF_PID=$!` 追加 / line 100 の predicate を `wmctrl -l -p | awk -v p="$FF_PID" '$3==p'` に置換、code-reviewer pass、commit + push 済み）。判断: B3/B4/B17-B23 実機検証 pass を待たず先当て（理由: 設計引き直しは redesign team で確定済、patch は実装 1 周目、明朝 05:30 までの空白を埋めるため）。
-- [ ] **〔ユーザー〕明朝 2026-05-17 05:30 発火観察**（patch 後の本番初発火、cold boot 系の B19 真値、長期持続性 B17、BGM (B11) など実機セッションでは取れなかった項目を確認）。失敗時は STATUS L73「3 朝連続失敗で再設計判断」に従い夜診断、3 朝連続なら G 系列移行。
+- [x] **〔ユーザー〕明朝 2026-05-17 05:30 発火観察** — 2026-05-17 / 5/18 / 5/19 の 3 朝とも user TV 物理確認で **機能成功** (Done 詳細参照、2026-05-20 全体レビュー軸 1 で確定)。journal 上 `firefox window not found within timeout — leaving as-is` は出るが、firefox 自身が kiosk mode で HDMI-1 を占有しており TV 表示は OK。predicate ロジック (wmctrl PID 一致 12 秒以内) の効きどころ見直しは Phase 4 trigger 時 or 別タイミング、L113「3 朝連続失敗」ルールは機能成功のため不発動。
 - [x] **〔ユーザー〕実機検証** B3 改訂 / B4 改訂 / B10 / B17 (短期) / B19 (warm) / B22 / B23 (限定条件) — 2026-05-16 00:55 事故再現条件下で `systemctl --user start dashboard.service` 実行、pass。残り B5 / B7 / B11 / B13 / B15 / B16 / B18 / B20 / B21 は別途。
 - [x] **停止時の音量復元** — 2026-05-16 実装。`bin/dashboard-start.sh` で起動時に現音量・mute を `.state/prev-sink-volume{,mute}` に保存（`LC_ALL=C` でロケール固定）、新規 `bin/dashboard-restore-volume.sh` を `dashboard.service` の `ExecStopPost=` で呼んで復元。要 `systemctl --user daemon-reload`。
 - [x] **時間ごと予報 strip** — 2026-05-16 実装。天気パネル下端に 6/9/12/15/18/21 時の 6 スロット (時刻 / アイコン / 気温 / 降水%) を追加。既存 `forecast_days=1` のレスポンスで賄える。`index.html` / `app.js` (renderHourly) / `style.css` (.wx-hourly grid) 更新。
@@ -224,9 +224,23 @@ dashboard/
 
 ## In progress
 
-- 明朝 2026-05-17 05:30 発火観察（patch 後の本番初発火）。`web/dashboard-config.js` 中村区実データ書き換えは並行。stop 時の音量復元と時間ごと予報も本番初発火で観察対象。v0.2 redesign の B24-B27 も同タイミングで確認。
+（なし、2026-05-20 全体レビュー軸 1 で 5/17-19 観察 Done 移管完了）
 
 ## Done
+
+- 2026-05-20 全体レビュー軸 1 で発覚した dashboard 5/17-19 観察結果整理 + In progress 解消
+  - **背景**: 健全性 2 週間観察期間 (2026-05-19〜2026-06-02) 起点で実施した全体レビュー (PROJECT.md 健全性履歴 2026-05-20 entry 参照) 軸 1 STATUS.md drift 点検で、5/17 patch 後の本番初発火観察が In progress のまま 3 朝放置されている drift を検出。journal 確認 + user TV 物理確認で 3 朝とも機能成功と判明、L113 / L191 「3 朝連続失敗」ルール不発動を確定
+  - **journal 観察値** (`journalctl --user -u dashboard.service` 5/17-19):
+    - 5/17 05:30:00 start / `firefox window not found within timeout — leaving as-is` / 09:00:00 stop, `ExecMainStatus=0` `Result=success` `Consumed 18min 48.153s CPU time`
+    - 5/18 05:30:00 start / 同 / 09:00:00 stop, `Consumed 18min 39.957s CPU time`
+    - 5/19 05:30:00 start / 同 / 09:00:00 stop, `Consumed 18min 51.093s CPU time`
+  - **user TV 物理確認**: 5/17, 5/18, 5/19 の 3 朝とも TV にダッシュボードが映っていた = **機能成功**。journal の「window not found」は dashboard-start.sh L100 の wmctrl predicate (`-l -p | awk '$3==FF_PID'`) が 12 秒以内に PID 一致 window を捕まえられなかっただけで、firefox 自身は `--kiosk` で HDMI-1 を占有・全画面化していた
+  - **「3 朝連続失敗」ルール判定**: L113 / L191 のルールは「機能失敗 (TV に何も映らない / 異常表示)」を前提とする。本件は機能成功なのでルール不発動、G 系列 (firefox --kiosk --kiosk-monitor=<N>) への引き直しは不要
+  - **残置課題 (修正対象外)**: dashboard-start.sh L100 predicate が常に timeout する事実は新たな観察値。firefox --kiosk は自前で全画面化するので wmctrl 操作は本来不要だった可能性 (= 「leaving as-is」が結果オーライ)。Phase 4 trigger 時 or 別タイミングで「predicate を撤去するか / window 移動責務を kiosk monitor option に統合するか」を再判定 → 本台帳「実機検証チェックリスト」B7 拡張系 (B24-B27) の議論時に併合検討。今は機能成功 + 観察値記録のみで commit ノイズを避ける (CLAUDE.md「対症療法 2 周目ルール」抵触なし)
+  - **drift #3 関連**: L209 ゴミ収集ルール書き換え TODO は「ユーザー実機作業 / 観察対象外」とラベル付け、In progress とは別欄管理 (本日 5/20 修正済)
+  - **作業範囲**: `dashboard/docs/STATUS.md` L209 ラベル付け + L214 観察結果記録 + L227 In progress 整理 + 本 Done エントリ。1 ファイル
+  - **code-reviewer**: 省略 (drift 整備 + 観察値記録のみ、実装変更ゼロ、bot/STATUS.md 5/19 「workspace/CLAUDE.md §B-2 反映済 drift 解消」と同方針)
+  - **次タスク**: Phase 2.5 健全性 2 週間観察 (2026-05-19〜2026-06-02) で dashboard.service 引き続き観察、B24-B27 v0.2 redesign 目視は user 朝の運用ペースで実施
 
 - 2026-05-13 skeleton 作成
 - 2026-05-13 設計レビュー（team dashboard-design: architect / ux / devil）完了、本ファイルに確定設計を転記
