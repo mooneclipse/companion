@@ -1,6 +1,6 @@
 # companion-voice 開発台帳（Phase 3-2: TTS (VOICEVOX) + bot 駆動先行 v2.0）
 
-最終更新: 2026-05-19 (voice-design.md v2.0.2 改版で voice/ 側前倒し方針確定、PROJECT.md L184 整合反映)
+最終更新: 2026-05-19 (voice/ git init + GitHub repo (mooneclipse/companion-voice) 初回 push 完了)
 
 ## 設計メモ
 
@@ -301,6 +301,13 @@ team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省 (Pha
 ---
 
 ## Done
+
+- 2026-05-19 voice/ git init + GitHub プライベート repo (mooneclipse/companion-voice) 初回 push 完了
+  - **背景**: voice-design.md v2.0.2 §5.3 voice/ 側前倒し着手方針に沿って、PROJECT.md L46-59「サブプロジェクトの git 化手順」で voice/ を git 化
+  - **作業内容**: `git init -b main` + user 設定 (`1870071+mooneclipse@users.noreply.github.com` / `mooneclipse`) + pre-commit hook (gitleaks) 配置 + `.gitignore` 作成 (4 行: `engine/` / `.state/` / `.env` / `.env.*`、本台帳 L46 center of truth 準拠) + 初回 commit `c5a7d61` (4 files / 467 insertions) → `git push -u origin main`
+  - **gitleaks**: dir スキャン (421MB) と commit hook 両方 `no leaks found`、engine/ (1.69GB の 7z + 展開済バイナリ) は `.gitignore` `engine/` パターンで除外、`git check-ignore -v` で確認済
+  - **code-reviewer**: 修正必須なし。軽微提案 (`*.swp` / `*~` 追加可否、maintenance のみ採用の慣習) は bot/dashboard 多数派慣習 + YAGNI で採用せず (実害出たら 1 行追加で対応)
+  - **次タスク**: TODO #1 残り (T-1 sprint #1 発話確認 user 物理確認 / voice/bin/voice-engine-up.sh + voice-engine-ready.sh / scripts/say.sh / systemd/companion-voice-engine.service 実装)
 
 - 2026-05-19 PROJECT.md Phase 3 ロードマップ #2 (TTS/VOICEVOX) を voice-design v2.0 反映で更新
   - **背景**: PROJECT.md L180-182 が v1.0 設計時の薄い 3 行 (「TTS (VOICEVOX): 応答を音声化」「CPU 軽量モードで実用域。Phase 4 のキャラ声と直接接続できる」「ディレクトリ: ~/companion/voice/」) のまま、v2.0 確定 (5/19) が反映されていなかった。別セッション「続きおねがい」で center of truth として最初に読まれる文書のため、ここを v2.0 整合させて voice 実装着手時の誤認を防ぐ
