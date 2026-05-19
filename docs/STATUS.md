@@ -26,7 +26,7 @@
 Phase 2.5「土管の耐久化（再設計）」T-A〜T-E 全完了 (T-D 後半 = 2026-05-19 即時前倒し)。残 TODO なし。
 
 設計根拠:
-- `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14; §4 は 2026-05-19 CreditBudgetGuard 即時前倒しに伴う追補が voice 系作業と同じ commit で別途反映予定)
+- `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14; §4.2 / §4.5 / §4.6 / §15 に 2026-05-19 CreditBudgetGuard 即時前倒し追補を反映済)
 - `~/companion/workspace/redesign/questions.md` (UQ-1〜UQ-10 全項目回答済)
 
 ### Phase 2.5 健全性 2 週間観察 (2026-05-19 〜 2026-06-02)
