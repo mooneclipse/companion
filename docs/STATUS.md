@@ -43,6 +43,13 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 
 ## Done
 
+- 2026-05-19 STATUS.md L29 drift 解消 (design.md §4 反映済表記への更新、`2611ee9` push 済)
+  - **背景**: 同日中の T-D 後半 CreditBudgetGuard 即時前倒し完了で design.md §4.2 / §4.5 / §4.6 / §15 が反映済になったが、本台帳 L29 設計根拠行が「§4 は ... voice 系作業と同じ commit で別途反映予定」のまま drift 残置
+  - **更新内容**: L29 → 「§4.2 / §4.5 / §4.6 / §15 に 2026-05-19 CreditBudgetGuard 即時前倒し追補を反映済」
+  - **作業範囲**: bot/docs/STATUS.md L29 1 行、計 1 ファイル
+  - **code-reviewer**: 省略 (drift 整備のみ実装変更ゼロ、前回 5/19 「workspace/CLAUDE.md §B-2 反映済 drift 解消」エントリと同方針)
+  - **次タスク**: Phase 2.5 健全性 2 週間観察期間 (2026-05-19 〜 2026-06-02) 継続観察
+
 - 2026-05-19 Phase 2.5 T-D 後半 (CreditBudgetGuard) 実装 + 2026-05-19 即時前倒し有効化 (design.md §4.2 → §4.6)
   - **背景**: 元設計では T-D 後半 = 2026-06 上旬実施予定 (design.md §4.2「意図的に伸ばす、当時に新クレジット制の挙動詳細が公式 release で出揃う想定」)。voice/ 側前倒し完了後 (5/19 完了基準 (i) 達成) で空白期間 2〜3 週間が発生、user 確認で「6月の変更以外を前倒しできないか、そうしないと 1 ヶ月近く何もできない」→ ledger.jsonl 検証 (5/14〜5/19 で累計 $0.7961 = 月次 $100 の 0.80%) + user 認識訂正 (companion-bot は `claude -p` のみで Anthropic API キーは使わない、6/15 はカウント方式変更 (5h cycle → 月次クレジット制度)、Anthropic Max 5x プラン公式メールで $100/月確定) で **CreditBudgetGuard 実装 + 即時切替を採用**
   - **設計判断履歴 (空白期間活用)**:
