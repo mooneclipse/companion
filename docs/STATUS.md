@@ -1,6 +1,6 @@
 # companion-voice 開発台帳（Phase 3-2: TTS (VOICEVOX) + bot 駆動先行 v2.0）
 
-最終更新: 2026-05-19 (voice/ git init + GitHub repo (mooneclipse/companion-voice) 初回 push 完了)
+最終更新: 2026-05-19 (voice/scripts/say.sh 実装完了、consumer API v2.0 §1.4 確定形)
 
 ## 設計メモ
 
@@ -301,6 +301,27 @@ team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省 (Pha
 ---
 
 ## Done
+
+- 2026-05-19 voice/scripts/say.sh 実装 (consumer API、voice-design.md v2.0 §1.4 確定形)
+  - **背景**: TODO #1 voice/ 側前倒し着手の主要部品。bot 駆動 `/say` slash command + CLI 手動デバッグの両方が直接呼び出す consumer。完了基準 (i)「say.sh CLI 手動 invoke で発話成功」の準備
+  - **実装内容** (182 行):
+    - exit code 6 段階 (0 OK / 1 ENGINE_UNREACHABLE / 2 ARGS_INVALID / 3 LOCK_TIMEOUT / 4 SYNTHESIS_FAILED / 5 AUDIO_PLAYBACK_FAILED)
+    - flock 1 段 (`.state/engine.lock`、`-w 5` で取得失敗 → exit 3、FD 9 exit close で解放)
+    - 副作用「常時実行」: `.state/last-result-YYYY-MM-DD` atomic write (mktemp → chmod 600 → printf → mv -f、同一 fs rename(2))、`.state/` 自体は 0700
+    - exit != 0 時 socket 通知 (`$XDG_RUNTIME_DIR/companion-bot.sock`、`nc -U -N`、maintenance/lib/notify.sh 慣例踏襲)。socket 不在 / 送信失敗は last-result に追記して握りつぶす (fail-open)
+    - silence padding 1 秒 (ffmpeg `adelay=1000`、fail-open。失敗時は padding skipped を last-result に追記 exit 0 維持)
+    - 引数長 2000 字超 → exit 2、speaker_id 整数バリデート
+    - リトライ自動化禁止 (CLAUDE.md「1 回で確定」原則)
+    - .env 読込 (VOICE_DEFAULT_SPEAKER=2 等)、ENGINE_HOST/ENGINE_PORT も env override 可
+  - **smoke test** (静的): `bash -n` syntax pass、`-h` ヘルプ出力 OK、空引数 → exit 2 で last-result-2026-05-19 に「FAIL ARGS_INVALID: empty text (exit 2)」記録 (0600 で書き込み確認)
+  - **未テスト経路** (Phase 3-2 実装完走後の V-S1 で実弾検証):
+    - exit 1 ENGINE_UNREACHABLE (engine 未起動状態で実行)
+    - exit 3 LOCK_TIMEOUT (別 say.sh で flock 占有時)
+    - exit 4 SYNTHESIS_FAILED (engine HTTP error 経路)
+    - exit 5 AUDIO_PLAYBACK_FAILED (paplay rc != 0)
+    - exit 0 OK + silence padding 成功経路
+  - **code-reviewer**: 修正必須なし。軽微提案 5 件 (A: HTTP_CODE 空文字ガード、B: `nc` タイムアウト、C: 失敗 WAV 保存、D: `--get -X POST` warning、E: SPEAKER percent-encode) はいずれも仕様準拠範囲で現状維持判断 (Phase 4 trigger 発生時に再検討)
+  - **次タスク**: voice/bin/voice-engine-up.sh + voice-engine-ready.sh / voice/systemd/companion-voice-engine.service (engine 起動経路、say.sh が依存する VOICEVOX engine の常駐手段)
 
 - 2026-05-19 voice/ git init + GitHub プライベート repo (mooneclipse/companion-voice) 初回 push 完了
   - **背景**: voice-design.md v2.0.2 §5.3 voice/ 側前倒し着手方針に沿って、PROJECT.md L46-59「サブプロジェクトの git 化手順」で voice/ を git 化
