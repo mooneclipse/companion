@@ -305,6 +305,17 @@ team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省。**
 
 ## Done
 
+- 2026-05-19 README.md drift 解消 (5/19 進捗反映: 発話確認 pass / git init + push 完了 / 使い方の前置き整備、`90337f3` push 済)
+  - **背景**: voice/README.md が voice/ 側実装完了 + T-D 後半即時前倒し完了の進捗反映から取り残されていた。本台帳 / PROJECT.md / SETUP.md は反映済で README だけ drift 残置
+  - **更新内容** (5 箇所、1 ファイル):
+    - L11 「発話確認のみ user 物理確認 pending」→「発話確認 user 物理確認は 5/19 pass で完了基準 (i) 達成」
+    - L13 「Phase 2.5 T-D 後半完了後 = 2026-06 中下旬の予定維持」→「健全性 2 週間観察完了後 = 2026-06 上旬目処、T-D 後半 5/19 即時前倒し完了に伴い元案 2026-06 中下旬から前倒し」
+    - L14 「voice/ git init は実装着手 1 件目の commit に揃える」→「2026-05-19: voice/ git init + GitHub プライベート repo 初回 push 完了、voice/ 側実装 (say.sh / bin/ / systemd) 完走」
+    - L20 見出し「使い方 (実装着手後に追記)」→「使い方」
+    - L24 「Phase 2.5 T-D 後半完了後」→「健全性 2 週間観察完了後 = 2026-06 上旬目処」
+  - **code-reviewer**: 省略 (drift 整備のみ実装変更ゼロ、前回 5/19 「workspace/CLAUDE.md §B-2 反映済 drift 解消」エントリと同方針)
+  - **次タスク**: Phase 2.5 健全性 2 週間観察期間 (2026-05-19 〜 2026-06-02) 継続観察 → 完了後 bot/ 側 voice_command.py 実装着手
+
 - 2026-05-19 Phase 2.5 T-D 後半 (CreditBudgetGuard) 即時前倒し完了に伴う台帳 drift 解消
   - **背景**: 同日中に bot/ 側で T-D 後半 (元案 2026-06 上旬実施) を即時前倒しで実装完了 (bot/docs/STATUS.md 2026-05-19 Done エントリ参照、commit `5d64ec2`)。voice/ 系統のスケジュール参照箇所が「T-D 後半 = 2026-06 上旬完了予定」前提のまま残置すると drift、Phase 3-2 全体スケジュールが誤って読まれるため整備
   - **更新内容**:
