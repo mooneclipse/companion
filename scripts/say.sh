@@ -62,7 +62,9 @@ chmod 700 "$STATE_DIR"
 TODAY="$(date +%F)"
 LAST_RESULT="$STATE_DIR/last-result-$TODAY"
 
-ts() { date '+%Y-%m-%d %H:%M:%S%z'; }
+# ISO8601 厳密形式。bot/ 側 voice_status.py が datetime.fromisoformat() で
+# 1 行 parse できるように `%:z` (`+09:00`) を使う (B3-1)。
+ts() { date '+%Y-%m-%dT%H:%M:%S%:z'; }
 
 write_last_result() {
     local body="$1"
@@ -168,10 +170,8 @@ else
     PLAY_WAV="$SYNTH_WAV"
 fi
 
-paplay "$PLAY_WAV"
-PAPLAY_RC=$?
-if [ "$PAPLAY_RC" -ne 0 ]; then
-    fail 5 "AUDIO_PLAYBACK_FAILED: paplay rc=$PAPLAY_RC"
+if ! paplay "$PLAY_WAV"; then
+    fail 5 "AUDIO_PLAYBACK_FAILED: paplay rc=$?"
 fi
 
 write_last_result "OK @ $(ts)"

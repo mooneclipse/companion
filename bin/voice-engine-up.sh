@@ -26,6 +26,9 @@ if [ ! -x "$ENGINE_DIR/run" ]; then
     exit 1
 fi
 
+# 手動 invoke 時の保険。systemd 経由では companion-voice-engine.service の
+# WorkingDirectory= で同一 dir に入るため二重指定だが、シェル直呼びでも
+# `./run` が解決できるよう残置 (B3-4)。
 cd "$ENGINE_DIR"
 exec ./run \
     --host="$ENGINE_HOST" \

@@ -305,6 +305,17 @@ team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省。**
 
 ## Done
 
+- 2026-05-20 全体コードレビューで発覚した voice/ 側 軽微 3 件反映
+  - **背景**: 健全性 2 週間観察期間 (2026-05-19〜2026-06-02) 起点で実施した全体レビュー (PROJECT.md 健全性履歴 2026-05-20 entry / bot/docs/STATUS.md 2026-05-20 entry 参照)。voice/ 側は **修正必須 0 件**、軽微 5 件のうち 3 件採用 / 2 件不採用
+  - **軽微 B3-1**: `say.sh:65` `ts()` を `%Y-%m-%d %H:%M:%S%z` → `%Y-%m-%dT%H:%M:%S%:z` (ISO8601 厳密形式) に変更。bot/ 側 (健全性観察完了後 = 2026-06 上旬目処に着手) で `voice_status.py` が `datetime.fromisoformat()` で 1 行 parse できる。voice/ 側 CLI 単独で使う last-result の人間可読性は維持
+  - **軽微 B3-3**: `say.sh:171` `paplay` を `if ! paplay ...; then fail 5 ...; fi` 形式に変更。`ffmpeg` ブロック (line 164) と統一、`PAPLAY_RC` 中間変数撤去
+  - **軽微 B3-4**: `voice-engine-up.sh:29` `cd "$ENGINE_DIR"` に「手動 invoke 時の保険、systemd 経由では WorkingDirectory= で同一 dir」コメント 1 行追加。将来読者が二重指定に困惑しないため
+  - **不採用**: B3-2 (`LANG=C curl` で英語固定化 → exit code 番号分類が主軸、reason 文言は人間向け log の位置付けで現状 OK、subagent 自身も「現状 OK」評価) / B3-5 (`systemd unit TimeoutStopSec=30` 明示 → default 90s で engine cleanup に十分、Phase 4 常駐化 trigger 時の判断材料として punt 妥当)
+  - **作業範囲**: `voice/scripts/say.sh` (2 箇所) + `voice/bin/voice-engine-up.sh` (1 箇所) + `voice/docs/STATUS.md` 本エントリ。3 ファイル
+  - **bash syntax check**: 両ファイル `bash -n` pass
+  - **code-reviewer**: 軸 3 で並列実施済 (本エントリ反映の根拠)、再レビュー不要
+  - **次タスク**: 観察期間 (2026-05-19〜2026-06-02) 継続観察、完了後 bot/ 側 voice_command.py 実装着手 (2026-06 上旬目処)
+
 - 2026-05-19 README.md drift 解消 (5/19 進捗反映: 発話確認 pass / git init + push 完了 / 使い方の前置き整備、`90337f3` push 済)
   - **背景**: voice/README.md が voice/ 側実装完了 + T-D 後半即時前倒し完了の進捗反映から取り残されていた。本台帳 / PROJECT.md / SETUP.md は反映済で README だけ drift 残置
   - **更新内容** (5 箇所、1 ファイル):
