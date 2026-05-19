@@ -1,6 +1,6 @@
 # companion-voice 開発台帳（Phase 3-2: TTS (VOICEVOX) + bot 駆動先行 v2.0）
 
-最終更新: 2026-05-19 (V-S1 CLI 実弾 pass + T-1 sprint #1 残「発話確認」消化、完了基準 (i) 達成)
+最終更新: 2026-05-19 (workspace/CLAUDE.md §B-2 反映済 drift 解消 + subordinate CLAUDE.md 参照行確認、voice/ 側完了後の空白期間 (a) 消化)
 
 ## 設計メモ
 
@@ -290,9 +290,9 @@ devil T-D-1(d) 構造原則は維持: (1) bot.py 同時 2 方向変更回避 (2)
 | 4 | drift 整備の前倒し処理: voice/SETUP.md (jq install 文 / T-1 sprint 完走条件) + voice/README.md (dashboard 駆動 6:30 → bot 駆動 /say) の v1.0 残置 drift を本台帳更新と同時に解消 |
 | 5 | 期待効果: 完了基準 (i) を 5 月中に達成、6 月の T-D 後半完了後の bot/ 側実装で完了基準 (ii)(iii) を一気に到達。voice Phase 3-2 全体完了が 2026-07 上旬から早まる可能性 (運用観察 2 週間カウントの開始も早まる、Phase 4 着手判断は変動なし) |
 
-### v2.0 議論で得た workspace/CLAUDE.md 補強候補
+### v2.0 議論で得た workspace/CLAUDE.md 補強候補 (2026-05-19 反映済)
 
-team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省 (Phase 3-2 完了タイミングで CLAUDE.md 改版検討対象):
+team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省。**`~/companion/workspace/CLAUDE.md` §「運用上の落とし穴と回避策」B-2「teammate 同士の cross-review 精度向上」として 2026-05-19 反映済** (Phase 3-2 完了を待たず drift 整備で前倒し、voice/ 側完了後の空白期間活用):
 
 - teammate Round N cross-review 着手前に「他 teammate の Round N 最新 plan を読み切る」明文化
 - 各 plan の改版履歴 section を Round 2 / Round 3 ごとに必ず付ける運用 (cross-review 精度向上)
@@ -302,6 +302,15 @@ team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省 (Pha
 ---
 
 ## Done
+
+- 2026-05-19 workspace/CLAUDE.md §B-2 反映済 drift 解消 + subordinate CLAUDE.md 参照行確認 (voice/ 側完了後の空白期間 (a) 消化)
+  - **背景**: voice/ 側前倒し完了 (本日 V-S1 CLI 実弾 pass で完了基準 (i) 達成) で、次タスク Phase 2.5 T-D 後半 (2026-06 上旬予定) まで約 2〜3 週間の空白期間が発生。user 確認で前倒し候補 (a) workspace/CLAUDE.md 補強候補書き起こし + (c) subordinate CLAUDE.md 参照行確認を 1 セッションで処理
+  - **(a) 結果 = drift 整備のみ**: workspace/CLAUDE.md L101-110 §「運用上の落とし穴と回避策」B-2「teammate 同士の cross-review 精度向上 (2026-05-19 voice-design v2.0 議論より追加)」として v2.0 議論 4 項目 (cross-review 精度向上 / 改版履歴 Round 2/3 必須化 / 比較対象 plan version 明示書式 / lead Round 2 SendMessage「latest version 読み直し」明示指示) は **既に反映済** と判明。本台帳「v2.0 議論で得た workspace/CLAUDE.md 補強候補」section + PROJECT.md L286 健全性チェック履歴 2026-05-18 entry の同記載が「Phase 3-2 完了タイミングで CLAUDE.md 改版検討対象」と未反映扱いで残置されていた drift を「反映済」に書き換えて整備
+  - **(c) 結果**: 機械側 entry-point 2 ファイル (`workspace/CLAUDE.md` L3 / `bot-workspace/CLAUDE.md` L29-33) で「設計判断・対症療法の上限」上位参照行を確認、追加変更不要。`vault/CLAUDE.md` は Windows パス (L44) + メイン機 Obsidian 操作前提で companion 機側からの編集対象外と判定 (PROJECT.md L154 / L297「整理・タグ運用はメイン機側で行う」方針と整合、機械側書き込み境界は上位 `~/companion/CLAUDE.md` + `bot-workspace/CLAUDE.md` でカバー済)
+  - **作業範囲**: voice/docs/STATUS.md「v2.0 議論で得た workspace/CLAUDE.md 補強候補」section の前置き 1 行 (見出し含む) + PROJECT.md L286 該当 1 行のみ、計 2 ファイル書き換え。workspace/CLAUDE.md / bot-workspace/CLAUDE.md / vault/CLAUDE.md には触らず (実体反映済または編集対象外)
+  - **code-reviewer**: 修正必須なし、軽微提案 2 件 (Done エントリへの code-reviewer 行追加 / (c) 結果ファイル別所感の簡潔化) いずれも採用反映済
+  - **前倒し候補 (b) Phase 2.5 T-D 後半 (CreditBudgetGuard) 実装前倒し**: 本セッションでは未着手。`MONTHLY_BUDGET_ACTIVE_FROM = datetime(2026, 6, 15, 0, 0, JST)` は **enable 切替** 判定であり実装と独立、ENV `BOT_BUDGET_GUARD=requests_count` のままにすれば実機影響なし可能性。ただし新規設計判断扱い (bot/docs/STATUS.md L36-37「2026-06 上旬実施」予定変更) のため user 別途相談ゲート、本タスク完了報告後に提示
+  - **次タスク**: (b) の前倒し可否 user 相談 → 採否確定後に Phase 2.5 T-D 後半着手 or 6 月上旬まで一旦待機
 
 - 2026-05-19 V-S1 CLI 実弾 pass + T-1 sprint #1 残「発話確認」消化、完了基準 (i) 達成
   - **背景**: voice/ 側実装 (git init + say.sh + engine 起動経路 + systemd unit) 完走を受けて実弾検証。完了基準 (i) は voice-design.md v2.0 §3「say.sh CLI 手動 invoke で発話成功」、TODO #1 voice/ 側前倒しの最終ゲート
