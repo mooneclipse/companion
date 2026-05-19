@@ -64,8 +64,10 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # bot.log は OWNER 限定経路の URL 等を含む。本プロセスが作る file は 0o600 にする
 # (rotation 後の新規 active log や sessions/quota state file にも適用)。
 os.umask(0o077)
-# 過去 0o644 で作られた既存ファイルがあれば 0o600 へ寄せる。
-for _existing in [LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*")]:
+# 過去 0o644 で作られた既存ファイルがあれば 0o600 へ寄せる。ledger.jsonl は
+# CreditBudgetGuard の cost データを含むので明示的に追加 (T-D 後半 2026-05-19)。
+_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "ledger.jsonl"
+for _existing in [LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*"), _LEDGER_PATH]:
     try:
         os.chmod(_existing, 0o600)
     except FileNotFoundError:
@@ -96,14 +98,12 @@ async def run_claude(prompt: str, channel_id: int) -> str:
     if not budget_guard.allow(now):
         summary = budget_guard.summary(now)
         logger.warning(
-            "budget exceeded channel_id=%s count_1h=%d/%s",
-            channel_id, summary.count_last_1h, summary.limit_per_hour,
+            "budget exceeded channel_id=%s kind=%s count_1h=%d/%s cost_month=%.4f/%.2f",
+            channel_id, summary.guard_kind,
+            summary.count_last_1h, summary.limit_per_hour,
+            summary.cost_month, summary.monthly_budget_usd,
         )
-        return (
-            f"[budget guard] 直近 1h あたり {summary.limit_per_hour} 回の上限に到達しました "
-            f"(現在 {summary.count_last_1h} 回)。"
-            "古い記録が window から外れるまでお待ちください。"
-        )
+        return budget_guard.exceeded_message(summary)
 
     meta, is_new = sessions.start_or_resume(channel_id)
     options = ClaudeOptions(timeout_s=CLAUDE_TIMEOUT)

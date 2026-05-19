@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-14 (`/play` の診断 log 追加 + bot.log 0o600 化)
+最終更新: 2026-05-19 (Phase 2.5 T-D 後半 CreditBudgetGuard 実装 + 即時前倒し有効化)
 
 ## 設計メモ
 
@@ -23,19 +23,15 @@
 
 ## TODO
 
-Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半 / T-E 完了、T-D 後半 (2026-06 上旬実施) のみ残。各サブタスク = 1 commit。
+Phase 2.5「土管の耐久化（再設計）」T-A〜T-E 全完了 (T-D 後半 = 2026-05-19 即時前倒し)。残 TODO なし。
 
 設計根拠:
-- `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14)
+- `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14; §4 は 2026-05-19 CreditBudgetGuard 即時前倒しに伴う追補が voice 系作業と同じ commit で別途反映予定)
 - `~/companion/workspace/redesign/questions.md` (UQ-1〜UQ-10 全項目回答済)
 
-### T-D 後半 (2026-06 上旬実施)
+### Phase 2.5 健全性 2 週間観察 (2026-05-19 〜 2026-06-02)
 
-- `CreditBudgetGuard` 実装 (月次クレジット $100、月初リセット)
-- 切替: `bot/.env` の `BOT_BUDGET_GUARD=requests_count|credit_usd` (ENV master、`quota.make_budget_guard()` で分岐)
-- 6/15 以降は `/quota` の本月累計行プレースホルダが自動で剥がれる (`MONTHLY_BUDGET_ACTIVE_FROM` 判定、T-D 前半で実装済)
-- Phase 2.5 着手後の実弾 1 週間で `BOT_REQUESTS_PER_HOUR` 実測値を STATUS.md に記録 (現状 default 20)
-- 対応 §: design.md §4.2 (CreditBudgetGuard 仕様)
+CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR/WARN / `/quota` `[guard: credit_usd]` 表示 / Discord 経由 prompt 計測値を観察。観察結果は PROJECT.md 健全性チェック履歴に時点記録。Phase 4 着手条件 #2 (PROJECT.md L213) 判定の起点となる。
 
 ## In progress
 
@@ -46,6 +42,49 @@ Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半 / T-E 完了、
 （なし）
 
 ## Done
+
+- 2026-05-19 Phase 2.5 T-D 後半 (CreditBudgetGuard) 実装 + 2026-05-19 即時前倒し有効化 (design.md §4.2 → §4.6)
+  - **背景**: 元設計では T-D 後半 = 2026-06 上旬実施予定 (design.md §4.2「意図的に伸ばす、当時に新クレジット制の挙動詳細が公式 release で出揃う想定」)。voice/ 側前倒し完了後 (5/19 完了基準 (i) 達成) で空白期間 2〜3 週間が発生、user 確認で「6月の変更以外を前倒しできないか、そうしないと 1 ヶ月近く何もできない」→ ledger.jsonl 検証 (5/14〜5/19 で累計 $0.7961 = 月次 $100 の 0.80%) + user 認識訂正 (companion-bot は `claude -p` のみで Anthropic API キーは使わない、6/15 はカウント方式変更 (5h cycle → 月次クレジット制度)、Anthropic Max 5x プラン公式メールで $100/月確定) で **CreditBudgetGuard 実装 + 即時切替を採用**
+  - **設計判断履歴 (空白期間活用)**:
+    - design.md §4.5 「Anthropic クレジット残量の公式 API 経由照会」は Anthropic Console 使用量自動取得手段 (オプション拡張) を指す、bot 実装本体は `claude -p --output-format json` の `total_cost_usd` ledger 累計で完結。公式 release で前提が変わる手戻りリスクは実装本体には無関係 (将来オプション拡張で取り込み可、これは「対症療法」ではなく「機能拡張」)
+    - `MONTHLY_BUDGET_ACTIVE_FROM = 2026-06-15` プレースホルダ境界は user 選択で (α) 撤廃、`format_summary()` の本月累計行を常時表示に簡素化
+    - 月次クレジット枠 = $100 (Max 5x プラン、Anthropic 公式メール文面で確定、design.md §4.1 UQ-5 と整合)
+    - devil T-D-1(d) 構造原則 (bot.py 同時 2 方向回避 + Phase 2.5 健全性 2 週間観察) との衝突なし: voice/ 側完了済 + bot/ 側 voice は 6 月中下旬予定、CreditBudgetGuard は bot.py / quota.py のみで完結 = voice 側と独立
+  - **実装内容** (3 ファイル):
+    - **`bot/quota.py`** (≈340 行):
+      - module docstring 更新 (CreditBudgetGuard 即時前倒しの設計参照 + プレースホルダ撤廃を明記)
+      - `MONTHLY_BUDGET_ACTIVE_FROM` 定数撤廃、`BudgetSummary.monthly_budget_active: bool` フィールド撤廃
+      - `_aggregate(ledger_path, now) -> dict` helper 新設 (両 guard が共通で使う ledger 集計、§4.6 共通スキーマ)、`_record_common(...)` helper 新設 (両 guard 共通の ledger append)
+      - `BudgetGuard` ABC に `exceeded_message(summary) -> str` を abstract method 追加 (元 bot.py hardcode 文言を guard 側責務に集約)
+      - `RequestsCountGuard` を `_aggregate` + `_record_common` 使用に refactor、`exceeded_message()` 追加 (回帰テスト pass)
+      - `CreditBudgetGuard` 新規実装: `allow(now)` = 月初 (00:00 JST) 〜 now の累計 < `monthly_budget_usd`、`record()` = `_record_common` 経由、`summary()` = `guard_kind="credit_usd"` / `limit_per_hour=None`、`exceeded_message()` = 「月次予算 $X.XX / $100.00 到達、月初までクールダウン」(design.md §4.4 第 2 期文言)
+      - `format_summary()`: `if s.monthly_budget_active:` 分岐削除、常時「本月累計 $X.XX / $100.00 (使用 N%, 残り $Y)」表示、`[guard: credit_usd / 本月 $X/$Y]` 表示分岐追加
+      - `make_budget_guard()`: `credit_usd` 分岐を `NotImplementedError` から `CreditBudgetGuard(monthly_budget_usd=BOT_MONTHLY_CREDIT_USD default 100)` に切替
+    - **`bot/bot.py`** (`run_claude` 周辺、約 5 行差分):
+      - logger.warning フォーマット拡張 (`kind=%s ... cost_month=%.4f/%.2f` 追加、credit_usd 経路でも有意な観察値が残る)
+      - hardcode 超過文言を `budget_guard.exceeded_message(summary)` 呼び出しに置換
+    - **`bot/.env.example`**:
+      - `BOT_BUDGET_GUARD` default を `requests_count` → `credit_usd` に変更 (即時切替方針)
+      - `BOT_MONTHLY_CREDIT_USD=100` 新規追加 (Max 5x プラン枠の説明文付き)
+      - 既存 `BOT_REQUESTS_PER_HOUR=20` は残置 (requests_count に戻す時のため、コメントで明示)
+  - **単体テスト (venv 経由で 9 テスト全 pass)**:
+    1. CreditBudgetGuard.allow() under/at/over budget (80/100=True, 100/100=False, 105/100=False)
+    2. 月初リセット境界 (5/19 → 6/1 で過月分 200 がリセットされ True)
+    3. summary() schema (guard_kind="credit_usd" / limit_per_hour=None / monthly_budget_active 属性なし)
+    4. format_summary() 本月累計常時表示 (プレースホルダ文言「集計中」が出ないこと)
+    5. exceeded_message() 文言確認
+    6. make_budget_guard() env 切替 (credit_usd / requests_count / bogus → ValueError)
+    7. RequestsCountGuard 回帰 (limit=3 で 3 件 deny)
+    8. RequestsCountGuard.exceeded_message() 回帰
+  - **適用手順** (user 操作):
+    - `bot/.env` を `.env.example` 差分に倣って `BOT_BUDGET_GUARD=credit_usd` + `BOT_MONTHLY_CREDIT_USD=100` を追加 (`BOT_REQUESTS_PER_HOUR` は残置でも可、未使用になる)
+    - `systemctl --user restart companion-bot.service` で反映
+    - Discord で `/quota` 実弾、`[guard: credit_usd / 本月 $X.XX/$100.00]` 表示 + 本月累計行常時表示 + 「集計中」プレースホルダ消滅を確認
+  - **code-reviewer**: 修正必須 1 件 (本台帳の TODO「T-D 後半 (2026-06 上旬実施)」記述を更新 = 本エントリで反映済)、軽微提案 2 件 ((i) `sessions/ledger.jsonl` 0o600 化 = bot.py L68 chmod ループに追加済 (ii) 月末枠到達時の手動引き上げ手順 = 本台帳「運用注記」section 新設で追加済) いずれも採用反映
+  - **Phase 2.5 完全完了 = 健全性 2 週間観察カウント 2026-05-19 から開始**:
+    - PROJECT.md L262 「Phase 4 着手条件 #2 観察カウントは Phase 2.5 完全完了 (T-D 後半含む) 後の 2026-06 中旬から開始」→ T-D 後半完了が 2026-05-19 に早まったため、観察カウント開始も 2026-05-19 に前倒し
+    - 2 週間経過 = 2026-06-02、その後 voice bot/ 側実装 (devil T-D-1(d) 順序原則) → 2026-06 上旬目処
+  - **次タスク**: 関連台帳 (design.md §4 訂正 / voice/docs/STATUS.md T-D 後半完了反映 + bot/ 側着手時期前倒し / PROJECT.md 健全性チェック履歴 + Phase 2.5 完了状況更新) を別 commit で反映
 
 - 2026-05-14 `/play` 追加実装の周辺改善 (診断 log + log 権限厳格化)
   - **背景**: `/play` の allowlist 拒否時に bot.log で原 URL が判別できず原因切り分けが効かなかった (短縮 URL を渡して拒否されたが、log 側からは `cmd=/play send len=82` のみで内容不明)。
@@ -237,6 +276,10 @@ Phase 2.5「土管の耐久化（再設計）」T-C / T-D 前半 / T-E 完了、
 ## 既知の問題
 
 （なし）
+
+## 運用注記
+
+- **CreditBudgetGuard 月末枠到達時の手動引き上げ**: `BOT_BUDGET_GUARD=credit_usd` 経路で月内 cost 累計が `BOT_MONTHLY_CREDIT_USD` (default $100) に到達すると `allow()` が False を返し続け、月初までクールダウンメッセージを返却する。緊急で枠を引き上げたい場合は `bot/.env` の `BOT_MONTHLY_CREDIT_USD` を一時的に大きい値 (例 200) に上書き → `systemctl --user restart companion-bot.service` で反映。元に戻すときも同手順。Anthropic Max 5x プラン側の "extra usage" は別物 (Anthropic Console で manual enable、companion-bot は ledger 集計しか見ない)
 
 ## 運用ルール
 
