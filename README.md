@@ -8,19 +8,19 @@ Phase 3-2 (PROJECT.md L143-188) の TTS サブプロジェクト。VOICEVOX (CPU
 
 ## 状態
 
-- 2026-05-18: voice/ サブプロジェクト初期化、T-1 sprint #1 大部分 pass (発話確認のみ user 物理確認 pending)
+- 2026-05-18: voice/ サブプロジェクト初期化、T-1 sprint #1 大部分 pass (発話確認 user 物理確認は 5/19 pass で完了基準 (i) 達成)
 - 2026-05-18〜19: T-1 sprint #2 V-1 pass / V-13 fail → voice-design v2.0 (case B: 朝自動発火 punt + bot 駆動先行) 確定
-- 2026-05-19: 前倒し方針確定で voice/ 実装着手段に移行 (bot/ 側 voice_command.py 等は Phase 2.5 T-D 後半完了後 = 2026-06 中下旬の予定維持)
-- voice/ git init は実装着手 1 件目の commit に揃える (PROJECT.md L46-59 のサブプロジェクト git 化手順)
+- 2026-05-19: 前倒し方針確定で voice/ 実装着手段に移行 (bot/ 側 voice_command.py 等は Phase 2.5 健全性 2 週間観察完了後 = 2026-06 上旬目処、T-D 後半 5/19 即時前倒し完了に伴い元案 2026-06 中下旬から前倒し)
+- 2026-05-19: voice/ git init + GitHub プライベート repo (`mooneclipse/companion-voice`) 初回 push 完了、voice/ 側実装 (say.sh / bin/ / systemd) 完走
 
 ## セットアップ
 
 `SETUP.md` 参照 (公式 7z DL + 展開手順)。
 
-## 使い方 (実装着手後に追記)
+## 使い方
 
 ```bash
-# 単発発話 (CLI 直接、bot 経由は voice_command.py 経路、Phase 2.5 T-D 後半完了後)
+# 単発発話 (CLI 直接、bot 経由は voice_command.py 経路、健全性 2 週間観察完了後 = 2026-06 上旬目処)
 ~/companion/voice/scripts/say.sh "テキスト" [speaker_id]
 ```
 
