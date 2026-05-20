@@ -1,6 +1,6 @@
 # companion-remote 開発台帳（フェーズ外単発ユーティリティ: スマホ専用リモコン PWA）
 
-最終更新: 2026-05-20 (プロジェクト初期化、設計議論未着手)
+最終更新: 2026-05-20 (ローカル git のみ (rollback 専用) で先行 git 化 / 設計議論未着手)
 
 ## 概要
 
@@ -38,7 +38,7 @@ remote/
     └── .gitignore
 ```
 
-git init は voice/ パターンに揃え「実装着手と同時、設計議論完了後」。
+git の扱い (2026-05-20 更新): まず **(C) ローカル git のみ (remote なし、rollback 専用)** で先行 git 化済み (`.gitignore` + gitleaks フック + 初回 commit)。設計議論段階の改稿を rollback できる状態にするのが目的。**(B) GitHub バックアップ付きへの昇格** (= `remote add` + `push`) は voice/ パターンに揃え「実装着手と同時、設計議論完了後」に判断する。git 化 3 階層の定義は `~/companion/CLAUDE.md` git 運用方針 / `workspace/PROJECT.md`「git 化の 3 階層」参照。
 
 ## TODO
 
@@ -53,7 +53,10 @@ git init は voice/ パターンに揃え「実装着手と同時、設計議論
 
 ## Done
 
-(なし)
+- 2026-05-20 `remote/` をローカル git のみ (remote なし、rollback 専用) で先行 git 化
+  - **背景**: companion 配下 git 化を 3 階層に整理 ((C) ローカルのみ新設)。設計議論段階の `docs/STATUS.md` / 今後の設計メモの改稿を rollback できるよう先行導入
+  - **やったこと**: `git init -b main` + user 設定 + gitleaks pre-commit フック配置 + `.gitignore` 作成 + `gitleaks dir` で no leaks 確認 + 初回 commit。**GitHub remote は意図的に付けない**
+  - (B) GitHub バックアップ付きへの昇格は実装着手時に判断 (上「git の扱い」参照)
 
 ## 既知の問題
 
