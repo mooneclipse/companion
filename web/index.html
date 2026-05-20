@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- CSP: 同一オリジンのみ。inline script/style 不許可(外部 app.js/style.css)、XSS 面を絞る -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'; base-uri 'none'">
+<meta name="theme-color" content="#1b1f2a">
+<title>リモコン</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="glance" id="glance" role="button" tabindex="0" aria-label="接続状態と OS health（タップで詳細）">
+  <span class="dot" id="conn-dot" aria-hidden="true"></span>
+  <span id="glance-text">接続確認中…</span>
+</header>
+
+<main>
+  <!-- トークン未設定 / 失効時 -->
+  <section id="token-setup" class="card" hidden>
+    <h2>トークン設定</h2>
+    <p id="token-msg">SSH で発行したトークンを貼り付けてください。</p>
+    <input type="password" id="token-input" autocomplete="off" inputmode="text" placeholder="トークン">
+    <button id="token-save" type="button">保存</button>
+  </section>
+
+  <!-- 操作 -->
+  <section id="app" hidden>
+    <section class="card">
+      <h2>発話</h2>
+      <textarea id="say-text" rows="3" maxlength="2000" placeholder="しゃべらせるテキスト"></textarea>
+      <div class="row">
+        <input type="number" id="say-speaker" min="0" inputmode="numeric" placeholder="speaker(任意)">
+        <button id="say-send" type="button">発話</button>
+      </div>
+      <p id="say-result" class="result" role="status"></p>
+    </section>
+
+    <section class="card" id="status-card" hidden>
+      <h2>OS status</h2>
+      <dl id="status-detail"></dl>
+      <button id="status-refresh" type="button">更新</button>
+    </section>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

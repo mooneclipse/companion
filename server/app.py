@@ -96,8 +96,17 @@ ROUTES = {
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。
-#      URL を FS に連結せず、この dict に列挙された固定パスのみ配信する。PWA 本体は RA-5 で追加。
-STATIC = {}
+#      URL を FS に連結せず、この dict に列挙された固定パスのみ配信する(無認証 = §2.3)。
+STATIC = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/index.html": ("index.html", "text/html; charset=utf-8"),
+    "/app.js": ("app.js", "application/javascript; charset=utf-8"),
+    "/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/manifest.json": ("manifest.json", "application/manifest+json"),
+    "/sw.js": ("sw.js", "application/javascript; charset=utf-8"),
+    "/icons/icon-192.png": ("icons/icon-192.png", "image/png"),
+    "/icons/icon-512.png": ("icons/icon-512.png", "image/png"),
+}
 
 
 class Handler(BaseHTTPRequestHandler):
