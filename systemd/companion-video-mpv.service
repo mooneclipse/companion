@@ -1,0 +1,49 @@
+[Unit]
+Description=companion remote F-video 常駐 mpv (idle, IPC リモコン制御専用)
+Documentation=file://%h/companion/remote/docs/STATUS.md
+Documentation=file://%h/companion/workspace/redesign/video-design.md
+
+[Service]
+Type=simple
+WorkingDirectory=%h/companion/remote
+
+# --- 環境隔離 (video-design §4.2 / §2 lead 実証: 最小 env rc=0) ---
+# user shell env / PROXY 系は systemd user unit が既定で継承しない。
+# PATH は yt-dlp(/home/miho/bin)を先頭に固定。HOME / XDG_RUNTIME_DIR は user unit が自動付与。
+Environment=PATH=/home/miho/bin:/usr/bin:/bin
+# 動画出力先(TV=HDMI)。dashboard.service と同じく明示。
+Environment=DISPLAY=:0
+# IPC socket を 0o600 で作らせる(同一 GUI uid からのみ到達 = video-design §3.4 / 契約2,3)。
+UMask=0077
+
+# stale socket 掃除を systemd 任せ(remote.service に supervise 責務を足さない、§3.2)。
+ExecStartPre=-/bin/rm -f %t/companion-video-mpv.sock
+
+# resident idle mpv。null 起動で常駐し、HTTP 経由の loadfile replace を待つ。
+#  --idle=yes              : ファイル無しでも常駐(再生 state を mpv が所有 → ジョブ基盤不要)
+#  --force-window=no       : idle 中は窓を占有しない(V-A1 で TV 黒画面化しないこと確認)
+#  --fullscreen --fs-screen: 再生時のみ TV 側へ全画面(N は V-A1 で決定論性確認、暫定 0)
+#  --no-config             : ~/.config/mpv を読まない(SG-3 ハードニング)
+#  --ytdl-raw-options      : yt-dlp に --ignore-config / --no-playlist を強制
+#  ytdl_hook-ytdl_path     : yt-dlp 実体を固定パスで解決(PATH 依存にしない)
+#  --ytdl-format           : 720p 上限(AVX1+HDD で 4K ソフトデコード自己DoS 回避。数値は1回確定)
+#  --input-ipc-server      : リモコン制御の唯一の入口(verb whitelist は server/video.py 側)
+ExecStart=/usr/bin/mpv \
+    --idle=yes \
+    --no-terminal \
+    --force-window=no \
+    --fullscreen \
+    --fs-screen=0 \
+    --no-config \
+    --ytdl=yes \
+    --ytdl-raw-options=ignore-config=,no-playlist= \
+    --script-opts=ytdl_hook-ytdl_path=/home/miho/bin/yt-dlp \
+    --ytdl-format=bestvideo[height<=?720]+bestaudio/best[height<=?720]/best \
+    --input-ipc-server=%t/companion-video-mpv.sock
+
+# 単一インスタンス = 単一 lane を物理保証(409/lane ガード不要、§3.2)。クラッシュ時のみ再起動。
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
