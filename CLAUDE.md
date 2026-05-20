@@ -69,6 +69,20 @@ workspace 直下は **(C) ローカル git のみ（remote なし、rollback 専
   - 新フェーズ着手前の発散探索（UX 体験 / 技術アーキ / コスト & 運用負荷 を並走させて衝突）
 - **subagent で済ます**: 並列に報告を集めるだけ・議論不要のとき。既存の `code-reviewer` の延長（軸別レビュー、単発の grep 探索、Explore agent）はこちらで継続。トークン消費が桁で違う
 
+### 通信トポロジー（star / mesh のフェーズ切り替え）
+
+agent teams は「全員が lead 経由で報告する star 型」と「teammate 同士が直接 SendMessage で反証し合う mesh 型」のどちらにもなる。**spawn prompt で mesh を明示しないと自動的に star に潰れる**（2026-05-20 video-design で実測: teammate 同士の直接メッセージ 0、全員 lead 経由）。star に潰れた team はトークンを払ってサブエージェント形の価値しか出さない。
+
+判断基準は「網羅されて戻りの少ない設計が出るか」。star 単独は devil が当事者へ直接ぶつけられず網羅性を取りこぼし、mesh 単独は version すれ違いで戻る（B-2 の voice-design v2.0 事故）。したがって**フェーズで切り替える**:
+
+- **発散・反証ラウンド = mesh**: spawn prompt で「各 teammate は自分の plan を**互いに直接 SendMessage で送り合い**、相手の弱点を名指しで反証してから lead に集約せよ。lead 経由の伝言で済ませない」を明示する。anchoring 回避と設計衝突の早期表面化はここでしか出ない
+- **収束・成果物書き起こし = star**: 最終判断・整合確認・`design.md` 等の確定は lead が center of truth として単独責任（共通根本対策のとおり）
+- **mesh の発火条件**: B-2 の version 規律（cross-review 着手前に相手の Round N 最新版を読み切る／各 plan に改版履歴 section を付ける）を満たすときのみ mesh を許可。満たせない局面は star に倒す（無秩序 mesh は戻りを増やす）
+
+spawn prompt テンプレ（発散ラウンド用、ロール名は適宜差し替え）:
+
+> 「architect / security / devil / ux を spawn。各自 read-only plan mode で自分の軸の plan を作ったら、**他メンバー全員へ直接 SendMessage で plan を送り、相手の最新版を読み切った上で弱点を名指し反証**せよ。反証往復が一巡してから lead に集約。lead 経由の伝言で cross-review を代替しない。各 plan には Round ごとの改版履歴 section を必ず付ける」
+
 ### companion 固有の前提
 
 - 表示モードは in-process。Linux Mint の通常端末で tmux/iTerm2 を常用しないため、`teammateMode` は明示せず公式デフォルトの `auto`（tmux 外なら自動的に in-process）に任せる
