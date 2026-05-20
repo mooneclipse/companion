@@ -1,0 +1,20 @@
+[Unit]
+Description=companion remote (スマホ専用リモコン PWA + 配信サーバ, 127.0.0.1)
+Documentation=file://%h/companion/remote/docs/STATUS.md
+Documentation=file://%h/companion/workspace/redesign/remote-design.md
+
+[Service]
+Type=simple
+WorkingDirectory=%h/companion/remote
+# .env は任意(- 付きで不在でも起動)。REMOTE_PORT / REMOTE_SAY_SH を渡す。
+EnvironmentFile=-%h/companion/remote/.env
+# say.sh(F-2)の paplay 経路向け。PULSE は XDG_RUNTIME_DIR/pulse 経由で届く想定だが、
+# DISPLAY は dashboard.service と同じく明示しておく(audio env 充足は §9 で serve 実機検証)。
+Environment=DISPLAY=:0
+ExecStart=%h/companion/remote/server/app.py
+# 常駐 HTTP サーバなのでクラッシュ時は再起動(stateless、回復に state 引きは不要)。
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
