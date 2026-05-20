@@ -68,11 +68,25 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
   - **Round 4 起動条件**: (i) 観察期間完了 2026-06-02 or 5/26 以降の早期点検判断 (ii) 観察データ初期メトリクス確定 (iii) 観察期間中発覚 issue + 判定保留軸の再点検 (axis-5-result.md §6)
   - **team cleanup**: 本 entry + axis-5-result.md 転記完了確認後、architect / devil / ux に shutdown_request → approve → TeamDelete 予定
   - **落とし穴 D 違反訂正の書面化**: lead 自身が axis-5 prompt 5/26 推奨を 5/20 に前倒し判断 = lead 単独責任で「user 判断 (b) と両立する形で実施」明示済 (PROJECT.md 健全性履歴 5/20 entry S-4)
-  - **claude CLI 2.1.141 → 2.1.145 無記録 up 検出 (M-7、本 entry 詳細)**:
+  - **claude CLI 2.1.141 → 2.1.145 無記録 up 検出 + 再検証完了 (M-7、本 entry 詳細)**:
     - 5/20 軸 5 lead 実機検証で `claude --version` = **2.1.145** 確認、本 STATUS.md L234 (2026-05-14 T-0) の 2.1.141 記録から 4 バージョン分上昇が無記録で進行
     - design.md §1.5 / §10.4 + `~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」運用ルール違反、devil P1「実害ゼロ常態化」と方向は別軸だが補強材料
-    - 観察期間 (2026-05-19〜2026-06-02) の bot.service が **2.1.141 想定設計で 2.1.145 実機運用** している差分あり: 観察初期は 2.1.145 想定設計に追いつくため再検証 pass 後に design.md §1.5 version pin 更新
-    - **本 review 完了後最優先タスク**: S1-S5 再検証 + encoded-cwd 規則確認 + `claude -p --help` で `--bare` デフォルト動作変更確認、再検証結果は本 entry に追記 (= 結果が出てから別 commit、本 commit では再検証実施宣言のみ)
+    - 観察期間 (2026-05-19〜2026-06-02) の bot.service が **2.1.141 想定設計で 2.1.145 実機運用** している差分あり、5/20 軸 5 完了直後に再検証実施
+    - **再検証結果 (2026-05-20 軸 5 完了直後実施)**: S1-S5 全シナリオ pass + design.md §1.5 (2.1.138) / 5/14 T-0 (2.1.141) と完全一致:
+
+  | シナリオ | コマンド | 結果 (2.1.145) | 5/14 T-0 (2.1.141) / design.md §1.5 (2.1.138) 一致 |
+  |---|---|---|---|
+  | S1 新規 | `--session-id $(uuidgen) "..."` | rc=0、`~/.claude/projects/-tmp-bot-cli-verify-2026-05-20/<uuid>.jsonl` 作成、stdout=`ALPHA` | ✓ |
+  | S2 継続 | `--resume <uuid> "..."` | rc=0、直前 ALPHA を想起 = 文脈保持 | ✓ |
+  | S3 lost | `--resume <存在しない uuid>` | rc=1、stderr `No conversation found with session ID: <uuid>` | ✓ 完全一致 |
+  | S4 in-use | `--session-id <既存uuid>` | rc=1、stderr `Error: Session ID <uuid> is already in use.` | ✓ 完全一致 |
+  | S5 json | `--output-format json --session-id <new> "..."` | rc=0、JSON 単一オブジェクト | ✓ + 追加情報 (`ttft_ms` 新規) |
+
+    - 検証 CWD: `/tmp/bot-cli-verify-2026-05-20/`、env unset 5 件 (CLAUDECODE / CLAUDE_CODE_ENTRYPOINT / CLAUDE_CODE_EXECPATH / CLAUDE_CODE_SESSION_ID / ANTHROPIC_API_KEY)、Haiku 4.5 model (検証コスト最小化、S5 cost = $0.01370685)
+    - encoded-cwd 規則 確認: `/tmp/bot-cli-verify-2026-05-20` → `-tmp-bot-cli-verify-2026-05-20`、JSONL 保存先 = `~/.claude/projects/-tmp-bot-cli-verify-2026-05-20/<uuid>.jsonl` ✓
+    - **S5 stdout 新規観察 (2.1.145 で 5/14 T-0 2.1.141 から追加)**: `ttft_ms: 5875` (time to first token、cold start 計測材料)、その他は 2.1.141 と同等 (生データ: `bot/docs/reviews/2026-05-20-cli-2.1.145-S5-stdout.json` に保管)
+    - **`--bare` 動作確認** (§1.8 #5、N4 監視): 説明文「Minimal mode: skip hooks, LSP, plugin sync, attribution, auto-memory, background prefetches, keychain reads, and CLAUDE.md auto-discovery. Sets CLAUDE_CODE_SIMPLE=1. Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are never read). 3P providers (Bedrock/Vertex/Foundry) use their own credentials. Skills still resolve via /skill-name.」 → オプトインのまま、デフォルト動作変更なし、5/14 T-0 (2.1.141) と同等。N4「bot.py は明示的に `--bare` を使わない」継続妥当
+    - **design.md §1.5 への反映**: 末尾に「2.1.141 (5/14 T-0) + 2.1.145 (5/20 M-7) でも S1-S5 結果完全一致、`ttft_ms` 新規追加」追記 (別 commit、本 entry の commit と合わせて 2 commits)
 
 - 2026-05-20 全体コードレビュー (Phase 2.5/3-2 直後 fresh-eye) で発覚した bot/ 側 修正必須 2 件 + 軽微 5 件 を反映
   - **背景**: 健全性 2 週間観察期間 (2026-05-19〜2026-06-02) の起点で、Phase 2.5 + Phase 3-2 voice/ 側完了直後の fresh-eye として全体レビュー (Claude 直接 + code-reviewer subagent × 3 並列 / agent team 1 軸 punt 可) を実施 (PROJECT.md 健全性履歴 2026-05-20 entry 参照)
