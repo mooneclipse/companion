@@ -1,0 +1,14 @@
+[Unit]
+Description=Persistent tmux session "claude" for remote attach (Android via Tailscale SSH)
+After=default.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/companion/workspace
+ExecStartPre=-/usr/bin/tmux kill-session -t claude
+ExecStart=/usr/bin/tmux new-session -d -s claude -c %h/companion/workspace
+ExecStop=/usr/bin/tmux kill-session -t claude
+
+[Install]
+WantedBy=default.target

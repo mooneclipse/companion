@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# gitleaks pre-commit: scan staged diff for secrets before allowing the commit.
+# 新しい subproject を git init したときは、このファイルを `.git/hooks/` にコピーして
+# `chmod +x` する（PROJECT.md「サブプロジェクトの git 化手順」参照）。
+GITLEAKS="$HOME/bin/gitleaks"
+if [ ! -x "$GITLEAKS" ]; then
+    echo "warning: gitleaks not found at $GITLEAKS; skipping pre-commit secret scan" >&2
+    exit 0
+fi
+exec "$GITLEAKS" git --pre-commit --staged --redact --no-banner
