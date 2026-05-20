@@ -20,6 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import auth
 import status as os_status
+import urlguard
+import video
 import voice
 
 HOST = "127.0.0.1"
@@ -86,6 +88,91 @@ def api_say(handler):
     return _SAY_EXIT_MAP.get(rc, (500, {"error": "voice failed"}))
 
 
+def _read_json(handler):
+    """body を JSON dict としてパース。(data, None) か (None, (code, obj))。"""
+    try:
+        data = json.loads(handler._read_body() or b"{}")
+    except ValueError:
+        return None, (400, {"error": "invalid json"})
+    if not isinstance(data, dict):
+        return None, (400, {"error": "invalid json"})
+    return data, None
+
+
+def _is_num(val):
+    """bool を除く int/float のみ True(JSON の true/false を数値扱いしない)。"""
+    return isinstance(val, (int, float)) and not isinstance(val, bool)
+
+
+def _video_result(resp, ok_body=None):
+    """video.py の mpv 応答を HTTP へ写像。接続不能=503 / mpv エラー=502 / 成功=200。
+
+    判定は構造化応答(mpv IPC の error フィールド)のみ。stderr パースはしない(§5.4 契約)。
+    """
+    if resp is None:
+        return 503, {"error": "video unavailable"}  # mpv unit 停止/socket 不在
+    if resp.get("error") != "success":
+        return 502, {"error": "command failed"}
+    return 200, (ok_body or {"status": "ok"})
+
+
+def api_video_play(handler):
+    """POST /api/video/play {url} — urlguard で normalize → loadfile replace。Bearer 必須。
+
+    url は §4.1 allowlist(唯一の外向き境界)を通ったものだけが mpv へ届く。即 200 で返し、
+    yt-dlp 解決(40〜70s)は mpv 内で非同期進行(PWA は GET /api/video/state でポーリング)。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    url = urlguard.normalize(data.get("url"))
+    if url is None:
+        return 400, {"error": "url rejected"}
+    return _video_result(video.play(url))
+
+
+def api_video_pause(handler):
+    return _video_result(video.pause())
+
+
+def api_video_resume(handler):
+    return _video_result(video.resume())
+
+
+def api_video_stop(handler):
+    return _video_result(video.stop())
+
+
+def api_video_seek(handler):
+    """POST /api/video/seek {pos} — 絶対シーク(秒)。VOD のみ(live gate は PWA 側)。"""
+    data, err = _read_json(handler)
+    if err:
+        return err
+    pos = data.get("pos")
+    if not _is_num(pos) or pos < 0:
+        return 400, {"error": "pos must be a non-negative number"}
+    return _video_result(video.seek(pos))
+
+
+def api_video_volume(handler):
+    """POST /api/video/volume {v} — mpv volume(0〜130)。PulseAudio sink は不可触(契約1)。"""
+    data, err = _read_json(handler)
+    if err:
+        return err
+    v = data.get("v")
+    if not _is_num(v) or v < 0 or v > 130:
+        return 400, {"error": "v must be a number in 0..130"}
+    return _video_result(video.set_volume(v))
+
+
+def api_video_state(handler):
+    """GET /api/video/state — phase/title/pos/duration/pause/is_live/seekable を集約。"""
+    s = video.state()
+    if s is None:
+        return 503, {"error": "video unavailable"}
+    return 200, s
+
+
 # (i) API 明示ルートテーブル。値は (handler, auth_required)。ここに無い (method, path) は 404。
 #     self.path を FS に連結しない。auth_required=False は無認証 endpoint(生存確認のみ)、
 #     それ以外の /api/* は (iv) Bearer 必須。
@@ -93,6 +180,14 @@ ROUTES = {
     ("GET", "/api/health"): (health, False),
     ("GET", "/api/status"): (api_status, True),
     ("POST", "/api/say"): (api_say, True),
+    # F-video(全て Bearer 必須)。state のみ GET、他は POST。
+    ("POST", "/api/video/play"): (api_video_play, True),
+    ("POST", "/api/video/pause"): (api_video_pause, True),
+    ("POST", "/api/video/resume"): (api_video_resume, True),
+    ("POST", "/api/video/stop"): (api_video_stop, True),
+    ("POST", "/api/video/seek"): (api_video_seek, True),
+    ("POST", "/api/video/volume"): (api_video_volume, True),
+    ("GET", "/api/video/state"): (api_video_state, True),
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。
