@@ -28,6 +28,9 @@ ExecStartPre=-/bin/rm -f %t/companion-video-mpv.sock
 #  --no-config             : ~/.config/mpv を読まない(SG-3 ハードニング)
 #  --ytdl-raw-options      : yt-dlp に --ignore-config / --no-playlist を強制
 #  ytdl_hook-ytdl_path     : yt-dlp 実体を固定パスで解決(PATH 依存にしない)
+#  ytdl_hook-try_ytdl_first: 最初から yt-dlp を呼ぶ(既定 no は youtube を ffmpeg 直開き→
+#       必ず失敗→on_load_fail フォールバックする。実 vo 環境では解決の遅いアーカイブで
+#       直開き失敗後に load が idle 中断され再生不能になる。V-A3 build 検証 2026-05-21 で確定)
 #  --ytdl-format           : 720p 上限(AVX1+HDD で 4K ソフトデコード自己DoS 回避。数値は1回確定)
 #  --input-ipc-server      : リモコン制御の唯一の入口(verb whitelist は server/video.py 側)
 ExecStart=/usr/bin/mpv \
@@ -39,7 +42,7 @@ ExecStart=/usr/bin/mpv \
     --no-config \
     --ytdl=yes \
     --ytdl-raw-options=ignore-config=,no-playlist= \
-    --script-opts=ytdl_hook-ytdl_path=/home/miho/bin/yt-dlp \
+    --script-opts=ytdl_hook-ytdl_path=/home/miho/bin/yt-dlp,ytdl_hook-try_ytdl_first=yes \
     --ytdl-format=bestvideo[height<=?720]+bestaudio/best[height<=?720]/best \
     --input-ipc-server=%t/companion-video-mpv.sock
 
