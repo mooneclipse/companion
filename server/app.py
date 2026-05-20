@@ -16,19 +16,24 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import auth
+
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("REMOTE_PORT", "47824"))
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
+MAX_BODY = 64 * 1024  # (iii) JSON body 上限。F-1 prompt の別枠拡張は v1-β。
 
 
 def health(handler):
-    """GET /api/health — 認証不要の生存確認。"""
+    """GET /api/health — 無認証の生存確認(情報を漏らさず liveness のみ)。"""
     return 200, {"status": "ok"}
 
 
-# (i) API 明示ルートテーブル。ここに無い (method, path) は 404。self.path を FS に連結しない。
+# (i) API 明示ルートテーブル。値は (handler, auth_required)。ここに無い (method, path) は 404。
+#     self.path を FS に連結しない。auth_required=False は無認証 endpoint(生存確認のみ)、
+#     それ以外の /api/* は (iv) Bearer 必須。
 ROUTES = {
-    ("GET", "/api/health"): health,
+    ("GET", "/api/health"): (health, False),
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。
@@ -63,10 +68,51 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, body, content_type)
 
+    def _authorized(self):
+        h = self.headers.get("Authorization", "")
+        if not h.startswith("Bearer "):
+            return False
+        return auth.verify(h[7:].strip())
+
+    def _read_body(self, max_bytes=MAX_BODY):
+        """検証済み Content-Length 分の body を読む(_dispatch で cap 済)。"""
+        try:
+            clen = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            return b""
+        if clen <= 0 or clen > max_bytes:
+            return b""
+        return self.rfile.read(clen)
+
     def _dispatch(self, method):
         path = self.path.split("?", 1)[0]
-        handler = ROUTES.get((method, path))
-        if handler is not None:
+        # (iii) Content-Length 手動 cap(全リクエスト共通)。body 読込前に弾く。
+        # body 未読で応答する分岐は keep-alive 再利用での desync を避けるため接続を閉じる。
+        # chunked は未サポート(制御下のクライアントは Content-Length 送出)。未読 body の
+        # desync を避けるため明示拒否する。
+        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+            self.close_connection = True
+            self._send_json(400, {"error": "bad request"})
+            return
+        try:
+            clen = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            self.close_connection = True
+            self._send_json(400, {"error": "bad request"})
+            return
+        if clen < 0 or clen > MAX_BODY:
+            self.close_connection = True
+            self._send_json(413, {"error": "payload too large"})
+            return
+        route = ROUTES.get((method, path))
+        if route is not None:
+            handler, auth_required = route
+            # (iv) Bearer 必須 endpoint
+            if auth_required and not self._authorized():
+                if clen:
+                    self.close_connection = True
+                self._send_json(401, {"error": "unauthorized"})
+                return
             try:
                 code, obj = handler(self)
             except Exception:
@@ -76,9 +122,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(code, obj)
             return
         if method == "GET":
-            entry = STATIC.get(path)
-            if entry is not None:
-                self._serve_static(entry)
+            static = STATIC.get(path)
+            if static is not None:
+                self._serve_static(static)
                 return
         self._send_json(404, {"error": "not found"})
 
