@@ -37,6 +37,8 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 - **`claude_runner.ClaudeOptions` 未使用 7 フィールド + `to_sdk_kwargs()` の判定** (B4-1): `add_dir` / `no_session_persistence` / `disable_slash_commands` / `exclude_dynamic_system_prompt_sections` / `setting_sources` / `prompt_prefix` / `prompt_suffix` は SDK 移行耐性 / cache framing 用に T-B で先行設置、現状 bot.py からは `timeout_s` のみ代入。観察期間中に prompt-cache hit 率データ (`/quota` キャッシュ表示) が出揃ったタイミングで「`prompt_prefix` 実装するか、空のまま削るか」を判定。Phase 3 着手者の混乱コストを削るため期間内に決定する
 - **`web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ** (B4-5): rotation 不在の意図設計 (年間数 MB 想定) が観察期間中の Stop フック発火頻度で破綻していないか、行数 + ファイルサイズを 2026-06-02 集計時にチェック
 
+軸 5 集約観察項目 (2026-05-20 軸 5 agent team で追加、19 件統合): 詳細は `~/companion/workspace/review-2026-05-20/axis-5-result.md` §4 (K-1〜K-19) 参照。集計タイミング別: 6/2 完了時点 (K-1〜K-12) / 月跨ぎ JST + 月末締め (K-13/K-14) / bot/ 側着手後 (K-15〜K-18) / 本 review 完了後最優先 (K-19 = CLI 2.1.145 再検証)。Round 4 (5/26 以降 or 6/2 完了後) で実観測再点検実施。
+
 ## In progress
 
 （なし）
@@ -46,6 +48,31 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 （なし）
 
 ## Done
+
+- 2026-05-20 軸 5 設計 doc 耐久性レビュー (agent team `companion-durability-0520`) 集約結果
+  - **概要**: 5/20 軸 5 を 5/26 推奨から前倒し起動 (lead 単独判断、devil D-C 致命級指摘の出発点)、3 teammate (architect / devil / ux) Round 1〜Round 2 で集約。集約成果物 = `~/companion/workspace/review-2026-05-20/axis-5-result.md` (center of truth、落とし穴 F 通り teammate plan ファイル消失防護のため lead 単独責任で転記済)
+  - **修正必須 14 件 (M-1〜M-14) 反映済**: 詳細 axis-5-result.md §2 参照
+    - M-1 (PROJECT.md 健全性履歴運用ルール昇格) / M-14 (PROJECT.md remote/ 同居境界原則) / S-1〜S-4 (PROJECT.md 設計判断履歴) / 観察期間定義精密化 → PROJECT.md 健全性履歴 5/20 entry 更新
+    - M-2 (§0 主張訂正) / M-3 縮退 (§3 図 + §3.4 inline 注記強化、追加分割は YAGNI Phase 4 punt) / M-4 (§4.2 末尾実機 enable 確認手順) / M-5 (§4.7 末尾 4 段階拡張 2 周目明記) / M-6 (§10.2 末尾 `_STDERR_PATTERNS` 3 件目判定基準) → design.md 反映
+    - M-8 (§1.4 引数長 multi-tier bot.py 100 字 + cmd_say wait_for 90s + 境界変更時判定基準) / M-9 (§1.9 起算日明示 = bot/ 側完了起算) / M-10 (§1.9 Phase 4 trigger 4 項目再構成) / M-11 (§5.3 末尾 maintenance/ 追記タイミング明示) → voice-design.md 反映
+    - M-12 (vault-sync-from-transcript.sh 冒頭コメント rc!=0 後処理禁止事項明文化) → web/scripts/ 反映
+    - **M-7 (claude CLI 2.1.145 STATUS.md 無記録 up 補正)**: 本 entry の **詳細 sub-entry** 参照 (本 review 完了後最優先タスク、lead 実機検証で 2.1.141 → 2.1.145 検出)
+    - **M-13 (Discord 通知 1 行投稿、voice/ 側完了 + bot/ 6 月上旬目処)**: bot/ 側 ad-hoc 投稿、commit 不要
+  - **3 teammate 一致確定 4 件**:
+    - (a) 対症療法 2 周目候補警戒順序 **C-3 > C-2 > C-1** (architect Round 1 C-1 1 位から部分転換)
+    - (b) **軸 5 二段階方式採用** (5/20 静的整合性完遂 + Round 4 = 5/26 以降 or 6/2 完了後の実観測再点検を別 session 予約、user 判断 (b) 今日完結と両立)
+    - (c) **「実害ゼロ常態化」N=5 連続で仕切り直し境界化** (現状 4 回連続 = 5/9 / 5/14 / 5/18 / 5/20、devil D-A 自己訂正で 5 → 4 回に確定)
+    - (d) architect M2-3 引数長 multi-tier RTF 超過確認 (warm RTF 0.463 秒/字 × 200 字 + cold 17 秒 = 103-110 秒で wait_for(60s) 圧倒的超過、ux Round 1 §2.5 計算混同を Round 2 で自己訂正)
+  - **構造的指摘 8 件 (S-1〜S-8)**: 書面化先は axis-5-result.md §3 表参照。S-1〜S-4 は PROJECT.md 健全性履歴 5/20 entry「設計判断履歴」section に記録済、S-5 は design.md §0 末尾 + §11.4、S-6 (case A 5 案優先順序) は voice-design.md §5.1 末尾 (architect Round 1 たたき台残置)、S-7 は design.md §6.2 補足、S-8 は PROJECT.md L213 補足
+  - **観察項目 19 件 (K-1〜K-19) 統合済**: 上記「Phase 2.5 健全性 2 週間観察」section 参照、Round 4 で実観測再点検実施
+  - **Round 4 起動条件**: (i) 観察期間完了 2026-06-02 or 5/26 以降の早期点検判断 (ii) 観察データ初期メトリクス確定 (iii) 観察期間中発覚 issue + 判定保留軸の再点検 (axis-5-result.md §6)
+  - **team cleanup**: 本 entry + axis-5-result.md 転記完了確認後、architect / devil / ux に shutdown_request → approve → TeamDelete 予定
+  - **落とし穴 D 違反訂正の書面化**: lead 自身が axis-5 prompt 5/26 推奨を 5/20 に前倒し判断 = lead 単独責任で「user 判断 (b) と両立する形で実施」明示済 (PROJECT.md 健全性履歴 5/20 entry S-4)
+  - **claude CLI 2.1.141 → 2.1.145 無記録 up 検出 (M-7、本 entry 詳細)**:
+    - 5/20 軸 5 lead 実機検証で `claude --version` = **2.1.145** 確認、本 STATUS.md L234 (2026-05-14 T-0) の 2.1.141 記録から 4 バージョン分上昇が無記録で進行
+    - design.md §1.5 / §10.4 + `~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」運用ルール違反、devil P1「実害ゼロ常態化」と方向は別軸だが補強材料
+    - 観察期間 (2026-05-19〜2026-06-02) の bot.service が **2.1.141 想定設計で 2.1.145 実機運用** している差分あり: 観察初期は 2.1.145 想定設計に追いつくため再検証 pass 後に design.md §1.5 version pin 更新
+    - **本 review 完了後最優先タスク**: S1-S5 再検証 + encoded-cwd 規則確認 + `claude -p --help` で `--bare` デフォルト動作変更確認、再検証結果は本 entry に追記 (= 結果が出てから別 commit、本 commit では再検証実施宣言のみ)
 
 - 2026-05-20 全体コードレビュー (Phase 2.5/3-2 直後 fresh-eye) で発覚した bot/ 側 修正必須 2 件 + 軽微 5 件 を反映
   - **背景**: 健全性 2 週間観察期間 (2026-05-19〜2026-06-02) の起点で、Phase 2.5 + Phase 3-2 voice/ 側完了直後の fresh-eye として全体レビュー (Claude 直接 + code-reviewer subagent × 3 並列 / agent team 1 軸 punt 可) を実施 (PROJECT.md 健全性履歴 2026-05-20 entry 参照)
