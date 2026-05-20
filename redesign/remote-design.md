@@ -1,288 +1,159 @@
-# remote-design.md (companion-remote 設計議論 brief)
+# remote-design.md (companion-remote 確定設計)
 
-version: v0.1 (議論前 brief、agent team `companion-remote-design` で v1.0 に確定する起点)
+version: **v1.0 (確定版)** — agent team `companion-remote-design` (architect/ux/security/devil + lead) の Round 1〜3 議論を経て確定。
 作成: 2026-05-20
-ステータス: **議論未着手**。本ファイルは team 起動時に lead が teammate へ配布する起点ドキュメント。
+ステータス: **設計確定**。実装着手前に §10 の user 確認4件を要する。実装は §7(v1-α)→ §8(v1-β)の順。
+議論アーカイブ: team plan は cleanup で消滅。本ファイル + `remote-arch-plan-v{1,2}.md`(architect plan 転記)が成果物。
 
 ---
 
 ## 0. 目的と非目的
 
 ### 目的
-
-スマホ (Pixel-6、Tailnet 同居) を Linux Mint 機 (miho-inspiron-3521) 専用の「軽量リモコン」にする。
-
-- 素早い open → 1〜2 タップで操作 → close
-- 完全個人利用 (miho 1 人のみ、家族端末・友人端末からの利用想定なし)
-- Discord アプリのアカウント切替制約 (bot 認可アカウント ≠ user 通常アカウント) を回避
-- companion 機の既存資産 (bot / voice / vault / dashboard) を **疎結合に** 操作可能
+スマホ (Pixel-6, Tailnet 同居) を Linux Mint 機 (miho-inspiron-3521) 専用の軽量リモコンにする。素早い open → 操作 → close。完全個人利用 (miho 1人)。Discord アプリのアカウント切替制約を回避し、**対話完結型**(claude への指示も応答もリモコン UI で完結)で使う。
 
 ### 非目的
-
-- push 通知 / バックグラウンド処理 (要件: user 明示で「不要」)
-- スマホハード活用 (カメラ・センサ・GPS、要件: 不要)
-- 外部公開 (Tailnet 外からのアクセス、絶対に作らない)
-- マルチユーザ (家族・友人含めゼロ)
-- ストア配布 (個人利用前提、apk/ipa 配布も不要)
-- PROJECT.md Phase 4 (キャラクター層) との接続 (リモコンは「土管」側、装飾は乗せない)
+push 通知 / バックグラウンド処理 / スマホハード活用 / 外部公開(Tailnet 外) / マルチユーザ / ストア配布 / Phase 4 キャラクター層。
 
 ---
 
-## 1. 確定済み要件 (このセッションで user 確認済)
+## 1. 確定要件
 
-- 構成: **PWA + Tailscale Serve** の方針 (user 同意済、ネイティブ Android / Termux 案は却下)
-- セキュリティ最重視: 外部からの侵入を起こさないこと
-- 既存 PC 資産との関係: bot.py / bot.service / voice/ には触らない (Phase 2.5 健全性観察と独立)
-- 起動方式: スマホ Chrome → ホーム画面追加 → アイコンタップで全画面起動
+| 項目 | 確定内容 | 根拠 |
+|---|---|---|
+| 構成 | PWA + Tailscale Serve | user 確定 (brief §1) |
+| 要求粒度 | **(iii) 対話完結型** — F-1 の claude 応答も remote UI に返す | user 確定 (2026-05-20)。Discord 応答案D は却下「Discord と行き来しない」、テレビ前にいない時も使うため |
+| 責務境界 | **案B** = F-1 は bot 経由(bot.py 最小双方向化)、F-2/F-3 は remote 直接 | user 確定。§5 |
+| MVP 機能 | F-1(claude に任意テキスト) / F-2(voice 発話) / F-3(ステータス) | user 確定 |
+| 認証 | a = localStorage 永続ランダムトークン + Bearer | user 確定。§2.3 |
+| 実装順 | **ハイブリッド**: v1-α(〜6/2 先行, bot.service 非依存) → v1-β(6/2後, bot.py 改変) | user 確定。Phase 2.5 健全性観察(〜6/2)を汚さない |
+| サーバ実装 | **stdlib http.server (ThreadingHTTPServer)** | architect 推奨 + security 裁定。§3.1 |
+| ブラウザ | Chrome / dev 経路 = SSH ポートフォワード | brief default |
 
 ---
 
-## 2. セキュリティ要件 (このセッションで user 同意済の 3 層)
+## 2. セキュリティ3層
 
-### 2.1 ネットワーク層 (Tailscale)
-
-- サーバは `127.0.0.1:<port>` バインドのみ。0.0.0.0 / `*` 厳禁
-- 外向き口は `tailscale serve` 経由だけ。Tailnet 内のみ到達
-- **`tailscale funnel` 絶対禁止** (外部公開コマンド、誤発射防止で settings.json `deny` に登録済)
-- `ufw` 等のホストファイアウォール検討 (`allow in on tailscale0` だけにする)
+### 2.1 ネットワーク層
+- サーバは **127.0.0.1 (+ ::1) バインドのみ**。0.0.0.0 / tailnet IP 厳禁(x11vnc が tailnet IP 直バインドしているのは反面教師)。
+- 外向きは `tailscale serve https` だけ。`tailscale funnel` 絶対禁止(settings deny 済)。
+- デプロイ後 `ss -tlnp` で 127.0.0.1/::1 以外に listen していないことを検証。
+- ufw 化は **本タスクスコープ外**(既存 inbound = x11vnc 5900 等への自己ロックアウトリスク、§10 で user 判断)。loopback bind で境界は閉じる。
 
 ### 2.2 アクセス層 (Tailscale ACL)
+- ACL は **port 単位**(pixel-6 → remote-host:443 のみ)。x11vnc(5900)を pixel にすら開けない最小権限。
+- **default allow-all 撤去が前提**(tailnet 全体 = m-gamepc 含む波及、§10 で user 判断)。
+- tag 運用は MVP では IP 直指定で開始、余裕あれば tag 化。tailnet lock は個人3台で過剰・不採用。
 
-- Tailscale 管理画面 ACL で「該当 PC の HTTPS port に到達できるのは Pixel-6 だけ」と明示
-- ACL タグ運用検討 (アカウント乗っ取り時に新規追加デバイスが即座に届かない構成)
-- `tailnet lock` 有効化検討 (議論項目)
-
-### 2.3 アプリ層 (1 段認証)
-
-- 初回ロード時にランダム生成トークン → スマホ localStorage 保存 → `Authorization: Bearer ...` で API 保護
-- Tailscale クライアント識別 (`$TS_REMOTE_ADDR` chk) との二段化は議論項目 (多層化のコスパ)
-- トークン失効・再発行 endpoint を最初から用意 (スマホ紛失時の対応)
+### 2.3 アプリ層 (認証 a)
+- `secrets.token_urlsafe(32)` を SSH 発行 CLI で生成 → `remote/.state/tokens.json` (0o600) → PWA に **1回 paste → localStorage 保存**(out-of-band bootstrap、ネットワークを流れない)。
+- Bearer 検証は `secrets.compare_digest`(定数時間)。不一致 401。static (/, manifest, sw.js) は無認証、`/api/*` のみ Bearer 必須。
+- **identity header 二段化**(可能なら): HTTP edge で Bearer AND `Tailscale-User-Login == mr.mooneclipse@`。serve 実機で header が出るか §9(d)で確認、出なければ Bearer+ACL に縮退し §6 の認可退行を design 明記。
+- TLS は MagicDNS の Let's Encrypt 実 CA 証明書(TOFU 非該当)。
+- caveat: SSH 発行トークンは print-once 推奨 / CSP `default-src 'self'` + innerHTML 不使用で localStorage XSS 露出を防ぐ / URL・DOM・ログにトークンを残さない。
+- 失効 = SSH で tokens.json を空に(UI 経由の失効 endpoint は循環参照で**作らない**)。device revoke と2系統(q-7)。
 
 ---
 
-## 3. 技術選択肢 (議論で確定する箇所)
+## 3. 技術選択(確定)
 
-### 3.1 サーバ実装
+### 3.1 サーバ = stdlib http.server (ThreadingHTTPServer)
+FastAPI でなく stdlib を採用(architect 推奨 + security 裁定)。根拠: dashboard/server が同型 precedent / RAM 3.7Gi + AVX1 + HDD で uvicorn+fastapi+pydantic 常駐 ~50-80MB を避ける(stdlib ~15MB)/ tailscale serve が前段リバースプロキシでクリーン HTTP のみ渡す(stdlib の HTTP パース堅牢性懸念が消える)/ path traversal は framework 非依存。
 
-- 候補 A: **FastAPI + uvicorn** (Python、bot/quota.py 等と統一可能、依存軽量)
-- 候補 B: aiohttp / Flask + gunicorn (Python、別実装)
-- 候補 C: Go / Rust などコンパイル言語 (依存最小、ただし companion 機の他資産と乖離)
+**必須ガードレール5点**(RA-1/RA-2 に織込):
+1. 明示ルートテーブルのみ(`{(method,path):handler}`)。`self.path` を FS に連結しない。
+2. 静的ファイルは固定 allowlist dict 配信(`{url:(fs_path,content_type)}`)。URL→FS join 禁止。
+3. Content-Length 手動 cap(JSON body 64KB / F-1 prompt は別枠で上限明示)。
+4. Bearer は `secrets.compare_digest`。
+5. ディレクトリリスティング無効・Content-Type 明示・エラーで内部パス非漏洩(generic 404/500)。
 
-**default 案**: A (Python、既存 ecosystem と整合)
+YAGNI 境界: endpoint ~8本超 or 入力 validation/OpenAPI 必要時に FastAPI 移行。
 
 ### 3.2 PWA フロント
+素 HTML/JS + manifest.json + 最小 SW。ビルド工程なし(dashboard/web 同方針)。
 
-- 候補 A: **素の HTML/JS + manifest.json + 最小 service worker** (依存ゼロ、ビルド工程なし)
-- 候補 B: Vite + (React | Vue | Svelte) (DX 良いが依存重い、apk 同等のオーバーヘッド)
-- 候補 C: HTMX + 配信側 SSR (zero JS framework、Python サーバと相性良い)
+### 3.3 配信
+`tailscale serve https`(SW の secure context 要件 → HTTPS 必須、MagicDNS cert)。
 
-**default 案**: A (個人利用 PWA はビルド工程いらない、yaml で要件足りる)
-
-### 3.3 配信方式
-
-- 候補 A: **`tailscale serve https / http://localhost:<port>`** (HTTPS 自動 + Let's Encrypt MagicDNS 証明書)
-- 候補 B: nginx reverse proxy + `tailscale serve` で前段
-- 候補 C: 平文 HTTP のまま Tailnet 内提供 (Tailscale 暗号化で代替)
-
-**default 案**: A (HTTPS 化は service worker 動作要件、Tailscale 標準機能)
-
-### 3.4 サーバ起動方式
-
-- 候補 A: **systemd user service** (常駐、再起動自動復帰、bot.service / voice/ と同 pattern)
-- 候補 B: cron / oneshot (常駐不要、起動オーバーヘッド許容)
-
-**default 案**: A (リモコンは「いつでも開けば動く」のが価値、常駐前提)
+### 3.4 起動
+systemd user service(bot/voice/dashboard と同 pattern、auto-login で起動)。
 
 ---
 
-## 4. 機能スコープ (議論で確定する箇所)
+## 4. 機能スコープ
 
-リモコンに載せる「機能」を最小から積む。MVP v1 → v2 と拡張する設計。
+MVP = **F-1 / F-2 / F-3 のみ**。F-4〜F-8 は v2 punt(F-5 dashboard on/off が v2 最有力候補)。
 
-### 4.1 MVP v1 候補機能 (議論で取捨選択)
-
-以下のうち、agent team で **3〜5 機能** に絞る。
-
-| # | 機能 | 内容 | bot との関係 |
-|---|---|---|---|
-| F-1 | 任意テキストを Claude Code に流す | Discord bot 経由と同等の `claude -p` 呼び出し | bot 経由 or 直接 |
-| F-2 | voice/say.sh で発話 | bot `/say` と同等 | bot 経由 or 直接 |
-| F-3 | 各種ステータス表示 | bot `/status` / `/quota` 同等 | bot 経由 or ledger 直読 |
-| F-4 | vault notes 検索 / 閲覧 | grep + Markdown 表示 | 直接 (vault clone を読む) |
-| F-5 | TV ダッシュボード on/off | dashboard.service / dashboard-stop.service 手動 trigger | 直接 (systemd user) |
-| F-6 | system レポート即時実行 | maintenance notify-system-report.sh 手動 trigger | 直接 |
-| F-7 | 音量・画面・電源など OS 操作 | xrandr / pactl / loginctl など | 直接 |
-| F-8 | unattended-upgrades 結果再確認 | maintenance notify-unattended-upgrades.sh 状態表示 | 直接 |
-
-### 4.2 設計分岐 (議論の中心)
-
-リモコンが既存 bot に対して **どういう関係を持つか** で大きく 2 案:
-
-- **案 X: 薄い HTTP shim** — リモコンは bot Unix socket / slash command を HTTP で叩き直す薄いラッパ。bot.py が center of truth、リモコンは UI のみ
-- **案 Y: 独立した責務サーバ** — リモコンは bot に依存せず直接 systemd / vault / voice を叩く。bot は Discord 経路、リモコンは Web 経路、両方並列
-- **案 Z: ハイブリッド** — F-1 / F-2 / F-3 は bot 経由 (会話状態が bot にある)、F-4〜F-8 は直接
-
-**default 案**: Z (会話状態のある操作だけ bot を尊重、ステートレスな OS 操作は直接)
-
-devil's advocate には「Z の境界が曖昧で whack-a-mole になる」観点で反証してもらう。
+| # | 機能 | claude 起動 | 経路 | 実装段 |
+|---|---|---|---|---|
+| F-1 | 任意テキスト → claude | Yes | bot socket (verb=ask, budget guard 経由) | v1-β |
+| F-2 | voice 発話 | No | remote 直叩き (say.sh) | v1-α |
+| F-3 OS | df/free/sensors/uptime | No | remote 直叩き (read-only cmd) | v1-α |
+| F-3 集計 | quota/session 集計 | No(読取) | bot socket (verb=status, summary 読取) | v1-β |
 
 ---
 
-## 5. Open Questions (team で確定すべき項目)
+## 5. 責務境界(案Z → 1ビット静的判定 + 第2原則)
 
-### q-1: アプリ層認証の強度
+### 第1原則(whack-a-mole 防止の核心)
+振り分けは「会話状態の有無」という曖昧語でなく、**「その操作が `claude -p` を起動して Max クレジットを消費し claude session を触るか」の静的1ビットで設計時に1回確定**し、runtime で再評価しない(stderr マッチ/rc 分岐/fallback リトライをしない。CLAUDE.md「成否判定は1回で確定」)。claude を叩く操作は bot 経由(quota+session の単一 owner = bot)、叩かない操作は remote 直接。
 
-- a. ランダムトークン 1 個 (localStorage、永続)
-- b. 短期トークン + refresh
-- c. WebAuthn (スマホ指紋・PIN)
-- d. Tailscale 識別だけで OK (アプリ層認証なし)
-
-→ default: a (個人利用、Tailscale ACL で既に守られている前提で 1 段だけ追加)
-
-### q-2: bot との責務境界 (§4.2)
-
-→ X / Y / Z のどれを採用するか。default: Z
-
-### q-3: PWA service worker のスコープ
-
-- offline 対応する? (Tailnet 切断時の UI 表示だけでも valuable か)
-- アプリ shell のキャッシュ戦略 (stale-while-revalidate / network-first)
-
-→ default: 最小 service worker (manifest + 起動アイコンのみ、offline 不要)
-
-### q-4: HTTP API バージョニング
-
-- `/api/v1/...` を最初から切る? それとも v1 暗黙 (個人利用なので破壊的変更許容)
-
-→ default: 個人利用なので暗黙 v1、必要になったら切る (YAGNI)
-
-### q-5: ログとオブザーバビリティ
-
-- リモコン操作ログをどこに残す? (bot.log / 専用 ledger.jsonl / journalctl)
-- 失敗時の user へのフィードバック手段 (UI トースト / bot DM 通知 / silent)
-
-→ default: 専用 `remote/.state/access.log` (append-only)、失敗は UI トーストで完結
-
-### q-6: bot 機能との重複時の挙動
-
-- 例: F-2 で「リモコンから /say した発話」は bot `voice_ledger.jsonl` に書く? 別 ledger?
-
-→ default: voice_ledger.jsonl に source=remote と付けて統合 (voice/STATUS.md v2.0 §1.8 と整合)
-
-### q-7: スマホ紛失・トークン漏洩時の運用手順
-
-- Tailscale 管理画面 device revoke の手順を STATUS.md に書面化
-- アプリ層トークン無効化 endpoint の認証経路 (リモコン UI から / SSH から)
-
-→ default: SSH ログインで `remote/.state/tokens.json` を空にする手動手順 (UI 経由は循環参照)
-
-### q-8: tailscale serve の persistent 設定
-
-- `tailscale serve --bg` で永続化? それとも systemd user service で叩き直し?
-
-→ default: systemd user service で `tailscale serve` 設定 + アプリサーバ起動を 1 ユニットに
-
-### q-9: スマホブラウザ間の動作要件
-
-- Chrome only? Firefox / Samsung Browser サポート?
-
-→ default: Chrome のみ動作確認、他ブラウザは best-effort (Pixel-6 default Chrome 想定)
-
-### q-10: 開発・iteration 環境
-
-- ローカルで開発する場合の dev 経路 (Tailscale 経由 vs SSH ポートフォワード)
-- ホットリロード戦略 (静的アセット mtime watch / 手動 reload)
-
-→ default: 開発中は SSH ポートフォワード + Chrome DevTools、本番投入時に tailscale serve に切替
+### 第2原則(M-1)
+- 1ビットは **capability(claude の推論/session が要るか)に束ねて設計時に凍結**。表層文言や rc で分岐しない。
+- 他モジュールの private 永続 schema(ledger.jsonl 等)を読むなら **所有者 accessor 経由**(生パース禁止)。→ F-3 集計は bot の `budget_guard.summary` を socket 越しに呼ぶ(remote が ledger を再パースしない)。
+- capability が変わったら **既存 endpoint を変異させず新 endpoint を切る**(将来 F-4 vault write は ask を流用せず新 endpoint 追加に正規化、配管やり直しにしない)。
 
 ---
 
-## 6. team 設計 (agent teams 起動仕様)
+## 6. F-1 認可退行(H-1, design 明記)
 
-### 6.1 team 名
-
-`companion-remote-design`
-
-### 6.2 役割 (4 teammate + lead)
-
-CLAUDE.md「Agent Teams 運用方針」§C (devil's advocate 必須) 遵守。
-
-| role | 担当 | tools |
-|---|---|---|
-| lead (= 通常 claude セッション) | orchestration / approve / 成果物書き起こし | full |
-| architect | §3 技術選択肢 / §4.2 責務境界 / §5 q-2,q-3,q-4,q-8 | read-only + plan mode |
-| ux | §4.1 機能スコープ / §5 q-3,q-5,q-9 / リモコン UX 全般 | read-only + plan mode |
-| security | §2 セキュリティ層 / §5 q-1,q-7 / 攻撃面分析 | read-only + plan mode |
-| devil's advocate | architect / ux / security plan への反証 / 採用前検証項目の列挙 / 案 Z (§4.2) の whack-a-mole リスク | read-only + plan mode |
-
-### 6.3 spawn 前 pre-approval (settings.json に登録済)
-
-CLAUDE.md「Agent Teams 運用方針」§E (permission pre-approval 必須) 遵守。本ファイル §7 で確認。
-
-### 6.4 議論ラウンド設計 (CLAUDE.md §B-2 cross-review 精度向上適用)
-
-- Round 1: 各 teammate が独立に v1.0 plan 起案
-- Round 2: 各 teammate が **他 teammate の Round 1 最新 plan を読み切ってから** cross-review (改版履歴 section 必須、比較対象 plan version 明示書式)
-- Round 3: devil が致命級指摘を整理、lead が plan_approval_response 前に **plan ファイル全体読み直し** + inbox 再読 (CLAUDE.md §B / §D 落とし穴対策)
-- 確定後、lead が `remote-design.md` v1.0 に書き起こし、`remote/docs/STATUS.md` にサブタスク分割を反映
-
-### 6.5 plan vs 成果物の役割分離 (CLAUDE.md §F)
-
-- plan ファイル (`~/.claude/plans/companion-remote-design.md`): 議論アーカイブ、改版履歴含め肥大化許容
-- 最終成果物: 本ファイル v1.0 (`workspace/redesign/remote-design.md`) + `remote/docs/STATUS.md` サブタスク
-- team cleanup で plan ファイルは消える、lead が center of truth として転記責任
-
-### 6.6 user 確認が要る項目 (議論起動前)
-
-team 起動前に user に確認すべき項目を以下に列挙。本リスト 8 項目に user が回答してから team spawn。
-
-- **u-1**: §5 q-1〜q-10 の default 案で議論を進めて良いか? それとも user 側で先に動かしたい default があるか?
-- **u-2**: §4.1 機能スコープのうち、MVP v1 で **絶対欲しい** ものを 1〜2 個指定 (なければ teammate に丸投げで OK)
-- **u-3**: §4.2 案 X / Y / Z のどれを軸にするか (default Z で議論進めても OK、ただし user の感覚と違うなら指定)
-- **u-4**: スマホ側ブラウザは Chrome 想定で良いか? (q-9)
-- **u-5**: アプリ層認証は a (ランダムトークン localStorage 永続) で良いか? それとも b/c/d 検討?
-- **u-6**: 開発期間中の dev 経路 (SSH ポートフォワード 想定で良いか)
-- **u-7**: 完了基準を「リモコンから F-X を叩ける」のどこまでとするか (3 機能? 5 機能? 全機能?)
-- **u-8**: 着手のタイミング (今すぐ team 起動 / Phase 2.5 健全性観察 = 2026-06-02 まで待つ / voice/ 側 bot 実装完了後)
+F-1 は `run_claude` 直呼びで `on_message` の OWNER_ID チェックを通らない → token + ACL の二段は Discord 経路(Discord アカウント + OWNER_ID の二重)より一段弱い。緩和:
+- (i) identity header 二段化(§2.3、serve 実機 §9(d)待ち。縮退時は弱さを明記)。
+- (ii) **budget guard 必須**(§8 RB-1)が damage backstop(認可が漏れても Max クレジットは月次 cap で頭打ち)。
+- (iii) token 失効(SSH で tokens.json 空)= F-1 即無効化と紐付け。
+- 受容判断: 単一ユーザ・宅内 remote・tailnet 限定到達で、devil 最終確認も「受容可」。F-2/F-3 は token 保持者なら無制限だがコストゼロ(嫌がらせ面のみ)。
 
 ---
 
-## 7. spawn 前チェックリスト (CLAUDE.md「Agent Teams 運用方針」遵守)
+## 7. v1-α サブタスク(〜6/2, bot.service 非依存、1サブタスク=1commit)
 
-- [x] devil's advocate を role に組み込み済 (§C)
-- [ ] u-1 〜 u-8 user 回答取得 (§6.6)
-- [ ] permission pre-approval `.claude/settings.json` に反映 (§E、本セッションで実施済 → §7.1 で確認)
-- [ ] plan mode + plan_approval_request 必須運用宣言 (本ファイル §6.4 で明示)
-- [ ] cross-review 精度向上 4 項目を team prompt に組み込み (§B-2、本ファイル §6.4)
-- [ ] team spawn 直前に本ファイルと STATUS.md を最新版で読み直す (§B)
+- **RA-1**: scaffold + server skeleton。`server/app.py`(http.server, 127.0.0.1:<port>, `/api/health`)。ガードレール (i)(ii)(v) 土台化。`.env.example` + `.gitignore`(.state/, tokens.json)。
+- **RA-2**: トークン認証。`server/auth.py`(token_urlsafe 発行 CLI + tokens.json 0o600 + Bearer compare_digest + 401)。ガードレール (iii)(iv)。失効 = SSH 手動。
+- **RA-3**: F-3 **OS status のみ** `/api/status`(df/free/sensors/uptime 直叩き)。**ledger/session 由来情報は含めない**(v1-β へ、H-2)。
+- **RA-4**: F-2 voice `POST /api/say`。**env 隔離**(`subprocess.run([say_sh,text,str(speaker)], env=固定最小env)`、user 入力を環境変数に流さない=say.sh の $VOICE_HOME/.env source 経路を塞ぐ)。speaker 整数 validation。flock(5s→exit 3)は UX 吸収。N-1: 失敗時 [voice]FAIL→Discord notify 副作用を明記、`/api/say` 簡易 rate-limit。
+- **RA-5**: PWA(index.html/app.js/manifest.json/sw.js[shell-only precache, API network-only, cache versioning, skipWaiting, エラー画面]/icons)。F-2 発話 + F-3 OS status + 初回トークン paste 欄。glance strip = ● 接続 + OS health(タップで詳細)。401 時は再 paste UX(R4)。
+- **RA-6**: `systemd/companion-remote.service`(Type=simple, Restart=on-failure, 127.0.0.1) + SETUP.md(tailscale serve --bg one-time / トークン発行 / SSH revoke)。
+- **RA-7**: docs/STATUS.md 反映 + (B)GitHub 昇格判断 + **N-3: brief §2.3 失効 endpoint 記述削除** + **R1: PROJECT.md L373 M-14 文面を改訂 M-14 へ更新**(台帳 vs 実装の不一致防止)。
 
-### 7.1 pre-approval された Bash コマンド (本セッションで `.claude/settings.json` 追加分)
+## 8. v1-β サブタスク(6/2 観察窓後、bot.service restart 伴う)
 
-```
-Bash(tailscale status*)
-Bash(tailscale ip*)
-Bash(tailscale netcheck*)
-Bash(tailscale version*)
-Bash(tailscale serve status*)
-Bash(tailscale cert*)
-Bash(ss:*)
-Bash(netstat:*)
-```
-
-deny に登録 (誤発射防止):
-
-```
-Bash(tailscale funnel:*)
-```
-
-ask に登録 (状態変更系、user 1 回承認で許可):
-
-```
-Bash(tailscale serve:*)
-```
+- **RB-1**: bot.py 最小双方向化。`REMOTE_SOCKET = $XDG_RUNTIME_DIR/companion-bot-remote.sock`(notify socket 前例の親ディレクトリ、/tmp 禁止, 0o600)を setup_hook に2本目 start_unix_server。`_handle_remote` は verb 振り分け:
+  - `verb=ask`: prompt read → **必ず同一 budget_guard インスタンス経由**(allow() → run_claude(prompt, REMOTE_CHANNEL_ID) → 成功時 record())。**迂回禁止 = M-14 核心の実装契約**。認可は upstream HTTP edge で1回済、socket は plumbing。
+  - `verb=status`: `budget_guard.summary` + `sessions.load(REMOTE_CHANNEL_ID)` を read-only serialize(allow/record 呼ばない、claude 不起動)。F-3 集計の owner accessor。
+  - REMOTE_CHANNEL_ID ≠ 0(bot の sentinel 回避、例 1、snowflake 非衝突)。既存 _handle_notify/on_message/sessions 無改変。bot/tests/ に verb 別単体テスト。bot.service restart は観察窓後、健全性履歴に「実装過程の意図的 restart」明記。
+- **RB-2**: remote F-1 bridge `POST /api/ask` → 非同期ジョブ型(job_id 即返し、background スレッドが socket connect/send/recv、結果を `.state/jobs/<id>.json` 0o600 保存、`GET /api/ask/<job_id>` polling)。**lane 単一 in-flight ガード**(進行中 job あれば2本目は 409、--resume リトライ厳禁=design.md §1.4)。**socket read timeout は bot 最長 tier から導出**(320 ハードコード禁止。R2: claude_lock 待ち行列も考慮、or bot が accepted/queued frame で wait 延長)。job TTL cleanup。
+- **RB-3**: F-1 PWA UI(送信→job_id→polling→結果表示、サーバ保持、job_id localStorage 復元、多重投入 disable、status 表示)+ F-3 集計を verb=status に接続。glance に quota%/最終活動を昇格。
+- **RB-4**: docs/STATUS.md + 本ファイル反映 + 健全性観察影響記録。
 
 ---
+
+## 9. 採用前実機検証項目
+- **(d) 最重要**: `tailscale serve` 実機で (1)ルート `/` マウント可否(SW scope `/` 前提) (2)identity header(Tailscale-User-Login)が proxy で付与されるか(H-1(i)の成否)。要 `tailscale serve` 実行(ask 承認)。
+- bot の最長 timeout tier 値の確定 + **claude_lock 待ち行列考慮**(RB-2 M-3/R2)。
+- say.sh 固定最小 env で paplay/ffmpeg/curl が動くか(DISPLAY/PULSE/PATH 充足)。
+
+## 10. 実装着手前に user 確認が要る4件(v1-α 着手直前にまとめて諮る)
+1. **ACL allow-all 撤去**(tailnet 全体 = m-gamepc 含む波及)
+2. **ufw 化**(既存 inbound 自己ロックアウトリスク、x11vnc 5900)
+3. **M-14 改訂文面**の最終 OK(PROJECT.md L373 編集前)
+4. **H-1 認可退行の受容**(F-1 認可が token+ACL+identity で Discord 経路の OWNER_ID 二重より一段弱い。budget guard で課金被害は月次 cap 頭打ち)
+
+## 11. 議論経緯サマリ(なぜこの設計か)
+- **D-1/D-2**(devil 摘出, lead 裏取り済): 当初 user 確定の「案Z + bot.py 不可触 + F-1 会話機能」は両立しない。bot socket は notify-only で F-1 応答経路が無く、作るには bot.py 改変が必須。M-14「Discord 経由統一」とも衝突。→ user に差し戻し、**対話完結型**(応答も remote)を確定 → 案B(bot.py 最小双方向化)+ M-14 を認可趣旨ベースに改訂で解決。
+- **H-1**(認可退行)/ **H-2**(派生原則自己違反)を devil cross-review で摘出 → §6 / §5 第2原則 + v1-α F-3 を OS status のみに縮小で対処。
+- サーバ実装は RAM 制約で stdlib(security 裁定 + ガードレール5点)。
+- 実装は Phase 2.5 健全性観察(〜6/2)を汚さないハイブリッド(F-1 のみ 6/2後)。
 
 ## 改版履歴
-
-- v0.1 (2026-05-20): 初版、議論前 brief。lead は本ファイルを起点に team `companion-remote-design` を spawn 予定
+- v1.0 (2026-05-20): agent team `companion-remote-design` の Round 1〜3 + lead 裁定13件 + devil 最終確認(approve 可・致命級ゼロ・残課題 R1〜R4)を経て確定。brief v0.1 を全面改稿。
+- v0.1 (2026-05-20): 議論前 brief(初版)。
