@@ -1,6 +1,6 @@
 # companion-web 開発台帳（Phase 3-1: Web 検索 → md 蓄積 + Obsidian vault 同期）
 
-最終更新: 2026-05-17 (Phase 3-1 全 TODO 消化: 重複チェック / 発火 UX とも自然文継続で確定)
+最終更新: 2026-05-20 (web/ をローカル git のみ (rollback 専用) で git 化)
 
 ## 設計メモ
 
@@ -130,6 +130,11 @@ C. **push 済み**: 修正 commit を新規に作って push（force push は使
 （なし）
 
 ## Done
+
+- 2026-05-20 `web/` をローカル git のみ (remote なし、rollback 専用) で git 化
+  - **背景**: companion 配下 git 化を 3 階層に整理 (`~/companion/CLAUDE.md` git 運用方針 / `workspace/PROJECT.md`「git 化の 3 階層」)。`web/` は実体あるサブプロジェクトだが、マシン外バックアップ不要・rollback が効けば十分のため (C) ローカルのみを採用
+  - **やったこと**: `git init -b main` + user 設定 + gitleaks pre-commit フック配置 + `.gitignore` 作成 + `gitleaks dir` で no leaks 確認 + 初回 commit。**GitHub remote は意図的に付けない**（上げ忘れと誤認して remote を足さないこと）
+  - 将来 (B) GitHub バックアップ付きに昇格させたくなったら `remote add` + `push` するだけ
 
 - 2026-05-17 Phase 3-1 TODO「Discord 側の発火 UX 確認」を自然文継続で確定
   - **背景**: 重複チェック手段の確定に続く Phase 3-1 残 TODO。Phase 3-1 着手 (5/8) 以降の `notes/` commits 計 7 件のうち Discord 経由実弾 2 件 (5/14 notion-developer-platform / 5/16 dashboard-character-design、commit message が "bot session auto-sync") の運用観察データが揃ったため判定可能になった
