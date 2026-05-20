@@ -119,27 +119,31 @@ def _derive(v):
     - idle-active=True → idle(ファイル無し)
     - time-pos が数値 → 再生開始済 → pause で playing/paused 分岐
     - どちらでもない(loadfile 後 time-pos=None)→ resolving(yt-dlp 解決中, 40〜70s)
-    is_live: 再生開始後 duration=None なら live(§7 LIVE-1。live は再生中も duration=null)。
+    is_live: 再生中に **seek 不可** なら live。当初の duration=None 前提(§7 LIVE-1)は
+    V-A3 実測(2026-05-20)で外れた — YouTube live は DVR バッファ長を有限 duration で返す
+    (46→104s と伸びる)。実測では live=seekable False / partially-seekable False、
+    VOD=seekable True。UX が gate したいのは「seek できるか」そのものゆえ seekable を直接
+    主シグナルにする(設計「補助で seekable」を1回引き直し。条件を積む2周目を打たない)。
     """
     idle = v.get("idle-active")
     time_pos = v.get("time-pos")
-    duration = v.get("duration")
+    seekable = bool(v.get("seekable"))
     pause = bool(v.get("pause"))
     if idle:
         phase, is_live = "idle", False
     elif time_pos is not None:
         phase = "paused" if pause else "playing"
-        is_live = duration is None
+        is_live = not seekable
     else:
         phase, is_live = "resolving", False
     return {
         "phase": phase,
         "title": v.get("media-title"),
         "pos": time_pos,
-        "duration": duration,
+        "duration": v.get("duration"),
         "pause": pause,
         "is_live": is_live,
-        "seekable": bool(v.get("seekable")),
+        "seekable": seekable,
     }
 
 

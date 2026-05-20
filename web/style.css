@@ -8,6 +8,9 @@
   --down: #e2685f;
 }
 * { box-sizing: border-box; }
+/* hidden 属性を最優先(.row 等の display:flex に specificity で負けないように)。
+   これが無いと live 時に display:flex の #video-seekrow が hidden を無視して残る。 */
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--bg);

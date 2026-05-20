@@ -113,11 +113,13 @@ async function sendSay() {
 // （token とは分離、§5.4）。close ≠ stop: 「閉じる」は可逆(TV 継続)、「停止」は不可逆。
 const V_RESOLVE_KEY = "video_resolve_at";  // resolve 開始 epoch ms（経過秒の起点）
 const V_LASTURL_KEY = "video_last_url";    // 直前投入 URL（取りこぼし時の再投入ヒント）
-let vState = null;       // 直近の server state
-let vCollapsed = false;  // 「閉じる」で transport を畳んだ（TV は継続）
-let vSeeking = false;    // シーク操作中は poll でスライダを上書きしない
-let vTimer = null;       // 2s 状態ポーリング
-let vTick = null;        // 1s resolve 経過秒の更新
+let vState = null;          // 直近の server state
+let vCollapsed = false;     // 「閉じる」で transport を畳んだ（TV は継続）
+let vSeeking = false;       // シーク操作中は poll でスライダを上書きしない
+let vTimer = null;          // 2s 状態ポーリング
+let vTick = null;           // 1s resolve 経過秒の更新
+let vAttemptActive = false; // 自分が押した再生が in-flight か（playing 到達 / 停止で false）
+let vFailedLoad = false;    // 投入直後の読み込み失敗（resolving→idle、playing 未到達）
 
 const vSetResolveAt = (ms) => localStorage.setItem(V_RESOLVE_KEY, String(ms));
 const vClearResolveAt = () => localStorage.removeItem(V_RESOLVE_KEY);
@@ -161,8 +163,13 @@ function renderIdle(ph) {
   $("video-reopen").hidden = !(vCollapsed && active);
   const ended = $("video-ended");
   const last = localStorage.getItem(V_LASTURL_KEY) || "";
-  if (!active && last) {
-    // stateless ゆえ成功/失敗は断定しない（§5.3 取りこぼし許容）。
+  if (vFailedLoad) {
+    // 投入直後の読み込み失敗。playing に達さず idle に落ちた client 遷移で判定（§7 clean-fail）。
+    ended.hidden = false;
+    ended.textContent = "読み込めませんでした（配信終了か、再生できない動画の可能性）";
+    if (last && !$("video-url").value) $("video-url").value = last;
+  } else if (!active && last) {
+    // 再開時の取りこぼし。stateless ゆえ成功/失敗は断定しない（§5.3）。
     ended.hidden = false;
     ended.textContent = "前回の再生は終了しています";
     if (!$("video-url").value) $("video-url").value = last;
@@ -224,9 +231,17 @@ async function pollVideo() {
   try {
     const r = await api("/api/video/state");
     if (!r.ok) return;
-    vState = await r.json();
-    if (vState.phase !== "resolving") vClearResolveAt();
-    if (vState.phase === "idle") vCollapsed = false;  // 終了したら畳み状態を解除
+    const prev = vState ? vState.phase : null;
+    const ns = await r.json();
+    if (ns.phase === "playing" || ns.phase === "paused") vAttemptActive = false;
+    // 自分の投入が playing に達さず resolving→idle に落ちた = 読み込み失敗（§7 clean-fail）。
+    if (ns.phase === "idle" && vAttemptActive && prev === "resolving") {
+      vFailedLoad = true;
+      vAttemptActive = false;
+    }
+    vState = ns;
+    if (ns.phase !== "resolving") vClearResolveAt();
+    if (ns.phase === "idle") vCollapsed = false;  // 終了したら畳み状態を解除
     renderVideo();
     renderNow();
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
@@ -236,10 +251,12 @@ async function playVideo() {
   const url = $("video-url").value.trim();
   const err = $("video-play-err");
   if (!url) { err.textContent = "URL を入力してください"; return; }
-  // 楽観的遷移: タップ即 RESOLVING（§5.2）。
+  // 楽観的遷移: タップ即 RESOLVING（§5.2）。新規投入なので失敗フラグをリセットし attempt 開始。
   localStorage.setItem(V_LASTURL_KEY, url);
   vSetResolveAt(Date.now());
   vCollapsed = false;
+  vFailedLoad = false;
+  vAttemptActive = true;
   err.textContent = "";
   vState = { phase: "resolving", title: null, is_live: false };
   renderVideo();
@@ -252,7 +269,9 @@ async function playVideo() {
       body: JSON.stringify({ url }),
     });
     if (!r.ok) {
+      // 投入そのものが弾かれた（attempt は離陸せず）。失敗文言は #video-play-err 側で出す。
       vClearResolveAt();
+      vAttemptActive = false;
       vState = { phase: "idle" };
       if (r.status === 400) err.textContent = "受け付けない URL です（YouTube のみ対応）";
       else if (r.status === 503) err.textContent = "動画プレイヤーに接続できません";
@@ -263,6 +282,7 @@ async function playVideo() {
   } catch (e) {
     if (e.message !== "unauthorized") {
       vClearResolveAt();
+      vAttemptActive = false;
       vState = { phase: "idle" };
       err.textContent = "送信エラー";
       renderVideo();
@@ -273,7 +293,10 @@ async function playVideo() {
 
 // キャンセル(resolving) / 停止(transport) はどちらも mpv stop（state 1本で確定、§5.2）。
 async function videoStop() {
+  // 明示停止/キャンセルは失敗ではない（読み込み失敗文言を出さない）。
   vClearResolveAt();
+  vAttemptActive = false;
+  vFailedLoad = false;
   try { await api("/api/video/stop", { method: "POST" }); } catch (e) { /* noop */ }
   vState = { phase: "idle" };
   vCollapsed = false;

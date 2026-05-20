@@ -22,7 +22,9 @@ ExecStartPre=-/bin/rm -f %t/companion-video-mpv.sock
 # resident idle mpv。null 起動で常駐し、HTTP 経由の loadfile replace を待つ。
 #  --idle=yes              : ファイル無しでも常駐(再生 state を mpv が所有 → ジョブ基盤不要)
 #  --force-window=no       : idle 中は窓を占有しない(V-A1 で TV 黒画面化しないこと確認)
-#  --fullscreen --fs-screen: 再生時のみ TV 側へ全画面(N は V-A1 で決定論性確認、暫定 0)
+#  --fullscreen --fs-screen-name: 再生時のみ TV(HDMI-1)へ全画面。出力名指定で Xinerama
+#                       index の脆さを回避(V-A1 確定 2026-05-20: index 0 は LVDS-1=ノート本体
+#                       を掴むため出力名 HDMI-1 で一意指定。xrandr: HDMI-1 1920x1080 820x460mm)
 #  --no-config             : ~/.config/mpv を読まない(SG-3 ハードニング)
 #  --ytdl-raw-options      : yt-dlp に --ignore-config / --no-playlist を強制
 #  ytdl_hook-ytdl_path     : yt-dlp 実体を固定パスで解決(PATH 依存にしない)
@@ -33,7 +35,7 @@ ExecStart=/usr/bin/mpv \
     --no-terminal \
     --force-window=no \
     --fullscreen \
-    --fs-screen=0 \
+    --fs-screen-name=HDMI-1 \
     --no-config \
     --ytdl=yes \
     --ytdl-raw-options=ignore-config=,no-playlist= \

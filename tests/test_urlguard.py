@@ -69,18 +69,23 @@ class TestVideoDerive(unittest.TestCase):
         self.assertFalse(s["is_live"])
 
     def test_playing_vod(self):
-        s = video._derive({"idle-active": False, "time-pos": 12.0, "duration": 300.0, "pause": False})
+        # VOD は seekable=True(V-A3 実測: シーク可) → is_live False
+        s = video._derive({"idle-active": False, "time-pos": 12.0, "duration": 300.0,
+                           "seekable": True, "pause": False})
         self.assertEqual(s["phase"], "playing")
         self.assertFalse(s["is_live"])
         self.assertEqual(s["pos"], 12.0)
 
     def test_paused_vod(self):
-        s = video._derive({"idle-active": False, "time-pos": 12.0, "duration": 300.0, "pause": True})
+        s = video._derive({"idle-active": False, "time-pos": 12.0, "duration": 300.0,
+                           "seekable": True, "pause": True})
         self.assertEqual(s["phase"], "paused")
+        self.assertFalse(s["is_live"])
 
     def test_playing_live(self):
-        # live は再生中も duration=None(§7 LIVE-1)
-        s = video._derive({"idle-active": False, "time-pos": 5.0, "duration": None, "pause": False})
+        # V-A3 実測(2026-05-20): live は DVR バッファ長を有限 duration で返すが seekable=False
+        s = video._derive({"idle-active": False, "time-pos": 82.9, "duration": 103.9,
+                           "seekable": False, "pause": False})
         self.assertEqual(s["phase"], "playing")
         self.assertTrue(s["is_live"])
 
