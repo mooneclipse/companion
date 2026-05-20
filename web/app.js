@@ -106,6 +106,230 @@ async function sendSay() {
   }
 }
 
+// ===== F-video（動画プレイヤー） =====
+// 状態機械: IDLE → RESOLVING(40〜70s) → PLAYING ⇄ PAUSED / ERROR。
+// transport の真実は mpv（GET /api/video/state ポーリング）、PWA はその写像。
+// サーバ stateless ゆえ resolve 開始時刻と直前 URL は localStorage の表示ヒントで持つ
+// （token とは分離、§5.4）。close ≠ stop: 「閉じる」は可逆(TV 継続)、「停止」は不可逆。
+const V_RESOLVE_KEY = "video_resolve_at";  // resolve 開始 epoch ms（経過秒の起点）
+const V_LASTURL_KEY = "video_last_url";    // 直前投入 URL（取りこぼし時の再投入ヒント）
+let vState = null;       // 直近の server state
+let vCollapsed = false;  // 「閉じる」で transport を畳んだ（TV は継続）
+let vSeeking = false;    // シーク操作中は poll でスライダを上書きしない
+let vTimer = null;       // 2s 状態ポーリング
+let vTick = null;        // 1s resolve 経過秒の更新
+
+const vSetResolveAt = (ms) => localStorage.setItem(V_RESOLVE_KEY, String(ms));
+const vClearResolveAt = () => localStorage.removeItem(V_RESOLVE_KEY);
+function vElapsed() {
+  const at = parseInt(localStorage.getItem(V_RESOLVE_KEY) || "0", 10);
+  if (!at) return null;  // 起点不明（別経路で開始 / localStorage 消失）
+  return Math.max(0, Math.round((Date.now() - at) / 1000));
+}
+
+function fmtTime(sec) {
+  if (sec == null || isNaN(sec)) return "--:--";
+  sec = Math.floor(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? h + ":" + String(m).padStart(2, "0") + ":" + ss : m + ":" + ss;
+}
+
+function showVideoView(view) {
+  $("video-idle").hidden = view !== "idle";
+  $("video-resolving").hidden = view !== "resolving";
+  $("video-transport").hidden = view !== "transport";
+}
+
+function renderVideo() {
+  const ph = vState ? vState.phase : "idle";
+  if ((ph === "playing" || ph === "paused") && !vCollapsed) {
+    showVideoView("transport");
+    renderTransport();
+  } else if (ph === "resolving" && !vCollapsed) {
+    showVideoView("resolving");
+    renderResolving();
+  } else {
+    showVideoView("idle");
+    renderIdle(ph);
+  }
+}
+
+function renderIdle(ph) {
+  const active = ph === "playing" || ph === "paused" || ph === "resolving";
+  // 畳んだだけで TV 継続中なら操作へ戻る導線、終了済みなら中立明示 + 再投入ヒント。
+  $("video-reopen").hidden = !(vCollapsed && active);
+  const ended = $("video-ended");
+  const last = localStorage.getItem(V_LASTURL_KEY) || "";
+  if (!active && last) {
+    // stateless ゆえ成功/失敗は断定しない（§5.3 取りこぼし許容）。
+    ended.hidden = false;
+    ended.textContent = "前回の再生は終了しています";
+    if (!$("video-url").value) $("video-url").value = last;
+  } else {
+    ended.hidden = true;
+  }
+}
+
+function renderResolving() {
+  const el = vElapsed();
+  $("video-resolve-text").textContent =
+    el == null ? "読み込み中…" : "読み込み中… " + el + "s";
+  $("video-resolve-note").textContent =
+    el != null && el > 90
+      ? "通常より時間がかかっています。少し待つかキャンセルしてください"
+      : "読み込みに最大1分ほどかかります";
+}
+
+function renderTransport() {
+  const s = vState;
+  $("video-title").textContent = s.title || "(タイトル取得中)";
+  $("video-toggle").textContent = s.pause ? "再開" : "一時停止";
+  // LIVE: シーク無効 + ●LIVE 表示（§5.1）。VOD: duration が分かればシークバー。
+  const live = !!s.is_live;
+  $("video-live-badge").hidden = !live;
+  const seekable = !live && typeof s.duration === "number" && s.duration > 0;
+  $("video-seekrow").hidden = !seekable;
+  if (seekable && !vSeeking) {
+    const seek = $("video-seek");
+    seek.max = Math.floor(s.duration);
+    seek.value = Math.floor(s.pos || 0);
+    $("video-time").textContent = fmtTime(s.pos) + " / " + fmtTime(s.duration);
+  }
+}
+
+function renderNow() {
+  const now = $("glance-now");
+  const s = vState;
+  if (!s || s.phase === "idle") { now.hidden = true; now.textContent = ""; return; }
+  now.hidden = false;
+  if (s.phase === "resolving") {
+    const el = vElapsed();
+    now.textContent = "⟳ 解決中…" + (el == null ? "" : " " + el + "s");
+  } else {
+    const icon = s.is_live ? "● LIVE" : (s.pause ? "⏸" : "▶");
+    now.textContent = icon + " " + (s.title || "");
+  }
+}
+
+function startVideoPoll() {
+  if (!vTimer) vTimer = setInterval(pollVideo, 2000);
+  if (!vTick) vTick = setInterval(() => {
+    if (vState && vState.phase === "resolving") { renderResolving(); renderNow(); }
+  }, 1000);
+}
+
+async function pollVideo() {
+  if (!getToken()) return;
+  try {
+    const r = await api("/api/video/state");
+    if (!r.ok) return;
+    vState = await r.json();
+    if (vState.phase !== "resolving") vClearResolveAt();
+    if (vState.phase === "idle") vCollapsed = false;  // 終了したら畳み状態を解除
+    renderVideo();
+    renderNow();
+  } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
+}
+
+async function playVideo() {
+  const url = $("video-url").value.trim();
+  const err = $("video-play-err");
+  if (!url) { err.textContent = "URL を入力してください"; return; }
+  // 楽観的遷移: タップ即 RESOLVING（§5.2）。
+  localStorage.setItem(V_LASTURL_KEY, url);
+  vSetResolveAt(Date.now());
+  vCollapsed = false;
+  err.textContent = "";
+  vState = { phase: "resolving", title: null, is_live: false };
+  renderVideo();
+  renderNow();
+  startVideoPoll();
+  try {
+    const r = await api("/api/video/play", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (!r.ok) {
+      vClearResolveAt();
+      vState = { phase: "idle" };
+      if (r.status === 400) err.textContent = "受け付けない URL です（YouTube のみ対応）";
+      else if (r.status === 503) err.textContent = "動画プレイヤーに接続できません";
+      else err.textContent = "再生開始に失敗しました";
+      renderVideo();
+      renderNow();
+    }
+  } catch (e) {
+    if (e.message !== "unauthorized") {
+      vClearResolveAt();
+      vState = { phase: "idle" };
+      err.textContent = "送信エラー";
+      renderVideo();
+      renderNow();
+    }
+  }
+}
+
+// キャンセル(resolving) / 停止(transport) はどちらも mpv stop（state 1本で確定、§5.2）。
+async function videoStop() {
+  vClearResolveAt();
+  try { await api("/api/video/stop", { method: "POST" }); } catch (e) { /* noop */ }
+  vState = { phase: "idle" };
+  vCollapsed = false;
+  renderVideo();
+  renderNow();
+}
+
+async function videoToggle() {
+  const path = (vState && vState.pause) ? "/api/video/resume" : "/api/video/pause";
+  try { await api(path, { method: "POST" }); } catch (e) { return; }
+  if (vState) { vState.pause = !vState.pause; renderTransport(); renderNow(); }
+}
+
+async function videoSeek() {
+  const pos = parseInt($("video-seek").value, 10);
+  vSeeking = false;
+  if (isNaN(pos)) return;
+  try {
+    await api("/api/video/seek", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pos }),
+    });
+  } catch (e) { /* noop */ }
+}
+
+async function videoVolume() {
+  const v = parseInt($("video-volume").value, 10);
+  if (isNaN(v)) return;
+  try {
+    await api("/api/video/volume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ v }),
+    });
+  } catch (e) { /* noop */ }
+}
+
+function initVideo() {
+  $("video-play").addEventListener("click", playVideo);
+  $("video-cancel").addEventListener("click", videoStop);
+  $("video-stop").addEventListener("click", () => {
+    if (confirm("再生を停止しますか？（TV の再生が止まります）")) videoStop();
+  });
+  $("video-close").addEventListener("click", () => { vCollapsed = true; renderVideo(); });
+  $("video-reopen").addEventListener("click", () => { vCollapsed = false; renderVideo(); });
+  $("video-toggle").addEventListener("click", videoToggle);
+  const seek = $("video-seek");
+  ["pointerdown", "touchstart", "mousedown"].forEach((ev) =>
+    seek.addEventListener(ev, () => { vSeeking = true; }));
+  seek.addEventListener("change", videoSeek);
+  $("video-volume").addEventListener("change", videoVolume);
+  startVideoPoll();
+  pollVideo();  // 初回: 既存セッション復元（§5.2）
+}
+
 function init() {
   $("token-save").addEventListener("click", () => {
     const t = $("token-input").value.trim();
@@ -117,6 +341,7 @@ function init() {
   });
   $("say-send").addEventListener("click", sendSay);
   $("status-refresh").addEventListener("click", refreshGlance);
+  initVideo();
 
   const glance = $("glance");
   glance.addEventListener("click", () => {

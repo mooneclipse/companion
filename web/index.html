@@ -12,8 +12,9 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<header class="glance" id="glance" role="button" tabindex="0" aria-label="接続状態と OS health（タップで詳細）">
+<header class="glance" id="glance" role="button" tabindex="0" aria-label="接続状態と再生状況と OS health（タップで詳細）">
   <span class="dot" id="conn-dot" aria-hidden="true"></span>
+  <span id="glance-now" class="now" hidden></span>
   <span id="glance-text">接続確認中…</span>
 </header>
 
@@ -28,6 +29,52 @@
 
   <!-- 操作 -->
   <section id="app" hidden>
+    <section class="card" id="video-card">
+      <h2>動画</h2>
+
+      <!-- idle: URL 投入。close≠stop ゆえ再生中でも「閉じる」でこの view に戻れる(TV 継続) -->
+      <div id="video-idle">
+        <!-- 「閉じる」で transport を畳んだが TV 再生継続中のとき、操作へ戻る導線 -->
+        <button id="video-reopen" type="button" class="secondary" hidden>操作に戻る</button>
+        <p id="video-ended" class="result" role="status" hidden></p>
+        <textarea id="video-url" rows="2" maxlength="2000" placeholder="YouTube の URL"></textarea>
+        <button id="video-play" type="button">再生</button>
+        <p id="video-play-err" class="result" role="status"></p>
+      </div>
+
+      <!-- resolving: yt-dlp 解決中(40〜70秒)。経過秒 + 目安 + キャンセル -->
+      <div id="video-resolving" hidden>
+        <p class="resolving"><span class="spinner" aria-hidden="true"></span>
+          <span id="video-resolve-text">読み込み中…</span></p>
+        <p class="muted" id="video-resolve-note">読み込みに最大1分ほどかかります</p>
+        <button id="video-cancel" type="button" class="secondary">キャンセル</button>
+      </div>
+
+      <!-- transport: 再生中 / 一時停止 -->
+      <div id="video-transport" hidden>
+        <p id="video-title" class="now-title"></p>
+        <div id="video-seekrow" class="row">
+          <input type="range" id="video-seek" min="0" max="100" value="0"
+                 aria-label="再生位置">
+          <span id="video-time" class="muted"></span>
+        </div>
+        <p id="video-live-badge" class="live-badge" hidden>● LIVE</p>
+        <div class="row">
+          <button id="video-toggle" type="button">一時停止</button>
+        </div>
+        <div class="row">
+          <span class="muted vol-label">音量</span>
+          <input type="range" id="video-volume" min="0" max="130" value="100"
+                 aria-label="音量">
+        </div>
+        <!-- 「閉じる」(可逆・TV 継続)と「停止」(不可逆・破壊的)を語彙/位置で分離(§5.1) -->
+        <div class="row video-bottom">
+          <button id="video-close" type="button" class="secondary">閉じる</button>
+          <button id="video-stop" type="button" class="danger">停止</button>
+        </div>
+      </div>
+    </section>
+
     <section class="card">
       <h2>発話</h2>
       <textarea id="say-text" rows="3" maxlength="2000" placeholder="しゃべらせるテキスト"></textarea>

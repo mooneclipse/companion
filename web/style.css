@@ -38,6 +38,13 @@ body {
 .dot.ok { background: var(--ok); }
 .dot.down { background: var(--down); }
 #glance-text { color: var(--muted); font-size: 0.95rem; }
+.now {
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
 main { padding: 1rem; max-width: 640px; margin: 0 auto; }
 .card {
   background: var(--card);
@@ -73,3 +80,35 @@ button:disabled { opacity: 0.5; cursor: default; }
 dl { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; margin: 0; }
 dt { color: var(--muted); }
 dd { margin: 0; }
+
+/* --- F-video --- */
+.muted { color: var(--muted); font-size: 0.9rem; margin: 0.4rem 0; }
+button.secondary { background: #3a4153; color: var(--fg); }
+button.danger { background: var(--down); color: #fff; }
+#video-play, #video-cancel, #video-reopen { margin-top: 0.6rem; }
+.now-title {
+  font-weight: 600;
+  margin: 0 0 0.7rem;
+  word-break: break-word;
+}
+.resolving { display: flex; align-items: center; gap: 0.6rem; margin: 0.3rem 0; }
+.spinner {
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 0.18rem solid #3a4153;
+  border-top-color: #e0a458;  /* amber: 解決中(§5.2) */
+  border-radius: 50%;
+  flex: none;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.live-badge {
+  display: inline-block;
+  color: var(--down);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin: 0.2rem 0 0.7rem;
+}
+.vol-label { flex: none; }
+#video-seek, #video-volume { flex: 1; }
+.video-bottom { justify-content: space-between; margin-top: 0.9rem; }
