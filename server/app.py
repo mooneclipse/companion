@@ -17,6 +17,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import auth
+import status as os_status
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("REMOTE_PORT", "47824"))
@@ -29,11 +30,17 @@ def health(handler):
     return 200, {"status": "ok"}
 
 
+def api_status(handler):
+    """GET /api/status — F-3 OS status(df/free/sensors/uptime)。Bearer 必須。"""
+    return 200, os_status.collect()
+
+
 # (i) API 明示ルートテーブル。値は (handler, auth_required)。ここに無い (method, path) は 404。
 #     self.path を FS に連結しない。auth_required=False は無認証 endpoint(生存確認のみ)、
 #     それ以外の /api/* は (iv) Bearer 必須。
 ROUTES = {
     ("GET", "/api/health"): (health, False),
+    ("GET", "/api/status"): (api_status, True),
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。
