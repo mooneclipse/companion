@@ -326,7 +326,7 @@ html, body {
 /* 体・スクリーン・影 */
 .cmp-body   { fill: #28323f; }
 .cmp-shadow { fill: rgba(0, 0, 0, 0.28); }
-.cmp-screen { fill: #0c1118; }
+.cmp-screen { fill: #1a2230; }     /* 体(#28323f)より暗い窪み。橙の目の視認性のため真黒(#0c1118)から上げた(2026-05-22) */
 
 /* 目・口（accent で発光感。drop-shadow は 1080i のにじみを避け控えめ） */
 .cmp-eye, .cmp-mouth {
