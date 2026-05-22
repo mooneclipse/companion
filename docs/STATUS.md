@@ -187,8 +187,8 @@ dashboard/
 - slot 判定: 境界時刻の特別扱いをしない。start 時に 1 回確定、途中再評価しない。slot #2 が来たら時計監視ループを足すのではなく `dashboard@<slot>.service` テンプレ化に移行。
 - now-playing: mpv IPC は 1 回の connect-or-empty で確定。「mpv 起動待ちで数回リトライ」をしない。
 - respawn: `while true; do firefox …; done` 系禁止。`Restart=` 付けない。子が 1 個落ちても残りは degrade、9:00 に cgroup kill で掃除。
-- **窓識別**: `wmctrl -l -p` の PID 一致のみで確定。WM_CLASS マッチへの fallback / 多重述語（WM_CLASS AND PID）/ 配置後の geometry read-back / stderr 文言マッチは足さない。PID 一致で 0 件 = benign give-up。firefox launch 失敗時は `$!` が前ジョブ PID（nowplaying-helper or mpv）を返し、helper/mpv は X11 窓を持たない → wmctrl で見つからず timeout → benign give-up に流れる。
-- **案 A 不成立観測時の引き直し先 = G（placement 軸移行）**: 「PID 一致でも見つからない」観測時（3 朝連続失敗、§ 朝の運用ルール準拠）は polling 上限（10s → 20s）を増やす **2 周目を打たず**、identity 軸 → placement 軸へ 1 度で引き直し: G（`firefox --kiosk --kiosk-monitor=<N>` + wmctrl 撤去）。最小覆しデータは monitor index 決定論性 / HDMI-1 占有 / 9:00 panel 復帰 / fullscreen-warning 抑止 / `--new-instance --kiosk` 干渉 / xrandr disconnect 挙動。**同一軸の中間段（i-TITLE 等）は持たない** — 補欠複数を持つと patch #2/#3 を呼び込み「3 度目を打たずに一段引いて設計を見直す」上限を浪費（`~/companion/CLAUDE.md` 抵触）。G への移行は判断根拠を本欄に追記してから着手。
+- **窓識別**: index.html の `<title>=COMPANION-DASH` のタイトル一致（`wmctrl -l | awk 'index($0,t)'`）で確定。WM_CLASS マッチ / 多重述語 / 配置後の geometry read-back / stderr 文言マッチ / リトライ fallback は足さない。一致 0 件 = benign give-up。**旧 PID 一致（`wmctrl -l -p` の `$3==FF_PID`）から 2026-05-22 に引き直し**: `firefox --new-instance` の launcher PID(`$!`) と実窓の `_NET_WM_PID` が原理的に食い違い PID 一致が当たらず毎朝 timeout していた（5/17-19 の「window not found」の真因はこれ。当時 STATUS が「firefox --kiosk で HDMI-1 占有」と書いたのは誤帰属＝スクリプトに `--kiosk` は無い。実際は前回 firefox が書いた xulstore の 1280x710 normal 窓が偶々 HDMI-1 上にあっただけ）。COMPANION-DASH は dashboard 専用 profile + `--new-instance` ゆえ常用 firefox の窓と衝突しない、我々が所有する一意キー。
+- **2026-05-22 引き直しの軸選択（identity 軸の据え直し、placement 軸移行は不採用）**: 当初の引き直し先 G（`firefox --kiosk --kiosk-monitor=<N>`）は **firefox に存在しない幻のフラグ**だった（`--kiosk-monitor` は Chromium のオプション、firefox 151 `--help` に無し）。さらに実機検証（2026-05-22、`DISPLAY=:0` 使い捨て profile）で xulstore（`sizemode:fullscreen`→maximized 格下げ / `sizemode:normal`+screenX:0 / +screenX:300）も `--kiosk` も **この機の WM(Marco) が新規窓を primary=LVDS-1 へ再配置するため全パターン LVDS-1 着地**（尊重されるのは width/height のみ、モニタは不可制御）と判明。HDMI-1 を座標で確実に狙えるのは `wmctrl -e 0,0,1920,1080`+`add,fullscreen` のみ（B4 2026-05-16 + 2026-05-22 再実証で X=0/1920×1080/FULLSCREEN を確認）。**壊れていたのは placement ではなく identity** だったため、placement 軸（G）へは移さず identity 軸を PID→title へ据え直した。成否は 1 回で確定・fallback 連鎖なしゆえ `~/companion/CLAUDE.md` の対症療法 2 周目には当たらない（PID 述語への条件追加ではなく軸の置換）。
 
 ---
 
@@ -216,6 +216,7 @@ dashboard/
 - [x] **停止時の音量復元** — 2026-05-16 実装。`bin/dashboard-start.sh` で起動時に現音量・mute を `.state/prev-sink-volume{,mute}` に保存（`LC_ALL=C` でロケール固定）、新規 `bin/dashboard-restore-volume.sh` を `dashboard.service` の `ExecStopPost=` で呼んで復元。要 `systemctl --user daemon-reload`。
 - [x] **時間ごと予報 strip** — 2026-05-16 実装。天気パネル下端に 6/9/12/15/18/21 時の 6 スロット (時刻 / アイコン / 気温 / 降水%) を追加。既存 `forecast_days=1` のレスポンスで賄える。`index.html` / `app.js` (renderHourly) / `style.css` (.wx-hourly grid) 更新。
 - [x] **v0.2 redesign（industrial-refined）** — 2026-05-16 実装。team `dashboard-redesign-2` (architect / ux / devil) で議論し本 STATUS の画面レイアウト section を全面書き換え。Inter / Noto Sans JP を撤去し Josefin Sans + DM Sans + Noto Sans CJK JP を自己ホスト (`web/fonts/`)。サイズリセット (weather/garbage 縮小・hourly 独立行)・column-gap 60px・vignette overlay・letter-spacing 精緻化を反映。grain と border-top は devil 反証で不採用。`app.js` 変更ゼロ。
+- [ ] **〔ユーザー〕title 一致引き直しの本番確認**（2026-05-22 実装）: 明朝 2026-05-23 05:30 発火 or 手動 `systemctl --user start dashboard.service` で TV に **全画面**表示されるか物理確認。journal に `placed firefox window <id> on HDMI-1 (fullscreen)` が出れば title 一致成功（従来は `window not found within timeout`）。NG が 3 朝続けば L190-191 に従い設計引き直し。
 - [ ] **B7 拡張系（v0.2 redesign 用の実機確認）**: 下記 B24-B27 を本番初発火 or 手動 start で目視
   - B24: fold 高さ実測（v0.2 予測 ~696px が可視域内か）
   - B25: vignette 中心 `50% 40%` で端部の wx-sub / gb-next が暗くなりすぎないか
@@ -228,6 +229,12 @@ dashboard/
 
 ## Done
 
+- 2026-05-22 窓配置の identity 軸引き直し（PID 一致 → title 一致）。**ユーザー報告**「9:00 にブラウザごと閉じるのは確認できた。ただ YouTube と同じでウィンドウの大きさが制御できていない」を起点に調査。
+  - **根本原因**: ① 現行 profile の `xulstore.json` が `screenX:319,screenY:169,width:1280,height:710,sizemode:normal` を保持 → firefox がこの 1280x710 の「普通の窓」を復元（＝大きさ未制御の正体）。② step6 の wmctrl PID 一致が毎朝 timeout（今朝 5/22 も `firefox window not found within timeout`、05:30:12）。真因は `firefox --new-instance` の launcher PID(`$!`) ≠ 実窓 `_NET_WM_PID`。③ 台帳が予告した引き直し先 G（`firefox --kiosk --kiosk-monitor=<N>`）は firefox に存在しない幻フラグ（Chromium のもの、firefox 151 `--help` 確認）。chromium/chrome/xdotool は未導入（firefox のみ）。
+  - **実機検証**（`DISPLAY=:0` 使い捨て profile、5 パターン）: xulstore `sizemode:fullscreen`→maximized 格下げで **LVDS-1** / `normal`+screenX:0→**LVDS-1** / `normal`+screenX:300→x≈2014 で **LVDS-1** / `--kiosk`+xulstore→真の全画面だが **LVDS-1** / **title 一致+`wmctrl -e 0,0,1920,1080`+`add,fullscreen`→X=0,Y=0,1920×1080,FULLSCREEN=HDMI-1** ✓。結論: この機の WM(Marco) は新規窓を primary=LVDS-1 へ再配置し screenX を無視（video-design の `--fs-screen=0`→LVDS-1 と同じ罠）。firefox に mpv の `--fs-screen-name=HDMI-1` 相当の出力名フラグは無いため、HDMI-1 を狙えるのは座標指定の `wmctrl -e` のみ。
+  - **引き直し（ユーザー承認 2 段階: 方式選択→xulstore 否定後に第3案へ切替）**: 壊れていたのは placement でなく identity ゆえ identity 軸を PID→title へ据え直し（placement 軸 G へは移さない）。`web/index.html` の `<title>` を `dashboard`→`COMPANION-DASH`（全画面では非表示の一意キー）、`bin/dashboard-start.sh` step6 の同定を `wmctrl -l -p` PID 一致 → `wmctrl -l | awk -v t=COMPANION-DASH 'index($0,t)'` title 一致に置換。配置（`wmctrl -e`+`add,fullscreen`）は据え置き。`bash -n` OK、awk が素の "dashboard" 行を拾わないことを単体確認。対症療法 2 周目非該当（軸の置換、成否 1 回確定、fallback なし）。
+  - **誤帰属の訂正**: 5/17-19 の「機能成功 = firefox `--kiosk` で HDMI-1 占有」（旧 L214/237）は誤り。スクリプトに `--kiosk` は無く、実際は xulstore の 1280x710 normal 窓が偶々 HDMI-1 上にあっただけ（だから「大きさ未制御」が当初から潜在していた）。
+  - **残**: 〔ユーザー〕明朝 2026-05-23 05:30 発火 or 手動 start で TV 全画面を物理確認（journal に `placed firefox window … on HDMI-1 (fullscreen)` が出れば title 一致成功）。3 朝連続失敗時は L190-191 のルールに従い設計引き直し（patch #2 を打たない）。
 - 2026-05-20 全体レビュー軸 1 で発覚した dashboard 5/17-19 観察結果整理 + In progress 解消
   - **背景**: 健全性 2 週間観察期間 (2026-05-19〜2026-06-02) 起点で実施した全体レビュー (PROJECT.md 健全性履歴 2026-05-20 entry 参照) 軸 1 STATUS.md drift 点検で、5/17 patch 後の本番初発火観察が In progress のまま 3 朝放置されている drift を検出。journal 確認 + user TV 物理確認で 3 朝とも機能成功と判明、L113 / L191 「3 朝連続失敗」ルール不発動を確定
   - **journal 観察値** (`journalctl --user -u dashboard.service` 5/17-19):

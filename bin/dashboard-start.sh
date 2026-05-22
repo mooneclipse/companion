@@ -107,11 +107,21 @@ echo "dashboard-start.sh: firefox launched (launcher pid $FF_PID)"
 
 # ── 6. firefox ウィンドウを HDMI-1（1920x1080+0+0）へ移動して全画面化
 #   observable state（窓の存在）への上限付き readiness wait → 出なければ benign give-up（service は殺さない）。
-#   窓同定は `wmctrl -l -p` の PID 一致（$3 == FF_PID）。WM_CLASS-grep は常用 firefox 並走時に他窓を拾うため不採用（2026-05-15 事故 root cause）。
+#   窓同定は index.html の <title>=COMPANION-DASH のタイトル一致。
+#     旧: `wmctrl -l -p` の PID 一致（$3 == FF_PID）。だが firefox --new-instance は launcher PID($!) と
+#     実窓の _NET_WM_PID が食い違い、PID 一致が原理的に当たらず毎朝 timeout していた（2026-05-22 実機確定）。
+#     同定の軸を「OS 任せの PID」→「index.html で我々が所有するタイトル」へ引き直した（成否は1回で確定、
+#     fallback 連鎖なし＝対症療法 2 周目ではない。根拠は ../docs/STATUS.md 2026-05-22 エントリ）。
+#     WM_CLASS-grep 不採用は据え置き（常用 firefox 並走時に他窓を拾う、2026-05-15 事故 root cause）。
+#     COMPANION-DASH は dashboard 専用 profile + --new-instance ゆえ常用 firefox の窓と衝突しない一意キー。
+#   xulstore / --kiosk による位置指定は不採用: この機の WM(Marco) が新規窓を primary=LVDS-1 へ再配置し
+#     screenX を無視するため HDMI-1 を狙えない（2026-05-22 実機で全パターン LVDS-1 着地を確認）。
+#     HDMI-1 を座標で確実に狙えるのは wmctrl -e のみ（B4 2026-05-16 + 2026-05-22 再実証）。
 #   ※ ここを「窓が出ない → 回数を増やす / sleep を足す」方向に育てないこと。flaky が続くなら patch #2 を当てず設計引き直し（../docs/STATUS.md 参照）。
+WIN_TITLE_MATCH="COMPANION-DASH"
 WIN_ID=""
 for _ in $(seq 1 20); do
-  WIN_ID=$(wmctrl -l -p 2>/dev/null | awk -v p="$FF_PID" '$3==p {print $1; exit}')
+  WIN_ID=$(wmctrl -l 2>/dev/null | awk -v t="$WIN_TITLE_MATCH" 'index($0, t) {print $1; exit}')
   [ -n "$WIN_ID" ] && break
   sleep 0.5
 done
