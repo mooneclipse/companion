@@ -88,7 +88,8 @@ dd { margin: 0; }
 .muted { color: var(--muted); font-size: 0.9rem; margin: 0.4rem 0; }
 button.secondary { background: #3a4153; color: var(--fg); }
 button.danger { background: var(--down); color: #fff; }
-#video-play, #video-cancel, #video-reopen { margin-top: 0.6rem; }
+/* video-play は .row 内に入れたので margin-top は .row に任せる(二重がけで縦ずれ防止) */
+#video-cancel, #video-reopen { margin-top: 0.6rem; }
 .now-title {
   font-weight: 600;
   margin: 0 0 0.7rem;
