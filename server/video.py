@@ -87,8 +87,13 @@ def _command(verb):
 # --- HTTP 層から呼ぶ固定テンプレート(verb whitelist) ---
 
 def play(url):
-    """loadfile <url> replace。url は urlguard.normalize 済みのみが届く前提。"""
-    return _command(["loadfile", url, "replace"])
+    """loadfile <url> replace pause=no。url は urlguard.normalize 済みのみが届く前提。
+
+    pause は mpv の global property で loadfile をまたいで保持されるため、前回 pause の
+    まま閉じると次の再生も pause で始まる。per-file option `pause=no` で継承を断ち、
+    再生開始は必ず再生状態にする(mpv 0.34.1 で構文確認済)。
+    """
+    return _command(["loadfile", url, "replace", "pause=no"])
 
 
 def pause():
