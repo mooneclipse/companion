@@ -69,6 +69,31 @@
     <span class="np-text" id="np-text">Morning Bell — Ambient Works</span>
   </footer>
 
+  <!-- 小箱キャラ（下半分中央・absolute で flow 外＝上半分レイアウトを揺らさない）。
+       体は固定 SVG、スクリーン内の目/口だけ data-state で切り替え（現状 normal 固定）。
+       状態セット（normal/thinking/answering/happy/confused/error/sleepy）は CSS 側に予約済み。
+       将来の外部連携は companion 要素の data-state を差し替えるだけ。app.js が
+       まばたき・目線のランダムタイマーを駆動（throw しても他機能と独立、時計は別系統）。 -->
+  <div class="companion" id="companion" data-state="normal" aria-hidden="true">
+    <div class="companion-sway">
+      <svg class="companion-svg" viewBox="0 0 160 200" width="100%" height="100%">
+        <!-- 体（直方体） -->
+        <rect class="cmp-body" x="28" y="28" width="104" height="150" rx="20"/>
+        <!-- 接地の薄い影 -->
+        <ellipse class="cmp-shadow" cx="80" cy="188" rx="46" ry="6"/>
+        <!-- スクリーン（顔） -->
+        <rect class="cmp-screen" x="44" y="56" width="72" height="74" rx="14"/>
+        <!-- 目（点）。.eyes 単位で目線移動、各 .eye 単位でまばたき -->
+        <g class="cmp-eyes">
+          <circle class="cmp-eye" cx="67" cy="88" r="6.5"/>
+          <circle class="cmp-eye" cx="93" cy="88" r="6.5"/>
+        </g>
+        <!-- 口（横棒 —） -->
+        <rect class="cmp-mouth" x="71" y="110" width="18" height="4.5" rx="2.25"/>
+      </svg>
+    </div>
+  </div>
+
 </div>
 
 <script>

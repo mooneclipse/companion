@@ -262,4 +262,65 @@
 
   setInterval(function () { try { fetchWeather(); } catch (e) {} }, 3600 * 1000);   // 毎時
   setInterval(function () { try { pollNowPlaying(); } catch (e) {} }, 2500);          // 2.5s
+
+  // ─────────────────────────────────────────────────────────────
+  // 小箱キャラ アイドルアニメ（まばたき・目線のランダムタイマー）
+  // 体の微揺れ・呼吸は CSS keyframes 完結。ここは「JS でしか出せないランダム性」だけ。
+  // 状態連動（設計ノート 2026-05-16）:
+  //   thinking/answering … 目線移動を停止（揺れ停止は CSS 側）。まばたきは継続
+  //   error              … アイドル全停止（まばたき・目線とも止め、揺れ/呼吸は CSS 側）
+  //   sleepy             … まばたきが遅く重い（閉じ 200ms）
+  // 現状 data-state は normal 固定（外部連携は将来）。
+  // ─────────────────────────────────────────────────────────────
+  (function () {
+    var cmp = $('companion');
+    if (!cmp) return;
+    var eyes = cmp.querySelector('.cmp-eyes');
+    var eyeEls = cmp.querySelectorAll('.cmp-eye');
+    if (!eyes || !eyeEls.length) return;
+    var rand = function (min, max) { return min + Math.random() * (max - min); };
+    var state = function () { return cmp.getAttribute('data-state') || 'normal'; };
+
+    // まばたきは error のみ停止（sleepy を含むそれ以外は瞬きする）
+    function blinkAllowed() { return state() !== 'error'; }
+    // 目線移動は処理中（thinking/answering）と error で停止
+    function gazeAllowed() {
+      var s = state();
+      return s !== 'thinking' && s !== 'answering' && s !== 'error';
+    }
+
+    function blinkOnce() {
+      var hold = state() === 'sleepy' ? 200 : 100;   // sleepy は重いまばたき
+      for (var i = 0; i < eyeEls.length; i++) eyeEls[i].classList.add('blink');
+      setTimeout(function () {
+        for (var i = 0; i < eyeEls.length; i++) eyeEls[i].classList.remove('blink');
+      }, hold);
+    }
+    function scheduleBlink() {
+      setTimeout(function () {
+        if (blinkAllowed()) {
+          blinkOnce();
+          if (Math.random() < 0.1) setTimeout(blinkOnce, 180);   // 10回に1回 二連まばたき
+        }
+        scheduleBlink();
+      }, rand(3000, 7000));   // 3〜7秒ランダム
+    }
+    function scheduleGaze() {
+      setTimeout(function () {
+        if (gazeAllowed()) {
+          eyes.classList.remove('look-left', 'look-right');
+          var r = Math.random();
+          if (r < 0.4) eyes.classList.add('look-left');
+          else if (r < 0.8) eyes.classList.add('look-right');
+          // 残り 20% は正面のまま
+          setTimeout(function () { eyes.classList.remove('look-left', 'look-right'); }, 1600);
+        } else {
+          eyes.classList.remove('look-left', 'look-right');   // 停止中は正面に戻す
+        }
+        scheduleGaze();
+      }, rand(8000, 15000));   // 8〜15秒ランダム
+    }
+    scheduleBlink();
+    scheduleGaze();
+  })();
 })();

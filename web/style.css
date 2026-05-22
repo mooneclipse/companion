@@ -297,3 +297,83 @@ html, body {
 /* データ更新時のソフトフェード（pop させない）。要素単位で .updating を一瞬付ける用 */
 .weather, .garbage { transition: opacity 380ms ease; }
 .updating { opacity: 0.35; }
+
+/* ── 小箱キャラ（下半分中央・absolute / flow 外） ─────────────────────
+   下半分の意図された静けさに小さく住む。視聴距離 2-3m なので面・記号は太め。
+   - 体: 固定 SVG（青みグレー、背景からわずかに浮く）
+   - スクリーン: 暗い窪み、目/口は accent で「出力してる感」
+   - 微揺れ（translateY ±2px / 2s）と呼吸（scaleY / 4s）はレイヤーを分けて合成
+   - まばたき・目線は app.js がクラス on/off（CSS が形を持つ＝JS は最小） */
+.companion {
+  position: absolute;
+  left: 50%;
+  bottom: 13vh;                    /* 下半分中央寄り。実機可視域で要微調整（B7 系の余地） */
+  transform: translateX(-50%);
+  width: 8.5vw;                    /* 小さめマスコット。実機で調整 */
+  z-index: 1;                      /* vignette(::before z0) より前 */
+  pointer-events: none;
+}
+.companion-sway {
+  animation: cmp-sway 2s ease-in-out infinite;
+}
+.companion-svg {
+  display: block;
+  animation: cmp-breathe 4s ease-in-out infinite;
+  transform-origin: 50% 90%;       /* 接地点を基準に呼吸 */
+  overflow: visible;
+}
+
+/* 体・スクリーン・影 */
+.cmp-body   { fill: #28323f; }
+.cmp-shadow { fill: rgba(0, 0, 0, 0.28); }
+.cmp-screen { fill: #0c1118; }
+
+/* 目・口（accent で発光感。drop-shadow は 1080i のにじみを避け控えめ） */
+.cmp-eye, .cmp-mouth {
+  fill: var(--accent);
+}
+.cmp-eyes {
+  transition: transform 220ms ease;   /* 目線移動を滑らかに */
+}
+.cmp-eyes.look-left  { transform: translateX(-4px); }
+.cmp-eyes.look-right { transform: translateX(4px); }
+
+.cmp-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 90ms ease;     /* まばたきの開閉 */
+}
+/* blink は全 state で最優先（confused/happy/sleepy の目 transform が specificity で勝つのを防ぐ）。
+   瞬きの停止は app.js 側で error のみ（設計ノート 2026-05-16）。 */
+.cmp-eye.blink { transform: scaleY(0.08) !important; }
+
+/* 微揺れ・呼吸 keyframes（ロードフェードと違い常時ループ＝静かな生体感のみ） */
+@keyframes cmp-sway {
+  0%, 100% { transform: translateY(-2px); }
+  50%      { transform: translateY(2px); }
+}
+@keyframes cmp-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(1.015); }
+}
+
+/* 状態連動の体アニメ停止（設計ノート 2026-05-16: 処理中=揺れ停止 / error=全停止）。
+   まばたき・目線（JS）の停止は app.js 側、ここは CSS keyframes の揺れ・呼吸を止める。 */
+.companion[data-state="thinking"]  .companion-sway,
+.companion[data-state="answering"] .companion-sway,
+.companion[data-state="error"]     .companion-sway { animation: none; }
+.companion[data-state="error"]     .companion-svg  { animation: none; }
+
+/* ── 表情セット（将来の外部連携用に予約。現状 app.js は normal 固定で駆動）──
+   data-state を差し替えるだけで目/口が変わる。 */
+.companion[data-state="thinking"]  .cmp-mouth { animation: cmp-think 1.1s steps(1) infinite; }
+.companion[data-state="answering"] .cmp-mouth { width: 5px; x: 77px; animation: cmp-type 0.5s steps(1) infinite; }
+.companion[data-state="happy"]     .cmp-eye   { transform: scaleY(0.55) translateY(-2px); }
+.companion[data-state="happy"]     .cmp-mouth { height: 7px; rx: 3.5px; }
+/* confused: 右目だけ細めて少し上げる（怪訝。"・ ？" の完全描画は将来差分） */
+.companion[data-state="confused"]  .cmp-eye:last-of-type { transform: scaleY(0.5) translateY(-3px); }
+.companion[data-state="error"]     .cmp-eye,
+.companion[data-state="error"]     .cmp-mouth { fill: var(--ink-dim); }
+.companion[data-state="sleepy"]    .cmp-eye   { transform: scaleY(0.12); }
+@keyframes cmp-think { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.25; } }
+@keyframes cmp-type  { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
