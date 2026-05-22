@@ -144,10 +144,19 @@ def api_video_stop(handler):
 
 
 def api_video_seek(handler):
-    """POST /api/video/seek {pos} — 絶対シーク(秒)。VOD のみ(live gate は PWA 側)。"""
+    """POST /api/video/seek — シーク(VOD のみ、live gate は PWA 側)。
+
+    {pos}: 絶対シーク(秒, 非負)。{delta}: 相対シーク(±秒, RV-7 ±N スキップ)。
+    delta は負も許可。範囲外は mpv が clamp(server は delta を受けるだけ、STATUS RV-7)。
+    """
     data, err = _read_json(handler)
     if err:
         return err
+    delta = data.get("delta")
+    if delta is not None:
+        if not _is_num(delta) or abs(delta) > 86400:
+            return 400, {"error": "delta must be a number within +/-86400"}
+        return _video_result(video.seek(delta, relative=True))
     pos = data.get("pos")
     if not _is_num(pos) or pos < 0:
         return 400, {"error": "pos must be a non-negative number"}

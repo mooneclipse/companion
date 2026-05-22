@@ -103,9 +103,14 @@ def stop():
     return _command(["stop"])
 
 
-def seek(pos):
-    """絶対シーク(VOD のみ。live のシーク無効化は PWA 側 is_live で gate)。"""
-    return _command(["seek", pos, "absolute"])
+def seek(amount, relative=False):
+    """シーク(VOD のみ。live のシーク無効化は PWA 側 is_live で gate)。
+
+    relative=False: 絶対(秒)。relative=True: 相対(±秒, RV-7 ±N スキップ)。
+    どちらも verb whitelist「seek abs+rel」内(video-design.md §3.4)で RCE 面を増やさない。
+    範囲外は mpv が clamp する(成否1回確定の原則を崩さない)。
+    """
+    return _command(["seek", amount, "relative" if relative else "absolute"])
 
 
 def set_volume(v):

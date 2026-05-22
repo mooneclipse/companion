@@ -115,3 +115,9 @@ button.danger { background: var(--down); color: #fff; }
 .vol-label { flex: none; }
 #video-seek, #video-volume { flex: 1; }
 .video-bottom { justify-content: space-between; margin-top: 0.9rem; }
+/* ±N スキップ行(RV-7): 前後ボタンを両端、中央にステップ可変コントロール */
+#video-skiprow { justify-content: space-between; }
+#video-skip-back, #video-skip-fwd { flex: none; }
+.step-ctl { display: flex; align-items: center; gap: 0.4rem; }
+.step-ctl .step-btn { padding: 0.4rem 0.7rem; flex: none; }
+#video-step-label { flex: none; min-width: 2.5em; text-align: center; }

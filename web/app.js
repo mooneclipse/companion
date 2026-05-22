@@ -113,6 +113,9 @@ async function sendSay() {
 // （token とは分離、§5.4）。close ≠ stop: 「閉じる」は可逆(TV 継続)、「停止」は不可逆。
 const V_RESOLVE_KEY = "video_resolve_at";  // resolve 開始 epoch ms（経過秒の起点）
 const V_LASTURL_KEY = "video_last_url";    // 直前投入 URL（取りこぼし時の再投入ヒント）
+const V_STEP_KEY = "video_skip_step";      // ±N スキップのステップ秒（client 表示ヒント、token と分離。RV-7）
+const V_STEP_OPTIONS = [5, 10, 30, 60];    // 上下ボタンで巡回するステップ候補
+const V_STEP_DEFAULT = 10;
 let vState = null;          // 直近の server state
 let vCollapsed = false;     // 「閉じる」で transport を畳んだ（TV は継続）
 let vSeeking = false;       // シーク操作中は poll でスライダを上書きしない
@@ -127,6 +130,12 @@ function vElapsed() {
   const at = parseInt(localStorage.getItem(V_RESOLVE_KEY) || "0", 10);
   if (!at) return null;  // 起点不明（別経路で開始 / localStorage 消失）
   return Math.max(0, Math.round((Date.now() - at) / 1000));
+}
+
+// ±N スキップのステップ秒（候補外の値は既定へ寄せる）。サーバは delta を受けるだけ（RV-7）。
+function vStep() {
+  const n = parseInt(localStorage.getItem(V_STEP_KEY) || "", 10);
+  return V_STEP_OPTIONS.includes(n) ? n : V_STEP_DEFAULT;
 }
 
 function fmtTime(sec) {
@@ -197,6 +206,7 @@ function renderTransport() {
   $("video-live-badge").hidden = !live;
   const seekable = !live && typeof s.duration === "number" && s.duration > 0;
   $("video-seekrow").hidden = !seekable;
+  $("video-skiprow").hidden = !seekable;  // ±N スキップも VOD のみ（RV-7）
   if (seekable && !vSeeking) {
     const seek = $("video-seek");
     seek.max = Math.floor(s.duration);
@@ -323,6 +333,34 @@ async function videoSeek() {
   } catch (e) { /* noop */ }
 }
 
+// ±N スキップ（RV-7）。delta=±step を相対シークで送る（pos 取得待ち不要）。
+async function videoSkip(sign) {
+  const delta = sign * vStep();
+  try {
+    await api("/api/video/seek", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delta }),
+    });
+  } catch (e) { /* noop */ }
+}
+
+// 上下ボタンでステップ秒を候補内で増減（dir=+1/-1）。client state のみ更新。
+function changeStep(dir) {
+  let i = V_STEP_OPTIONS.indexOf(vStep());
+  if (i < 0) i = V_STEP_OPTIONS.indexOf(V_STEP_DEFAULT);
+  i = Math.min(V_STEP_OPTIONS.length - 1, Math.max(0, i + dir));
+  localStorage.setItem(V_STEP_KEY, String(V_STEP_OPTIONS[i]));
+  renderStepLabels();
+}
+
+function renderStepLabels() {
+  const n = vStep();
+  $("video-step-label").textContent = n + "s";
+  $("video-skip-back").textContent = "−" + n + "s";
+  $("video-skip-fwd").textContent = "＋" + n + "s";
+}
+
 async function videoVolume() {
   const v = parseInt($("video-volume").value, 10);
   if (isNaN(v)) return;
@@ -335,8 +373,21 @@ async function videoVolume() {
   } catch (e) { /* noop */ }
 }
 
+// URL 欄のクリア（RV-6）。URL を空に + 取りこぼし/失敗文言(#video-ended)もクリア。
+// 直前 URL ヒントも消す（消さないと次の poll で renderIdle が文言/再投入を復活させる）。
+function videoClear() {
+  $("video-url").value = "";
+  const ended = $("video-ended");
+  ended.hidden = true;
+  ended.textContent = "";
+  $("video-play-err").textContent = "";
+  vFailedLoad = false;
+  localStorage.removeItem(V_LASTURL_KEY);
+}
+
 function initVideo() {
   $("video-play").addEventListener("click", playVideo);
+  $("video-clear").addEventListener("click", videoClear);
   $("video-cancel").addEventListener("click", videoStop);
   $("video-stop").addEventListener("click", () => {
     if (confirm("再生を停止しますか？（TV の再生が止まります）")) videoStop();
@@ -348,6 +399,11 @@ function initVideo() {
   ["pointerdown", "touchstart", "mousedown"].forEach((ev) =>
     seek.addEventListener(ev, () => { vSeeking = true; }));
   seek.addEventListener("change", videoSeek);
+  $("video-skip-back").addEventListener("click", () => videoSkip(-1));
+  $("video-skip-fwd").addEventListener("click", () => videoSkip(1));
+  $("video-step-down").addEventListener("click", () => changeStep(-1));
+  $("video-step-up").addEventListener("click", () => changeStep(1));
+  renderStepLabels();
   $("video-volume").addEventListener("change", videoVolume);
   startVideoPoll();
   pollVideo();  // 初回: 既存セッション復元（§5.2）

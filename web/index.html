@@ -38,7 +38,10 @@
         <button id="video-reopen" type="button" class="secondary" hidden>操作に戻る</button>
         <p id="video-ended" class="result" role="status" hidden></p>
         <textarea id="video-url" rows="2" maxlength="2000" placeholder="YouTube の URL"></textarea>
-        <button id="video-play" type="button">再生</button>
+        <div class="row">
+          <button id="video-play" type="button">再生</button>
+          <button id="video-clear" type="button" class="secondary">クリア</button>
+        </div>
         <p id="video-play-err" class="result" role="status"></p>
       </div>
 
@@ -57,6 +60,18 @@
           <input type="range" id="video-seek" min="0" max="100" value="0"
                  aria-label="再生位置">
           <span id="video-time" class="muted"></span>
+        </div>
+        <!-- ±N 秒スキップ + ステップ可変(RV-7)。seekable=VOD のみ表示(live は §5.1 で非表示) -->
+        <div id="video-skiprow" class="row" hidden>
+          <button id="video-skip-back" type="button" class="secondary">−10s</button>
+          <span class="step-ctl">
+            <button id="video-step-down" type="button" class="secondary step-btn"
+                    aria-label="スキップ秒数を短く">−</button>
+            <span id="video-step-label" class="muted">10s</span>
+            <button id="video-step-up" type="button" class="secondary step-btn"
+                    aria-label="スキップ秒数を長く">＋</button>
+          </span>
+          <button id="video-skip-fwd" type="button" class="secondary">＋10s</button>
         </div>
         <p id="video-live-badge" class="live-badge" hidden>● LIVE</p>
         <div class="row">
