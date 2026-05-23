@@ -49,6 +49,17 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 
 ## Done
 
+- 2026-05-23 claude CLI 2.1.145 → 2.1.149 軽量再検証 + `~/.claude/CLAUDE.md` の Fast モード記述更新 (`~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」運用ルール準拠、M-7 と同方針)
+  - **経緯**: ユーザー手元 UI に update 通知。`claude update` は up-to-date 応答（ローカル既に 2.1.149、`npm view @anthropic-ai/claude-code dist-tags` で latest/next=2.1.149, stable=2.1.142 を確認）。前回検証 (M-7, 2.1.145, 2026-05-20) 後の 4 日で自動更新が走った後の通知だった可能性
+  - **検証方針**: 軽量再検証 (S3 + `--help` / `--bare` 文言差分) で完了。フル S1/S2/S4/S5 は前回 2.1.145 で全 pass + 今回 `--help` 文言に bot.py 経路 (`--session-id` / `--resume <uuid>` 固定ルート) を脅かす差分なしと判定し、credit 抑制 (Max 5x プラン前提)
+  - **結果**:
+    - **S3 (存在しない uuid resume)**: `claude -p --resume 00000000-... "ignored"` → rc=0, stdout `No conversation found with session ID: <uuid>`。bot.py は `sessions/channels/<channel-id>.json` で session 存在を事前判定して `--resume` を非存在 uuid に呼ばない設計のため実害なし (design.md §1.4 stderr マッチ自動 fallback 禁止と整合)
+    - **`--bare` 説明文**: M-7 (2.1.145) と完全同一文言 ("Minimal mode: skip hooks, LSP, plugin sync, attribution, auto-memory, background prefetches, keychain reads, and CLAUDE.md auto-discovery. Sets CLAUDE_CODE_SIMPLE=1. Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper..." )、オプトインのまま、デフォルト動作変更なし。Max 5x は OAuth 認証経由のため `--bare` は使用不能のままで、N4 監視「bot.py は明示的に `--bare` を使わない」継続妥当
+    - **`--help` 新規フラグ**: `--fork-session` / `--from-pr [value]` / `-n, --name <name>` / `--no-chrome` を追加観測。いずれも bot.py 経路 (`--session-id <uuid>` / `--resume <uuid>` 固定) に影響なし。`--fork-session` は将来 bot 側で「同一 channel の継続を fork したい」要件が出た場合の活用候補だが現状 YAGNI、必要時に新規設計判断として再評価
+    - **encoded-cwd 規則** (`/` → `-`): `~/.claude/projects/-home-miho-companion-bot-workspace/` 配下が bot 実運用で 5/14 以降生成され続けており、規則変更なし
+  - **CLAUDE.md 修正**: `~/.claude/CLAUDE.md` L37 の「Fast モード（Opus 4.6 高速版）の場合も 4.6 ルールを適用する」を「Fast モードのデフォルトは claude CLI 2.1.142 から Opus 4.7 に変更（旧: Opus 4.6 高速版）。Fast セッションでも判定は冒頭の "powered by" 行に従い、宣言されたモデルのルールを適用する」に更新（2.1.142 リリースで Fast デフォルト = Opus 4.7 化、判定をモデル宣言ベースに明文化）。`~/.claude/CLAUDE.md` はユーザー私的 dotfile で git 管理外、本コミットには含めず本 entry に経緯を残す
+  - **companion repo 側の修正対象**: `/simplify`→`/code-review` 改名 (2.1.147) / `/extra-usage`→`/usage-credits` 改名 (2.1.144) の旧名参照を `~/.claude/CLAUDE.md` / `~/companion/CLAUDE.md` / `~/companion/workspace/CLAUDE.md` / `~/companion/vault/CLAUDE.md` / `~/companion/bot-workspace/CLAUDE.md` で grep → **該当なし** (companion 側は既に新名運用 or そもそも参照なし)
+  - **bot.py / claude_runner / sessions 側の変更**: なし。CLI フラグ追加・S3 stdout 文言・`--bare` 説明文すべてに bot.py の挙動を変える差分なし
 - 2026-05-20 軸 5 設計 doc 耐久性レビュー (agent team `companion-durability-0520`) 集約結果
   - **概要**: 5/20 軸 5 を 5/26 推奨から前倒し起動 (lead 単独判断、devil D-C 致命級指摘の出発点)、3 teammate (architect / devil / ux) Round 1〜Round 2 で集約。集約成果物 = `~/companion/workspace/review-2026-05-20/axis-5-result.md` (center of truth、落とし穴 F 通り teammate plan ファイル消失防護のため lead 単独責任で転記済)
   - **修正必須 14 件 (M-1〜M-14) 反映済**: 詳細 axis-5-result.md §2 参照
