@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dashboard-start.sh — dashboard.service の ExecStart。systemd 経由でのみ起動する想定。
 #
-# シーケンス: 音量固定 → 時間帯フォルダ判定 → mpv(空ならskip) → now-playing helper → firefox(file://) → wmctrl で HDMI-1 全画面 → exec sleep infinity
+# シーケンス: 音量固定 → 時間帯フォルダ判定 → mpv(空ならskip) → now-playing helper → firefox(--kiosk --kiosk-monitor=1 で HDMI-1 占有) → exec sleep infinity
 # 停止は dashboard-stop.timer(09:00) → systemctl --user stop dashboard.service → cgroup-kill。このスクリプトに kill ロジックは置かない。
 # set -e は掛けない（pactl/wmctrl の非致命ステップで死なせない）。詳細設計は ../docs/STATUS.md。
 
@@ -66,9 +66,11 @@ fi
 python3 "$DASH_DIR/server/nowplaying-helper.py" &
 echo "dashboard-start.sh: nowplaying-helper started (pid $!)"
 
-# ── 5. firefox（dashboard 専用 profile。--kiosk は使わない＝この後 wmctrl で HDMI-1 に配置するため）
+# ── 5. firefox（dashboard 専用 profile。--kiosk --kiosk-monitor=1 で firefox 自身が HDMI-1 占有）
 mkdir -p "$FF_PROFILE"
-rm -f "$FF_PROFILE/.parentlock" "$FF_PROFILE/lock" 2>/dev/null   # 前回の残骸を掃除（clean state）
+# 前回の残骸を掃除（clean state）。xulstore.json は旧 wmctrl 時代の screenX/sizemode:normal を
+# 保持しうるため毎朝捨てる（5/22 STATUS L257 参照、2026-05-25 引き直しで保険として追加）。
+rm -f "$FF_PROFILE/.parentlock" "$FF_PROFILE/lock" "$FF_PROFILE/xulstore.json" 2>/dev/null
 cat > "$FF_PROFILE/user.js" <<'FFEOF'
 // dashboard 専用 firefox profile 設定。起動毎に再生成（冪等）。
 // first-run / what's-new / session 復元 / default-browser / telemetry の各種プロンプトを全部抑止。
@@ -101,38 +103,27 @@ user_pref("browser.fullscreen.autohide", true);
 user_pref("dom.disable_open_during_load", false);
 FFEOF
 
-firefox --new-instance --no-remote --profile "$FF_PROFILE" "$WEB_URL" &
-FF_PID=$!
-echo "dashboard-start.sh: firefox launched (launcher pid $FF_PID)"
+firefox --new-instance --no-remote --profile "$FF_PROFILE" \
+        --kiosk --kiosk-monitor=1 "$WEB_URL" &
+echo "dashboard-start.sh: firefox launched (kiosk on monitor 1 = HDMI-1)"
 
-# ── 6. firefox ウィンドウを HDMI-1（1920x1080+0+0）へ移動して全画面化
-#   observable state（窓の存在）への上限付き readiness wait → 出なければ benign give-up（service は殺さない）。
-#   窓同定は index.html の <title>=COMPANION-DASH のタイトル一致。
-#     旧: `wmctrl -l -p` の PID 一致（$3 == FF_PID）。だが firefox --new-instance は launcher PID($!) と
-#     実窓の _NET_WM_PID が食い違い、PID 一致が原理的に当たらず毎朝 timeout していた（2026-05-22 実機確定）。
-#     同定の軸を「OS 任せの PID」→「index.html で我々が所有するタイトル」へ引き直した（成否は1回で確定、
-#     fallback 連鎖なし＝対症療法 2 周目ではない。根拠は ../docs/STATUS.md 2026-05-22 エントリ）。
-#     WM_CLASS-grep 不採用は据え置き（常用 firefox 並走時に他窓を拾う、2026-05-15 事故 root cause）。
-#     COMPANION-DASH は dashboard 専用 profile + --new-instance ゆえ常用 firefox の窓と衝突しない一意キー。
-#   xulstore / --kiosk による位置指定は不採用: この機の WM(Marco) が新規窓を primary=LVDS-1 へ再配置し
-#     screenX を無視するため HDMI-1 を狙えない（2026-05-22 実機で全パターン LVDS-1 着地を確認）。
-#     HDMI-1 を座標で確実に狙えるのは wmctrl -e のみ（B4 2026-05-16 + 2026-05-22 再実証）。
-#   ※ ここを「窓が出ない → 回数を増やす / sleep を足す」方向に育てないこと。flaky が続くなら patch #2 を当てず設計引き直し（../docs/STATUS.md 参照）。
-WIN_TITLE_MATCH="COMPANION-DASH"
-WIN_ID=""
-for _ in $(seq 1 20); do
-  WIN_ID=$(wmctrl -l 2>/dev/null | awk -v t="$WIN_TITLE_MATCH" 'index($0, t) {print $1; exit}')
-  [ -n "$WIN_ID" ] && break
-  sleep 0.5
-done
-if [ -n "$WIN_ID" ]; then
-  wmctrl -i -r "$WIN_ID" -b remove,maximized_vert,maximized_horz 2>/dev/null
-  wmctrl -i -r "$WIN_ID" -e 0,0,0,1920,1080                       2>/dev/null
-  wmctrl -i -r "$WIN_ID" -b add,fullscreen                        2>/dev/null
-  echo "dashboard-start.sh: placed firefox window $WIN_ID on HDMI-1 (fullscreen)"
-else
-  echo "dashboard-start.sh: firefox window not found within timeout — leaving as-is" >&2
-fi
+# ── 6. ウィンドウ配置は firefox の --kiosk-monitor=1 が確定。wmctrl による窓同定＋配置は不要。
+#   旧版: 起動後に「title=COMPANION-DASH の窓が wmctrl -l に出る」のを上限付き polling し、
+#         wmctrl -e で HDMI-1 (0,0,1920,1080) へ移動 + add,fullscreen していた。
+#   2026-05-25 引き直し: 「title 反映遅延」race で 10s 上限を超えるケースが本番発火（5/25 朝、
+#         title-match 引き直し後の初回失敗。ログ「firefox window not found within timeout」+
+#         窓が LVDS-1 (座標 1974,153) へデフォルト着地→TV 黒）。これを polling 数値で延ばすのは
+#         対症療法 2 周目（ガード規則: ../docs/STATUS.md 「対症療法 2 周目ルールの先回り」）。
+#   軸の置換: 旧設計 STATUS L191 では --kiosk-monitor を「firefox にない幻のフラグ」として却下
+#         していたが、これは 5/22 時点 firefox 150 の話。firefox 151 で --kiosk-monitor <num> が
+#         実装され、`firefox --help` で実存確認 (2026-05-25)。番号体系は実機検証で N=0=LVDS-1 /
+#         N=1=HDMI-1 確定 (xrandr 順ではなく primary 以外が 1 と推定)。primary 変更・モニタ
+#         追加時は再検証要。
+#   旧 --kiosk 不採用理由「WM が wmctrl move を無視」「窓が primary=LVDS-1 に出る」は wmctrl 移動
+#         を前提とした話。--kiosk-monitor=1 は firefox 自身がモニタを選ぶため wmctrl 自体が不要に
+#         なり、これら過去の懸念は構造的に消えた。
+#   ※ 「窓が HDMI-1 に出ない」観測時はここに polling を足し戻さず、--kiosk-monitor 番号体系の再
+#      検証＋STATUS への記録から始めること。
 
 # ── 7. service を active に保つ。寿命は systemd（dashboard-stop.timer / cgroup-kill）が握る。
 exec sleep infinity
