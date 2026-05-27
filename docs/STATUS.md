@@ -39,6 +39,55 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 
 軸 5 集約観察項目 (2026-05-20 軸 5 agent team で追加、19 件統合): 詳細は `~/companion/workspace/review-2026-05-20/axis-5-result.md` §4 (K-1〜K-19) 参照。集計タイミング別: 6/2 完了時点 (K-1〜K-12) / 月跨ぎ JST + 月末締め (K-13/K-14) / bot/ 側着手後 (K-15〜K-18) / 本 review 完了後最優先 (K-19 = CLI 2.1.145 再検証)。Round 4 (5/26 以降 or 6/2 完了後) で実観測再点検実施。
 
+### Phase 2.6 Telegram 移行設計確定 (2026-05-27、実装は 2026-06-02 以降)
+
+Discord 土管 → Telegram supergroup (topic = 1 session model) 移行の **設計確定**。agent team `companion-telegram-migration` (architect / devil / ux + lead) による mesh + lead approve 完了。
+
+**設計 center of truth**: `~/companion/workspace/redesign/telegram-design.md`
+**実装着手日**: 2026-06-02 以降 (Phase 2.5 健全性観察完了後の cold cut 切替日)
+
+#### 実装着手前検証項目 (V-1〜V-25 + D-add-1〜D-add-12 + 追加)
+
+実装着手 (2026-06-02 以降) 前に bot/ side で埋める必要がある:
+- **V-1**: Telegram Bot API `Update` 全 type 一覧、telegram-design §4.5 allowlist (11 種類) を網羅確認
+- **V-3 / V-22**: Bot API changelog 12-24 ヶ月分の breaking change 集計 (`https://core.telegram.org/bots/api-changelog`)、deprecation 履歴
+- **V-4**: `message_thread_id` 削除後再利用挙動 (公式 doc 明記 or 実機検証 3 回)
+- **V-5**: General topic (thread_id = None or 0) の確定、PTB type definition で確認
+- **V-6**: `can_manage_topics: false` 時の bot 動作確認 (rc=403 ハンドリング)
+- **V-11 / V-12**: PTB long polling offset 永続化 + bot.service 停止中の Update キューイング挙動
+- **V-21**: PTB v22 / aiogram v3 maintainer 数 + リリース頻度 + breaking change 履歴
+- **D-add-2**: Telegram (Android, Pixel-6) で reply chain 視認性 user 確認 (採用案 = chunk1 のみ reply の倒し直し trigger)
+- **D-add-3**: Forum UI deprecation 履歴 12-24 ヶ月分検証
+- **AIORateLimiter log level**: PTB v22 公式 doc spot check、`telegram.ext.AIORateLimiter` logger を INFO 以上に設定 (devil V-8「retry 沈黙」回避)
+- **Bot API up 時の再点検運用**: `~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」と同方針、新 Update type 検知時の allowlist 再点検
+
+#### 実装着手後の運用ルール (lead 集約持ち越し 12 件 + K-* 観察項目への統合)
+
+1. **K-T1**: ENV 5+ topic 再点検 trigger (`BOT_THREAD_ID_*` 増殖検出、5+ で対症療法 2 周目認定 → 設計引き直し議論起動、ax §1.1 boundary footnote / N-T11)
+2. **K-T2**: stale-thread-observation jsonl 運用 (`bot/.state/stale-thread-observations.jsonl`、同 thread_id で 1 回 = 許容、2 回目 = 2 周目認定、devil A6)
+3. **K-T3**: D-add-2 Pixel-6 reply chain 視認性 user 確認 (採用案 = chunk1 のみ reply で視認性低下時の不採用案倒し直し trigger)
+4. **K-T4**: AIORateLimiter log level (INFO 以上設定、retry 沈黙回避、devil V-8)
+5. **K-T5**: Bot API up 時の再点検運用 (新 Update type 検知時 → allowlist 再点検、CLAUDE CLI バージョン up と同方針)
+6. **K-T6**: Forum UI deprecation 履歴監視 (D-add-3、Phase 4 trigger 候補)
+7. **K-T7**: venv rollback path (`mv venv venv-discord-backup` + 1 週間運用後 rm、devil A7)
+8. **K-T8**: catch-up worker rate 制御 (AIORateLimiter 1 層、素手 sleep 永続禁止、N-T12 違反監視)
+9. **K-T9**: sentinel 種別上限 (1 種限定、2 種目要求 = 設計引き直し議論起動、W-6 / ax §7.2.1)
+10. **K-T10**: `[critical]` プレフィクス上限 (完全一致 1 件、`startswith("[critical] ")` 半角スペース込み、2 種目要求 = 設計引き直し議論起動、W-6)
+11. **K-T11**: edit event filter (`edited_message` 完全無視を維持、`MessageHandler(filters.UpdateType.MESSAGE & ~filters.UpdateType.EDITED_MESSAGE)`、W-6 / N-T7)
+12. **K-T12**: 新 2 週間観察カウント条文 (cold cut 切替日から 14 日、Phase 4 着手条件 #2 PROJECT.md L228 改訂反映済)
+
+#### Phase 2.6 実装 TODO (cold cut 切替日に開始)
+
+- bot.py 全面書き換え + telegram_io.py 新設 (詳細は telegram-design.md §4)
+- sessions.py schema 2 軸拡張 (`(chat_id, thread_id)` 複合キー)
+- quota.py 軽微 rename (`channel_id` → `topic_key`)
+- requirements.txt 差し替え (`discord.py` → `python-telegram-bot[rate-limiter,job-queue]>=22.7,<23`)
+- .env.example / companion-bot.service description 更新
+- venv 入れ替え (rollback path 確保)
+- 切替 1 週間後に `sessions/channels/` を `.archive/channels-pre-telegram/` に rename
+
+実装段階で詳細を In progress に展開する。
+
 ## In progress
 
 （なし）
