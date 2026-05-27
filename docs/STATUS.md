@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-27 (Phase 2.6 実装着手前検証 + telegram-setup.md 作成 + V-4/V-5/V-6 実機検証完了)
+最終更新: 2026-05-28 (Phase 2.6 cold cut 実装 commit 完了、venv swap / systemctl restart は次タスクで実施)
 
 ## 設計メモ
 
@@ -29,9 +29,9 @@ Phase 2.5「土管の耐久化（再設計）」T-A〜T-E 全完了 (T-D 後半 
 - `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14; §4.2 / §4.5 / §4.6 / §15 に 2026-05-19 CreditBudgetGuard 即時前倒し追補を反映済)
 - `~/companion/workspace/redesign/questions.md` (UQ-1〜UQ-10 全項目回答済)
 
-### Phase 2.5 健全性 2 週間観察 (2026-05-19 〜 2026-06-02)
+### Phase 2.5 健全性観察 (2026-05-19 〜 2026-05-27、8 日で打ち切り、lead 単独判断)
 
-CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR/WARN / `/quota` `[guard: credit_usd]` 表示 / Discord 経由 prompt 計測値を観察。観察結果は PROJECT.md 健全性チェック履歴に時点記録。Phase 4 着手条件 #2 (PROJECT.md L213) 判定の起点となる。
+CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR/WARN / `/quota` `[guard: credit_usd]` 表示 / Discord 経由 prompt 計測値を観察。**2026-05-27 lead 単独判断で打ち切り、Phase 2.6 cold cut 前倒し実施**。詳細根拠は PROJECT.md 健全性チェック履歴「2026-05-27 (追): Phase 2.5 観察打ち切り + Phase 2.6 cold cut 前倒し判断」entry 参照。観察結果サマリ (打ち切り時点): NRestarts=0、ERROR/WARN/Traceback 0 件、`/quota` credit_usd 表示稼働、ledger 累計低消費継続、catch-up 経路二重実行で重複なし、vault sync 正常稼働 = 「実害ゼロ拡張ルール」(M-1) 適用条件 (i)(ii)(iii) すべて満たし。
 
 追加観察項目 (2026-05-20 全体レビューで追記):
 - **`claude_runner.ClaudeOptions` 未使用 7 フィールド + `to_sdk_kwargs()` の判定** (B4-1): `add_dir` / `no_session_persistence` / `disable_slash_commands` / `exclude_dynamic_system_prompt_sections` / `setting_sources` / `prompt_prefix` / `prompt_suffix` は SDK 移行耐性 / cache framing 用に T-B で先行設置、現状 bot.py からは `timeout_s` のみ代入。観察期間中に prompt-cache hit 率データ (`/quota` キャッシュ表示) が出揃ったタイミングで「`prompt_prefix` 実装するか、空のまま削るか」を判定。Phase 3 着手者の混乱コストを削るため期間内に決定する
@@ -39,13 +39,13 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 
 軸 5 集約観察項目 (2026-05-20 軸 5 agent team で追加、19 件統合): 詳細は `~/companion/workspace/review-2026-05-20/axis-5-result.md` §4 (K-1〜K-19) 参照。集計タイミング別: 6/2 完了時点 (K-1〜K-12) / 月跨ぎ JST + 月末締め (K-13/K-14) / bot/ 側着手後 (K-15〜K-18) / 本 review 完了後最優先 (K-19 = CLI 2.1.145 再検証)。Round 4 (5/26 以降 or 6/2 完了後) で実観測再点検実施。
 
-### Phase 2.6 Telegram 移行設計確定 (2026-05-27、実装は 2026-06-02 以降)
+### Phase 2.6 Telegram 移行設計確定 + cold cut 実施 (2026-05-27)
 
-Discord 土管 → Telegram supergroup (topic = 1 session model) 移行の **設計確定**。agent team `companion-telegram-migration` (architect / devil / ux + lead) による mesh + lead approve 完了。
+Discord 土管 → Telegram supergroup (topic = 1 session model) 移行の **設計確定 + cold cut 当日実施**。agent team `companion-telegram-migration` (architect / devil / ux + lead) による mesh + lead approve 完了 → 同日内に実装着手前検証完了 → lead 単独判断で cold cut 前倒し採用 → cold cut 当日実施。
 
-**設計 center of truth**: `~/companion/workspace/redesign/telegram-design.md`
-**6/2 切替日 cold cut 手順書**: `~/companion/bot/docs/telegram-setup.md` (BotFather セットアップ + supergroup 構築 + 実機検証 + cold cut step + rollback)
-**実装着手日**: 2026-06-02 以降 (Phase 2.5 健全性観察完了後の cold cut 切替日)
+**設計 center of truth**: `~/companion/workspace/redesign/telegram-design.md` (2026-05-27 §9.1 改訂、cold cut 前倒し)
+**cold cut 切替手順書**: `~/companion/bot/docs/telegram-setup.md` (BotFather セットアップ + supergroup 構築 + 実機検証 + cold cut step + rollback)
+**実装着手日**: 2026-05-27 (当初 6/2 以降想定から lead 前倒し、PROJECT.md 2026-05-27 (追) entry 参照)
 
 #### 実装着手前検証項目 (V-1〜V-25 + D-add-1〜D-add-12 + 追加)
 
@@ -170,6 +170,29 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 
 ## Done
 
+- 2026-05-28 Phase 2.6 cold cut 実装: Discord SDK → python-telegram-bot v22.7 全面書き換え (commit までで停止、venv swap / systemctl restart / push は orc 外の次タスク)
+  - **設計 center of truth**: `~/companion/workspace/redesign/telegram-design.md` §1〜§8 確定版、実装ガード 16 項目 (OWNER 4 段防御 / privacy mode off / chunk_telegram TELEGRAM_MAX=4000 / AIORateLimiter 委譲 / parse_mode 未指定 / BotCommandScopeChat 限定 / edited_message filter / stall_check_job / `_handle_notify` queue + worker / sessions schema 2 軸 / sessions ファイル path / sessions/channels/ 残置 / ledger.jsonl `topic_key` field / catch-up 無改変 / AIORateLimiter logger INFO / stale-thread-observation jsonl は YAGNI で未実装) すべて反映
+  - **変更ファイル (6 + 1)**:
+    - `bot.py`: 全面書き換え (~410 行、PTB v22.7 ApplicationBuilder / handler / post_init / post_shutdown / notify queue worker / stall check job 等)
+    - `sessions.py`: `(chat_id, thread_id)` 複合キー、`topic_key()` モジュール関数 + プロパティ、General topic = `'general'` 固定 suffix (§2.3)、`_SESSIONS_DIR` を `sessions/topics/` に変更
+    - `quota.py`: `_record_common` / `BudgetGuard` ABC / `RequestsCountGuard` / `CreditBudgetGuard` の引数キーワード `channel_id` → `topic_key` rename (BudgetGuard ABC 本体ロジックは無改変)、ledger.jsonl field 名も `channel_id` → `topic_key`
+    - `requirements.txt`: `discord.py>=2.3,<2.4` → `python-telegram-bot[rate-limiter,job-queue]>=22.7,<23`
+    - `.env.example`: `DISCORD_TOKEN` / `NOTIFY_CHANNEL_ID` 削除、`TELEGRAM_BOT_TOKEN` / `NOTIFY_CHAT_ID` / `BOT_THREAD_ID_CHAT` / `BOT_THREAD_ID_RESEARCH` / `BOT_THREAD_ID_MAINTENANCE` / `BOT_THREAD_ID_VOICE_LOG` 追加
+    - `companion-bot.service`: Description 1 行差し替えのみ (`Discord` → `Telegram`)、`ExecStart` / `ExecStartPost` 2 行 / `Environment` / `Restart` は完全無改変 (catch-up 経路無改変ガード遵守)
+    - `tests/test_quota.py`: `_make_entry` の `channel_id` field → `topic_key` field rename、`test_record_appends_ledger` の `channel_id=42` 引数 → `topic_key="-1001234567890_2"` rename
+  - **新規追加ファイル (2)**:
+    - `tests/test_sessions.py`: 12 ケース (topic_key formatting / General topic suffix / General と numeric 0 が衝突しないこと / save/load round-trip / start_or_resume 新規発番 + 再呼び出し / 異なる thread_id で異なる session / reset)
+    - `tests/test_bot.py`: bot.py 純関数のユニットテスト 5 case 群 (chunk_telegram 改行優先 fallback / _normalize_play_url allowlist / _fmt_duration / cmd_reset / _authorized 4 段防御)。PTB 未導入環境では `SkipTest` で自動 skip
+  - **設計と実装の差分 1 件**:
+    - telegram-design §4.1 では `telegram_io.py` を新規ファイルとして分離する案だったが、orc タスク指示の対象ファイル 6 件に `telegram_io.py` 含まれず、独断で新規ファイル追加せず `bot.py` 単体に統合 (`chunk_telegram` / `send_text` / `_typing_action` 等を bot.py 内に配置)。将来分割は YAGNI、必要になった時点で別 commit で抽出可能 (`chunk_telegram` は pure function、`send_text` も bot 引数注入なので分離コスト低い)
+  - **動作確認**:
+    - `venv/bin/python -m py_compile bot.py sessions.py quota.py` → 構文エラーなし
+    - `venv/bin/python -m unittest discover -s tests -v`: 29 ケース全 pass + 5 ケース skip (PTB 未導入の bot.py 関連、venv swap (orc 外の次タスク) 後に解消)
+      - 既存 quota テスト 17 件: 全 pass (`channel_id` → `topic_key` rename 整合)
+      - 新規 sessions テスト 12 件: 全 pass (General topic suffix / numeric 0 衝突回避 / round-trip)
+      - 新規 bot.py 関連テスト 5 件 (chunk_telegram / _normalize_play_url / _fmt_duration / cmd_reset / _authorized): SkipTest (PTB 未導入)
+    - PTB v22 実機 import 検証: auto mode classifier で `/tmp` venv への pip install が拒否されたため未実施。`ast` で import 文を機械抽出し、PTB v22 公式 import パス (`telegram.{BotCommand, BotCommandScopeChat, ReplyParameters, Update, User, Chat, Message}` / `telegram.constants.ChatType` / `telegram.ext.{AIORateLimiter, Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters}`) との整合は静的確認済。venv swap 時に `bot.service` 起動で post_init の `bot.get_me()` / `set_my_commands` が正常呼び出されるかは smoke test で最終確認
+  - **commit までで停止 (次タスクは orc 外で user 側実施)**: `telegram-setup.md` §6.2 step 1〜7 (Discord bot 停止 / venv swap / .env 追記 / daemon-reload / start / smoke test)。`.env` の `TELEGRAM_BOT_TOKEN` 追記 + `NOTIFY_CHAT_ID=-1003851931893` / `BOT_THREAD_ID_CHAT=3` / `BOT_THREAD_ID_RESEARCH=4` / `BOT_THREAD_ID_MAINTENANCE=5` 追記は user 操作
 - 2026-05-23 claude CLI 2.1.145 → 2.1.149 軽量再検証 + `~/.claude/CLAUDE.md` の Fast モード記述更新 (`~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」運用ルール準拠、M-7 と同方針)
   - **経緯**: ユーザー手元 UI に update 通知。`claude update` は up-to-date 応答（ローカル既に 2.1.149、`npm view @anthropic-ai/claude-code dist-tags` で latest/next=2.1.149, stable=2.1.142 を確認）。前回検証 (M-7, 2.1.145, 2026-05-20) 後の 4 日で自動更新が走った後の通知だった可能性
   - **検証方針**: 軽量再検証 (S3 + `--help` / `--bare` 文言差分) で完了。フル S1/S2/S4/S5 は前回 2.1.145 で全 pass + 今回 `--help` 文言に bot.py 経路 (`--session-id` / `--resume <uuid>` 固定ルート) を脅かす差分なしと判定し、credit 抑制 (Max 5x プラン前提)
