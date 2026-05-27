@@ -87,9 +87,11 @@
             </svg>
           </div>
         </div>
-        <!-- セリフ枠（30 秒ごとに 5 個の名言をループ。文言は app.js の QUOTES 配列で一元管理）。 -->
+        <!-- セリフ枠（30 秒ごとに 1 言ずつフェード切替。文言は app.js の buildQuoteQueue で動的生成）。 -->
+        <!-- quote-progress: セリフ切替の 30 秒メーター。span が 0→100% に伸びて切替タイミングを可視化。 -->
         <div class="quote" id="quote" aria-live="polite">
           <div class="quote-text" id="quote-text">…</div>
+          <div class="quote-progress" id="quote-progress" aria-hidden="true"><span></span></div>
         </div>
       </div>
     </section>

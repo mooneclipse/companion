@@ -359,17 +359,20 @@ html, body {
 @keyframes cmp-think { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.25; } }
 @keyframes cmp-type  { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
 
-/* セリフ枠: キャラの隣で語る感じ。30s ごとに 5 個ループ。 */
+/* セリフ枠: キャラの隣で語る感じ。30s ごとに 1 言ずつフェード切替。 */
 .quote {
   flex: 1 1 auto;
   min-width: 0;
+  position: relative;                            /* quote-progress を下端に絶対配置するため */
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;                       /* セリフ本文をセル内で縦中央 */
   padding: 18px 24px;
   background: rgba(40, 50, 63, 0.35);            /* キャラの体色 #28323f を薄く敷いて連帯感を出す */
   border-radius: 14px;
   border-left: 3px solid var(--accent);          /* キャラの目と同じ accent で「キャラの声」感 */
   min-height: 6vw;
+  overflow: hidden;                              /* 下端の progress 線が border-radius を越えて出ないように */
 }
 .quote-text {
   font-size: 1.5vw;
@@ -379,6 +382,31 @@ html, body {
   transition: opacity 320ms ease;                /* 30s 切替時のソフトフェード */
 }
 .quote-text.is-fading { opacity: 0; }
+
+/* セリフ切替メーター: 枠の下端で 30s かけて 0→100% に伸びる細い進捗線。 */
+.quote-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.5px;
+  background: rgba(243, 184, 95, 0.12);          /* accent の薄い下敷き（track） */
+  pointer-events: none;
+}
+.quote-progress > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);                     /* セリフ切替のリズムを accent で示す */
+  transform-origin: left center;
+}
+.quote-progress.is-running > span {
+  animation: quote-progress 30s linear forwards; /* QUOTE_INTERVAL_MS=30s と同期 */
+}
+@keyframes quote-progress {
+  from { width: 0; }
+  to   { width: 100%; }
+}
 
 /* ── (3, left) 再生中の曲（控えめ・床に溶ける footnote） ────────── */
 .cell-nowplaying { justify-content: center; }

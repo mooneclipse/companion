@@ -240,9 +240,23 @@ dashboard/
 
 ## In progress
 
-（なし、2026-05-27 のセリフ枠動的化 Done 移管完了）
+（なし、2026-05-27 のセリフ切替 30 秒メーター Done 移管完了）
 
 ## Done
+
+- 2026-05-27 セリフ枠下端に 30 秒切替メーターを追加（細い進捗線）。orc 経由 implementer。**ユーザー要望**: 「ren のセリフが切り替わるタイミングがわかるような 30 秒のメーターがほしいかも、細い線でも円でもいいから」(2026-05-27 夜) → orc 経由で形式確定「セリフ枠下端の細い横線」を採用。industrial-refined v0.2 トーン親和性が高い案。
+  - **HTML 追加 1 要素** (`web/index.html`): `.quote` 内の `#quote-text` の弟として `<div class="quote-progress" id="quote-progress" aria-hidden="true"><span></span></div>` を 1 行追加。`<span>` を中に入れて parent の border-radius / padding と独立に width 0→100% アニメをかけられる構造。
+  - **CSS 追加** (`web/style.css`): ① `.quote` を `position: relative` + `flex-direction: column` + `justify-content: center` + `overflow: hidden` に変更（progress 線を下端絶対配置するための土台 / セリフ本文は引き続き縦中央 / 下端線が border-radius を越えないように clip）。② 新規 `.quote-progress { position:absolute; left/right/bottom:0; height:1.5px; background: rgba(243,184,95,0.12) }` (accent の薄い下敷き track) + `.quote-progress > span { display:block; height:100%; width:0; background: var(--accent) }` + `.quote-progress.is-running > span { animation: quote-progress 30s linear forwards }` + `@keyframes quote-progress { from { width:0 } to { width:100% } }`。
+  - **JS ロジック追加** (`web/app.js`): セリフ IIFE 内に `progressEl = $('quote-progress')` 取得 + `restartProgress()` 関数を新設。`restartProgress` は `classList.remove('is-running')` → `void offsetWidth` (reflow 強制) → `classList.add('is-running')` の 3 段で、同名 class 再付与だけだと再開しないブラウザ仕様への対処。初回起動時 + `setInterval` callback 冒頭（fade-out 前）で呼び、setInterval の 30s 周期と progress の 30s animation を完全同期 (drift しない)。`progressEl` 不在時 (HTML 退化ケース) は早期 return で本流不変。
+  - **触らない範囲は完全無改修**: ① `QUOTES` build ロジック (`buildQuoteQueue` / `_clothesPhrase` / `_umbrellaPhrase` / `buildFortuneLine` / `buildNewsLines`) / 天気/占い/ニュース fetch / cycle 順序 ([朝の天気, 夜の天気, 占い, ニュース×3] 等)。② セリフ fade 320ms (`.quote-text.is-fading` transition + `QUOTE_FADE_MS`) は据置。③ 他 5 セル (時計 / 天気 / ごみ / 再生中の曲 / 空欄) は無改変。④ キャラ SVG / 瞬き&目線 / 体の揺れ keyframes (`cmp-*`, `cmp-sway`, `cmp-breathe`) も無関係。⑤ `dashboard-config.js` 無関係。差分 stat: `web/app.js` +13 / `web/index.html` +3 -1 / `web/style.css` +30 -2 で局所化を確認。
+  - **対症療法 2 周目ガード非該当**: 既存条件分岐・閾値・fallback の追加延長ではなく、初出の進捗線 1 要素追加 + 単純な class toggle 1 回で完結。fallback 連鎖なし、`progressEl` 不在は 1 段で early return 確定。`~/companion/CLAUDE.md` 2 周目ルール準拠。
+  - **動作確認**:
+    - firefox 151 ヘッドレスで原本 `file:///home/miho/companion/dashboard/web/index.html` を 1920x1080 起動 → スクリーンショット (`/tmp/dashboard-progress-check/t0.png`) で 6 セル全て無改変描画を確認 (時計 21:41 / 天気 18° くもり時々晴れ / ごみ きょう(水)プラ容器 / キャラ + セリフ「双子座: 金銭運が好調」/ now-playing 空 / 空欄)、セリフ枠の border-left オレンジ + border-radius 維持。
+    - 進捗線の途中 width 観察: アニメ途中状態をヘッドレスで撮るための test HTML (`/tmp/dashboard-progress-check/test-progress-states.html`) で `animation-delay: -8s` / `-30s` を使い 0% / ~26% / 100% の 3 状態を 1 画像 (`/tmp/dashboard-progress-check/t-states.png`) で並列確認 → 線が左から右へ accent オレンジで伸びることを目視確認 (t=0: 描画なし / t=8s: ~26% / t=30s: 100%)。`.quote` の `position:relative` + `overflow:hidden` で枠の border-radius を線が越えないことも同時確認。
+    - JS の class toggle 経路: node 単体 (`/tmp/dashboard-progress-check/test-restart.js`) で `restartProgress` をモック DOM に対して 2 回呼び、毎回 `remove:is-running → reflow → add:is-running` の 3 イベントが出ることと、`progressEl=null` 時に throw せず no-op で抜けることを確認。
+  - **既存セリフ fade との整合**: `setInterval` callback の最初に `restartProgress()`、その直後に `el.classList.add('is-fading')` を呼ぶ順序で、progress は新サイクルを 0% から再カウント開始、セリフ本文は 320ms かけて opacity 0→ 差替え → 1。fade 中に progress が 0% から動き始める仕様で、線とテキストが独立に進む。`~/companion/CLAUDE.md` 対症療法 2 周目ルールの「外部呼び出しの成否判定は 1 回で確定」原則どおり、setInterval 1 周ごとに progress reset 1 回で確定する設計。
+  - **commit**: `web/index.html` + `web/style.css` + `web/app.js` + `docs/STATUS.md` Done 反映を 1 commit (1 論理単位 = 「30 秒メーター追加」)。push は orc / ユーザー側で実施 (implementer は commit 止め)。
+  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) での目視確認 = 明朝 05:30 自動起動 or 手動 `systemctl --user start dashboard.service` で「セリフ枠下端の細いオレンジ線が 30 秒で左→右に伸び、セリフ切替時に 0% にリセットされる」ことを観察。NG なら線の太さ (`height: 1.5px`)・透明度 (`rgba(...,0.12)`)・色 (`var(--accent)`) を実機印象で再調整。
 
 - 2026-05-27 レイアウト v3 微調整: 周囲余白 + 時計/天気のセル内中央寄せ（v3.1）。orc 経由 implementer。**ユーザー報告 2 点**: ①「周囲の余白がない」(2026-05-27 夜の TV 実機目視) / ②「時計と今日の天気のやつはセル内の中央がいいかも」。industrial-refined v0.2 トーン (`#28323f` 地・accent `#f3b85f`・Josefin Sans / DM Sans / Noto Sans CJK JP・ビネット) は維持。
   - **CSS 微調整のみ** (`web/style.css`): ① `.dashboard` の `padding: 40px 70px` → `64px 110px` (TV 1080i overscan 上下〜40 / 左右〜60px + 視覚的余白の両立、ベゼル付近まで詰めない)。② 時計セル: `.cell-clock` を `align-items: flex-start` → `center`、`.clock` 内側も `align-items: flex-start` / `text-align: left` → `center` / `center` で `hh:mm` + 日付ブロックをセル内中央 (水平・垂直) へ。③ 天気セル: `.cell-weather` を `justify-content: stretch; align-items: stretch` に、`.weather` を `display: flex` → `display: grid; grid-template-rows: 1fr auto; flex: 1` で「1 行目=今日の天気ブロックを縦中央 / 2 行目=hourly strip を下端固定」を実現。`.weather-now` には `align-items: center; justify-content: center; align-self: center` を追加して 1 行目セル内中央へ。

@@ -457,6 +457,7 @@
   (function () {
     var el = $('quote-text');
     if (!el) return;
+    var progressEl = $('quote-progress');     // セリフ切替メーター（下端の細線）。無くても本流は壊さない。
     var queue = [];
     var idx = 0;
 
@@ -478,13 +479,25 @@
       idx++;
     }
 
+    // 30s メーターを 0% から再カウント。class を一度外し reflow を強制してから付け直すことで
+    // CSS animation を確実に再生（同名 class の再付与だけだと再開しないブラウザ仕様への対処）。
+    function restartProgress() {
+      if (!progressEl) return;
+      progressEl.classList.remove('is-running');
+      // reflow を強制（戻り値は捨てるが、参照することが副作用としてレイアウト計算を走らせる）。
+      void progressEl.offsetWidth;
+      progressEl.classList.add('is-running');
+    }
+
     // 初回: queue を即組んで 1 言目を表示（fetchWeather が走り始めた直後で
     // lastWeatherData が未着でも、占いは無条件で出るので最低 1 言は描画される）。
     queue = buildQuoteQueue();
     if (queue.length) { el.textContent = queue[0]; idx = 1; }
+    restartProgress();
 
     setInterval(function () {
       try {
+        restartProgress();                     // setInterval と同タイミングで 0% リセット（drift しない）
         el.classList.add('is-fading');
         setTimeout(function () {
           showNext();
