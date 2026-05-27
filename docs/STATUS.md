@@ -243,7 +243,7 @@ dashboard/
   - **動作確認**: firefox 151 ヘッドレスで `file:///home/miho/companion/dashboard/web/index.html` を 1920x1080 起動 → 6 セル全てが想定位置に描画 (時計 13:41 / 天気 18° くもり時々晴れ / ごみ「きょう (水) プラ容器」/ キャラ + 1 番目の名言「人生はクローズアップで…チャップリン」/ 再生中曲は helper 不在で is-empty 透明 / 右下空欄)。fold 圏内（1080px）に全要素収まる。QUOTES の 30 秒 setInterval / 5 件ループ / fade トランジションは node 単体検証で interval 値・配列件数を確認。
   - **未実装/プレースホルダ対応**: ① 再生中の曲 = 既存 now-playing helper 経由なので新規実装なし、helper 不在時は CSS `.is-empty { opacity:0 }` で控えめに非表示（既存挙動踏襲）。② 「おすすめ」セル (3,R) = 仕様どおり空のまま（HTML コメントだけ残す。markup の予約はしない＝先回り雛形回避）。
   - **対症療法 2 周目ガード非該当**: 既存ロジック (天気 fetch / now-playing polling / ごみ計算 / キャラ瞬き) に条件分岐・閾値追加なし。レイアウト軸（grid 構造）の置換 1 回で完結、fallback 連鎖なし。
-  - **commit**: `<hash>` レイアウトを 2 列 3 行グリッドへ組み替え + キャラセリフ枠を追加。push は orc / ユーザー側で実施（implementer は commit 止め）。
+  - **commit**: `799bb93` レイアウトを 2 列 3 行グリッドへ組み替え + キャラセリフ枠を追加。push は orc / ユーザー側で実施（implementer は commit 止め）。
   - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) での目視確認 = 明朝 05:30 自動起動 or 手動 `systemctl --user start dashboard.service` で 6 セル配置・セリフ 30 秒切替・既存要素の整合を確認。NG なら CSS の vw 値（時計 / 天気 / ごみ / キャラ幅）を実測ベースで再調整。
 
 - 2026-05-25 窓配置の placement 軸全移行（title 一致 → `--kiosk --kiosk-monitor=1`）。**ユーザー報告**「いまテレビつけたらダッシュボードが表示されてない」(2026-05-25 朝 08:05) を起点に調査。
