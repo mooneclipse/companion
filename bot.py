@@ -648,13 +648,15 @@ async def post_init(application: Application) -> None:
         sys.exit(1)
     logger.info("logged in as @%s (id=%s)", me.username, me.id)
 
-    # supergroup の到達性確認 (§4.2 段 4 と整合)
+    # supergroup の到達性確認 (§4.2 段 4 と整合)。typo / 権限喪失 / supergroup 未参加なら起動時に sys.exit、当日デバッグの早期化 (privacy mode off チェックと対称)
     try:
         chat = await application.bot.get_chat(NOTIFY_CHAT_ID)
         logger.info("notify chat verified: id=%s title=%r type=%s",
                     chat.id, chat.title, chat.type)
     except Exception:
-        logger.exception("notify chat %s could not be resolved", NOTIFY_CHAT_ID)
+        logger.critical("notify chat %s could not be resolved (typo / bot not in supergroup / 権限喪失)",
+                        NOTIFY_CHAT_ID, exc_info=True)
+        sys.exit(1)
 
     # slash command scope を NOTIFY_CHAT_ID に限定 (§4.4)
     commands = [
@@ -752,7 +754,8 @@ def build_application() -> Application:
 
 def main() -> None:
     app = build_application()
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # §4.5 allowlist: 受信そのものを message に絞る (handler 未登録 type の getUpdates 帯域 / log ノイズを削減、callback_query は §7.4 sentinel 経路採用時に追加)
+    app.run_polling(allowed_updates=["message"])
 
 
 if __name__ == "__main__":
