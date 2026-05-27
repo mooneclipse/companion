@@ -240,9 +240,50 @@ dashboard/
 
 ## In progress
 
-（なし、2026-05-27 のセリフ切替 30 秒メーター Done 移管完了）
+（なし、2026-05-28 の ren セリフ集 Telegram 通知 Done 移管完了）
 
 ## Done
+
+- 2026-05-28 5:30 dashboard 起動時に「今朝の ren セリフ集」を bot 経由で Telegram #maintenance topic に silent 通知する機能を追加。orc 経由 implementer。**ユーザー要望**: 「ダッシュボードに表示される ren のセリフを 5:30 dashboard 起動時にその朝の分まとめて 1 通として bot 経由で Telegram #maintenance topic に silent 通知してほしい」。Phase 2.6 cold cut 直後で bot 側は安定運用中につき bot 側コードは無改修、既存 Unix socket 通知経路（`$XDG_RUNTIME_DIR/companion-bot.sock`）流用で完結。
+  - **新規スクリプト追加** (`bin/dashboard-notify-ren-quotes.py`): Python 3 単独スクリプト、`#!/usr/bin/env python3` shebang + executable。`dashboard-start.sh` から `&` でバックグラウンド起動される想定。内部で「全例外を最上位で握って exit 0」を実装、dashboard 本流（mpv / firefox / sleep infinity）を倒さない。
+    - **セリフ内容**: 平日 = `朝の天気 + 夜の天気 + 占い + ニュース×3`、土日 = `きょうの天気 + 占い + ニュース×3`。web/app.js のセリフ枠ロジックと同等概念（時点ズレ可、同じ意図のセリフが届けば成功条件を満たす）。天気は朝 [7,9) / 夜 [18,22) / 一日 [6,21) の半開区間で、`_clothes_phrase` / `_umbrella_phrase` は web/app.js の閾値と文言を完全一致で Python 移植。占いは日付 seed の Python 標準 `random.Random` で deterministic 生成（双子座固定、phrase pool は app.js と同一文言）。Mulberry32 / JS 32bit 演算との bit-exact 一致は不要（同日同じ結果で deterministic ならよい）。
+    - **天気 fetch**: Open-Meteo (`https://api.open-meteo.com/v1/forecast`) に直接 fetch、`web/dashboard-config.js` から `lat` / `lon` / `tz` を正規表現で抽出。timeout 4 秒、失敗は天気行スキップ。app.js と同じパラメータ（hourly=temperature_2m,weather_code,precipitation_probability + current + timezone + forecast_days=1）。
+    - **ニュース fetch**: NHK NEWS WEB 主要ニュース RSS (`https://www.nhk.or.jp/rss/news/cat0.xml`) に直接 fetch + ElementTree parse、最大 3 件抽出（server/nowplaying-helper.py と同方針）。timeout 3 秒。helper の `/news` は dashboard helper として 30 分 TTL キャッシュを持つが、bot 通知は 1 日 1 通なので helper キャッシュは経由せず直接 fetch する設計（5:30 時点で helper が起動しているかは race condition で不確定 + helper 経由にする実利がない）。
+    - **bot socket 投入**: `socket.AF_UNIX` で `$XDG_RUNTIME_DIR/companion-bot.sock` に connect、UTF-8 で本文送信後 `shutdown(SHUT_WR)` で EOF を送って bot 側に転送確定させる。`[critical] ` プレフィクスは付けない（silent default の希望どおり）。timeout 3 秒、失敗時は stderr に 1 行記録して `mark_sent_today` を呼ばずに exit 0（次回起動で再試行可能）。
+  - **dashboard-start.sh 改修** (`bin/dashboard-start.sh`): step 4 (now-playing helper 起動) と step 5 (firefox 起動) の間に新規 step 4.5 を挿入。`python3 "$DASH_DIR/bin/dashboard-notify-ren-quotes.py" &` でバックグラウンド起動。`set -e` は元々全体掛けしていないため、新規追加部分も他ステップと同様に独立で扱う。header コメントのシーケンス行も更新。
+  - **重複防止**: `.state/last-notify-date` に YYYY-MM-DD（JST）を書き、同日内の再起動では skip。**判断根拠**: 「毎回送る」/「1 日 1 通制限」のどちらでも成功条件を満たすが、観察期間中に手動 `systemctl --user restart dashboard.service` を 1 日に複数回行ったとき #maintenance topic に同じセリフ集が複数届くと過剰（topic を眺める user の体験悪化）。1 日 1 通に倒し、強制再送したい場合は `.state/last-notify-date` を削除すればよい運用に統一。送信失敗時は mark しないので次回 dashboard 起動で再送される。
+  - **failure isolation**: ① スクリプト自身は全例外を try/except で握って常に exit 0、② dashboard-start.sh からは `&` でバックグラウンド起動、③ bot socket 不在 / Open-Meteo タイムアウト / NHK RSS タイムアウト / parse 失敗 すべて degraded mode で進む（取れた sub-source だけで build、占いは無条件で出るので最低 1 行は確保）、④ 全 sub-source 空なら body=None で送信せず終わる。dashboard 本流（mpv / firefox / sleep infinity）に影響なし。
+  - **動作確認**:
+    - `python3 -m py_compile bin/dashboard-notify-ren-quotes.py` pass、`bash -n bin/dashboard-start.sh` pass。
+    - 単体実行: `python3 bin/dashboard-notify-ren-quotes.py` → stdout `dashboard-notify: sent (255 bytes) for 2026-05-28` + bot.log に `notify forwarded len=255 critical=False` + Telegram #maintenance topic に 1 通受信（実機目視は orc 経由）。
+    - 重複防止確認: 同条件で 2 回目実行 → `dashboard-notify: already sent for 2026-05-28, skipping` で送信せず exit 0。
+    - socket 不在ケース: `XDG_RUNTIME_DIR=/tmp/nonexistent-dir python3 bin/dashboard-notify-ren-quotes.py` → stderr に `bot socket send failed: [Errno 2] No such file or directory` + exit 0 + `.state/last-notify-date` 作られず（次回再送可能経路）。
+    - degraded build: 内部で `_fetch_weather=lambda: None` + `build_news_lines=lambda: []` に差し替え → 占い 1 行のみで body 構築成功。さらに `build_fortune_line` も例外化 → body=None で送信せず exit 0。
+    - 平日/土日分岐: 木曜の `build_weather_lines` で `[朝の天気, 夜の天気]` の 2 行、`_wx_band_stats` が朝 [7,9) で `{'hi':20.1,'lo':20.0,'pop_max':19}` / 夜 [18,22) で `{'hi':22.1,'lo':21.8,'pop_max':20}` / 一日 [6,21) で `{'hi':22.4,'lo':19.7,'pop_max':24}` を返すことを確認。土日コードパスは「`now.weekday() >= 5` で `きょうの天気` 1 行」を build_weather_lines 内で分岐実装。
+    - **送信本文サンプル** (2026-05-28 木 01:04 実行):
+      ```
+      今朝の ren セリフ集（2026-05-28 (Thu) 01:04）
+
+      朝の天気：最高 20°, 長袖シャツで, 傘はいらなさそう
+
+      夜の天気：最高 22°, 長袖シャツで, 傘はいらなさそう
+
+      きょうの双子座：健康運が穏やか。ラッキーカラーは青。誰かに一言「ありがとう」を伝えてみよう。
+
+      ニュース：大阪地検特捜部の特別公務員暴行陵虐事件 検事側が無罪主張へ
+
+      ニュース：「国家情報局」設置法 成立 政府のインテリジェンス機能強化へ
+
+      ニュース：皇位継承 衆参議長・副議長が会談 “幅広い賛同を”認識共有
+      ```
+  - **対症療法 2 周目ガード非該当**: 既存条件分岐・閾値・fallback の追加・延長ではなく、初出の新規スクリプト追加 + dashboard-start.sh に 1 行 step を挿入。failure 経路は「失敗 = 送らず exit 0」の 1 段確定で fallback 連鎖なし。`~/companion/CLAUDE.md` 2 周目ルール準拠。
+  - **設計判断の記録**:
+    - **phrase pool 二重管理**: web/app.js の `FORTUNE_LUCK` / `FORTUNE_LEVEL` / `FORTUNE_COLOR` / `FORTUNE_TIP` を Python 側でも保持しており、pool 更新時は両方追従が必要。bot 通知用に「同じ意図のセリフが届けば成功条件を満たす」前提（committee 受け取りの「セリフ内容は web/app.js のセリフ枠ロジックと同等概念」）に従い、phrase pool 単一管理化は将来の選択肢（dashboard-config.js に分離 or JSON 化）として残置。これ自体は新規実装 1 周目につき対症療法 2 周目ガード非該当だが、将来 pool 更新が両側に同期されない drift が起きたら根本対策（単一管理化）を検討する。
+    - **socket 経路独立**: bot 通知 helper (`nowplaying-helper.py` の `/news`) を経由せず、Python 側で NHK RSS を直接 fetch する選択。理由: 5:30 時点で `now-playing helper` の起動が race condition で先か後か不確定 + helper キャッシュ 30 分の効きは 1 日 1 通には不要 + 経由するとさらに HTTP 1 段増えて failure path も増える。
+    - **重複防止 = 1 日 1 通制限**: 上述「判断根拠」参照。手動 restart で過剰送信を防ぐ方針を選択。
+  - **意図との差分**: 委任時の意図と異なる対応はなし。
+  - **commit**: `bin/dashboard-notify-ren-quotes.py` 新規 + `bin/dashboard-start.sh` 改修 + `docs/STATUS.md` Done 反映を 1 commit (1 論理単位 = 「ren セリフ集 Telegram 通知追加」)。push は orc / ユーザー側で実施 (implementer は commit 止め、dashboard repo は remote `mooneclipse/companion-dashboard` あり)。
+  - **残**: 〔ユーザー〕明朝 2026-05-29 05:30 発火で Telegram #maintenance topic に「今朝の ren セリフ集」が 1 通 silent で届くかの実機確認（本台帳 L113 ルールの 3 朝連続観察対象）。
 
 - 2026-05-27 セリフ枠下端に 30 秒切替メーターを追加（細い進捗線）。orc 経由 implementer。**ユーザー要望**: 「ren のセリフが切り替わるタイミングがわかるような 30 秒のメーターがほしいかも、細い線でも円でもいいから」(2026-05-27 夜) → orc 経由で形式確定「セリフ枠下端の細い横線」を採用。industrial-refined v0.2 トーン親和性が高い案。
   - **HTML 追加 1 要素** (`web/index.html`): `.quote` 内の `#quote-text` の弟として `<div class="quote-progress" id="quote-progress" aria-hidden="true"><span></span></div>` を 1 行追加。`<span>` を中に入れて parent の border-radius / padding と独立に width 0→100% アニメをかけられる構造。

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dashboard-start.sh — dashboard.service の ExecStart。systemd 経由でのみ起動する想定。
 #
-# シーケンス: 音量固定 → 時間帯フォルダ判定 → mpv(空ならskip) → now-playing helper → firefox(--kiosk --kiosk-monitor=1 で HDMI-1 占有) → exec sleep infinity
+# シーケンス: 音量固定 → 時間帯フォルダ判定 → mpv(空ならskip) → now-playing helper → ren セリフ集 bot 通知 → firefox(--kiosk --kiosk-monitor=1 で HDMI-1 占有) → exec sleep infinity
 # 停止は dashboard-stop.timer(09:00) → systemctl --user stop dashboard.service → cgroup-kill。このスクリプトに kill ロジックは置かない。
 # set -e は掛けない（pactl/wmctrl の非致命ステップで死なせない）。詳細設計は ../docs/STATUS.md。
 
@@ -65,6 +65,13 @@ fi
 # ── 4. now-playing helper（mpv IPC → http://127.0.0.1:PORT/np。mpv 不在でも {"playing":false} を返すだけ）
 python3 "$DASH_DIR/server/nowplaying-helper.py" &
 echo "dashboard-start.sh: nowplaying-helper started (pid $!)"
+
+# ── 4.5 ren セリフ集を bot 経由で Telegram #maintenance topic に silent 通知（1 日 1 通制限）。
+#   スクリプト内部で「同日内は skip」「全例外を握って exit 0」を実装しているため、ここでは
+#   バックグラウンド起動して即次へ進む（mpv / firefox 起動の本流を遅らせない / 失敗で倒さない）。
+#   詳細: bin/dashboard-notify-ren-quotes.py 冒頭の docstring 参照。
+python3 "$DASH_DIR/bin/dashboard-notify-ren-quotes.py" &
+echo "dashboard-start.sh: ren-quotes notify dispatched (pid $!)"
 
 # ── 5. firefox（dashboard 専用 profile。--kiosk --kiosk-monitor=1 で firefox 自身が HDMI-1 占有）
 mkdir -p "$FF_PROFILE"
