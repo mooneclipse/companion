@@ -154,7 +154,7 @@ Phase 3-1 (Web 検索 → vault 保存) で確認ラリー破綻と権限 whack-
 
 ---
 
-### Phase 2.6: Telegram 移行 ⬜ 設計確定、実装 2026-06-02 以降
+### Phase 2.6: Telegram 移行 ⬜ 設計確定、cold cut 2026-05-27 (lead 前倒し)
 
 Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session model) に置き換える。bot 指示はモバイル中心 + topic で分けたい要件 (user 確定済) に応える。
 
@@ -164,7 +164,7 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 - framework: **python-telegram-bot v22.7** (PTB)、long polling、`AIORateLimiter` extra
 - session 帰属: `(chat_id, thread_id)` 複合キー、`sessions/topics/<chat_id>_<thread_id|general>.json`
 - 移行戦略: **cold cut** (並行運用しない、claude_lock 分裂 + CreditBudgetGuard 月次 $200 経路回避)
-- 切替日: **2026-06-02 以降** (Phase 2.5 健全性観察完了後)、観察期間 5/19-6/2 はまたがない
+- 切替日: **2026-05-27** (lead 単独判断で Phase 2.5 観察期間 8 日打ち切り、健全性チェック履歴 2026-05-27 entry §「Phase 2.5 観察打ち切り + cold cut 前倒し判断」参照)
 - OWNER 認可: `from_user.id == OWNER_ID` + privacy mode off (起動時 `can_read_all_group_messages` 確認、False なら `sys.exit(1)`) + 4 段防御
 - topic 構成 (initial 4): General / #chat / #research / #maintenance (#aidiary / #voice-log は実需時に追加、YAGNI)
 - voice/ 統合: Telegram 観察 14 日完了後に着手 (順序原則、bot.py 同時 2 方向回避)
@@ -248,7 +248,7 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 
 1. **Phase 3 の能力が最低 1 つ、日常運用に自然に組み込まれている**（ユーザーが普段の生活で意識せず使う頻度があり、2 週間以上継続）
 2. **直近 2 週間、Phase 1〜3 のいずれかで「想定外の停止 / 誤動作 / 修正必須レベルの不具合」が発生していない**
-   - **Phase 2.6 (Telegram 移行) 反映**: Phase 2.5 観察 (5/19-6/2) は独立完了として記録、Phase 4 着手判定は **Telegram 観察 14 日単独判定** (cold cut 切替日起算)。voice/ 統合は Telegram 観察完了後に着手、voice/ 統合 +14 日でも安定継続が条件 #2 充足の判断材料 (telegram-design.md §9.2 / §10 layer 引き継ぎ可否表)
+   - **Phase 2.6 (Telegram 移行) 反映**: Phase 2.5 観察 (5/19-5/27、8 日で打ち切り) は独立完了として記録、Phase 4 着手判定は **Telegram 観察 14 日単独判定** (cold cut 切替日 2026-05-27 起算 = 2026-06-10 観察完了予定)。voice/ 統合は Telegram 観察完了後に着手、voice/ 統合 +14 日でも安定継続が条件 #2 充足の判断材料 (telegram-design.md §9.2 / §10 layer 引き継ぎ可否表)
    - 「Phase 2.5 観察結果を Telegram 経路に引き継ぐ」は **採用しない** (N-T10 違反禁止、bot.py event handler は引き継げない layer)
 3. **ユーザー自身が「土台が落ち着いた、Phase 4 へ進む」と明示的に宣言している**
 
@@ -410,7 +410,42 @@ Phase 2.5 健全性 2 週間観察期間中 (5/19-6/2) の **read-only 設計議
 
 **実害ゼロ拡張ルール (M-1) との関係**: 本 entry は **設計議論 read-only**、bot.service / bot.py 挙動変更ゼロ、「5 回連続境界」(2026-05-20 entry §設計判断履歴 S-1) には **発火しない** (適用条件 (ii)「修正 commit が観察カウント起算日リセットを発火させない」に該当)。
 
-次回チェック目安: 2026-06-02 (Phase 2.5 観察完了) + cold cut 切替日 (実装着手) + Telegram 観察 +14 日。
+次回チェック目安: 2026-06-10 (cold cut 5/27 +14 日 = Telegram 観察完了タイミング、2026-05-27 (追) entry で前倒し)。
+
+### 2026-05-27 (追): Phase 2.5 観察打ち切り + Phase 2.6 cold cut 前倒し判断
+
+**判断**: lead 単独判断で Phase 2.5 健全性 2 週間観察 (5/19-6/2 予定) を **5/19-5/27 の 8 日で打ち切り**、Phase 2.6 cold cut 切替を 2026-06-02 → **2026-05-27 当日実施** に前倒し。user が選択肢 C「今すぐ cold cut 切替」を明示選択した経緯を受けた lead 確定。
+
+**判断根拠** (覆し前提となる telegram-design.md §9.1「絶対遵守」を上書き):
+
+- (a) Phase 2.5 観察 8 日経過時点で実害ゼロ確認: `bot.service` NRestarts=0、`bot.log` ERROR / WARN / Traceback 0 件、`/quota` credit_usd 表示稼働、ledger 累計は monthly $100 の 1% 未満想定 (前回 entry 5/19 時点 $0.7961 = 0.80% から 8 日経過、低消費継続) = low-frequency events なので残り 6 日待っても観察結論は同等の見込み
+- (b) Phase 4 着手条件 #2 起点は telegram-design.md §9.2 で **Telegram 観察 14 日単独判定** に改訂済 (Phase 2.5 観察は「独立完了」として記録するのみ) = Phase 2.5 短縮は Phase 4 着手スケジュールに影響なし、むしろ cold cut 前倒しで Telegram 観察 14 日が前倒しされ Phase 4 着手判定が 6 日早まる (6/16 → 6/10)
+- (c) 実装着手前検証 V-1〜V-25 + D-add-* + AIORateLimiter + Bot API up 監視運用 + V-4/V-5/V-6 実機検証すべて 2026-05-27 同日完了 (`bot/docs/STATUS.md` Phase 2.6 section 参照)、cold cut 前提条件成立
+- (d) user 確認 (AskUserQuestion 「Phase 2.6 cold cut の前倒し方針は?」で選択肢 C「今すぐ cold cut 切替」明示選択、5/27 22時台)
+- (e) lead 判断: agent team 再起動コスト (devil + architect で覆し議論 30 分以上) vs 前倒し利得 (Phase 4 着手 6 日前倒し + 観察期間中の lead 認知負荷削減) の秤、user C 選択尊重 + 過剰防御寄りと判定して前倒し採用
+
+**落とし穴 D「approve 前の最終整合チェック」継承**: 観察期間打ち切り判断は設計レベル覆しだが、(b) で Phase 4 起点が独立、(c) で前提条件成立、(a) で観察データが残り 6 日待っても変化乏しいと推定、(d) で user 確認 = 仕切り直しは過剰防御と判定。
+
+**仕切り直し境界 (S-1「実害ゼロ常態化」5 回連続) との関係**: 本判断は新規 issue 検出ではない (観察対象を Phase 2.5 → Telegram に切替えるだけ)、S-1 カウント (現状 4 回 = 5/9 / 5/14 / 5/18 / 5/20) は据え置き。Telegram 観察期間 5/27-6/10 で次回 entry が 5 回目に該当する場合は仕切り直し境界化判定を実施。
+
+**devil 不在の反証経路欠如 (lead 自認)**: 本判断は devil 装置を起動せず lead 単独で実施 (telegram-design.md §13.4 で devil 装置の本来機能 = lead judgment ミス訂正 が機能した事例を経験した直後の判断としてはやや矛盾)。falsification: Phase 2.5 観察 8 日で十分根拠の脆弱性は、cold cut 後の Telegram 14 日観察で issue 発覚した場合 (Phase 2.5 を 14 日完走させていれば検出できたか) で事後検証する。事後検証で問題があれば次回類似判断時に devil 起動を必須化する運用ルールへ昇格 (S-3「lead 単独責任 vs devil 必須」起動タイミング判断の Round 4 議題に追加)。
+
+**Phase 2.5 観察期間の最終結果 (5/19-5/27、8 日)**:
+- bot.service: ActiveEnter `2026-05-20 00:57:34 JST` から 7 日強 active 連続、NRestarts=0、ERROR/WARN/Traceback 0 件
+- CreditBudgetGuard (5/20 00:57 以降): 実弾運用、`/quota` credit_usd 表示稼働、ledger 累計低消費継続
+- vault sync: `vault-sync-from-transcript.sh` Stop hook 正常稼働、commit 漏出なし
+- maintenance 通知: catch-up 経路 + 日次 timer 経路の二重実行で重複なし (T-E state_matches で skip 動作確認済)
+- 「実害ゼロ拡張ルール」(M-1) の適用条件 (i)(ii)(iii) すべて満たし
+
+**時系列影響**:
+- Phase 2.5 観察完了 → 5/27 (8 日)
+- cold cut 切替 → 5/27 当日実施
+- Telegram 観察 14 日カウント → 5/27 起算 = 6/10 完了予定
+- voice/ 統合着手 → 6/10 以降 (順序原則、N-T14 違反禁止)
+- voice/ 統合 +14 日 → 6/24 目処
+- Phase 4 着手判定 → 条件 #1 / #3 と合わせて user 宣言時 (最短 6/24 +α)
+
+次回チェック目安: 2026-06-10 (Telegram 観察 14 日完了タイミング)、その後 voice/ 統合着手前に条件 #2 を再判定する。
 
 ---
 

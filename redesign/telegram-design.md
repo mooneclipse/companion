@@ -1,7 +1,7 @@
 # telegram-design.md — companion-bot Telegram 移行設計確定版
 
-最終更新: 2026-05-27
-status: **設計確定 (plan_approval 完了)**、実装着手は 2026-06-02 以降
+最終更新: 2026-05-27 (Phase 2.5 観察打ち切り + cold cut 前倒し改訂)
+status: **設計確定 (plan_approval 完了)**、**cold cut 2026-05-27 実施 (lead 単独判断で前倒し、§9.1 改訂参照)**
 
 ## 0. 本書の位置付け
 
@@ -407,28 +407,35 @@ venv/bin/pip install -r requirements.txt
 
 ## 9. Phase 2.5 観察 + Phase 4 着手条件 #2 改訂
 
-### 9.1 観察期間中の挙動 (絶対遵守)
+### 9.1 観察期間中の挙動 (2026-05-27 改訂、当初「絶対遵守」を lead 単独判断で打ち切り)
 
+**(履歴) 当初制約 (絶対遵守)**:
 - **2026-05-19 〜 2026-06-02**: Phase 2.5 健全性 2 週間観察期間
 - 設計議論のみ (read-only)、`bot.service` / `bot.py` / `bot-workspace/.claude/settings.json` / maintenance 系の挙動変更を伴う commit / push は **禁止** (N-T3)
 - cold cut 切替日は **観察期間をまたがない** (devil V-16)
 
-### 9.2 Phase 4 着手条件 #2 改訂 (PROJECT.md L262 周辺)
+**(2026-05-27 改訂、lead 単独判断)**:
+- **Phase 2.5 観察期間を 5/19-5/27 (8 日) で打ち切り**、cold cut 切替を 6/2 → **5/27 当日実施** に前倒し
+- 判断根拠: PROJECT.md 健全性履歴「2026-05-27 (追): Phase 2.5 観察打ち切り + Phase 2.6 cold cut 前倒し判断」entry に集約 ((a) 8 日経過実害ゼロ + (b) Phase 4 起点が Telegram 観察 14 日単独判定なので Phase 2.5 短縮は Phase 4 着手スケジュールに影響なし + (c) 実装着手前検証 V-1〜V-25 + V-4/V-5/V-6 実機検証全 pass + (d) user 確認 C 選択 + (e) lead 過剰防御寄り判定)
+- N-T3「観察期間中の挙動変更禁止」と V-16「観察期間をまたがない」は本改訂で **解除** (Phase 2.5 観察打ち切り扱い)
+- devil 不在の反証経路欠如を lead 自認、Telegram 14 日観察で issue 発覚した場合に事後検証を実施し、次回類似判断時の devil 起動必須化を運用ルール昇格候補 (PROJECT.md S-3「lead 単独責任 vs devil 必須」Round 4 議題)
+
+### 9.2 Phase 4 着手条件 #2 改訂 (PROJECT.md L262 周辺、2026-05-27 (追) で再前倒し)
 
 **改訂方針**:
-- Phase 2.5 観察 (5/19-6/2) は **独立完了** として PROJECT.md 健全性履歴に記録
-- Phase 4 着手判定は **Telegram 観察 14 日単独判定** (cold cut 切替日起算)
+- Phase 2.5 観察 (5/19-5/27、8 日で打ち切り) は **独立完了** として PROJECT.md 健全性履歴に記録
+- Phase 4 着手判定は **Telegram 観察 14 日単独判定** (cold cut 切替日 2026-05-27 起算)
 - voice/ 統合は **Telegram 観察 14 日完了後** に着手 (順序原則準拠、N-T14 違反禁止)
 
-タイムライン:
-1. 2026-06-02: Phase 2.5 観察完了
-2. 2026-06-02 以降: cold cut 切替 (Telegram bot.service 起動)
-3. cold cut +14 日: Telegram 観察完了
-4. その後: voice/ 統合着手
-5. voice/ 統合 +14 日: Phase 4 着手条件 #2 充足候補
+タイムライン (2026-05-27 改訂):
+1. 2026-05-27: Phase 2.5 観察打ち切り (lead 前倒し、8 日で完了扱い)
+2. 2026-05-27: cold cut 切替 (Telegram bot.service 起動)
+3. 2026-06-10: Telegram 観察 14 日完了
+4. その後: voice/ 統合着手 (bot/ 側)
+5. voice/ 統合 +14 日 (2026-06-24 目処): Phase 4 着手条件 #2 充足候補
 6. user 自身が Phase 4 着手を明示宣言 (条件 #3) で着手
 
-Phase 4 着手は **2026-06-16 +α 以降** 想定。
+Phase 4 着手は **2026-06-24 +α 以降** 想定 (当初 6/16 想定から voice/ 統合 +14 日まで含めて再計算)。
 
 ## 10. layer 別 platform-agnostic 引き継ぎ可否表
 
