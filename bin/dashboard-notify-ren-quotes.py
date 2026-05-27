@@ -311,12 +311,7 @@ def send_to_bot(text):
             s.settimeout(3.0)
             s.connect(BOT_SOCK)
             s.sendall(text.encode("utf-8"))
-            s.shutdown(socket.SHUT_WR)  # EOF を送って bot 側の受信を確定
-            # bot 側からの応答は仕様上空。close まで待ってから抜ける。
-            try:
-                s.recv(1)
-            except (OSError, socket.timeout):
-                pass
+            s.shutdown(socket.SHUT_WR)  # EOF 送出で送信完了を bot に伝える（応答は無し）
         return True
     except (OSError, socket.timeout) as e:
         print(f"dashboard-notify: bot socket send failed: {e}", file=sys.stderr)
