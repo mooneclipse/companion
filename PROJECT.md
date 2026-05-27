@@ -154,6 +154,28 @@ Phase 3-1 (Web 検索 → vault 保存) で確認ラリー破綻と権限 whack-
 
 ---
 
+### Phase 2.6: Telegram 移行 ⬜ 設計確定、実装 2026-06-02 以降
+
+Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session model) に置き換える。bot 指示はモバイル中心 + topic で分けたい要件 (user 確定済) に応える。
+
+**設計確定版**: `~/companion/workspace/redesign/telegram-design.md` (2026-05-27、agent team `companion-telegram-migration` による plan_approval 完了)
+
+**主要決定**:
+- framework: **python-telegram-bot v22.7** (PTB)、long polling、`AIORateLimiter` extra
+- session 帰属: `(chat_id, thread_id)` 複合キー、`sessions/topics/<chat_id>_<thread_id|general>.json`
+- 移行戦略: **cold cut** (並行運用しない、claude_lock 分裂 + CreditBudgetGuard 月次 $200 経路回避)
+- 切替日: **2026-06-02 以降** (Phase 2.5 健全性観察完了後)、観察期間 5/19-6/2 はまたがない
+- OWNER 認可: `from_user.id == OWNER_ID` + privacy mode off (起動時 `can_read_all_group_messages` 確認、False なら `sys.exit(1)`) + 4 段防御
+- topic 構成 (initial 4): General / #chat / #research / #maintenance (#aidiary / #voice-log は実需時に追加、YAGNI)
+- voice/ 統合: Telegram 観察 14 日完了後に着手 (順序原則、bot.py 同時 2 方向回避)
+- 採用すべきでない設計 14 件 (N-T1〜N-T14) + 対症療法 2 周目候補 6 件 (W-1〜W-6) 明示的不採用宣言
+
+**実装着手前検証**: 25+ 項目 (V-1〜V-25 + D-add-1〜D-add-12 + AIORateLimiter log level + Bot API up 監視等)、詳細は `bot/docs/STATUS.md` Phase 2.6 section
+
+**台帳**: `~/companion/bot/docs/STATUS.md` Phase 2.6 section (実装着手と同時に TODO/In progress/Done 追跡開始)
+
+---
+
 ### Phase 3: 能力層 ⬜ 未着手
 
 相棒に「できること」を増やす。**着手順序は軽 → 重で上から固定**（Phase 3 内なら次の項目への着手は合意不要、順に消化）:
@@ -226,6 +248,8 @@ Phase 3-1 (Web 検索 → vault 保存) で確認ラリー破綻と権限 whack-
 
 1. **Phase 3 の能力が最低 1 つ、日常運用に自然に組み込まれている**（ユーザーが普段の生活で意識せず使う頻度があり、2 週間以上継続）
 2. **直近 2 週間、Phase 1〜3 のいずれかで「想定外の停止 / 誤動作 / 修正必須レベルの不具合」が発生していない**
+   - **Phase 2.6 (Telegram 移行) 反映**: Phase 2.5 観察 (5/19-6/2) は独立完了として記録、Phase 4 着手判定は **Telegram 観察 14 日単独判定** (cold cut 切替日起算)。voice/ 統合は Telegram 観察完了後に着手、voice/ 統合 +14 日でも安定継続が条件 #2 充足の判断材料 (telegram-design.md §9.2 / §10 layer 引き継ぎ可否表)
+   - 「Phase 2.5 観察結果を Telegram 経路に引き継ぐ」は **採用しない** (N-T10 違反禁止、bot.py event handler は引き継げない layer)
 3. **ユーザー自身が「土台が落ち着いた、Phase 4 へ進む」と明示的に宣言している**
 
 3 が最終ゲート。1〜2 が満たされていなければ Claude 側から「まだ条件未達です」と差し戻す。条件達成判定は PROJECT.md / 各 STATUS.md / bot ログを根拠に Claude が報告し、最終判断はユーザーが下す。
@@ -365,6 +389,28 @@ Phase 2.5 完全完了 + Phase 3-2 voice/ 側完了直後の fresh-eye 点検と
 - 起動手順: `~/companion/workspace/review-2026-05-20/axis-5-result.md` を center of truth として lead 単独で再起動判断、必要なら agent team `companion-durability-0602` 等で再起動
 
 次回チェック目安: 2026-06-02 (健全性 2 週間観察完了タイミング) を維持。
+
+### 2026-05-27: Phase 2.6 Telegram 移行設計確定 (agent team companion-telegram-migration)
+
+Phase 2.5 健全性 2 週間観察期間中 (5/19-6/2) の **read-only 設計議論** として実施。bot.service / bot.py / settings.json / maintenance 系の挙動変更を伴う commit / push は **一切なし** (N-T3 違反回避、観察カウント保護)。
+
+- **目的**: Discord 土管 → Telegram supergroup (topic = 1 session model) への移行設計確定。bot 指示はモバイル中心 + topic で分けたい要件 (user 確定)。
+- **agent team 構成**: architect (Telegram Bot API + session 設計本体) / devil (構造的反証) / ux (mobile UX) + lead (companion-telegram-migration)
+- **mesh 議論**: Round 1 → Round 2.3 (ux) / Round 2.1.1 (architect) / v1.0.8 (devil)、devil 反証 19 件 + 罠リスト N-T1〜N-T14 + 検証項目 V-1〜V-25 + D-add-1〜D-add-12 + plan reject 候補 R-1〜R-9 すべて整理 + 取り込み or 撤回
+- **lead 裁定 2 件**: (a) ENV vs ファイル管理 → ENV 採用 (state 1 回決定原則整合、5+ topic で再点検 trigger) / (b) chunk reply → ux 案採用 (chunk2 以降 reply なし default、mobile UI 視認性)
+- **P3 user 確認**: supergroup topic で確定 (他選択肢 = private chat / Slack / Matrix / Signal / PWA 拡張では「topic で分けたい」要件を満たせない)
+- **3 plan 同時 approve 完了** + 確定設計を `~/companion/workspace/redesign/telegram-design.md` (center of truth) に転記
+- **実装着手予定**: 2026-06-02 以降の cold cut 切替日 (Phase 2.5 観察完了後)
+- **Phase 4 着手条件 #2 反映**: Telegram 観察 14 日単独判定 + voice/ 統合 +14 日、Phase 4 着手目安は 2026-06-16 +α 想定
+
+**運用継承事例 (将来 team 向け)**:
+- devil 装置が lead 認識違い (Issue 2 = 架空攻撃と誤判定) を反証で訂正 = 装置の本来機能 (lead judgment ミス訂正) 成功事例
+- devil v1.0.3 で B-2 違反 (中間状態誤認、R-6 架空攻撃) を自己訂正 + §8.4.1 plan version 確認運用 (wc/stat/完了マーカー + 引用コード実物検証 + asynchronous 改訂中の 2 回 verify) を装置側に追加
+- asynchronous 配信すれ違い 3 度目発生 (architect Round 2.1.1 完了通知 + lead Round 3.1 mini fix 指示の double cross) = agent team の本質的限界として記録、`workspace/CLAUDE.md` Agent Teams 運用方針 §B / §B-2 に「asynchronous 配信すれ違い実例」追記候補
+
+**実害ゼロ拡張ルール (M-1) との関係**: 本 entry は **設計議論 read-only**、bot.service / bot.py 挙動変更ゼロ、「5 回連続境界」(2026-05-20 entry §設計判断履歴 S-1) には **発火しない** (適用条件 (ii)「修正 commit が観察カウント起算日リセットを発火させない」に該当)。
+
+次回チェック目安: 2026-06-02 (Phase 2.5 観察完了) + cold cut 切替日 (実装着手) + Telegram 観察 +14 日。
 
 ---
 
