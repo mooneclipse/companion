@@ -1,19 +1,19 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-28 (Phase 2.6 cold cut 実装 commit 完了、venv swap / systemctl restart は次タスクで実施)
+最終更新: 2026-05-28 (Phase 2.6 cold cut 切替完了 + smoke test 全 pass、Telegram 観察 14 日カウント開始)
 
 ## 設計メモ
 
-- Discord ↔ `claude -p` 土管 bot
-- DM またはサーバー内ユーザーメンションをトリガに `claude -p` を呼び、出力をチャンネル/DM へ返す
-- OWNER_ID 以外の発言は完全に無視
+- Telegram supergroup ↔ `claude -p` 土管 bot (2026-05-28 cold cut で Discord から全面移行、設計 `~/companion/workspace/redesign/telegram-design.md`)
+- supergroup の各 topic (#chat / #research / #maintenance / General) でユーザーメンションをトリガに `claude -p` を呼び、出力を同 topic に返す。topic = 1 session model (`(chat_id, thread_id)` 複合キーで session 分離)
+- OWNER_ID (Telegram user.id、`@userinfobot` で取得) 以外の発言は完全に無視 (4 段防御: user.id / is_bot / chat.type / chat.id)
 - 主要パス:
-  - `bot.py` … 本体（1ファイル構成、`CompanionClient` で Unix socket listener を兼務）
-  - `companion-bot.service` … systemd user unit（`~/.config/systemd/user/` から symlink で配置 + `enable --now` 済み）
-  - `.env` … トークン・OWNER_ID・CLAUDE_BIN・CLAUDE_CWD・CLAUDE_TIMEOUT（chmod 600）
-  - `requirements.txt` … `discord.py>=2.3,<2.4`, `python-dotenv>=1.0,<2.0`
-  - `venv/` … Python 3.10 で再構築済み
-- 通知投入口: `$XDG_RUNTIME_DIR/companion-bot.sock`（permission 0600）。1 接続 1 メッセージ（UTF-8、EOF で確定）、本文は `.env` の `NOTIFY_CHANNEL_ID` で指定した Discord テキストチャンネルへ転送。例: `printf '%s' "..." | nc -U $XDG_RUNTIME_DIR/companion-bot.sock`
+  - `bot.py` … 本体 (1 ファイル構成、PTB v22.7 Application + Unix socket listener、`chunk_telegram` / `send_text` / `_typing_action` 含む)
+  - `companion-bot.service` … systemd user unit (`~/.config/systemd/user/` から symlink で配置 + `enable --now` 済)
+  - `.env` … `TELEGRAM_BOT_TOKEN` / `OWNER_ID` (Telegram user.id) / `NOTIFY_CHAT_ID` (supergroup chat_id、負値) / `BOT_THREAD_ID_*` (各 topic の数値 ID) / `CLAUDE_BIN` / `CLAUDE_CWD` / `CLAUDE_TIMEOUT` / `BOT_BUDGET_GUARD` / `BOT_MONTHLY_CREDIT_USD` (chmod 600)
+  - `requirements.txt` … `python-telegram-bot[rate-limiter,job-queue]>=22.7,<23` + `python-dotenv>=1.0,<2.0`
+  - `venv/` … Python 3.10 で 2026-05-28 cold cut 時に再構築 (旧 venv は `venv-discord-backup/` で 2026-06-04 まで保持、rollback path)
+- 通知投入口: `$XDG_RUNTIME_DIR/companion-bot.sock` (permission 0600)。1 接続 1 メッセージ (UTF-8、EOF で確定)、本文は `.env` の `NOTIFY_CHAT_ID` + `BOT_THREAD_ID_MAINTENANCE` (空なら maintenance fallback) で指定した Telegram supergroup の #maintenance topic へ転送。`[critical] ` プレフィクス完全一致 (半角込み) で `disable_notification` 反転 (silent default、critical のみ音 ON)。例: `printf '%s' "..." | nc -U $XDG_RUNTIME_DIR/companion-bot.sock`
 - 実行 CWD: `claude -p` は `~/companion/workspace` を CWD として起動
 - ログ: `~/companion/logs/bot.log` (RotatingFileHandler, 5MB×3)
 - `claude` CLI のパスは `.env` の `CLAUDE_BIN` と service ユニットの `Environment=PATH=...` の両方に nvm バージョン依存パスを書いている。Node 更新時は両方追従要
@@ -169,6 +169,36 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+- 2026-05-28 Phase 2.6 cold cut 切替完了 + smoke test 全 pass (Telegram 観察 14 日カウント開始)
+  - **背景**: 2026-05-27 lead 単独判断で Phase 2.5 観察期間 8 日打ち切り + cold cut 前倒し採用 (PROJECT.md 2026-05-27 (追) entry 参照)、同日中に orc skill で implementer 委任 → code-reviewer 点検 → 3 commits 作成 (`19ca082` migrate Discord to Telegram supergroup topic model / `60c11d1` STATUS.md 実装 entry / `abaacea` review fixes)。直後に venv swap + systemctl restart + smoke test 一気通貫実施
+  - **切替手順** (telegram-setup.md §6.2 通り、ただし OWNER_ID 上書き手順は本実施で漏れを発見 → setup.md §6.2 step 4 + §0 前提条件に補記済):
+    - `systemctl --user stop companion-bot.service` (Discord bot 停止)
+    - `mv venv venv-discord-backup` (rollback path、2026-06-04 cleanup 予定 = 切替 +1 週間)
+    - `python3 -m venv venv` + `venv/bin/pip install --upgrade pip` + `venv/bin/pip install -r requirements.txt` (PTB v22.7 + aiolimiter 1.2.1 + apscheduler 3.11.2 + httpx 0.28.1 + dotenv 1.2.2 等 13 packages 導入)
+    - `venv/bin/python -m unittest discover -s tests` → **54 tests 全 pass** (PTB skip 5 件が pass に転じた + 既存 quota 17 + 新規 sessions 12 + 新規 bot 5 + パラメータ展開分込)
+    - `systemctl --user daemon-reload` + `systemctl --user start companion-bot.service`
+  - **初回起動 (2026-05-28 00:18:41 JST) は OWNER 認可 4 段の段 1 で全 reject = 完全沈黙** = 想定通りの設計挙動だが原因切り分けに時間消費。原因: `.env` の `OWNER_ID=816507905758986301` は Discord snowflake (18 桁) のまま、Telegram user.id (10 桁前後) ではなかった。setup.md §6.2 step 4 が「TELEGRAM_BOT_TOKEN / NOTIFY_CHAT_ID / BOT_THREAD_ID_* 追記」のみ示し OWNER_ID 上書きを明示していなかった手順穴 (本 entry で setup.md 修正反映済)
+  - **OWNER_ID 修正** (00:26:33 再起動):
+    - user が `@userinfobot` (Telegram 公式) で `/start` → Telegram user.id `8395385864` 取得
+    - `cp .env .env.discord-backup` (chmod 600、rollback path) + `sed -i 's/^OWNER_ID=.*/OWNER_ID=8395385864/' .env`
+    - `systemctl --user start companion-bot.service` で再起動 → `logged in as @companion_renbot (id=8688439843)` / `notify chat verified: id=-1003851931893 title='my group' type=supergroup` / `slash commands registered: ['reset', 'quota', 'status', 'play']` / `notify socket listening` の 4 行で正常起動
+  - **smoke test 全 5 項目 + 1 catch-up 経路 pass** (2026-05-28 00:27〜00:30 JST):
+    - `00:27:36 send len=10` → `#chat` (thread_id=3) で `@companion_renbot こんにちは` → claude 応答 + `sessions/topics/-1003851931893_3.json` 生成 (session_id=`71d8895f-3147-4dc4-876e-1b4b0f40abee`)
+    - `00:28:11 send len=21` → `#research` (thread_id=4) で `@companion_renbot 何か検索して` → claude 応答 + `sessions/topics/-1003851931893_4.json` 生成 (session_id=`a73353cf-7202-45e6-99ed-5808ed89b601`) **= #chat と別 session として分離** ✓ (設計 §2.1 `(chat_id, thread_id)` 複合キー成立)
+    - `00:28:36 cmd=/quota send len=319` → `/quota` slash command 動作 (BotCommandScopeChat 登録通り)
+    - `00:29:01 cmd=/status send len=264` → `/status` slash command 動作
+    - `00:29:23 cmd=/reset send len=68` → `/reset` で `#research` session 破棄
+    - `00:30:02 send len=345` → /reset 後の `#research` で新 session (session_id=`feab1448-71ad-4480-9339-7c335d11e557`) で claude 応答
+    - **catch-up 経路 (00:19:01)**: `notify forwarded len=117 critical=False` で `#maintenance` topic に system-report 通知が silent default で届いた = `_handle_notify` asyncio.Queue + worker (§5.2) 動作 + `[critical] ` プレフィクス非該当で `disable_notification=True` (silent) 通り
+  - **ledger.jsonl 新 schema 動作確認**: `topic_key="-1003851931893_3"` / `topic_key="-1003851931893_4"` の文字列キーで 3 entries 追記、quota.py の `channel_id` → `topic_key` rename が ledger 経路でも整合 (modelUsage `claude-haiku-4-5-20251001` + `claude-sonnet-4-6` 両方記録、total_cost_usd 集計動作)
+  - **rollback path 残置 (2026-06-04 cleanup 予定)**: `venv-discord-backup/` (PTB 不要、Discord 版 venv) + `.env.discord-backup` (旧 OWNER_ID + DISCORD_TOKEN 含む) + `sessions/channels/` (Discord 時代の session 群)。setup.md §7 通り cold cut +1 週間で削除
+  - **未実施項目** (別タスク、本 entry に含めない):
+    - `sessions/channels/` の `.archive/channels-pre-telegram/` への rename (cold cut +1 週間 = 2026-06-04)
+    - `claude_runner.py` の `run_discord` → `run_session_prompt` 改名 (telegram-design §8.5 commit 粒度 (4))、本 cold cut では platform 非依存なので無改変、別 commit 化
+    - AIORateLimiter logger 2 名のうち 1 名削除判断 (実観測待ち、PTB v22 実機で retry 起きた時に bot.log でどちらの logger 名が出るか確認、不要な方を削る)
+    - `BOT_THREAD_ID_VOICE_LOG` 環境変数設定 (Phase 3-2 voice 統合時 = 2026-06-11 Telegram 観察完了後)
+  - **Phase 4 着手条件 #2 観察カウント**: 2026-05-28 起算 = **2026-06-11 完了予定** (Telegram 観察 14 日)、PROJECT.md 2026-05-27 (追) entry のタイムライン (cold cut 5/27 起算 = 6/10 完了予定) から 1 日遅延 (cold cut 切替が 5/27 23:00 から 5/28 00:18 にまたいだため)。Phase 4 着手目安は 2026-06-25 +α 想定 (voice/ 統合 +14 日 = 6/25 目処)
 
 - 2026-05-28 Phase 2.6 cold cut 実装: Discord SDK → python-telegram-bot v22.7 全面書き換え (commit までで停止、venv swap / systemctl restart / push は orc 外の次タスク)
   - **設計 center of truth**: `~/companion/workspace/redesign/telegram-design.md` §1〜§8 確定版、実装ガード 16 項目 (OWNER 4 段防御 / privacy mode off / chunk_telegram TELEGRAM_MAX=4000 / AIORateLimiter 委譲 / parse_mode 未指定 / BotCommandScopeChat 限定 / edited_message filter / stall_check_job / `_handle_notify` queue + worker / sessions schema 2 軸 / sessions ファイル path / sessions/channels/ 残置 / ledger.jsonl `topic_key` field / catch-up 無改変 / AIORateLimiter logger INFO / stale-thread-observation jsonl は YAGNI で未実装) すべて反映

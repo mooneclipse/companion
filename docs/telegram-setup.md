@@ -15,7 +15,7 @@ cold cut 着手前に以下が満たされていること:
 - [ ] **Phase 2.5 観察期間 2026-05-19 〜 2026-06-02 完了** (N-T3 違反なし)
 - [ ] Telegram モバイルクライアント (Android, Pixel-6) でログイン済 (OWNER アカウント)
 - [ ] PC 側で `~/companion/bot/` 配下に既存 Discord bot 動作中 (rollback 時の戻り先)
-- [ ] `bot/.env` の既存値 (`DISCORD_TOKEN` / `OWNER_ID` / `NOTIFY_CHANNEL_ID` 等) を別ファイルにバックアップ済
+- [ ] `bot/.env` の既存値 (`DISCORD_TOKEN` / `OWNER_ID` (Discord snowflake) / `NOTIFY_CHANNEL_ID` 等) を別ファイルにバックアップ済 (cold cut step §6.2 で `cp .env .env.discord-backup` を実施するため、ここでは事前確認のみ)
 
 ---
 
@@ -275,7 +275,11 @@ venv/bin/pip install -r requirements.txt
 
 # 4. .env 更新 (バックアップ後)
 cp .env .env.discord-backup
-# vim .env で TELEGRAM_BOT_TOKEN / NOTIFY_CHAT_ID / BOT_THREAD_ID_* を追記
+# vim .env で以下を実施:
+#   (a) TELEGRAM_BOT_TOKEN / NOTIFY_CHAT_ID / BOT_THREAD_ID_* を追記
+#   (b) OWNER_ID を Discord snowflake (18 桁) → Telegram user.id (10 桁前後) に上書き
+#       (Telegram user.id は §1.4 @userinfobot で取得済の値。Discord ID のまま
+#        起動すると OWNER 認可 4 段の段 1 で全 reject されて bot は完全沈黙する)
 # DISCORD_TOKEN / NOTIFY_CHANNEL_ID は残置 (rollback 用、bot.py 側は読まない)
 
 # 5. systemd unit reload (description 変更が反映される)
