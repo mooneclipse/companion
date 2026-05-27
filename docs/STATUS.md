@@ -256,7 +256,7 @@ dashboard/
     - JS の class toggle 経路: node 単体 (`/tmp/dashboard-progress-check/test-restart.js`) で `restartProgress` をモック DOM に対して 2 回呼び、毎回 `remove:is-running → reflow → add:is-running` の 3 イベントが出ることと、`progressEl=null` 時に throw せず no-op で抜けることを確認。
   - **既存セリフ fade との整合**: `setInterval` callback の最初に `restartProgress()`、その直後に `el.classList.add('is-fading')` を呼ぶ順序で、progress は新サイクルを 0% から再カウント開始、セリフ本文は 320ms かけて opacity 0→ 差替え → 1。fade 中に progress が 0% から動き始める仕様で、線とテキストが独立に進む。`~/companion/CLAUDE.md` 対症療法 2 周目ルールの「外部呼び出しの成否判定は 1 回で確定」原則どおり、setInterval 1 周ごとに progress reset 1 回で確定する設計。
   - **commit**: `web/index.html` + `web/style.css` + `web/app.js` + `docs/STATUS.md` Done 反映を 1 commit (1 論理単位 = 「30 秒メーター追加」)。push は orc / ユーザー側で実施 (implementer は commit 止め)。
-  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) での目視確認 = 明朝 05:30 自動起動 or 手動 `systemctl --user start dashboard.service` で「セリフ枠下端の細いオレンジ線が 30 秒で左→右に伸び、セリフ切替時に 0% にリセットされる」ことを観察。NG なら線の太さ (`height: 1.5px`)・透明度 (`rgba(...,0.12)`)・色 (`var(--accent)`) を実機印象で再調整。
+  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) 目視 → **2026-05-27 21:50 pass** (orc 経由、手動 `systemctl --user restart dashboard.service` 後に確認)。ユーザー評「めっちゃいい」。線の太さ 1.5px / 色 `var(--accent)` / 透明度 0.12 track / 30s 同期リセットすべて実機で違和感なし、CSS 数値の再調整は不要。code-reviewer 軽微提案 1 件 (`.quote-progress > span` の `transform-origin: left center;` は width animation に効かないデッドコード) は実害ゼロにつき独断見送り、次回 CSS を触る機会に併せる。
 
 - 2026-05-27 レイアウト v3 微調整: 周囲余白 + 時計/天気のセル内中央寄せ（v3.1）。orc 経由 implementer。**ユーザー報告 2 点**: ①「周囲の余白がない」(2026-05-27 夜の TV 実機目視) / ②「時計と今日の天気のやつはセル内の中央がいいかも」。industrial-refined v0.2 トーン (`#28323f` 地・accent `#f3b85f`・Josefin Sans / DM Sans / Noto Sans CJK JP・ビネット) は維持。
   - **CSS 微調整のみ** (`web/style.css`): ① `.dashboard` の `padding: 40px 70px` → `64px 110px` (TV 1080i overscan 上下〜40 / 左右〜60px + 視覚的余白の両立、ベゼル付近まで詰めない)。② 時計セル: `.cell-clock` を `align-items: flex-start` → `center`、`.clock` 内側も `align-items: flex-start` / `text-align: left` → `center` / `center` で `hh:mm` + 日付ブロックをセル内中央 (水平・垂直) へ。③ 天気セル: `.cell-weather` を `justify-content: stretch; align-items: stretch` に、`.weather` を `display: flex` → `display: grid; grid-template-rows: 1fr auto; flex: 1` で「1 行目=今日の天気ブロックを縦中央 / 2 行目=hourly strip を下端固定」を実現。`.weather-now` には `align-items: center; justify-content: center; align-self: center` を追加して 1 行目セル内中央へ。
@@ -265,7 +265,7 @@ dashboard/
   - **動作確認**: firefox 151 ヘッドレスで `file:///home/miho/companion/dashboard/web/index.html` を 1920x1080 起動 → スクリーンショット (`/tmp/dashboard-v3.1-after.png`) で 6 セル目視: 時計「20:14」+ 日付「5月27日 (水)」が時計セル内で水平・垂直中央配置 / 天気セル「21° 霧雨 ↑24° ↓18° 降水 78%」が縦中央配置 + 3 時間ごと予報 strip (6/9/12/15/18/21 時) が同セル下部に配置 / グリッド外周に控えめな余白 (左右 110px + 上下 64px) / 他 4 セル (ごみ「きょう (水) プラ容器」/ キャラ + セリフ「双子座: 金銭運が好調」/ 再生中の曲 / 空欄) は無改変で 1080 fold 圏内に収まる。
   - **対症療法 2 周目ガード非該当**: 既存の条件分岐・閾値・fallback の追加・延長ではなく、初出の余白追加 + 中央寄せ。`.weather` の `display: flex` → `grid` への置換も「責務を grid の 2 行分割で 1 回確定」する設計改善で、`~/companion/CLAUDE.md` 2 周目ルール準拠。
   - **commit**: `web/style.css` 余白追加 + 時計/天気中央寄せ + `docs/STATUS.md` v3.1 Done 反映を 1 commit (1 論理単位)。push は orc / ユーザー側で実施 (implementer は commit 止め)。
-  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) での目視確認 = 明朝 05:30 自動起動 or 手動 `systemctl --user start dashboard.service` で 周囲余白・時計中央・天気中央 + hourly 下端固定を実機印象で確認。NG なら padding 値 / grid 行比 / vw 値を実測ベースで再調整。
+  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) 目視 → **2026-05-27 21:34 pass** (orc 経由、手動 `systemctl --user restart dashboard.service` 後に確認)。padding 64px 110px / 時計セル中央 / 天気セル縦中央 + hourly 下端固定すべて実機で違和感なし、padding 値 / grid 行比 / vw 値の再調整は不要。code-reviewer 軽微提案 1 件 (`.cell-weather { justify-content: stretch; ... }` は flex 主軸で invalid value、`align-items: stretch` のみで十分) は実害ゼロにつき独断見送り、次回 CSS を触る機会に併せる。
 
 - 2026-05-27 セリフ枠（`#quote-text`）を偉人の名言ループから動的内容（天気・占い・ニュース）へ置換。orc 経由 implementer。
   - **ローテーション仕様**: 30 秒ごとに 1 言ずつフェード切替。月〜金=`[朝の天気, 夜の天気, 占い, ニュース×1〜3]` / 土日=`[一日の天気, 占い, ニュース×1〜3]`。cycle 末尾まで来たら次 cycle で再 build（天気・ニュースの最新値を反映）。既存 `QUOTE_INTERVAL_MS=30*1000` / `QUOTE_FADE_MS=320` / CSS `.quote-text.is-fading` は流用、CSS は無改修。
@@ -282,7 +282,7 @@ dashboard/
     - node 統合テスト: 水曜=朝/夜 2 件 + 占い + ニュース 3 件 = 6 言 / 土曜=一日 1 件 + 占い + ニュース 3 件 = 5 言 を正しく build。news 不在時は news 行をスキップして cycle 継続。
   - **対症療法 2 周目ガード非該当**: 既存ロジック（fetchWeather / now-playing polling）に条件分岐・閾値追加なし。セリフ枠の責務追加 1 回で完結、fallback 連鎖なし（helper 失敗→client 失敗→該当言スキップ、で 1 段確定）。
   - **commit**: ① `server/nowplaying-helper.py` に `/news` 追加（NHK RSS proxy） ② `web/app.js` のセリフ枠を動的化（天気・占い・ニュース） ③ `docs/STATUS.md` に確定アーキ追記 + Done 反映。push は orc / ユーザー側で実施（implementer は commit 止め）。
-  - **残（〔ユーザー〕実機作業）**: `systemctl --user restart dashboard.service` で helper 再起動（`/news` が稼働開始、`web/app.js` 変更は次回 firefox 再読込で即反映）。または 9:00 自動停止 → 翌朝 5:30 自動起動で世代交代。実機 TV で 30 秒ごとに天気→占い→ニュースが切り替わることを目視確認。NG なら STATUS の文言ロジック区切り（温度帯 / 降水確率閾値 / 占い phrase pool）を実機印象ベースで調整。
+  - **残（〔ユーザー〕実機作業）**: 実機 TV 目視 → **2026-05-27 21:34 pass** (orc 経由、手動 `systemctl --user restart dashboard.service` 後に確認)。夜帯 [18,22) で `[朝の天気, 夜の天気, 占い, ニュース×3]` が 30s フェード切替で回ることを実機目視確認、ユーザー評「動作 OK」。文言ロジック区切り（温度帯 / 降水確率閾値 / 占い phrase pool）の調整は不要。**helper 古プロセス残置の副次観察**: 同日 16:41 頃に何らかの経路で立ち上がっていた古い helper (PID 189257) が 9:00 自動 stop の cgroup-kill から外れた状態で port 47823 を占有 → 21:01 の手動 start で `OSError: Address already in use` 発生、orc が PID 直 kill + restart でクリーンアップ。発生経路と再現条件は別途観察対象 (本 Done 範囲外、TODO 候補)。
 
 - 2026-05-27 レイアウトを 2 列 3 行グリッドへ組み替え + キャラセル隣にセリフ枠新設。orc 経由 implementer。**ユーザー指定の新仕様**: (1,L)時計 / (1,R)今日の天気+3 時間ごと予報 / (2,L)ごみ予告 / (2,R)キャラ(セル端寄せ)+セリフ / (3,L)再生中の曲 / (3,R)空欄（将来「おすすめ」予約セル、現状ロジック未実装＝空のまま）。
   - **HTML 構造変更** (`web/index.html`): 旧 `.main-row`(水平 3 カラム) + 全幅 `.hourly-strip` + footer `.now-playing` + absolute 配置 `.companion` を破棄、新 `.grid` (2 列 × 3 行) に 6 `.cell` を配置。3 時間ごと予報は (1,R) 天気セル内に統合 (`HOURLY_SLOTS=[6,9,12,15,18,21]` がそのまま 3 時間刻みなので app.js 不変)。
@@ -293,7 +293,7 @@ dashboard/
   - **未実装/プレースホルダ対応**: ① 再生中の曲 = 既存 now-playing helper 経由なので新規実装なし、helper 不在時は CSS `.is-empty { opacity:0 }` で控えめに非表示（既存挙動踏襲）。② 「おすすめ」セル (3,R) = 仕様どおり空のまま（HTML コメントだけ残す。markup の予約はしない＝先回り雛形回避）。
   - **対症療法 2 周目ガード非該当**: 既存ロジック (天気 fetch / now-playing polling / ごみ計算 / キャラ瞬き) に条件分岐・閾値追加なし。レイアウト軸（grid 構造）の置換 1 回で完結、fallback 連鎖なし。
   - **commit**: `799bb93` レイアウトを 2 列 3 行グリッドへ組み替え + キャラセリフ枠を追加。push は orc / ユーザー側で実施（implementer は commit 止め）。
-  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) での目視確認 = 明朝 05:30 自動起動 or 手動 `systemctl --user start dashboard.service` で 6 セル配置・セリフ 30 秒切替・既存要素の整合を確認。NG なら CSS の vw 値（時計 / 天気 / ごみ / キャラ幅）を実測ベースで再調整。
+  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) 目視 → **2026-05-27 21:34 pass** (v3.1 経由で 6 セル配置・セリフ 30 秒切替・既存要素の整合を実機目視確認、ユーザー評「動作 OK」)。CSS の vw 値追加調整は不要、ただし周囲余白 + 時計/天気中央寄せは v3.1 (commit `7554e48`) で別 Done として吸収済み。
 
 - 2026-05-25 窓配置の placement 軸全移行（title 一致 → `--kiosk --kiosk-monitor=1`）。**ユーザー報告**「いまテレビつけたらダッシュボードが表示されてない」(2026-05-25 朝 08:05) を起点に調査。
   - **根本原因**: journal の 5/25 05:30 起動ログに `firefox window not found within timeout — leaving as-is`、`wmctrl -lG` で窓 0x04800003 が geometry `1974,153,1280,710` = LVDS-1 内に着地、TV (HDMI-1) は黒。title 一致方式（5/22 引き直し済）の polling が 10s 上限内に `<title>=COMPANION-DASH` を捕捉できず、Marco が新規 firefox 窓を primary=LVDS-1 へ再配置するデフォルト挙動が表面化。プロセスは全部生きていた（mpv / nowplaying-helper / firefox）。
