@@ -285,6 +285,7 @@
   // ── 天気: 時刻帯の代表値抽出 + 服装/傘の文言化 ──────────────────
   function _wxBandStats(data, baseDate, hourFrom, hourTo) {
     // data.hourly から baseDate の hourFrom..hourTo 時の温度・降水確率・代表 weather_code を集約。
+    // 区間は半開区間 [hourFrom, hourTo)（Open-Meteo hourly は「時刻開始の 1 時間区間」セマンティクス）。
     // 該当データが 1 件も無ければ null。
     if (!data || !data.hourly) return null;
     var times = data.hourly.time || [];
@@ -297,7 +298,7 @@
       var t = new Date(times[i]);
       if (t.getFullYear() !== y || t.getMonth() !== m || t.getDate() !== d) continue;
       var h = t.getHours();
-      if (h < hourFrom || h > hourTo) continue;
+      if (h < hourFrom || h >= hourTo) continue;
       var tv = temps[i];
       if (typeof tv === 'number') {
         if (tHi === null || tv > tHi) tHi = tv;
@@ -350,7 +351,8 @@
   }
 
   function buildWeatherLines() {
-    // 平日 2 件 (朝 7-9 / 夜 18-22) / 土日 1 件 (一日 6-21)。データ不在は該当行を返さない。
+    // 平日 2 件 (朝 7-9 / 夜 18-22) / 土日 1 件 (一日 6-21)。半開区間 [from, to) で指定。
+    // データ不在は該当行を返さない。
     var data = lastWeatherData;
     if (!data) return [];
     var base = new Date();

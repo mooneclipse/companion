@@ -99,7 +99,7 @@ def _fetch_news_rss():
             headers={"User-Agent": "companion-dashboard/1.0 (+local kiosk)"},
         )
         with urllib.request.urlopen(req, timeout=NEWS_FETCH_TIMEOUT) as resp:
-            raw = resp.read()
+            raw = resp.read(1024 * 1024)  # 1MB 上限（配信元事故対策）
     except (OSError, ValueError):
         return []
     try:
