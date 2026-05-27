@@ -244,6 +244,15 @@ dashboard/
 
 ## Done
 
+- 2026-05-27 レイアウト v3 微調整: 周囲余白 + 時計/天気のセル内中央寄せ（v3.1）。orc 経由 implementer。**ユーザー報告 2 点**: ①「周囲の余白がない」(2026-05-27 夜の TV 実機目視) / ②「時計と今日の天気のやつはセル内の中央がいいかも」。industrial-refined v0.2 トーン (`#28323f` 地・accent `#f3b85f`・Josefin Sans / DM Sans / Noto Sans CJK JP・ビネット) は維持。
+  - **CSS 微調整のみ** (`web/style.css`): ① `.dashboard` の `padding: 40px 70px` → `64px 110px` (TV 1080i overscan 上下〜40 / 左右〜60px + 視覚的余白の両立、ベゼル付近まで詰めない)。② 時計セル: `.cell-clock` を `align-items: flex-start` → `center`、`.clock` 内側も `align-items: flex-start` / `text-align: left` → `center` / `center` で `hh:mm` + 日付ブロックをセル内中央 (水平・垂直) へ。③ 天気セル: `.cell-weather` を `justify-content: stretch; align-items: stretch` に、`.weather` を `display: flex` → `display: grid; grid-template-rows: 1fr auto; flex: 1` で「1 行目=今日の天気ブロックを縦中央 / 2 行目=hourly strip を下端固定」を実現。`.weather-now` には `align-items: center; justify-content: center; align-self: center` を追加して 1 行目セル内中央へ。
+  - **HTML/JS は無改修**: `web/index.html` の 6 セル DOM 配線・id (wx-*, gb-*, np-text, companion, hh/mm/date, wx-hourly) は全て据置。`web/app.js` のセリフ枠ローテーション・天気 fetch・now-playing polling・キャラ瞬き&目線も無改修。`dashboard-config.js` も無改修。
+  - **触らないセルは無改変**: (2,L)ごみ予告 / (2,R)キャラ+セリフ / (3,L)再生中の曲 / (3,R)空欄 の 4 セルは CSS 改修の波及範囲外で確認 (差分 grep で `.cell-clock` / `.cell-weather` / `.weather` / `.weather-now` / `.dashboard` のみに変更が局所化)。
+  - **動作確認**: firefox 151 ヘッドレスで `file:///home/miho/companion/dashboard/web/index.html` を 1920x1080 起動 → スクリーンショット (`/tmp/dashboard-v3.1-after.png`) で 6 セル目視: 時計「20:14」+ 日付「5月27日 (水)」が時計セル内で水平・垂直中央配置 / 天気セル「21° 霧雨 ↑24° ↓18° 降水 78%」が縦中央配置 + 3 時間ごと予報 strip (6/9/12/15/18/21 時) が同セル下部に配置 / グリッド外周に控えめな余白 (左右 110px + 上下 64px) / 他 4 セル (ごみ「きょう (水) プラ容器」/ キャラ + セリフ「双子座: 金銭運が好調」/ 再生中の曲 / 空欄) は無改変で 1080 fold 圏内に収まる。
+  - **対症療法 2 周目ガード非該当**: 既存の条件分岐・閾値・fallback の追加・延長ではなく、初出の余白追加 + 中央寄せ。`.weather` の `display: flex` → `grid` への置換も「責務を grid の 2 行分割で 1 回確定」する設計改善で、`~/companion/CLAUDE.md` 2 周目ルール準拠。
+  - **commit**: `web/style.css` 余白追加 + 時計/天気中央寄せ + `docs/STATUS.md` v3.1 Done 反映を 1 commit (1 論理単位)。push は orc / ユーザー側で実施 (implementer は commit 止め)。
+  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) での目視確認 = 明朝 05:30 自動起動 or 手動 `systemctl --user start dashboard.service` で 周囲余白・時計中央・天気中央 + hourly 下端固定を実機印象で確認。NG なら padding 値 / grid 行比 / vw 値を実測ベースで再調整。
+
 - 2026-05-27 セリフ枠（`#quote-text`）を偉人の名言ループから動的内容（天気・占い・ニュース）へ置換。orc 経由 implementer。
   - **ローテーション仕様**: 30 秒ごとに 1 言ずつフェード切替。月〜金=`[朝の天気, 夜の天気, 占い, ニュース×1〜3]` / 土日=`[一日の天気, 占い, ニュース×1〜3]`。cycle 末尾まで来たら次 cycle で再 build（天気・ニュースの最新値を反映）。既存 `QUOTE_INTERVAL_MS=30*1000` / `QUOTE_FADE_MS=320` / CSS `.quote-text.is-fading` は流用、CSS は無改修。
   - **天気の文言ロジック** (`web/app.js`): `fetchWeather()` の成功 / localStorage 復帰時に `lastWeatherData` へ保持し、cycle build 時に `_wxBandStats(baseDate, hourFrom, hourTo)` で時刻帯 match（朝 7-9 / 夜 18-22 / 一日 6-21）→ hi/lo/popMax を集約 → `_clothesPhrase` (≥30/25/20/15/10/5/`<5`) + `_umbrellaPhrase` (≥70/50/30/`<30`) で組み立て。**新規 API call ゼロ**（既存毎時 fetch の再利用）。データ不在は該当行スキップ（cycle 全体は止めない）。

@@ -76,7 +76,8 @@ html, body {
 .dashboard {
   position: relative;
   height: 100%;
-  padding: 40px 70px;              /* 上下対称：3 行を縦に分割するため上端ゆとりを残しつつ下端余白も確保 */
+  padding: 64px 110px;             /* TV 1080i overscan (上下〜40 / 左右〜60px) + 視覚的余白の両立。
+                                      industrial-refined の落ち着きトーンに合わせ、グリッド外周をベゼル付近まで詰めない。 */
   opacity: 0;
   animation: fade-in 700ms ease 120ms forwards;
 }
@@ -118,12 +119,12 @@ html, body {
 .panel { min-width: 0; }
 
 /* ── (1, left) 時計 ────────────────────────────────────────────────── */
-.cell-clock { align-items: flex-start; justify-content: center; }
+.cell-clock { align-items: center; justify-content: center; }   /* セル内で水平・垂直中央 */
 .clock {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
+  align-items: center;
+  text-align: center;
 }
 .time {
   font-family: var(--font-display);
@@ -148,16 +149,19 @@ html, body {
 }
 
 /* ── (1, right) 今日の天気 + 3 時間ごとの天気 ───────────────────── */
-.cell-weather { justify-content: center; }
+.cell-weather { justify-content: stretch; align-items: stretch; }
 .weather {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: 1fr auto;     /* 1 行目=今日の天気ブロックを縦中央 / 2 行目=hourly strip を下端固定 */
   gap: 16px;
+  flex: 1;                          /* .cell の flex-direction:column 内で高さを取り切る */
 }
 .weather-now {
   display: flex;
-  align-items: flex-start;
+  align-items: center;              /* icon と weather-text の縦軸中央揃え */
+  justify-content: center;          /* 今日の天気ブロック全体をセル内で水平中央 */
   gap: 24px;
+  align-self: center;               /* grid 1 行目内で縦中央 */
 }
 .wx-icon {
   width: 4.6vw;
