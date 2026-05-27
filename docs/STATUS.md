@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-19 (Phase 2.5 T-D 後半 CreditBudgetGuard 実装 + 即時前倒し有効化)
+最終更新: 2026-05-27 (Phase 2.6 実装着手前検証 + telegram-setup.md 作成)
 
 ## 設計メモ
 
@@ -44,6 +44,7 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 Discord 土管 → Telegram supergroup (topic = 1 session model) 移行の **設計確定**。agent team `companion-telegram-migration` (architect / devil / ux + lead) による mesh + lead approve 完了。
 
 **設計 center of truth**: `~/companion/workspace/redesign/telegram-design.md`
+**6/2 切替日 cold cut 手順書**: `~/companion/bot/docs/telegram-setup.md` (BotFather セットアップ + supergroup 構築 + 実機検証 + cold cut step + rollback)
 **実装着手日**: 2026-06-02 以降 (Phase 2.5 健全性観察完了後の cold cut 切替日)
 
 #### 実装着手前検証項目 (V-1〜V-25 + D-add-1〜D-add-12 + 追加)
@@ -60,6 +61,52 @@ Discord 土管 → Telegram supergroup (topic = 1 session model) 移行の **設
 - **D-add-3**: Forum UI deprecation 履歴 12-24 ヶ月分検証
 - **AIORateLimiter log level**: PTB v22 公式 doc spot check、`telegram.ext.AIORateLimiter` logger を INFO 以上に設定 (devil V-8「retry 沈黙」回避)
 - **Bot API up 時の再点検運用**: `~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」と同方針、新 Update type 検知時の allowlist 再点検
+
+#### 検証結果 (2026-05-27 公式 doc fetch 実施分、実機検証分は 6/2 当日)
+
+公式 doc fetch で完結する V-1 / V-3 / V-22 / V-11 / V-12 / V-21 / AIORateLimiter / D-add-3 を 2026-05-27 に実施。実機検証 V-4 / V-5 / V-6 は `bot/docs/telegram-setup.md` §5 に手順を整備し、6/2 cold cut 当日に実施 (BotFather 経由の bot 作成 + supergroup 構築が必須前提)。
+
+- **V-1**: Bot API 10.0 (2026-05-08 リリース) 時点で `Update` field は **25 種類**。telegram-design §4.5 allowlist 11 種類との差分 14 種類 (`edited_channel_post` / `business_*` 4 種 / `guest_message` / `message_reaction_count` / `chosen_inline_result` / `shipping_query` / `pre_checkout_query` / `purchased_paid_media` / `poll_answer` / `chat_boost` / `removed_chat_boost` / `managed_bot`) は "handler 未登録 = silently drop" (§4.5 末尾) で取りこぼし、N-T7 経路に乗る = 設計通り
+  - 補強: `getUpdates` default で `chat_member` / `message_reaction` / `message_reaction_count` は **Telegram 側で除外** (Bot API doc 明記、`allowed_updates` 空指定の挙動)。design.md §4.5 で ✗ している `chat_member` / `message_reaction` の明示 filter は二重防御として継続妥当 (Telegram 側 default + bot 側 handler 未登録の両方で弾く)
+  - PTB v22.7 が対応する Bot API バージョン = 9.5 (PTB CHANGELOG)、現行 Bot API 10.0 で 0.5 バージョン遅れ。v22.7 リリース時点で対応していない Update type (`guest_message` / `managed_bot` 等) は PTB から見えない可能性大、cold cut 時点で問題なし
+- **V-3 / V-22**: 24 ヶ月分 (2024-05〜2026-05) で breaking change **3 件**、いずれも bot.py / sessions.py / quota.py が触らないフィールド (直接影響なし):
+  1. Bot API 8.2 (2025-01-01): `InlineQueryResultArticle.hide_url` 削除
+  2. Bot API 9.0 (2025-04-11): `BusinessConnection.can_reply` → `rights: BusinessBotRights`
+  3. Bot API 9.6 (2026-04-03): `Poll.correct_option_id` → `correct_option_ids`
+- **V-11 / V-12**: Telegram server-side Update **保持期間 = 24 時間** (Bot API getUpdates doc 明記、"will not be kept longer than 24 hours")。bot.service 停止が 24h 以内なら catch-up 経路で取りこぼしなし、24h 超え停止時のみ取りこぼし発生 (受容可能、観察項目 K-T14 に追加)
+  - PTB `drop_pending_updates` default = **False** (起動時に pending Update を保持して処理) = 設計 §4.6 long polling stall 検知 + systemd Restart=on-failure の前提と整合
+  - PTB の getUpdates **offset 永続化は公式 doc 明示なし** (`Application.persistence` は chat_data/user_data 用、offset は別レイヤ)。bot.service プロセス再起動時、Telegram 側 24h retention に依存して取りこぼし回避 = 仕様として受容、観察項目 K-T15 で監視
+- **V-21**: lib リリースペース比較 (2026-05-27 時点):
+  - PTB **v22.7 = 2025-03-16 リリース** = Bot API 9.5 対応、v23 系未リリース、**前回リリースから 14 ヶ月空き** (22.x series は元々 2-3 ヶ月間隔だった)
+  - aiogram v3.28.2 = 2026-05-10 リリース = Bot API 10.0 対応、**毎月リリース**、活発
+  - lead 判断: 設計時の PTB 採用根拠 (JobQueue 同梱 / discord.py 構造 / doc 厚さ) は維持できるが、開発ペース低下を新規観察項目 **K-T16** として追加。Phase 2.6 cold cut 開始 +6 ヶ月 (2026-12 目処) 時点で PTB v23 未リリース + Bot API 10.x で breaking change 発生があれば lib 切替議論を起動
+- **AIORateLimiter log level** (PTB source 直接確認): logger 名 = `"AIORateLimiter"` (`get_logger(__name__, class_name="AIORateLimiter")`)、retry イベント = `_LOGGER.info("Rate limit hit. Retrying after %f seconds")`、max_retries 超過 = `_LOGGER.exception("Rate limit hit after maximum of %d retries")` (= ERROR + traceback)
+  - **K-T4 確定方針**: bot.py 起動時に `logging.getLogger("AIORateLimiter").setLevel(logging.INFO)` を明示。root logger が INFO 以上なら不要だが、defensive に explicit 設定する。これで retry が沈黙せず bot.log に記録される (devil V-8 回避)
+- **D-add-3** (Forum UI 関連の 24 ヶ月変更履歴):
+  - 拡張方向のみ、**deprecation ゼロ**
+  - 7.9 (2024-08-14): Super Channels サポート (sender が user/channel どちらも許可)
+  - 9.3 (2025-12-31): **Topics in private chats** (private chat でも `message_thread_id` / `is_topic_message` 使用可、`has_topics_enabled` User field)
+  - 9.4 (2026-02-09): bots に `createForumTopic` 権限拡張 (private chat 対応)、`allows_users_to_create_topics` User field
+  - 9.5 (2026-03-01): `ChatMemberMember` / `ChatMemberRestricted` に `tag` field、`setChatMemberTag` method (forum 関連ではないが member 管理拡張)
+  - lead 判断: Forum/Topic は Telegram 公式に **拡張投資中**、近い将来の deprecation リスク低。Phase 4 で private chat の topic 機能を活用する選択肢が広がっている (現状 supergroup topic で確定なので punt)
+- **Bot API up 時の再点検運用**: 設計 §4.5 末尾通り、新 Update type 検知時の allowlist 再点検は `~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」と同方針で運用。Bot API 10.0 → 10.x / 11.0 への upgrade 時に PTB v23 リリース有無 + Update type 追加を確認
+
+#### 観察項目追加 (Phase 2.6 観察項目 K-T13〜K-T16、telegram-design §14 K-T1〜K-T12 の続番)
+
+設計 telegram-design §14 の lead 集約持ち越し 12 件 (K-T1〜K-T12) に加えて、2026-05-27 公式 doc 検証で出てきた 4 件を追加。axis-5 集約観察項目 K-1〜K-19 (本台帳 L40) とは別 namespace (K-T プレフィクスで Telegram 専用 namespace 明示):
+
+13. **K-T13**: Bot API 10.x / 11.0 への upgrade 時に **Update type 追加 + PTB v23 リリース有無** を確認、§4.5 allowlist 再点検 (Bot API up 時の再点検運用と同方針、V-1 由来)
+14. **K-T14**: bot.service 停止時間が 24 時間を超える運用が発生したら、Telegram retention 切れで Update 取りこぼし発生。観察期間中に発生したら回数記録、2 回目で systemd 起動ヘルス強化 (`Restart=always` 等) を再設計判断 (V-12 由来)
+15. **K-T15**: PTB `getUpdates` offset 永続化を bot.py 側で実装する必要が出たら判断トリガ。観察期間中に「bot 再起動直後に旧 Update 大量処理で予算消費」発生したら設計引き直し (V-11 由来)
+16. **K-T16**: PTB v22 系のリリース間隔監視。前回 v22.7 = 2025-03-16 から 18 ヶ月超え (2026-09 以降) + Bot API 10.x で PTB 未対応 breaking change 発生があれば aiogram v3 への切替議論を起動 (V-21 由来)
+
+#### 実機検証 V-4 / V-5 / V-6 (6/2 cold cut 当日実施、telegram-setup.md §5)
+
+- **V-4**: `#test-delete` topic 作成 → 削除 → `#test-new` 作成で thread_id 連番増加 (削除 thread_id 再利用なし) を curl getUpdates で確認
+- **V-5**: General topic message で `message_thread_id` field が JSON 上不在 (null) を curl getUpdates で確認
+- **V-6**: `can_manage_topics: false` の状態で `createForumTopic` API → 400 `not enough rights` (or 403) を curl POST で確認
+
+検証結果は 6/2 cold cut 完了時の STATUS.md entry に追記。
 
 #### 実装着手後の運用ルール (lead 集約持ち越し 12 件 + K-* 観察項目への統合)
 
