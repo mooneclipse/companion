@@ -1,5 +1,5 @@
 [Unit]
-Description=Companion Discord bot (bridges Discord to `claude -p`)
+Description=Companion Telegram bot (bridges Telegram supergroup to `claude -p`)
 After=network-online.target
 Wants=network-online.target
 

@@ -34,7 +34,7 @@ def _make_entry(ts: datetime, cost: float, **usage: int) -> dict:
     """Compose one ledger.jsonl line matching `_record_common` schema."""
     return {
         "timestamp": ts.astimezone(JST).isoformat(),
-        "channel_id": 12345,
+        "topic_key": "-1001234567890_2",
         "session_id": "00000000-0000-0000-0000-000000000000",
         "total_cost_usd": cost,
         "usage": {
@@ -153,11 +153,11 @@ class CreditBudgetGuardTest(TempLedgerCase):
             cache_creation_input_tokens=0, cache_read_input_tokens=100,
             terminal_reason="ok",
         )
-        guard.record(now, result, channel_id=42, session_id="abc")
+        guard.record(now, result, topic_key="-1001234567890_2", session_id="abc")
         entries = quota.read_ledger(self.ledger_path)
         self.assertEqual(len(entries), 1)
         self.assertAlmostEqual(entries[0]["total_cost_usd"], 0.05, places=4)
-        self.assertEqual(entries[0]["channel_id"], 42)
+        self.assertEqual(entries[0]["topic_key"], "-1001234567890_2")
 
 
 class FormatSummaryTest(TempLedgerCase):

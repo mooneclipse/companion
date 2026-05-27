@@ -1,4 +1,20 @@
-"""Discord bot that pipes DMs / mentions to `claude -p` and returns the output."""
+"""Telegram bot that pipes supergroup-topic messages to `claude -p` and returns the output.
+
+Migrated from discord.py to python-telegram-bot v22.7 in the 2026-05-27 cold
+cut. Center of truth: ``~/companion/workspace/redesign/telegram-design.md``.
+
+Design highlights wired in here:
+- OWNER 認可 4 段防御 (§4.2): user.id / is_bot / chat.type / chat.id
+- privacy mode off 起動確認 (post_init で can_read_all_group_messages 検査)
+- chunk_telegram: TELEGRAM_MAX=4000、改行優先 fallback
+- send_text: AIORateLimiter (framework) 委譲、素手 sleep なし (N-T12)
+- parse_mode = 指定しない (素文字列送信、MarkdownV2 escape は W-6 で永続不採用)
+- slash command を BotCommandScopeChat(chat_id=NOTIFY_CHAT_ID) にスコープ限定
+- edited_message を filter で物理取りこぼし (§4.5 / N-T7)
+- long polling stall_check_job (§4.6) で 5 分 × 3 連続 fail → sys.exit(1)
+- `_handle_notify` は asyncio.Queue + 1 worker で順序保証 (§5.2)、`[critical] `
+  完全一致のみ disable_notification 反転 (W-6 上限ルール)
+"""
 from __future__ import annotations
 
 import asyncio
@@ -10,9 +26,23 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-import discord
-from discord import app_commands
 from dotenv import load_dotenv
+from telegram import (
+    BotCommand,
+    BotCommandScopeChat,
+    ReplyParameters,
+    Update,
+)
+from telegram.constants import ChatType
+from telegram.ext import (
+    AIORateLimiter,
+    Application,
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 import quota
 import sessions
@@ -20,16 +50,18 @@ from claude_runner import ClaudeOptions, ClaudeRunner, ErrorKind
 
 load_dotenv()
 
-DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "").strip()
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip()
-NOTIFY_CHANNEL_ID_RAW = os.environ.get("NOTIFY_CHANNEL_ID", "").strip()
+NOTIFY_CHAT_ID_RAW = os.environ.get("NOTIFY_CHAT_ID", "").strip()
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude").strip()
 CLAUDE_CWD = os.environ.get("CLAUDE_CWD", str(Path.home() / "companion" / "bot-workspace")).strip()
 CLAUDE_TIMEOUT = float(os.environ.get("CLAUDE_TIMEOUT", "300"))
 
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
-DISCORD_MAX = 1900  # leave margin under the hard 2000-char limit
+
+# 公式上限 4096 char に 96 char マージン (URL preview / link entity 等の future safety)。
+TELEGRAM_MAX = 4000
 
 PLAY_ALLOWED_HOSTS = frozenset({
     "youtube.com",
@@ -40,6 +72,20 @@ PLAY_ALLOWED_HOSTS = frozenset({
 })
 PLAY_TIMEOUT_S = 10.0
 
+# stall 検知 (§4.6): 5 分間隔で getMe(), 連続 3 回失敗で sys.exit(1)。
+STALL_CHECK_INTERVAL_S = 300.0
+STALL_FAIL_THRESHOLD = 3
+
+# socket 通知の単発上限 = 1MB。同 UID 内 bug / 暴走による無制限メモリ消費を
+# 物理的に止める (Phase 2 B4-4 と同じ意図、Telegram chunk 後でも rate limit を
+# 踏みかねない巨大 push を socket 受信段階で打ち切る)。
+NOTIFY_SOCKET_MAX_BYTES = 1_000_000
+
+# `[critical] ` 完全一致 (半角スペース込み) で disable_notification 反転。
+# W-6 上限ルール: prefix マッチ拡張 (`startswith('[warning]')` 等) は永続禁止、
+# 2 種目要求は対症療法 2 周目認定で設計引き直し議論を起動する。
+CRITICAL_PREFIX = "[critical] "
+
 _runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
 if _runtime_dir:
     NOTIFY_SOCKET = Path(_runtime_dir) / "companion-bot.sock"
@@ -48,17 +94,34 @@ else:
     _fallback.mkdir(parents=True, exist_ok=True, mode=0o700)
     NOTIFY_SOCKET = _fallback / "companion-bot.sock"
 
-if not DISCORD_TOKEN:
-    print("DISCORD_TOKEN is not set", file=sys.stderr)
+if not TELEGRAM_BOT_TOKEN:
+    print("TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
     sys.exit(1)
 if not OWNER_ID_RAW.isdigit():
-    print("OWNER_ID must be a numeric Discord user id", file=sys.stderr)
+    print("OWNER_ID must be a numeric Telegram user id", file=sys.stderr)
     sys.exit(1)
 OWNER_ID = int(OWNER_ID_RAW)
-if not NOTIFY_CHANNEL_ID_RAW.isdigit():
-    print("NOTIFY_CHANNEL_ID must be a numeric Discord channel id", file=sys.stderr)
+# NOTIFY_CHAT_ID は supergroup chat_id (負値)、isdigit() では弾けない。
+try:
+    NOTIFY_CHAT_ID = int(NOTIFY_CHAT_ID_RAW)
+except ValueError:
+    print("NOTIFY_CHAT_ID must be a numeric Telegram supergroup id (negative)", file=sys.stderr)
     sys.exit(1)
-NOTIFY_CHANNEL_ID = int(NOTIFY_CHANNEL_ID_RAW)
+
+
+def _thread_id_env(name: str) -> int | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"{name} must be an integer thread_id when set", file=sys.stderr)
+        sys.exit(1)
+
+
+# BOT_THREAD_ID_MAINTENANCE は socket forward 先 (§5.2)、空の場合は General topic。
+BOT_THREAD_ID_MAINTENANCE = _thread_id_env("BOT_THREAD_ID_MAINTENANCE")
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # bot.log は OWNER 限定経路の URL 等を含む。本プロセスが作る file は 0o600 にする
@@ -79,38 +142,109 @@ _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(me
 logger.addHandler(_handler)
 logger.propagate = False
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.dm_messages = True
+# AIORateLimiter の retry/RetryAfter イベントを沈黙させない (K-T4 / V-8 回避、
+# devil 観察項目 4: retry を吸って沈黙状態に陥らないよう INFO 以上で残す)。
+logging.getLogger("telegram.ext.AIORateLimiter").setLevel(logging.INFO)
+logging.getLogger("AIORateLimiter").setLevel(logging.INFO)
+
 runner = ClaudeRunner(CLAUDE_BIN, CLAUDE_CWD)
 budget_guard = quota.make_budget_guard()
 BOT_START_AT = datetime.now(quota.JST)
 
 
-def chunk(text: str, size: int = DISCORD_MAX):
+# ---------------------------------------------------------------------------
+# Telegram I/O helpers
+# ---------------------------------------------------------------------------
+
+
+def chunk_telegram(text: str, size: int = TELEGRAM_MAX) -> list[str]:
+    """Split `text` into chunks <= `size` chars, preferring newline boundaries.
+
+    Fallback order (telegram-design §4.3):
+      1. paragraph break (``\\n\\n``)
+      2. line break (``\\n``)
+      3. fixed-width slice
+
+    Pure function, no Telegram dependency, so it can be unit-tested directly.
+    """
     if not text:
         return []
-    return [text[i : i + size] for i in range(0, len(text), size)]
+    if len(text) <= size:
+        return [text]
+    pieces: list[str] = []
+    remaining = text
+    while len(remaining) > size:
+        head = remaining[:size]
+        # `\n\n` の最後の出現位置 (段落境界)
+        cut = head.rfind("\n\n")
+        if cut == -1 or cut == 0:
+            # `\n` の最後の出現位置 (行境界)
+            cut = head.rfind("\n")
+        if cut == -1 or cut == 0:
+            # fallback: 文字数固定で切る
+            cut = size
+        pieces.append(remaining[:cut].rstrip("\n"))
+        # 改行境界で切った場合は consumed 側の改行も飛ばす
+        remaining = remaining[cut:].lstrip("\n") if cut < size else remaining[cut:]
+    if remaining:
+        pieces.append(remaining)
+    return pieces
 
 
-async def run_claude(prompt: str, channel_id: int) -> str:
+async def send_text(
+    bot,
+    chat_id: int,
+    thread_id: int | None,
+    text: str,
+    *,
+    reply_to: int | None = None,
+    disable_notification: bool = False,
+) -> None:
+    """Send `text` to a topic, chunking and reply-only-on-first-piece.
+
+    AIORateLimiter (framework) が per-chat 1 msg/sec と 429 RetryAfter を吸う。
+    素手 sleep / 二重 retry は永続禁止 (N-T12)。
+    """
+    pieces = chunk_telegram(text)
+    if not pieces:
+        return
+    for i, piece in enumerate(pieces):
+        kwargs: dict = {
+            "chat_id": chat_id,
+            "text": piece,
+            "disable_notification": disable_notification,
+        }
+        if thread_id is not None:
+            kwargs["message_thread_id"] = thread_id
+        if i == 0 and reply_to is not None:
+            kwargs["reply_parameters"] = ReplyParameters(message_id=reply_to)
+        await bot.send_message(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# claude invocation
+# ---------------------------------------------------------------------------
+
+
+async def run_claude(prompt: str, chat_id: int, thread_id: int | None) -> str:
+    topic_key = sessions.topic_key(chat_id, thread_id)
     now = datetime.now(quota.JST)
     if not budget_guard.allow(now):
         summary = budget_guard.summary(now)
         if summary.guard_kind == "requests_count":
             logger.warning(
-                "budget exceeded channel_id=%s kind=requests_count count_1h=%d/%d",
-                channel_id, summary.count_last_1h, summary.limit_per_hour,
+                "budget exceeded topic_key=%s kind=requests_count count_1h=%d/%d",
+                topic_key, summary.count_last_1h, summary.limit_per_hour,
             )
         else:
             logger.warning(
-                "budget exceeded channel_id=%s kind=%s cost_month=%.4f/%.2f",
-                channel_id, summary.guard_kind,
+                "budget exceeded topic_key=%s kind=%s cost_month=%.4f/%.2f",
+                topic_key, summary.guard_kind,
                 summary.cost_month, summary.monthly_budget_usd,
             )
         return budget_guard.exceeded_message(summary)
 
-    meta, is_new = sessions.start_or_resume(channel_id)
+    meta, is_new = sessions.start_or_resume(chat_id, thread_id)
     options = ClaudeOptions(timeout_s=CLAUDE_TIMEOUT)
     if is_new:
         options.session_id = meta.session_id
@@ -124,7 +258,7 @@ async def run_claude(prompt: str, channel_id: int) -> str:
         budget_guard.record(
             datetime.now(quota.JST),
             result,
-            channel_id=channel_id,
+            topic_key=topic_key,
             session_id=meta.session_id,
         )
         body = result.result_text if result.result_text is not None else result.raw_stdout
@@ -142,10 +276,15 @@ async def run_claude(prompt: str, channel_id: int) -> str:
     )
 
 
-def cmd_reset(channel_id: int) -> str:
-    if sessions.reset(channel_id):
-        return "[reset] 現 channel の session を破棄しました。次の prompt で新しい session_id が発番されます。"
-    return "[reset] 現 channel に session は存在しませんでした (no-op)。"
+# ---------------------------------------------------------------------------
+# slash command bodies (no Telegram type imports → easy to unit-test)
+# ---------------------------------------------------------------------------
+
+
+def cmd_reset(chat_id: int, thread_id: int | None) -> str:
+    if sessions.reset(chat_id, thread_id):
+        return "[reset] 現 topic の session を破棄しました。次の prompt で新しい session_id が発番されます。"
+    return "[reset] 現 topic に session は存在しませんでした (no-op)。"
 
 
 def cmd_quota() -> str:
@@ -204,11 +343,15 @@ async def cmd_play(url: str) -> str:
     )
 
 
-def cmd_status(channel_id: int) -> str:
+def cmd_status(
+    chat_id: int,
+    thread_id: int | None,
+    *,
+    socket_ok: bool,
+) -> str:
     now = datetime.now(quota.JST)
     summary = budget_guard.summary(now)
-    socket_ok = getattr(client, "_notify_server", None) is not None
-    meta = sessions.load(channel_id)
+    meta = sessions.load(chat_id, thread_id)
     lines = [
         f"bot uptime: {BOT_START_AT.isoformat(timespec='seconds')} ({_fmt_duration(now - BOT_START_AT)} 前から稼働)",
         f"last claude call: {summary.last_call_at.isoformat(timespec='seconds') if summary.last_call_at else 'なし'}",
@@ -241,168 +384,375 @@ def _fmt_duration(delta) -> str:
     return f"{seconds}s"
 
 
-class CompanionClient(discord.Client):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.tree = app_commands.CommandTree(self)
-        self._synced_guild_id: int | None = None
-
-    async def setup_hook(self):
-        try:
-            NOTIFY_SOCKET.unlink()
-        except FileNotFoundError:
-            pass
-        self._notify_server = await asyncio.start_unix_server(
-            self._handle_notify, path=str(NOTIFY_SOCKET)
-        )
-        os.chmod(NOTIFY_SOCKET, 0o600)
-        logger.info("notify socket listening at %s", NOTIFY_SOCKET)
-
-    async def close(self):
-        server = getattr(self, "_notify_server", None)
-        if server is not None:
-            server.close()
-            await server.wait_closed()
-        try:
-            NOTIFY_SOCKET.unlink()
-        except FileNotFoundError:
-            pass
-        await super().close()
-
-    async def _handle_notify(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        try:
-            # 同 UID 内の bug / 暴走による無制限メモリ消費を物理的に止める。
-            # Discord chunk(DISCORD_MAX=1900) で分割しても rate limit を踏みかね
-            # ない巨大 push を socket 受信段階で打ち切る (B4-4)。
-            data = await reader.read(1_000_000)
-            text = data.decode("utf-8", errors="replace").strip()
-            if not text:
-                return
-            channel = self.get_channel(NOTIFY_CHANNEL_ID) or await self.fetch_channel(NOTIFY_CHANNEL_ID)
-            for piece in chunk(text):
-                await channel.send(piece)
-            logger.info("notify forwarded len=%d", len(text))
-        except Exception:
-            logger.exception("notify forward failed")
-        finally:
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
+# ---------------------------------------------------------------------------
+# OWNER 認可 4 段防御 (§4.2)
+# ---------------------------------------------------------------------------
 
 
-client = CompanionClient(intents=intents)
+def _authorized(update: Update) -> bool:
+    """Return True when the update passes all 4 stages, False otherwise.
+
+    違反は呼び出し側で完全沈黙 (return)。Telegram の構造的利得を活用、
+    Discord ephemeral 通知から脱却 (`~/companion/CLAUDE.md` OWNER 原則)。
+    """
+    user = update.effective_user
+    chat = update.effective_chat
+    if user is None or chat is None:
+        return False
+    # 段 1: OWNER 認可
+    if user.id != OWNER_ID:
+        return False
+    # 段 2: bot echo 防止
+    if user.is_bot:
+        return False
+    # 段 3: chat type (supergroup のみ)
+    if chat.type != ChatType.SUPERGROUP:
+        return False
+    # 段 4: 想定外 supergroup 巻き込み防止
+    if chat.id != NOTIFY_CHAT_ID:
+        return False
+    return True
 
 
-async def _reject_non_owner(interaction: discord.Interaction) -> bool:
-    """Send an ephemeral rejection if the caller isn't the OWNER. Returns True
-    when rejected (handler should bail). Keeps OWNER-only authorization
-    consistent with `on_message`."""
-    if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message("not authorized", ephemeral=True)
-        return True
-    return False
+# ---------------------------------------------------------------------------
+# handlers
+# ---------------------------------------------------------------------------
 
 
-@client.tree.command(name="reset", description="現 channel の claude セッションを破棄")
-async def slash_reset(interaction: discord.Interaction):
-    if await _reject_non_owner(interaction):
+async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
         return
-    output = cmd_reset(interaction.channel_id or 0)
-    logger.info("cmd=/reset send len=%d", len(output))
-    await interaction.response.send_message(output)
-
-
-@client.tree.command(name="quota", description="bot 経由 prompt の予算 / 集計を表示")
-async def slash_quota(interaction: discord.Interaction):
-    if await _reject_non_owner(interaction):
+    msg = update.effective_message
+    if msg is None:
         return
-    output = cmd_quota()
-    logger.info("cmd=/quota send len=%d", len(output))
-    await interaction.response.send_message(output)
-
-
-@client.tree.command(name="status", description="bot 稼働状況 / current session を表示")
-async def slash_status(interaction: discord.Interaction):
-    if await _reject_non_owner(interaction):
-        return
-    output = cmd_status(interaction.channel_id or 0)
-    logger.info("cmd=/status send len=%d", len(output))
-    await interaction.response.send_message(output)
-
-
-@client.tree.command(name="play", description="YouTube / YouTube Music URL をこの PC のブラウザで開く")
-@app_commands.describe(url="YouTube / YouTube Music の URL")
-async def slash_play(interaction: discord.Interaction, url: str):
-    if await _reject_non_owner(interaction):
-        return
-    await interaction.response.defer(thinking=True)
-    output = await cmd_play(url)
-    # URL は OWNER 限定経路のため log に残してよい。allowlist 拒否時の原因切り分けに使う。
-    logger.info("cmd=/play url=%r send len=%d", url, len(output))
-    await interaction.followup.send(output)
-
-
-@client.event
-async def on_ready():
-    logger.info("logged in as %s", client.user)
-    try:
-        ch = client.get_channel(NOTIFY_CHANNEL_ID) or await client.fetch_channel(NOTIFY_CHANNEL_ID)
-    except Exception:
-        logger.exception("notify channel %s could not be resolved", NOTIFY_CHANNEL_ID)
-        return
-    if not isinstance(ch, discord.TextChannel):
-        logger.error("notify channel %s is not a TextChannel: %r", NOTIFY_CHANNEL_ID, ch)
-        return
-    logger.info("notify channel verified: #%s (%s)", ch.name, NOTIFY_CHANNEL_ID)
-
-    guild = ch.guild
-    if client._synced_guild_id != guild.id:
-        try:
-            client.tree.copy_global_to(guild=guild)
-            synced = await client.tree.sync(guild=guild)
-            logger.info(
-                "slash commands synced to guild #%s (%d cmds): %s",
-                guild.id, len(synced), [c.name for c in synced],
-            )
-            client._synced_guild_id = guild.id
-        except Exception:
-            logger.exception("slash command sync failed for guild %s", guild.id)
-
-
-@client.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-
-    is_dm = isinstance(message.channel, discord.DMChannel)
-    is_mention = client.user in message.mentions if client.user else False
-
-    if message.author.id != OWNER_ID:
-        return
-    if not (is_dm or is_mention):
-        return
-
-    prompt = message.clean_content.strip()
+    prompt = (msg.text or "").strip()
     if not prompt:
         return
+    thread_id = msg.message_thread_id
+    chat_id = update.effective_chat.id
 
     try:
-        async with message.channel.typing():
-            output = await run_claude(prompt, message.channel.id)
+        async with _typing_action(context.bot, chat_id, thread_id):
+            output = await run_claude(prompt, chat_id, thread_id)
     except Exception:
         logger.exception("claude invocation failed")
-        await message.channel.send("[internal error — see bot.log]")
+        await send_text(
+            context.bot, chat_id, thread_id,
+            "[internal error — see bot.log]",
+            reply_to=msg.message_id,
+        )
         return
 
     logger.info("send len=%d", len(output))
-    for piece in chunk(output):
-        await message.channel.send(piece)
+    await send_text(
+        context.bot, chat_id, thread_id, output, reply_to=msg.message_id,
+    )
 
 
-def main():
-    client.run(DISCORD_TOKEN, log_handler=None)
+class _typing_action:
+    """Periodic ``sendChatAction(typing)`` for the duration of a `with` block.
+
+    Telegram の typing indicator は 5 秒で消えるため定期再送信する (claude
+    invocation が長引いた時に「動いてる感」を出す、ux 既存挙動の踏襲)。
+    AIORateLimiter は send_chat_action にも適用される。
+    """
+
+    def __init__(self, bot, chat_id: int, thread_id: int | None):
+        self._bot = bot
+        self._chat_id = chat_id
+        self._thread_id = thread_id
+        self._task: asyncio.Task | None = None
+
+    async def __aenter__(self):
+        self._task = asyncio.create_task(self._loop())
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _loop(self):
+        while True:
+            try:
+                kwargs = {"chat_id": self._chat_id, "action": "typing"}
+                if self._thread_id is not None:
+                    kwargs["message_thread_id"] = self._thread_id
+                await self._bot.send_chat_action(**kwargs)
+            except Exception:
+                # typing は best-effort、失敗しても本筋に伝播させない
+                logger.debug("send_chat_action failed", exc_info=True)
+            await asyncio.sleep(4.0)
+
+
+async def slash_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    output = cmd_reset(chat_id, thread_id)
+    logger.info("cmd=/reset send len=%d", len(output))
+    await send_text(context.bot, chat_id, thread_id, output, reply_to=msg.message_id if msg else None)
+
+
+async def slash_quota(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    output = cmd_quota()
+    logger.info("cmd=/quota send len=%d", len(output))
+    await send_text(context.bot, chat_id, thread_id, output, reply_to=msg.message_id if msg else None)
+
+
+async def slash_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    socket_ok = context.application.bot_data.get("notify_server") is not None
+    output = cmd_status(chat_id, thread_id, socket_ok=socket_ok)
+    logger.info("cmd=/status send len=%d", len(output))
+    await send_text(context.bot, chat_id, thread_id, output, reply_to=msg.message_id if msg else None)
+
+
+async def slash_play(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    # `/play <url>` の引数解析: context.args は空白 split
+    if not context.args:
+        await send_text(
+            context.bot, chat_id, thread_id,
+            "[play] URL を引数に指定してください。例: /play https://youtu.be/xxx",
+            reply_to=msg.message_id if msg else None,
+        )
+        return
+    url = context.args[0]
+    output = await cmd_play(url)
+    # URL は OWNER 限定経路のため log に残してよい。allowlist 拒否時の原因切り分けに使う。
+    logger.info("cmd=/play url=%r send len=%d", url, len(output))
+    await send_text(
+        context.bot, chat_id, thread_id, output,
+        reply_to=msg.message_id if msg else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# notify socket (queue + 1 worker for order guarantee, §5.2)
+# ---------------------------------------------------------------------------
+
+
+async def _notify_worker(app: Application) -> None:
+    queue: asyncio.Queue = app.bot_data["notify_queue"]
+    while True:
+        text = await queue.get()
+        try:
+            is_critical = text.startswith(CRITICAL_PREFIX)  # 完全一致 (W-6 上限ルール)
+            thread_id = BOT_THREAD_ID_MAINTENANCE
+            await send_text(
+                app.bot,
+                NOTIFY_CHAT_ID,
+                thread_id,
+                text,
+                disable_notification=(not is_critical),
+            )
+            logger.info("notify forwarded len=%d critical=%s", len(text), is_critical)
+        except Exception:
+            logger.exception("notify forward failed")
+        finally:
+            queue.task_done()
+
+
+async def _handle_notify_connection(
+    app: Application,
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+) -> None:
+    try:
+        # 同 UID 内 bug / 暴走による無制限メモリ消費を物理的に止める (Phase 2
+        # B4-4 と同じ意図、Telegram chunk 後でも rate limit を踏みかねない巨大
+        # push を socket 受信段階で打ち切る)。
+        data = await reader.read(NOTIFY_SOCKET_MAX_BYTES)
+        text = data.decode("utf-8", errors="replace").strip()
+        if not text:
+            return
+        queue: asyncio.Queue = app.bot_data["notify_queue"]
+        await queue.put(text)
+    except Exception:
+        logger.exception("notify socket recv failed")
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# long polling stall check (§4.6)
+# ---------------------------------------------------------------------------
+
+
+async def stall_check_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    bot_data = context.application.bot_data
+    try:
+        await context.bot.get_me()
+        bot_data["stall_count"] = 0
+    except Exception:
+        bot_data["stall_count"] = bot_data.get("stall_count", 0) + 1
+        logger.warning(
+            "stall_check_job: get_me() failed (consecutive %d)",
+            bot_data["stall_count"],
+        )
+        if bot_data["stall_count"] >= STALL_FAIL_THRESHOLD:
+            logger.critical(
+                "long polling stall %d consecutive, exiting for systemd restart",
+                bot_data["stall_count"],
+            )
+            # critical 通知を best-effort で投げてから落ちる。
+            try:
+                await send_text(
+                    context.bot,
+                    NOTIFY_CHAT_ID,
+                    BOT_THREAD_ID_MAINTENANCE,
+                    f"{CRITICAL_PREFIX}bot long polling stall {bot_data['stall_count']} 回、再起動します",
+                    disable_notification=False,
+                )
+            except Exception:
+                logger.exception("critical notify on stall failed")
+            sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# post_init: privacy mode check, slash command registration, notify socket,
+# notify worker, stall check job
+# ---------------------------------------------------------------------------
+
+
+async def post_init(application: Application) -> None:
+    # privacy mode off 確認 (§4.2 末尾)
+    me = await application.bot.get_me()
+    if not me.can_read_all_group_messages:
+        logger.critical(
+            "privacy mode が ON のままです (BotFather → Bot Settings → Group Privacy → Turn off)"
+        )
+        sys.exit(1)
+    logger.info("logged in as @%s (id=%s)", me.username, me.id)
+
+    # supergroup の到達性確認 (§4.2 段 4 と整合)
+    try:
+        chat = await application.bot.get_chat(NOTIFY_CHAT_ID)
+        logger.info("notify chat verified: id=%s title=%r type=%s",
+                    chat.id, chat.title, chat.type)
+    except Exception:
+        logger.exception("notify chat %s could not be resolved", NOTIFY_CHAT_ID)
+
+    # slash command scope を NOTIFY_CHAT_ID に限定 (§4.4)
+    commands = [
+        BotCommand("reset", "現 topic の claude セッションを破棄"),
+        BotCommand("quota", "bot 経由 prompt の予算 / 集計を表示"),
+        BotCommand("status", "bot 稼働状況 / current session を表示"),
+        BotCommand("play", "YouTube URL をこの PC のブラウザで開く"),
+    ]
+    scope = BotCommandScopeChat(chat_id=NOTIFY_CHAT_ID)
+    try:
+        await application.bot.delete_my_commands(scope=scope)
+        await application.bot.set_my_commands(commands=commands, scope=scope)
+        logger.info("slash commands registered to chat %s: %s",
+                    NOTIFY_CHAT_ID, [c.command for c in commands])
+    except Exception:
+        logger.exception("slash command registration failed")
+
+    # notify socket の listen を開始 (§5.2)
+    try:
+        NOTIFY_SOCKET.unlink()
+    except FileNotFoundError:
+        pass
+    application.bot_data["notify_queue"] = asyncio.Queue()
+    server = await asyncio.start_unix_server(
+        lambda r, w: _handle_notify_connection(application, r, w),
+        path=str(NOTIFY_SOCKET),
+    )
+    os.chmod(NOTIFY_SOCKET, 0o600)
+    application.bot_data["notify_server"] = server
+    application.bot_data["notify_worker_task"] = asyncio.create_task(
+        _notify_worker(application)
+    )
+    logger.info("notify socket listening at %s", NOTIFY_SOCKET)
+
+    # stall check job (§4.6)
+    application.job_queue.run_repeating(
+        stall_check_job,
+        interval=STALL_CHECK_INTERVAL_S,
+        first=STALL_CHECK_INTERVAL_S,
+        name="stall_check",
+    )
+
+
+async def post_shutdown(application: Application) -> None:
+    server = application.bot_data.get("notify_server")
+    if server is not None:
+        server.close()
+        try:
+            await server.wait_closed()
+        except Exception:
+            pass
+    worker_task: asyncio.Task | None = application.bot_data.get("notify_worker_task")
+    if worker_task is not None:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except (asyncio.CancelledError, Exception):
+            pass
+    try:
+        NOTIFY_SOCKET.unlink()
+    except FileNotFoundError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+
+def build_application() -> Application:
+    app = (
+        ApplicationBuilder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .rate_limiter(AIORateLimiter())
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+
+    # edited_message を物理的に取りこぼす (§4.5 / N-T7、W-6)。
+    message_filter = filters.UpdateType.MESSAGE & ~filters.UpdateType.EDITED_MESSAGE
+    app.add_handler(CommandHandler("reset", slash_reset, filters=message_filter))
+    app.add_handler(CommandHandler("quota", slash_quota, filters=message_filter))
+    app.add_handler(CommandHandler("status", slash_status, filters=message_filter))
+    app.add_handler(CommandHandler("play", slash_play, filters=message_filter))
+    # slash command 以外の text message → on_message
+    app.add_handler(
+        MessageHandler(
+            message_filter & filters.TEXT & ~filters.COMMAND,
+            on_message,
+        )
+    )
+    return app
+
+
+def main() -> None:
+    app = build_application()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":

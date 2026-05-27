@@ -143,12 +143,12 @@ def _record_common(
     ledger_path: Path,
     now: datetime,
     result: ClaudeResult,
-    channel_id: int | None,
+    topic_key: str | None,
     session_id: str | None,
 ) -> None:
     entry = {
         "timestamp": now.astimezone(JST).isoformat(),
-        "channel_id": channel_id,
+        "topic_key": topic_key,
         "session_id": session_id,
         "total_cost_usd": result.cost_usd,
         "usage": {
@@ -173,7 +173,7 @@ class BudgetGuard(ABC):
         now: datetime,
         result: ClaudeResult,
         *,
-        channel_id: int | None = None,
+        topic_key: str | None = None,
         session_id: str | None = None,
     ) -> None: ...
 
@@ -212,10 +212,10 @@ class RequestsCountGuard(BudgetGuard):
         now: datetime,
         result: ClaudeResult,
         *,
-        channel_id: int | None = None,
+        topic_key: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        _record_common(self.ledger_path, now, result, channel_id, session_id)
+        _record_common(self.ledger_path, now, result, topic_key, session_id)
 
     def summary(self, now: datetime | None = None) -> BudgetSummary:
         now = now or datetime.now(JST)
@@ -277,10 +277,10 @@ class CreditBudgetGuard(BudgetGuard):
         now: datetime,
         result: ClaudeResult,
         *,
-        channel_id: int | None = None,
+        topic_key: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        _record_common(self.ledger_path, now, result, channel_id, session_id)
+        _record_common(self.ledger_path, now, result, topic_key, session_id)
 
     def summary(self, now: datetime | None = None) -> BudgetSummary:
         now = now or datetime.now(JST)
