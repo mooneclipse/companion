@@ -264,6 +264,39 @@
   setInterval(function () { try { pollNowPlaying(); } catch (e) {} }, 2500);          // 2.5s
 
   // ─────────────────────────────────────────────────────────────
+  // セリフ枠（偉人の名言を 30 秒ごとに 5 個ループ）。
+  // キャラセル隣の #quote-text を書き換える。フェード（CSS .is-fading で opacity:0）後に差し替え。
+  // 配列は将来差し替えやすいように 1 箇所にまとめる。dashboard-config.js への分離は今回しない（先回り雛形）。
+  // ─────────────────────────────────────────────────────────────
+  var QUOTES = [
+    '人生はクローズアップで見れば悲劇、ロングショットで見れば喜劇だ。 — チャップリン',
+    '我思う、ゆえに我あり。 — デカルト',
+    '天才とは 1% のひらめきと 99% の努力である。 — エジソン',
+    '汝自身を知れ。 — ソクラテス',
+    '一日一日を最後の日と思って生きよ。 — マルクス・アウレリウス'
+  ];
+  var QUOTE_INTERVAL_MS = 30 * 1000;
+  var QUOTE_FADE_MS = 320;             // style.css .quote-text transition と合わせる
+
+  (function () {
+    var el = $('quote-text');
+    if (!el || !QUOTES.length) return;
+    var idx = 0;
+    function show(i) { el.textContent = QUOTES[i]; }
+    show(idx);
+    setInterval(function () {
+      try {
+        el.classList.add('is-fading');
+        setTimeout(function () {
+          idx = (idx + 1) % QUOTES.length;
+          show(idx);
+          el.classList.remove('is-fading');
+        }, QUOTE_FADE_MS);
+      } catch (e) {}
+    }, QUOTE_INTERVAL_MS);
+  })();
+
+  // ─────────────────────────────────────────────────────────────
   // 小箱キャラ アイドルアニメ（まばたき・目線のランダムタイマー）
   // 体の微揺れ・呼吸は CSS keyframes 完結。ここは「JS でしか出せないランダム性」だけ。
   // 状態連動（設計ノート 2026-05-16）:

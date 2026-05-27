@@ -12,87 +12,102 @@
 <body>
 <div class="dashboard">
 
-  <!-- 将来: アドバイス band はここ（今は呼吸スペースとしての余白のみ。markup は予約しない） -->
-  <div class="advice-space" aria-hidden="true"></div>
+  <!-- 2 列 3 行グリッド:
+         row 1: [時計]          [今日の天気 + 3 時間ごとの天気]
+         row 2: [ごみ予告]      [キャラ + セリフ]
+         row 3: [再生中の曲]    [（空欄／将来「おすすめ」用の予約セル）]
+       既存 id (wx-*, gb-*, np-text, companion, hh/mm/date, wx-hourly) は維持し app.js / index 内 inline script を変更しない。 -->
+  <main class="grid">
 
-  <main class="main-row">
-
-    <!-- 天気 -->
-    <section class="panel weather" id="weather">
-      <div class="wx-icon" id="wx-icon"><!-- SVG はモック用に静的、本番は app.js が WMO code で差し替え -->
-        <svg viewBox="0 0 64 64" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="22" cy="22" r="11" fill="none"/>
-          <g class="ray"><line x1="22" y1="3" x2="22" y2="9"/><line x1="22" y1="35" x2="22" y2="41"/><line x1="3" y1="22" x2="9" y2="22"/><line x1="35" y1="22" x2="41" y2="22"/><line x1="8.8" y1="8.8" x2="13" y2="13"/><line x1="31" y1="31" x2="35.2" y2="35.2"/><line x1="35.2" y1="8.8" x2="31" y2="13"/><line x1="13" y1="31" x2="8.8" y2="35.2"/></g>
-          <path d="M20 44a11 11 0 0 1 21-4 8 8 0 0 1 1 16H22a9 9 0 0 1-2-12z" fill="none"/>
-        </svg>
+    <!-- (1, left) 時計 -->
+    <section class="cell cell-clock">
+      <div class="panel clock">
+        <div class="time"><span id="hh">07</span><span class="colon">:</span><span id="mm">42</span></div>
+        <div class="date" id="date">5月13日 (火)</div>
       </div>
-      <div class="wx-temp" id="wx-temp">18°</div>
-      <div class="wx-label" id="wx-label">くもり時々晴れ</div>
-      <div class="wx-sub">
-        <span class="wx-hilo" id="wx-hilo">今日 <span class="hi">↑22°</span> <span class="lo">↓14°</span></span>
-        <span class="wx-pop" id="wx-pop">降水 20%</span>
-      </div>
-      <div class="wx-stamp" id="wx-stamp"></div>
     </section>
 
-    <!-- 時計（最大・100% クライアント計算・絶対に欠けない） -->
-    <section class="panel clock">
-      <div class="time"><span id="hh">07</span><span class="colon">:</span><span id="mm">42</span></div>
-      <div class="date" id="date">5月13日 (火)</div>
+    <!-- (1, right) 今日の天気 + 3 時間ごとの天気 -->
+    <section class="cell cell-weather">
+      <div class="panel weather" id="weather">
+        <div class="weather-now">
+          <div class="wx-icon" id="wx-icon">
+            <svg viewBox="0 0 64 64" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="22" cy="22" r="11" fill="none"/>
+              <g class="ray"><line x1="22" y1="3" x2="22" y2="9"/><line x1="22" y1="35" x2="22" y2="41"/><line x1="3" y1="22" x2="9" y2="22"/><line x1="35" y1="22" x2="41" y2="22"/><line x1="8.8" y1="8.8" x2="13" y2="13"/><line x1="31" y1="31" x2="35.2" y2="35.2"/><line x1="35.2" y1="8.8" x2="31" y2="13"/><line x1="13" y1="31" x2="8.8" y2="35.2"/></g>
+              <path d="M20 44a11 11 0 0 1 21-4 8 8 0 0 1 1 16H22a9 9 0 0 1-2-12z" fill="none"/>
+            </svg>
+          </div>
+          <div class="weather-text">
+            <div class="wx-temp" id="wx-temp">18°</div>
+            <div class="wx-label" id="wx-label">くもり時々晴れ</div>
+            <div class="wx-sub">
+              <span class="wx-hilo" id="wx-hilo">今日 <span class="hi">↑22°</span> <span class="lo">↓14°</span></span>
+              <span class="wx-pop" id="wx-pop">降水 20%</span>
+            </div>
+            <div class="wx-stamp" id="wx-stamp"></div>
+          </div>
+        </div>
+        <!-- 3 時間ごと予報（6/9/12/15/18/21時）。HOURLY_SLOTS=[6,9,12,15,18,21] は 3 時間刻みなのでそのまま流用。 -->
+        <div class="wx-hourly" id="wx-hourly" aria-hidden="true"></div>
+      </div>
     </section>
 
-    <!-- ゴミの日 -->
-    <section class="panel garbage" id="garbage">
-      <div class="gb-icon">
-        <svg viewBox="0 0 64 64" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 18h36l-3 36a4 4 0 0 1-4 4H21a4 4 0 0 1-4-4z"/>
-          <path d="M10 18h44"/><path d="M25 18l2-6h10l2 6"/>
-          <line x1="27" y1="28" x2="28" y2="50"/><line x1="37" y1="28" x2="36" y2="50"/>
-        </svg>
+    <!-- (2, left) ごみ予告 -->
+    <section class="cell cell-garbage">
+      <div class="panel garbage" id="garbage">
+        <div class="gb-icon">
+          <svg viewBox="0 0 64 64" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 18h36l-3 36a4 4 0 0 1-4 4H21a4 4 0 0 1-4-4z"/>
+            <path d="M10 18h44"/><path d="M25 18l2-6h10l2 6"/>
+            <line x1="27" y1="28" x2="28" y2="50"/><line x1="37" y1="28" x2="36" y2="50"/>
+          </svg>
+        </div>
+        <div class="gb-when" id="gb-when">あす <span class="dow">(水)</span></div>
+        <div class="gb-type" id="gb-type">燃やすごみ</div>
+        <div class="gb-next" id="gb-next">次: プラ容器 5/16 (金)</div>
       </div>
-      <div class="gb-when" id="gb-when">あす <span class="dow">(水)</span></div>
-      <div class="gb-type" id="gb-type">燃やすごみ</div>
-      <div class="gb-next" id="gb-next">次: プラ容器 5/16 (金)</div>
+    </section>
+
+    <!-- (2, right) キャラ（セル左端寄せ）+ セリフ枠 -->
+    <section class="cell cell-companion">
+      <div class="companion-row">
+        <!-- 小箱キャラ。既存 SVG/アニメーション/data-state 機構は不変、配置だけ flow に戻す（旧 absolute → grid セル内）。 -->
+        <div class="companion" id="companion" data-state="normal" aria-hidden="true">
+          <div class="companion-sway">
+            <svg class="companion-svg" viewBox="0 0 160 200" width="100%" height="100%">
+              <rect class="cmp-body" x="28" y="28" width="104" height="150" rx="20"/>
+              <ellipse class="cmp-shadow" cx="80" cy="188" rx="46" ry="6"/>
+              <rect class="cmp-screen" x="44" y="56" width="72" height="74" rx="14"/>
+              <g class="cmp-eyes">
+                <circle class="cmp-eye" cx="67" cy="88" r="6.5"/>
+                <circle class="cmp-eye" cx="93" cy="88" r="6.5"/>
+              </g>
+              <rect class="cmp-mouth" x="71" y="110" width="18" height="4.5" rx="2.25"/>
+            </svg>
+          </div>
+        </div>
+        <!-- セリフ枠（30 秒ごとに 5 個の名言をループ。文言は app.js の QUOTES 配列で一元管理）。 -->
+        <div class="quote" id="quote" aria-live="polite">
+          <div class="quote-text" id="quote-text">…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- (3, left) 再生中の曲 -->
+    <section class="cell cell-nowplaying">
+      <div class="now-playing" id="now-playing">
+        <span class="np-note">♪</span>
+        <span class="np-text" id="np-text">—</span>
+      </div>
+    </section>
+
+    <!-- (3, right) 空欄（将来「おすすめ」表示用の予約セル。現状ロジック未実装＝何も描かない） -->
+    <section class="cell cell-suggestion" aria-hidden="true">
+      <!-- 将来: おすすめがあればここに描く。今は意図的に空。 -->
     </section>
 
   </main>
-
-  <!-- 時間ごと予報（6/9/12/15/18/21時）。weather panel から独立した全幅行へ移動して 3 列高さバランス回復。
-       app.js が hourly レスポンスから 6 スロット生成（ID wx-hourly は変更なし、JS 互換）。 -->
-  <div class="hourly-strip">
-    <div class="wx-hourly" id="wx-hourly" aria-hidden="true"></div>
-  </div>
-
-  <!-- now playing（最も控えめ・最も使い捨て可・レイアウトを揺らさない） -->
-  <footer class="now-playing" id="now-playing">
-    <span class="np-note">♪</span>
-    <span class="np-text" id="np-text">Morning Bell — Ambient Works</span>
-  </footer>
-
-  <!-- 小箱キャラ（下半分中央・absolute で flow 外＝上半分レイアウトを揺らさない）。
-       体は固定 SVG、スクリーン内の目/口だけ data-state で切り替え（現状 normal 固定）。
-       状態セット（normal/thinking/answering/happy/confused/error/sleepy）は CSS 側に予約済み。
-       将来の外部連携は companion 要素の data-state を差し替えるだけ。app.js が
-       まばたき・目線のランダムタイマーを駆動（throw しても他機能と独立、時計は別系統）。 -->
-  <div class="companion" id="companion" data-state="normal" aria-hidden="true">
-    <div class="companion-sway">
-      <svg class="companion-svg" viewBox="0 0 160 200" width="100%" height="100%">
-        <!-- 体（直方体） -->
-        <rect class="cmp-body" x="28" y="28" width="104" height="150" rx="20"/>
-        <!-- 接地の薄い影 -->
-        <ellipse class="cmp-shadow" cx="80" cy="188" rx="46" ry="6"/>
-        <!-- スクリーン（顔） -->
-        <rect class="cmp-screen" x="44" y="56" width="72" height="74" rx="14"/>
-        <!-- 目（点）。.eyes 単位で目線移動、各 .eye 単位でまばたき -->
-        <g class="cmp-eyes">
-          <circle class="cmp-eye" cx="67" cy="88" r="6.5"/>
-          <circle class="cmp-eye" cx="93" cy="88" r="6.5"/>
-        </g>
-        <!-- 口（横棒 —） -->
-        <rect class="cmp-mouth" x="71" y="110" width="18" height="4.5" rx="2.25"/>
-      </svg>
-    </div>
-  </div>
 
 </div>
 
@@ -113,7 +128,6 @@
       if (dayKey !== lastDay) {
         lastDay = dayKey;
         dateEl.textContent = (d.getMonth() + 1) + '月' + d.getDate() + '日 (' + WD[d.getDay()] + ')';
-        // 日付が変わったらゴミ再計算（app.js があれば）
         if (window.__refreshGarbage) { try { window.__refreshGarbage(); } catch (e) {} }
       }
     }

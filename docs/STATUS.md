@@ -231,9 +231,20 @@ dashboard/
 
 ## In progress
 
-（なし、2026-05-20 全体レビュー軸 1 で 5/17-19 観察 Done 移管完了）
+（なし、2026-05-27 の 2 列 3 行レイアウト組み替え Done 移管完了）
 
 ## Done
+
+- 2026-05-27 レイアウトを 2 列 3 行グリッドへ組み替え + キャラセル隣にセリフ枠新設。orc 経由 implementer。**ユーザー指定の新仕様**: (1,L)時計 / (1,R)今日の天気+3 時間ごと予報 / (2,L)ごみ予告 / (2,R)キャラ(セル端寄せ)+セリフ / (3,L)再生中の曲 / (3,R)空欄（将来「おすすめ」予約セル、現状ロジック未実装＝空のまま）。
+  - **HTML 構造変更** (`web/index.html`): 旧 `.main-row`(水平 3 カラム) + 全幅 `.hourly-strip` + footer `.now-playing` + absolute 配置 `.companion` を破棄、新 `.grid` (2 列 × 3 行) に 6 `.cell` を配置。3 時間ごと予報は (1,R) 天気セル内に統合 (`HOURLY_SLOTS=[6,9,12,15,18,21]` がそのまま 3 時間刻みなので app.js 不変)。
+  - **CSS 全面書き換え** (`web/style.css`): `.grid` に `grid-template-columns: 1fr 1.25fr` / `grid-template-rows: 1.4fr 1fr 0.5fr` / `column-gap: 60px` / `row-gap: 32px`。フォント・カラー・ビネット・キャラ SVG / アニメ keyframes は据置 (industrial-refined v0.2 トーン継承)。時計 13vw→11vw、天気/ごみのフォントサイズも 2x3 セル高さに合わせ縮小。`.companion` を absolute から flow に戻し `.companion-row` で `display:flex` + `gap:24px` でキャラ左端寄せ + セリフ枠を隣に配置。`.quote` は `border-left:3px solid var(--accent)` + `background: rgba(40,50,63,0.35)` で「キャラの声」感。
+  - **新規 JS ロジック** (`web/app.js` 末尾): `QUOTES` 配列に 5 個の名言（チャップリン / デカルト / エジソン / ソクラテス / マルクス・アウレリウス）を定数定義、`QUOTE_INTERVAL_MS=30*1000` で 30 秒ごとに `.quote-text` を fade out (320ms, CSS `.is-fading` transition) → text 差替え → fade in で循環表示。配列は同ファイル冒頭に集約（dashboard-config.js への分離は先回り雛形につき不採用）。既存の時計 / 天気 / ごみ / now-playing / キャラ瞬き&目線ロジックは一切変更なし。
+  - **id/データ配線維持**: `wx-icon`/`wx-temp`/`wx-label`/`wx-hilo`/`wx-pop`/`wx-stamp`/`wx-hourly`/`gb-when`/`gb-type`/`gb-next`/`np-text`/`companion`/`hh`/`mm`/`date` の id は全て維持。app.js の DOM 操作・index 内 inline 時計 script は無改変。
+  - **動作確認**: firefox 151 ヘッドレスで `file:///home/miho/companion/dashboard/web/index.html` を 1920x1080 起動 → 6 セル全てが想定位置に描画 (時計 13:41 / 天気 18° くもり時々晴れ / ごみ「きょう (水) プラ容器」/ キャラ + 1 番目の名言「人生はクローズアップで…チャップリン」/ 再生中曲は helper 不在で is-empty 透明 / 右下空欄)。fold 圏内（1080px）に全要素収まる。QUOTES の 30 秒 setInterval / 5 件ループ / fade トランジションは node 単体検証で interval 値・配列件数を確認。
+  - **未実装/プレースホルダ対応**: ① 再生中の曲 = 既存 now-playing helper 経由なので新規実装なし、helper 不在時は CSS `.is-empty { opacity:0 }` で控えめに非表示（既存挙動踏襲）。② 「おすすめ」セル (3,R) = 仕様どおり空のまま（HTML コメントだけ残す。markup の予約はしない＝先回り雛形回避）。
+  - **対症療法 2 周目ガード非該当**: 既存ロジック (天気 fetch / now-playing polling / ごみ計算 / キャラ瞬き) に条件分岐・閾値追加なし。レイアウト軸（grid 構造）の置換 1 回で完結、fallback 連鎖なし。
+  - **commit**: `<hash>` レイアウトを 2 列 3 行グリッドへ組み替え + キャラセリフ枠を追加。push は orc / ユーザー側で実施（implementer は commit 止め）。
+  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) での目視確認 = 明朝 05:30 自動起動 or 手動 `systemctl --user start dashboard.service` で 6 セル配置・セリフ 30 秒切替・既存要素の整合を確認。NG なら CSS の vw 値（時計 / 天気 / ごみ / キャラ幅）を実測ベースで再調整。
 
 - 2026-05-25 窓配置の placement 軸全移行（title 一致 → `--kiosk --kiosk-monitor=1`）。**ユーザー報告**「いまテレビつけたらダッシュボードが表示されてない」(2026-05-25 朝 08:05) を起点に調査。
   - **根本原因**: journal の 5/25 05:30 起動ログに `firefox window not found within timeout — leaving as-is`、`wmctrl -lG` で窓 0x04800003 が geometry `1974,153,1280,710` = LVDS-1 内に着地、TV (HDMI-1) は黒。title 一致方式（5/22 引き直し済）の polling が 10s 上限内に `<title>=COMPANION-DASH` を捕捉できず、Marco が新規 firefox 窓を primary=LVDS-1 へ再配置するデフォルト挙動が表面化。プロセスは全部生きていた（mpv / nowplaying-helper / firefox）。
