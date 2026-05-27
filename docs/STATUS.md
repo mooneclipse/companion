@@ -43,6 +43,15 @@
   - **B5 が NG だった場合の contingency**（build 時判断、runtime fallback ではない）: now-playing helper に `GET /weather` を足して Open-Meteo をプロキシ、app.js は `http://127.0.0.1:<port>/weather` を叩く（app.js 1 行 + helper ~10 行）。
 - **ゴミの日**: `web/dashboard-config.js`（`<script src>` で読み込む。`file://` から `fetch()` は弾かれるが `<script src>` は通る）に `window.DASHBOARD_CONFIG = { weather:{lat,lon,tz}, garbage:{rules:[...]} }`。クライアント JS が次回収集日＋種別を計算（純ローカル計算、retry 罠なし、5:30–9:00 で日跨ぎなし）。日付ロールオーバー検知で再計算。config 欠落/不正 → 「ゴミ設定なし」placeholder。**自治体カレンダー取込はしない**＝年末年始の振替等は表示が外れる（本ファイル明記済み）。
 - **now-playing**: クライアント JS が `http://127.0.0.1:<port>/np` を ~2-3s ポーリング（helper が ACAO:* を返すので `file://` から OK）。曲なし/mpv 不在/fetch 失敗 → ごく薄く「♪ —」or 非表示。**絶対にレイアウトを揺らさない・エラーを上げない**。最も使い捨て可能な要素。fetch 失敗時は前状態保持 or 静かにクリア。
+- **セリフ枠（キャラ隣 `#quote-text`）**: 30 秒ごとに 1 言ずつフェード切替で表示（既存 `QUOTE_INTERVAL_MS=30s` / `.is-fading` transition は流用）。ローテーション内容は cycle 開始時に動的 build:
+  - 月〜金: `[朝の天気, 夜の天気, 占い, ニュース×1〜3]`
+  - 土日:   `[一日の天気, 占い, ニュース×1〜3]`
+  - **天気**: 既存 `fetchWeather()` が 1 時間ごとに取得する Open-Meteo hourly レスポンスを `lastWeatherData` に保持し、cycle build 時に時刻帯 match（朝 7-9 / 夜 18-22 / 一日 6-21）で温度・降水確率を集約 → 服装（半袖/長袖/上着/コート…）+ 傘有無（pop ≥ 70/50/30）の一言を組み立てる。**新規 API call 無し**（既存 fetch の再利用）。データ不在時はその一言だけスキップ（cycle は止めない）。
+  - **占い（双子座固定）**: 日付 (YYYYMMDD) を seed にした deterministic 関数（Mulberry32）で `[運勢領域, 強度, ラッキーカラー, ひとこと tip]` を phrase pool から選択。**外部 API 無し**（CSP / file:// origin 安全、API key 不要）。同日内はリロードでも同じ結果。星座固定（双子座のみ）、他星座対応は先回り雛形なので不採用。
+  - **ニュース**: helper の `GET /news` を 1 時間ごとにポーリング（`lastNewsItems` に最大 3 件保持）。helper 側は NHK NEWS WEB RSS (`https://www.nhk.or.jp/rss/news/cat0.xml`) を proxy 取得し helper メモリ内 TTL=30 分でキャッシュ（過剰アクセス防止）。**取得元選定理由**: 認証不要・日本語主要ニュース・公開 RSS・API key 不要。fetch 失敗時は `{"items": []}` を 200 で返す（既存 `/np` と同じ pattern、retry/backoff 無し）。client 側も失敗時は前回値保持。
+  - **CORS 回避**: file:// origin から外部 RSS への直 fetch は CORS 制約で弾かれるため helper proxy 1 段で受ける。STATUS の「天気」B5 contingency と同じ方針（今回は build 時に必要と判断、runtime fallback ではない）。
+  - **失敗時の振る舞い**: weather/news どちらかが空でも cycle は回る（該当一言だけスキップ）。占いは無条件で生成できるため最低 1 言は描画される。retry/backoff は一切持たない（client は次の周期で再試行、helper は次回 client 呼びで再 fetch）。
+  - **不採用**: ① 外部 news API への直 fetch（CORS で破綻、helper proxy 1 段で構造的に解決）。② 多自治体・多星座対応の config 化（先回り雛形）。③ 文言 phrase pool の `dashboard-config.js` 分離（同上、文言改修は app.js 内 1 箇所修正で足りる）。
 - **〔将来〕アドバイス枠**: 今回は実装しない。**markup/ファイルの予約もしない**（PROJECT.md が禁じる「先回りの雛形増やし」）。やってよいのは「将来 1 要素増えても再設計せず吸収できる柔らかいレイアウト」方針のみ。可視帯の上 ~100px を「呼吸スペース（ただのマージン）」として空け、時計を帯の上寄りに置く（垂直中央には置かない＝後でアドバイス band を足したとき時計が下にずれて fold に近づくのを防ぐ）。HTML に `<!-- 将来: アドバイス band はここ -->` のコメント 1 行のみ。
 
 ### 画面レイアウト（v0.2: industrial-refined / dashboard-redesign-2 team で確定）
@@ -231,9 +240,26 @@ dashboard/
 
 ## In progress
 
-（なし、2026-05-27 の 2 列 3 行レイアウト組み替え Done 移管完了）
+（なし、2026-05-27 のセリフ枠動的化 Done 移管完了）
 
 ## Done
+
+- 2026-05-27 セリフ枠（`#quote-text`）を偉人の名言ループから動的内容（天気・占い・ニュース）へ置換。orc 経由 implementer。
+  - **ローテーション仕様**: 30 秒ごとに 1 言ずつフェード切替。月〜金=`[朝の天気, 夜の天気, 占い, ニュース×1〜3]` / 土日=`[一日の天気, 占い, ニュース×1〜3]`。cycle 末尾まで来たら次 cycle で再 build（天気・ニュースの最新値を反映）。既存 `QUOTE_INTERVAL_MS=30*1000` / `QUOTE_FADE_MS=320` / CSS `.quote-text.is-fading` は流用、CSS は無改修。
+  - **天気の文言ロジック** (`web/app.js`): `fetchWeather()` の成功 / localStorage 復帰時に `lastWeatherData` へ保持し、cycle build 時に `_wxBandStats(baseDate, hourFrom, hourTo)` で時刻帯 match（朝 7-9 / 夜 18-22 / 一日 6-21）→ hi/lo/popMax を集約 → `_clothesPhrase` (≥30/25/20/15/10/5/`<5`) + `_umbrellaPhrase` (≥70/50/30/`<30`) で組み立て。**新規 API call ゼロ**（既存毎時 fetch の再利用）。データ不在は該当行スキップ（cycle 全体は止めない）。
+  - **占いロジック** (`web/app.js`): 日付 (YYYYMMDD) を seed にした Mulberry32 で deterministic 生成、双子座固定。phrase pool は `FORTUNE_LUCK(8)` / `FORTUNE_LEVEL(5)` / `FORTUNE_COLOR(12)` / `FORTUNE_TIP(8)` の組み合わせ。**外部 API 無し**（CSP / file:// origin / CORS いずれも回避）。node 単体検証で同日 deterministic / 翌日変化を確認。
+  - **ニュース proxy** (`server/nowplaying-helper.py`): NHK NEWS WEB RSS (`https://www.nhk.or.jp/rss/news/cat0.xml`) を `urllib.request` + `xml.etree.ElementTree` で fetch + parse、`<item><title>` を最大 3 件抽出。`GET /news` で `{"items": [...]}` を返す（ACAO:* 付き）。helper メモリ内 TTL=30 分キャッシュ。fetch / parse 失敗時は `{"items": []}` を 200 で返す（既存 `/np` の「失敗=正常状態を 200 で返す」原則と整合、retry/backoff 無し）。**取得元選定理由**: 認証不要・日本語主要ニュース・公開 RSS・API key 不要。
+  - **CORS 回避**: file:// origin → 外部 RSS 直 fetch は CORS で破綻するため、helper proxy 1 段で受ける（既存 `/np` と同 pattern）。「外部 news API 直接 fetch」案は不採用として確定アーキ section に記録。
+  - **client 側ポーリング**: ニュースは起動直後 + 1 時間ごとに `/news` を fetch、`lastNewsItems` に保持。失敗時は前回値保持（client 側 retry/backoff 無し）。helper キャッシュ 30 分 × client 1 時間で外部 RSS への過剰アクセス防止。
+  - **既存機能への影響ゼロ**: 時計・天気パネル・3 時間ごと予報 strip・ゴミ予告・now-playing・キャラ瞬き&目線は一切無改修。`fetchWeather` の成功 hook に `lastWeatherData = j;` の 2 行追加のみ（renderWeather の挙動は不変）。
+  - **動作確認**:
+    - `python3 -m py_compile server/nowplaying-helper.py` pass。
+    - helper 起動 + curl: `/news` が 200 + ACAO:* + `{"items":[...]}` で 3 件返却（NHK RSS 実 fetch 成功、Content-Length 279）。`/np` は mpv 不在で `{"playing":false}` 200。`/unknown` は 404。
+    - node 単体テスト: 占い deterministic OK（同日 run1==run2、翌日 run≠）、`_clothesPhrase` 全境界（30/24/10/5/null）OK、`_umbrellaPhrase` 全境界（80/55/30/10/null）OK。
+    - node 統合テスト: 水曜=朝/夜 2 件 + 占い + ニュース 3 件 = 6 言 / 土曜=一日 1 件 + 占い + ニュース 3 件 = 5 言 を正しく build。news 不在時は news 行をスキップして cycle 継続。
+  - **対症療法 2 周目ガード非該当**: 既存ロジック（fetchWeather / now-playing polling）に条件分岐・閾値追加なし。セリフ枠の責務追加 1 回で完結、fallback 連鎖なし（helper 失敗→client 失敗→該当言スキップ、で 1 段確定）。
+  - **commit**: ① `server/nowplaying-helper.py` に `/news` 追加（NHK RSS proxy） ② `web/app.js` のセリフ枠を動的化（天気・占い・ニュース） ③ `docs/STATUS.md` に確定アーキ追記 + Done 反映。push は orc / ユーザー側で実施（implementer は commit 止め）。
+  - **残（〔ユーザー〕実機作業）**: `systemctl --user restart dashboard.service` で helper 再起動（`/news` が稼働開始、`web/app.js` 変更は次回 firefox 再読込で即反映）。または 9:00 自動停止 → 翌朝 5:30 自動起動で世代交代。実機 TV で 30 秒ごとに天気→占い→ニュースが切り替わることを目視確認。NG なら STATUS の文言ロジック区切り（温度帯 / 降水確率閾値 / 占い phrase pool）を実機印象ベースで調整。
 
 - 2026-05-27 レイアウトを 2 列 3 行グリッドへ組み替え + キャラセル隣にセリフ枠新設。orc 経由 implementer。**ユーザー指定の新仕様**: (1,L)時計 / (1,R)今日の天気+3 時間ごと予報 / (2,L)ごみ予告 / (2,R)キャラ(セル端寄せ)+セリフ / (3,L)再生中の曲 / (3,R)空欄（将来「おすすめ」予約セル、現状ロジック未実装＝空のまま）。
   - **HTML 構造変更** (`web/index.html`): 旧 `.main-row`(水平 3 カラム) + 全幅 `.hourly-strip` + footer `.now-playing` + absolute 配置 `.companion` を破棄、新 `.grid` (2 列 × 3 行) に 6 `.cell` を配置。3 時間ごと予報は (1,R) 天気セル内に統合 (`HOURLY_SLOTS=[6,9,12,15,18,21]` がそのまま 3 時間刻みなので app.js 不変)。
