@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-27 (Phase 2.6 実装着手前検証 + telegram-setup.md 作成)
+最終更新: 2026-05-27 (Phase 2.6 実装着手前検証 + telegram-setup.md 作成 + V-4/V-5/V-6 実機検証完了)
 
 ## 設計メモ
 
@@ -100,13 +100,38 @@ Discord 土管 → Telegram supergroup (topic = 1 session model) 移行の **設
 15. **K-T15**: PTB `getUpdates` offset 永続化を bot.py 側で実装する必要が出たら判断トリガ。観察期間中に「bot 再起動直後に旧 Update 大量処理で予算消費」発生したら設計引き直し (V-11 由来)
 16. **K-T16**: PTB v22 系のリリース間隔監視。前回 v22.7 = 2025-03-16 から 18 ヶ月超え (2026-09 以降) + Bot API 10.x で PTB 未対応 breaking change 発生があれば aiogram v3 への切替議論を起動 (V-21 由来)
 
-#### 実機検証 V-4 / V-5 / V-6 (6/2 cold cut 当日実施、telegram-setup.md §5)
+#### 実機検証 V-4 / V-5 / V-6 (2026-05-27 当日前倒し実施、全 pass)
 
-- **V-4**: `#test-delete` topic 作成 → 削除 → `#test-new` 作成で thread_id 連番増加 (削除 thread_id 再利用なし) を curl getUpdates で確認
-- **V-5**: General topic message で `message_thread_id` field が JSON 上不在 (null) を curl getUpdates で確認
-- **V-6**: `can_manage_topics: false` の状態で `createForumTopic` API → 400 `not enough rights` (or 403) を curl POST で確認
+user 側で BotFather による bot 作成 + supergroup `my group` + Topics (General / #chat / #research / #maintenance) + bot Administrator 追加 + privacy mode off まで完了済 (2026-05-27 夜)。claude 側で curl 経由 getUpdates / getMe / createForumTopic を直接叩いて検証実施 (`bot.service` 無関係、N-T3 違反なし)。
 
-検証結果は 6/2 cold cut 完了時の STATUS.md entry に追記。
+**getMe 結果** (bot 初期状態確認):
+- username: `@companion_renbot`
+- `can_read_all_group_messages: True` (privacy mode off、bot.py post_init の `sys.exit(1)` 条件回避済)
+- `can_join_groups: True` / `supports_inline_queries: False`
+
+**V-5 pass** (General topic thread_id 確定):
+- supergroup `my group` (chat_id `-1003851931893`) の General topic で OWNER が `@companion_renbot test general` を送信 → getUpdates で `message_thread_id: None`, `is_topic_message: None` を確認
+- 設計 §2.3 General topic 扱い (ファイル名 `<chat_id>_general.json` 固定 suffix、PTB の `update.effective_message.message_thread_id` も `None` で返る前提) と整合
+
+**V-4 pass** (削除 thread_id 再利用なし):
+- 手順: `#v4-delete` topic 作成 (forum_topic_created で thread_id=11 観察) + メッセージ送信 → topic 削除 → `#v4-new` topic 作成 (forum_topic_created で thread_id=13 観察) + メッセージ送信
+- thread_id は **11 → 13 で連番増加**、削除した 11 は再利用されず、12 もスキップ (V-6 の createForumTopic 400 失敗時に内部 id allocator が前進した模様、Telegram 側 allocator は API 成否に関わらず単調増加と推定)
+- 設計 §2.4 stale-thread-observation jsonl 運用 (1 回=許容、2 回=2 周目認定) の前提 = `(chat_id, thread_id)` 複合キー衝突なし、が成立
+
+**V-6 pass** (can_manage_topics:false で 400):
+- bot Administrator 権限 `can_manage_topics: false` の状態で `POST createForumTopic name=v6-test-should-fail` → `{"ok": false, "error_code": 400, "description": "Bad Request: not enough rights to create a topic"}`
+- Telegram 側で物理的に弾かれること確認、副作用ゼロ (topic 作成されず)。bot.py 自体では `createForumTopic` を呼ばない設計 (telegram-design §6.1 topic 管理は OWNER 手動) だが、二重防御として成立
+- 副次観察: 失敗 API 呼び出しでも内部 id allocator は前進する (V-4 で観察された 12 スキップの原因)
+
+**取得確定値** (cold cut 当日 6/2 に `bot/.env` 記載予定):
+- `NOTIFY_CHAT_ID=-1003851931893` (supergroup `my group`)
+- `BOT_THREAD_ID_CHAT=3` / `BOT_THREAD_ID_RESEARCH=4` / `BOT_THREAD_ID_MAINTENANCE=5` / `BOT_THREAD_ID_VOICE_LOG=` (空、Phase 3-2 voice 着手時に追加)
+
+**残作業** (cold cut 当日 6/2 以降):
+- user 操作: 検証用 topic `#v4-new` の手動削除 (実害なし、当日 cleanup)
+- claude 実装: telegram-setup.md §6.2 step に従い bot.py / sessions.py / quota.py / requirements.txt / .env.example / companion-bot.service の cold cut commit 作成
+- user 操作: telegram-setup.md §6.2 step 0〜7 (commit pull → bot 停止 → venv swap → .env 追記 → bot 起動 → smoke test)
+- 観察: cold cut +14 日 (2026-06-16 目処) で Telegram 観察完了、Phase 4 着手条件 #2 判定起点
 
 #### 実装着手後の運用ルール (lead 集約持ち越し 12 件 + K-* 観察項目への統合)
 
