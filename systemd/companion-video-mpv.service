@@ -35,7 +35,7 @@ ExecStartPre=-/bin/rm -f %t/companion-video-mpv.sock
 #  --hwdec=vaapi           : ハードウェアデコード有効化(Intel HD Graphics 4000=Ivy Bridge GEN7
 #                       + i965-va-driver 利用可)。Live 60fps で hwdec=no による frame-drop 690 /
 #                       estimated-vf-fps 27.3 (container 60.0) を観測したため有効化。新規オプション
-#                       追加 = 既存条件分岐の延長や数値だけ動かす対症療法 2 周目に該当せず1周目)
+#                       追加 = 既存条件分岐の延長や数値だけ動かす対症療法 2 周目に該当せず、1 周目。
 #  --video-zoom=-0.05      : TV オーバースキャン補正(画面端の見切れ解消、user 実機で「ちょうどいい」確認済)
 #  --input-ipc-server      : リモコン制御の唯一の入口(verb whitelist は server/video.py 側)
 ExecStart=/usr/bin/mpv \
