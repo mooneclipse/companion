@@ -240,9 +240,25 @@ dashboard/
 
 ## In progress
 
-（なし、2026-05-28 の ren セリフ集 Telegram 通知 Done 移管完了）
+（なし、2026-05-28 天気予報セリフ枠改修 3 件 Done 移管完了）
 
 ## Done
+
+- 2026-05-28 天気予報セリフ枠の改修 3 件 (orc 経由 implementer)。
+  - **A. 平日セリフに「1 日の天気」を頭出しに追加**: 平日 = `[きょうの天気, 朝の天気, 夜の天気, 占い, ニュース×3]` (4→5 行)、土日は現状維持 `[きょうの天気, 占い, ニュース×3]`。`web/app.js` の `buildWeatherLines` 並び順を変更 (all → morning → evening) + 冒頭コメント更新、`bin/dashboard-notify-ren-quotes.py` の同等関数も同順に変更 + docstring 更新。
+  - **B. 服装ロジックを「その日の最高気温」基準に統一**: 朝枠 (hi=20°) でも夜枠 (hi=22°) でも、服装ワード (`_clothesPhrase` / `_clothes_phrase`) はその日の最高気温 = all slot [6,21) の hi (= `dayHi` / `day_hi`) で固定判定。気温の数値表示は slot ごとの hi/lo を維持 (朝枠なら「最高 20°」)、傘ワードも slot ごとの pop_max を維持 (朝に傘・夜に傘の時間帯固有の意味を残す)。`_buildWeatherLine` / `_build_weather_line` のシグネチャに `dayHi` / `day_hi` 引数を追加し、呼び出し側 (`buildWeatherLines` / `build_weather_lines`) が all band stats を先に算出して全 line builder に渡す責務分担。閾値・文言は据置 (一般成人女性の標準体感、寒がりではない想定)。
+  - **C. データソースは Open-Meteo を継続採用**: JMA `forecast/230000.json` (愛知県) を実機で 200 OK + ACAO:* 確認したが、データ粒度が現行 UI と不整合のため不採用。具体的には: ① 短期予報の気温 timeSeries は 4 ポイント (今日 9 時 / 24 時 / 明日 9 時 / 18 時) で、現行 `_wxBandStats` が前提とする「1 時間単位 hi/lo 集約」が出来ない。② 降水確率は 6h 区切り 7 ポイントで、`[7,9) / [18,22) / [6,21)` の半開区間集約と整合しない。③ 天気概況も「今日午前 / 今日午後」の 2 ポイントで時間ごと予報 strip (6/9/12/15/18/21 時 6 スロット) の再構築には別データ源 (時系列予報) が要る → 切替えは hourly strip / band stats ロジックを大幅作り直し = 設計引き直し級の作業に発展 (`~/companion/CLAUDE.md` 2 周目ガード抵触懸念)。④ Open-Meteo は名古屋粒度で JMA データを取り込んだブレンドモデル、1.5 ヶ月運用実績で安定。⑤ 「精度向上」のユーザー要望は本タスク B (服装の最高気温基準化) でカバーできる範囲が大きい。判断: Open-Meteo 継続 + 切替えはセリフ精度の追加観察結果が出てから別タスクで設計。
+  - **対症療法 2 周目ガード非該当**: 既存条件分岐・閾値・fallback の追加延長ではなく、責務分担の引き直し (`buildWeatherLines` 側で all band stats を 1 回算出して line builder に dayHi として渡す = 引数化)。服装/傘の判定条件は据置、新規 case 追加・stderr 文言マッチ無し。`~/companion/CLAUDE.md` 2 周目ルール準拠。
+  - **動作確認**:
+    - `python3 -m py_compile bin/dashboard-notify-ren-quotes.py` pass。
+    - app.js 単体 (node vm): 平日 (dow=4=木) `buildWeatherLines()` で `[きょうの天気, 朝の天気, 夜の天気]` 3 行を順に返却、朝枠 (slot hi=20°) で `dayHi=26` 渡しのとき「半袖で十分」が出ること、夜枠 (slot hi=22°) でも同様に「半袖で十分」が出ることを確認。`dayHi=null` で服装パート省略・slot ごと hi/lo 表示は残ることも確認。
+    - app.js 単体 (土日強制 `Date.getDay()=6`): `buildWeatherLines()` が `[きょうの天気]` 1 行のみ返却を確認。
+    - notify 単体 (python): `_wx_band_stats` で `morning {hi:20,lo:20,pop_max:10}` / `all {hi:26,lo:19,pop_max:60}` / `evening {hi:22,lo:22,pop_max:60}` を返却、`_build_weather_line` が `dayHi=26` 渡しで朝枠 / 夜枠とも「半袖で十分」を含む文字列を生成。平日 `build_weather_lines(dt(2026-05-28))` で 3 行・土日 `build_weather_lines(dt(2026-05-30))` で 1 行・data 不在で空 list を確認。
+    - `build_message` 統合 (平日 mock fetch_weather + mock news): 1 通本文に `きょうの天気 → 朝の天気 → 夜の天気 → 占い → ニュース×3` の 7 行が並ぶ。
+    - JMA endpoint 検証: `curl -sI https://www.jma.go.jp/bosai/forecast/data/forecast/230000.json` で `HTTP/2 200` + `access-control-allow-origin: *` + `cache-control: max-age=60`、ペイロード 3.1KB。entry[0] timeSeries が `天気概況 (2pt) / 降水確率 (7pt, 6h刻み) / 気温 (4pt, 名古屋地点)` という粒度であることを実 JSON で確認。
+  - **意図との差分**: 委任時の意図と異なる対応はなし。データソースは委任の独断 OK 範囲で Open-Meteo 継続を選択 (理由は上述、判断根拠は本 Done に記録)。
+  - **commit**: 1 論理単位 = 「天気予報セリフ枠 3 件改修 (平日 1 日天気追加 + 服装 dayHi 基準化 + データソース調査)」で 1 commit。push は orc / ユーザー側で実施 (implementer は commit 止め、dashboard repo は remote `mooneclipse/companion-dashboard` あり)。
+  - **残**: 〔ユーザー〕実機 TV (HDMI-1 1920x1080i) で `systemctl --user restart dashboard.service` 後にセリフ枠が `[きょうの天気, 朝の天気, 夜の天気, 占い, ニュース×3]` の順で 30s 切替で回ることを目視確認。明朝 2026-05-29 05:30 発火時の Telegram #maintenance 通知本文も同順で届くか確認 (本 Done の通知本文サンプルは平日 mock データ)。
 
 - 2026-05-28 5:30 dashboard 起動時に「今朝の ren セリフ集」を bot 経由で Telegram #maintenance topic に silent 通知する機能を追加。orc 経由 implementer。**ユーザー要望**: 「ダッシュボードに表示される ren のセリフを 5:30 dashboard 起動時にその朝の分まとめて 1 通として bot 経由で Telegram #maintenance topic に silent 通知してほしい」。Phase 2.6 cold cut 直後で bot 側は安定運用中につき bot 側コードは無改修、既存 Unix socket 通知経路（`$XDG_RUNTIME_DIR/companion-bot.sock`）流用で完結。
   - **新規スクリプト追加** (`bin/dashboard-notify-ren-quotes.py`): Python 3 単独スクリプト、`#!/usr/bin/env python3` shebang + executable。`dashboard-start.sh` から `&` でバックグラウンド起動される想定。内部で「全例外を最上位で握って exit 0」を実装、dashboard 本流（mpv / firefox / sleep infinity）を倒さない。

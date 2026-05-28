@@ -269,7 +269,7 @@
 
   // ─────────────────────────────────────────────────────────────
   // セリフ枠（30 秒ごとに 1 言ずつローテーション）。
-  //   月〜金: 朝天気 → 夜天気 → 占い → ニュース 1..3
+  //   月〜金: 一日天気 → 朝天気 → 夜天気 → 占い → ニュース 1..3
   //   土日:   一日天気 → 占い → ニュース 1..3
   // データソース:
   //   - 天気: lastWeatherData (Open-Meteo の hourly 配列を時刻 match で抽出、新規 fetch 無し)
@@ -313,7 +313,10 @@
   }
 
   function _clothesPhrase(hi) {
-    // 最高気温 → 服装の一言。区切りは妥当な体感ベース。
+    // 「その日の最高気温」→ 服装の一言。slot (1日/朝/夜) を問わず判定対象は固定で
+    // all slot [6,21) の hi を使う。朝 20° / 日中 26° の日に「半袖で十分」が出るよう、
+    // _buildWeatherLine 側で渡される hi は dayHi（all slot 集約）に統一されている。
+    // 区切りは女性向け一般体感（寒がりではない標準）ベース。
     if (hi === null) return '';
     if (hi >= 30) return '半袖でも暑そう';
     if (hi >= 25) return '半袖で十分';
@@ -332,7 +335,11 @@
     return '傘はいらなさそう';
   }
 
-  function _buildWeatherLine(label, stats) {
+  function _buildWeatherLine(label, stats, dayHi) {
+    // 気温の表示は slot ごとの hi/lo（朝枠なら朝の最高/最低）、服装ワードは dayHi（その日の
+    // 最高気温＝all slot [6,21) の hi）で固定判定。傘ワードは slot ごとの popMax を使う
+    // （朝に傘・夜に傘という時間帯固有の意味を残す）。dayHi が null（all slot stats が無い）
+    // のときは服装パートを省略する。
     if (!stats) return null;
     var parts = [];
     if (stats.hi !== null) {
@@ -342,7 +349,7 @@
       }
       parts.push(t);
     }
-    var clothes = _clothesPhrase(stats.hi);
+    var clothes = _clothesPhrase(typeof dayHi === 'number' ? dayHi : null);
     if (clothes) parts.push(clothes);
     var umb = _umbrellaPhrase(stats.popMax);
     if (umb) parts.push(umb);
@@ -351,24 +358,25 @@
   }
 
   function buildWeatherLines() {
-    // 平日 2 件 (朝 7-9 / 夜 18-22) / 土日 1 件 (一日 6-21)。半開区間 [from, to) で指定。
-    // データ不在は該当行を返さない。
+    // 平日 3 件 (1 日 6-21 / 朝 7-9 / 夜 18-22) / 土日 1 件 (1 日 6-21)。半開区間 [from, to)。
+    // 服装ロジックは slot を問わず「その日の最高気温（all slot [6,21) の hi）」基準。
+    // データ不在は該当行を返さない（占い・ニュースで cycle は止まらない）。
     var data = lastWeatherData;
     if (!data) return [];
     var base = new Date();
     var dow = base.getDay();
     var isWeekend = (dow === 0 || dow === 6);
+    var all = _wxBandStats(data, base, 6, 21);
+    var dayHi = all && all.hi !== null ? all.hi : null;
     var out = [];
-    if (isWeekend) {
-      var all = _wxBandStats(data, base, 6, 21);
-      var line = _buildWeatherLine('きょうの天気', all);
-      if (line) out.push(line);
-    } else {
+    var allLine = _buildWeatherLine('きょうの天気', all, dayHi);
+    if (allLine) out.push(allLine);
+    if (!isWeekend) {
       var morning = _wxBandStats(data, base, 7, 9);
-      var ml = _buildWeatherLine('朝の天気', morning);
+      var ml = _buildWeatherLine('朝の天気', morning, dayHi);
       if (ml) out.push(ml);
       var evening = _wxBandStats(data, base, 18, 22);
-      var el = _buildWeatherLine('夜の天気', evening);
+      var el = _buildWeatherLine('夜の天気', evening, dayHi);
       if (el) out.push(el);
     }
     return out;
