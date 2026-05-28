@@ -48,9 +48,6 @@
 
   var WX_LS_KEY = 'dashboard.weather.lastgood';
 
-  // セリフ枠が朝/夜の一言を組み立てる際に使う最新の天気レスポンス（fetchWeather 成功時 / localStorage 復帰時に保持）。
-  var lastWeatherData = null;
-
   // 時間ごと予報のスロット（5:30〜9:00 運用の朝に今日の流れを一望できる範囲）。
   var HOURLY_SLOTS = [6, 9, 12, 15, 18, 21];
 
@@ -152,7 +149,6 @@
       .then(function (j) {
         j._fetchedAt = Date.now();
         try { localStorage.setItem(WX_LS_KEY, JSON.stringify(j)); } catch (e) {}
-        lastWeatherData = j;
         renderWeather(j, false);
       })
       .catch(function () {
@@ -163,7 +159,7 @@
           try {
             var j = JSON.parse(raw);
             var ageH = (Date.now() - (j._fetchedAt || 0)) / 3600000;
-            if (ageH < 24) { lastWeatherData = j; renderWeather(j, true); return; }
+            if (ageH < 24) { renderWeather(j, true); return; }
           } catch (e) {}
         }
         renderWeatherUnavailable();
@@ -271,194 +267,44 @@
   // セリフ枠（30 秒ごとに 1 言ずつローテーション）。
   //   月〜金: 一日天気 → 朝天気 → 夜天気 → 占い → ニュース 1..3
   //   土日:   一日天気 → 占い → ニュース 1..3
-  // データソース:
-  //   - 天気: lastWeatherData (Open-Meteo の hourly 配列を時刻 match で抽出、新規 fetch 無し)
-  //   - 占い: 日付 seed の deterministic 関数で 1 件生成（双子座固定、外部 API 無し）
-  //   - ニュース: helper の /news (NHK RSS proxy) を 1 時間ごとにポーリングしてキャッシュ
-  // 失敗時は該当一言だけスキップ（ローテーション全体は止めない）。fetch 失敗時の retry/backoff は無し。
+  // データソース: helper の GET /quotes（JST 当日 cache、bot 通知と同じ JSON）。
+  //   起動時に 1 回 fetch して queue にする。dashboard は 5:30-9:00 だけ動く想定なので
+  //   日跨ぎは起こらず、refill 時も同じ cache を再利用する（同日内は何度叩いても同一 JSON）。
+  //   helper unreachable / parse 失敗は queue 空のまま cycle が回らないだけ（既存 retry なし方針）。
   // ─────────────────────────────────────────────────────────────
   var QUOTE_INTERVAL_MS = 30 * 1000;
   var QUOTE_FADE_MS = 320;             // style.css .quote-text transition と合わせる
-  var NEWS_POLL_MS = 3600 * 1000;      // 1 時間ごと
-  var lastNewsItems = [];
+  var QUOTES_PORT = (CFG.nowPlaying && CFG.nowPlaying.port) || 47823;  // /np と同じ helper
+  var lastQuotesPayload = null;        // helper /quotes の最新レスポンス（同日同一）
 
-  // ── 天気: 時刻帯の代表値抽出 + 服装/傘の文言化 ──────────────────
-  function _wxBandStats(data, baseDate, hourFrom, hourTo) {
-    // data.hourly から baseDate の hourFrom..hourTo 時の温度・降水確率・代表 weather_code を集約。
-    // 区間は半開区間 [hourFrom, hourTo)（Open-Meteo hourly は「時刻開始の 1 時間区間」セマンティクス）。
-    // 該当データが 1 件も無ければ null。
-    if (!data || !data.hourly) return null;
-    var times = data.hourly.time || [];
-    var temps = data.hourly.temperature_2m || [];
-    var codes = data.hourly.weather_code || [];
-    var pops  = data.hourly.precipitation_probability || [];
-    var y = baseDate.getFullYear(), m = baseDate.getMonth(), d = baseDate.getDate();
-    var tHi = null, tLo = null, popMax = null, code = null;
-    for (var i = 0; i < times.length; i++) {
-      var t = new Date(times[i]);
-      if (t.getFullYear() !== y || t.getMonth() !== m || t.getDate() !== d) continue;
-      var h = t.getHours();
-      if (h < hourFrom || h >= hourTo) continue;
-      var tv = temps[i];
-      if (typeof tv === 'number') {
-        if (tHi === null || tv > tHi) tHi = tv;
-        if (tLo === null || tv < tLo) tLo = tv;
-      }
-      var pv = pops[i];
-      if (typeof pv === 'number' && (popMax === null || pv > popMax)) popMax = pv;
-      if (code === null && typeof codes[i] === 'number') code = codes[i];
-    }
-    if (tHi === null && popMax === null) return null;
-    return { hi: tHi, lo: tLo, popMax: popMax, code: code };
-  }
-
-  function _clothesPhrase(hi) {
-    // 「その日の最高気温」→ 服装の一言。slot (1日/朝/夜) を問わず判定対象は固定で
-    // all slot [6,21) の hi を使う。朝 20° / 日中 26° の日に「半袖で十分」が出るよう、
-    // _buildWeatherLine 側で渡される hi は dayHi（all slot 集約）に統一されている。
-    // 区切りは女性向け一般体感（寒がりではない標準）ベース。
-    if (hi === null) return '';
-    if (hi >= 30) return '半袖でも暑そう';
-    if (hi >= 25) return '半袖で十分';
-    if (hi >= 20) return '長袖シャツで';
-    if (hi >= 15) return '薄手の上着があると安心';
-    if (hi >= 10) return '上着をしっかり';
-    if (hi >= 5)  return 'コートで';
-    return '厚手のコートで';
-  }
-
-  function _umbrellaPhrase(popMax) {
-    if (popMax === null) return '';
-    if (popMax >= 70) return '傘は必須';
-    if (popMax >= 50) return '傘があった方がいいよ';
-    if (popMax >= 30) return '折りたたみ傘があると安心';
-    return '傘はいらなさそう';
-  }
-
-  function _buildWeatherLine(label, stats, dayHi) {
-    // 気温の表示は slot ごとの hi/lo（朝枠なら朝の最高/最低）、服装ワードは dayHi（その日の
-    // 最高気温＝all slot [6,21) の hi）で固定判定。傘ワードは slot ごとの popMax を使う
-    // （朝に傘・夜に傘という時間帯固有の意味を残す）。dayHi が null（all slot stats が無い）
-    // のときは服装パートを省略する。
-    if (!stats) return null;
-    var parts = [];
-    if (stats.hi !== null) {
-      var t = '最高 ' + Math.round(stats.hi) + '°';
-      if (stats.lo !== null && Math.round(stats.lo) !== Math.round(stats.hi)) {
-        t += ' / 最低 ' + Math.round(stats.lo) + '°';
-      }
-      parts.push(t);
-    }
-    var clothes = _clothesPhrase(typeof dayHi === 'number' ? dayHi : null);
-    if (clothes) parts.push(clothes);
-    var umb = _umbrellaPhrase(stats.popMax);
-    if (umb) parts.push(umb);
-    if (!parts.length) return null;
-    return label + '：' + parts.join('、');
-  }
-
-  function buildWeatherLines() {
-    // 平日 3 件 (1 日 6-21 / 朝 7-9 / 夜 18-22) / 土日 1 件 (1 日 6-21)。半開区間 [from, to)。
-    // 服装ロジックは slot を問わず「その日の最高気温（all slot [6,21) の hi）」基準。
-    // データ不在は該当行を返さない（占い・ニュースで cycle は止まらない）。
-    var data = lastWeatherData;
-    if (!data) return [];
-    var base = new Date();
-    var dow = base.getDay();
-    var isWeekend = (dow === 0 || dow === 6);
-    var all = _wxBandStats(data, base, 6, 21);
-    var dayHi = all && all.hi !== null ? all.hi : null;
-    var out = [];
-    var allLine = _buildWeatherLine('きょうの天気', all, dayHi);
-    if (allLine) out.push(allLine);
-    if (!isWeekend) {
-      var morning = _wxBandStats(data, base, 7, 9);
-      var ml = _buildWeatherLine('朝の天気', morning, dayHi);
-      if (ml) out.push(ml);
-      var evening = _wxBandStats(data, base, 18, 22);
-      var el = _buildWeatherLine('夜の天気', evening, dayHi);
-      if (el) out.push(el);
-    }
-    return out;
-  }
-
-  // ── 占い: 日付 seed の deterministic 生成（双子座固定） ──────────
-  // 同じ日付なら何度生成しても同じ結果（リロードで変わらない）。
-  var FORTUNE_LUCK = ['仕事', '勉強', '恋愛', '健康', '対人', '金銭', '創作', '趣味'];
-  var FORTUNE_LEVEL = ['絶好調', '好調', 'まずまず', '穏やか', '一息つくとよさそう'];
-  var FORTUNE_COLOR = ['青', '緑', '黄', '橙', '赤', '紫', '白', '黒', '金', '銀', '桃', '水色'];
-  var FORTUNE_TIP = [
-    '小さな約束を守ると流れが整う',
-    '深呼吸を 3 回するだけで視界が広がる',
-    '誰かに一言「ありがとう」を伝えてみよう',
-    '机の上を 5 分だけ片付けるといい',
-    '迷ったら静かな方を選ぶと吉',
-    'いつもより 5 分早く出ると拾い物がある',
-    '無理せず休む勇気が今日の運を呼ぶ',
-    '誰かの話を最後まで聞くと運が回る'
-  ];
-
-  function _fortuneSeed(date) {
-    // YYYYMMDD を seed 化。Mulberry32 風 32bit ハッシュ。
-    var s = date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
-    var h = s | 0;
-    h = (h ^ 61) ^ (h >>> 16);
-    h = (h + (h << 3)) | 0;
-    h = h ^ (h >>> 4);
-    h = Math.imul(h, 0x27d4eb2d);
-    h = h ^ (h >>> 15);
-    return h >>> 0;
-  }
-
-  function _mulberry32(seed) {
-    var s = seed >>> 0;
-    return function () {
-      s = (s + 0x6D2B79F5) >>> 0;
-      var t = s;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  function buildFortuneLine() {
-    var d = new Date();
-    var rnd = _mulberry32(_fortuneSeed(d));
-    var luck = FORTUNE_LUCK[Math.floor(rnd() * FORTUNE_LUCK.length)];
-    var level = FORTUNE_LEVEL[Math.floor(rnd() * FORTUNE_LEVEL.length)];
-    var color = FORTUNE_COLOR[Math.floor(rnd() * FORTUNE_COLOR.length)];
-    var tip = FORTUNE_TIP[Math.floor(rnd() * FORTUNE_TIP.length)];
-    return 'きょうの双子座：' + luck + '運が' + level + '。ラッキーカラーは' + color + '。' + tip + '。';
-  }
-
-  // ── ニュース: helper /news を 1 時間ごとポーリング ───────────────
-  var NEWS_PORT = (CFG.nowPlaying && CFG.nowPlaying.port) || 47823;  // /np と同じ helper
-  function pollNews() {
-    fetch('http://127.0.0.1:' + NEWS_PORT + '/news', { cache: 'no-store' })
+  // helper /quotes を fetch して payload を保持。queue 構築は payload から純粋関数で。
+  function fetchQuotes(callback) {
+    fetch('http://127.0.0.1:' + QUOTES_PORT + '/quotes', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (j) {
-        if (j && j.items && j.items.length) lastNewsItems = j.items.slice(0, 3);
+        if (j && typeof j === 'object') lastQuotesPayload = j;
+        if (callback) callback();
       })
-      .catch(function () { /* 失敗時は前回値保持。retry/backoff 無し */ });
+      .catch(function () {
+        // helper unreachable: 既存方針どおり retry/backoff しない。queue は空のままで cycle 静止。
+        if (callback) callback();
+      });
   }
 
-  function buildNewsLines() {
-    if (!lastNewsItems || !lastNewsItems.length) return [];
-    var out = [];
-    for (var i = 0; i < lastNewsItems.length && i < 3; i++) {
-      out.push('ニュース：' + lastNewsItems[i]);
-    }
-    return out;
-  }
-
-  // ── ローテーション: 1 cycle 分の一言キューを build → 順次表示 ──
+  // ── ローテーション: payload から 1 cycle 分の一言キューを build ──
   function buildQuoteQueue() {
     var q = [];
-    var wx = buildWeatherLines();
-    for (var i = 0; i < wx.length; i++) q.push(wx[i]);
-    q.push(buildFortuneLine());
-    var news = buildNewsLines();
-    for (var j = 0; j < news.length; j++) q.push(news[j]);
+    var p = lastQuotesPayload;
+    if (!p) return q;
+    var weather = p.weather || [];
+    for (var i = 0; i < weather.length; i++) {
+      if (typeof weather[i] === 'string' && weather[i]) q.push(weather[i]);
+    }
+    if (typeof p.fortune === 'string' && p.fortune) q.push(p.fortune);
+    var news = p.news || [];
+    for (var j = 0; j < news.length && j < 3; j++) {
+      if (typeof news[j] === 'string' && news[j]) q.push(news[j]);
+    }
     return q;
   }
 
@@ -479,8 +325,9 @@
     function showNext() {
       refillIfNeeded();
       if (!queue.length) {
-        // 何も組み立てられなかった（起動直後で weather 未取得 & news 未取得）。
-        // 骨格は維持しつつ「…」のまま、次周期で再試行。
+        // 何も組み立てられなかった（helper unreachable / 空 payload）。
+        // 骨格は維持しつつ「…」のまま、次周期で再試行（次の interval で fetch しないので
+        // 静止のまま。retry/backoff は持たない既存方針と整合）。
         return;
       }
       el.textContent = queue[idx];
@@ -497,10 +344,12 @@
       progressEl.classList.add('is-running');
     }
 
-    // 初回: queue を即組んで 1 言目を表示（fetchWeather が走り始めた直後で
-    // lastWeatherData が未着でも、占いは無条件で出るので最低 1 言は描画される）。
-    queue = buildQuoteQueue();
-    if (queue.length) { el.textContent = queue[0]; idx = 1; }
+    // 起動時に helper /quotes を 1 回 fetch。fetch 結果到着後に queue を組んで 1 言目を表示。
+    // fetch 失敗時は payload null → queue 空 → showNext が早期 return で骨格維持。
+    fetchQuotes(function () {
+      queue = buildQuoteQueue();
+      if (queue.length) { el.textContent = queue[0]; idx = 1; }
+    });
     restartProgress();
 
     setInterval(function () {
@@ -513,10 +362,6 @@
         }, QUOTE_FADE_MS);
       } catch (e) {}
     }, QUOTE_INTERVAL_MS);
-
-    // ニュースは起動直後 + 1 時間ごとに helper から取得。
-    try { pollNews(); } catch (e) {}
-    setInterval(function () { try { pollNews(); } catch (e) {} }, NEWS_POLL_MS);
   })();
 
   // ─────────────────────────────────────────────────────────────

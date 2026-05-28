@@ -66,10 +66,23 @@ fi
 python3 "$DASH_DIR/server/nowplaying-helper.py" &
 echo "dashboard-start.sh: nowplaying-helper started (pid $!)"
 
+# ── 4.4 helper の HTTP listen が立ち上がるまで短時間 readiness 待機。
+#   notify (step 4.5) は helper /quotes を fetch するため、起動直後の race で
+#   helper unreachable になり「helper unreachable で送らず exit 0」に流れるのを防ぐ。
+#   client 側 retry/backoff は持たない設計原則は維持。これは server (helper) の readiness
+#   待機で別カテゴリ（curl が成功 = listen 確立を 1 回確認）。最大 5 秒 (25 回 × 0.2 秒)、
+#   超えても notify は起動 (notify 側で接続失敗を exit 0 でハンドル済み)。
+#   port は helper のデフォルト 47823 を hardcode。helper 起動オプションを変えたら追従要。
+for _ in $(seq 1 25); do
+  curl -sf -m 0.5 http://127.0.0.1:47823/np >/dev/null 2>&1 && break
+  sleep 0.2
+done
+
 # ── 4.5 ren セリフ集を bot 経由で Telegram #maintenance topic に silent 通知（1 日 1 通制限）。
 #   スクリプト内部で「同日内は skip」「全例外を握って exit 0」を実装しているため、ここでは
 #   バックグラウンド起動して即次へ進む（mpv / firefox 起動の本流を遅らせない / 失敗で倒さない）。
-#   詳細: bin/dashboard-notify-ren-quotes.py 冒頭の docstring 参照。
+#   セリフ内容は helper の GET /quotes（同日 cache）から取得 → dashboard ブラウザ表示と
+#   完全一致が保証される。詳細: bin/dashboard-notify-ren-quotes.py 冒頭の docstring 参照。
 python3 "$DASH_DIR/bin/dashboard-notify-ren-quotes.py" &
 echo "dashboard-start.sh: ren-quotes notify dispatched (pid $!)"
 

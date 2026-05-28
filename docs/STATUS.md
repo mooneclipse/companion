@@ -43,15 +43,17 @@
   - **B5 が NG だった場合の contingency**（build 時判断、runtime fallback ではない）: now-playing helper に `GET /weather` を足して Open-Meteo をプロキシ、app.js は `http://127.0.0.1:<port>/weather` を叩く（app.js 1 行 + helper ~10 行）。
 - **ゴミの日**: `web/dashboard-config.js`（`<script src>` で読み込む。`file://` から `fetch()` は弾かれるが `<script src>` は通る）に `window.DASHBOARD_CONFIG = { weather:{lat,lon,tz}, garbage:{rules:[...]} }`。クライアント JS が次回収集日＋種別を計算（純ローカル計算、retry 罠なし、5:30–9:00 で日跨ぎなし）。日付ロールオーバー検知で再計算。config 欠落/不正 → 「ゴミ設定なし」placeholder。**自治体カレンダー取込はしない**＝年末年始の振替等は表示が外れる（本ファイル明記済み）。
 - **now-playing**: クライアント JS が `http://127.0.0.1:<port>/np` を ~2-3s ポーリング（helper が ACAO:* を返すので `file://` から OK）。曲なし/mpv 不在/fetch 失敗 → ごく薄く「♪ —」or 非表示。**絶対にレイアウトを揺らさない・エラーを上げない**。最も使い捨て可能な要素。fetch 失敗時は前状態保持 or 静かにクリア。
-- **セリフ枠（キャラ隣 `#quote-text`）**: 30 秒ごとに 1 言ずつフェード切替で表示（既存 `QUOTE_INTERVAL_MS=30s` / `.is-fading` transition は流用）。ローテーション内容は cycle 開始時に動的 build:
-  - 月〜金: `[朝の天気, 夜の天気, 占い, ニュース×1〜3]`
-  - 土日:   `[一日の天気, 占い, ニュース×1〜3]`
-  - **天気**: 既存 `fetchWeather()` が 1 時間ごとに取得する Open-Meteo hourly レスポンスを `lastWeatherData` に保持し、cycle build 時に時刻帯 match（朝 7-9 / 夜 18-22 / 一日 6-21）で温度・降水確率を集約 → 服装（半袖/長袖/上着/コート…）+ 傘有無（pop ≥ 70/50/30）の一言を組み立てる。**新規 API call 無し**（既存 fetch の再利用）。データ不在時はその一言だけスキップ（cycle は止めない）。
-  - **占い（双子座固定）**: 日付 (YYYYMMDD) を seed にした deterministic 関数（Mulberry32）で `[運勢領域, 強度, ラッキーカラー, ひとこと tip]` を phrase pool から選択。**外部 API 無し**（CSP / file:// origin 安全、API key 不要）。同日内はリロードでも同じ結果。星座固定（双子座のみ）、他星座対応は先回り雛形なので不採用。
-  - **ニュース**: helper の `GET /news` を 1 時間ごとにポーリング（`lastNewsItems` に最大 3 件保持）。helper 側は NHK NEWS WEB RSS (`https://www.nhk.or.jp/rss/news/cat0.xml`) を proxy 取得し helper メモリ内 TTL=30 分でキャッシュ（過剰アクセス防止）。**取得元選定理由**: 認証不要・日本語主要ニュース・公開 RSS・API key 不要。fetch 失敗時は `{"items": []}` を 200 で返す（既存 `/np` と同じ pattern、retry/backoff 無し）。client 側も失敗時は前回値保持。
-  - **CORS 回避**: file:// origin から外部 RSS への直 fetch は CORS 制約で弾かれるため helper proxy 1 段で受ける。STATUS の「天気」B5 contingency と同じ方針（今回は build 時に必要と判断、runtime fallback ではない）。
-  - **失敗時の振る舞い**: weather/news どちらかが空でも cycle は回る（該当一言だけスキップ）。占いは無条件で生成できるため最低 1 言は描画される。retry/backoff は一切持たない（client は次の周期で再試行、helper は次回 client 呼びで再 fetch）。
-  - **不採用**: ① 外部 news API への直 fetch（CORS で破綻、helper proxy 1 段で構造的に解決）。② 多自治体・多星座対応の config 化（先回り雛形）。③ 文言 phrase pool の `dashboard-config.js` 分離（同上、文言改修は app.js 内 1 箇所修正で足りる）。
+- **セリフ枠（キャラ隣 `#quote-text`）**: 30 秒ごとに 1 言ずつフェード切替で表示（既存 `QUOTE_INTERVAL_MS=30s` / `.is-fading` transition は流用）。ローテーション内容は **helper の `GET /quotes` を集約点**にして bot 通知と dashboard ブラウザで完全一致させる:
+  - 月〜金: `[きょうの天気, 朝の天気, 夜の天気, 占い, ニュース×1〜3]`
+  - 土日:   `[きょうの天気, 占い, ニュース×1〜3]`
+  - **helper `/quotes` 集約 (2026-05-29 改修)**: helper (`server/nowplaying-helper.py`) が JST 当日の日付を key に in-memory cache で 1 日 1 回だけ build → 同じ JSON を返す。返り値: `{"date": "YYYY-MM-DD", "weather": [...lines...], "fortune": "...", "news": [...lines...]}`。app.js（ブラウザ）も `bin/dashboard-notify-ren-quotes.py`（bot 通知）も両方 `/quotes` を fetch する **薄いクライアント** に統一。占い random seed / 天気 fetch 時点 / news fetch 時点のズレは helper 側で吸収され、同日中は両者で「同じ占い文 / 同じニュース並び / 同じ天気行」が出る。
+  - **天気** (helper 側): Open-Meteo に直接 fetch（app.js の weather パネル fetch とは別系統、helper 単独で fetch して `_wx_band_stats` で時刻帯 match）。平日 3 行 (きょう 6-21 / 朝 7-9 / 夜 18-22) / 土日 1 行 (きょう 6-21)。各行に **降水確率「降水 N%」を温度の次に表示**（傘ワードの根拠を可視化、傘がいらない日でも数字が出る）。服装ワード (`_clothes_phrase`) は slot を問わず「その日の最高気温 = all slot [6,21) の hi」基準で固定判定、傘ワード (`_umbrella_phrase`) は slot ごとの pop_max で判定（朝に傘・夜に傘の時間帯固有の意味を残す）。データ不在時はその一言だけスキップ（cycle は止めない）。
+  - **占い（双子座固定）** (helper 側): 日付 (YYYYMMDD) を seed にした Python 標準 `random.Random` で deterministic 生成、phrase pool は helper 内集中管理 (`FORTUNE_LUCK` / `FORTUNE_LEVEL` / `FORTUNE_COLOR` / `FORTUNE_TIP`)。**phrase pool 二重管理は解消**（旧版は app.js と notify script で持っており、Mulberry32 / random.Random で結果がズレていた → 改修で helper 集約 + bot 通知と同一に確定）。**外部 API 無し**（CSP / file:// origin 安全、API key 不要）。星座固定（双子座のみ）、他星座対応は先回り雛形なので不採用。
+  - **ニュース** (helper 側): NHK NEWS WEB RSS (`https://www.nhk.or.jp/rss/news/cat0.xml`) を helper が proxy 取得し helper メモリ内 TTL=30 分でキャッシュ（過剰アクセス防止）。`/quotes` は news_items() を流用し「ニュース：<title>」形式で返す。**取得元選定理由**: 認証不要・日本語主要ニュース・公開 RSS・API key 不要。fetch 失敗時は空配列（既存 `/np` と同じ pattern、retry/backoff 無し）。
+  - **CORS 回避**: file:// origin から外部 RSS への直 fetch は CORS 制約で弾かれるため helper proxy 1 段で受ける。改修後は天気 / 占い / news が全て helper 集約になったため、ブラウザの quote frame は **外部 API を一切叩かない**（weather パネル用の Open-Meteo fetch は別系統で残置）。
+  - **失敗時の振る舞い**: helper unreachable / parse 失敗 / fetch 失敗は該当配列が空（または fortune が空文字）で返る。app.js は queue 空のまま cycle 静止、notify script は exit 0 で抜けて翌日再試行（`.state/last-notify-date` を mark しないため）。retry/backoff は一切持たない（次の起動・次の日付ロールオーバーで再 build）。
+  - **/news endpoint の残置**: `GET /news` は app.js から参照されなくなったが、debug 用途で残置（NHK RSS の素データを確認する経路として）。
+  - **不採用**: ① 外部 news API への直 fetch（CORS で破綻、helper proxy 1 段で構造的に解決）。② 多自治体・多星座対応の config 化（先回り雛形）。③ 文言 phrase pool の `dashboard-config.js` 分離（先回り雛形、改修後は helper 1 箇所集約で足りる）。
 - **〔将来〕アドバイス枠**: 今回は実装しない。**markup/ファイルの予約もしない**（PROJECT.md が禁じる「先回りの雛形増やし」）。やってよいのは「将来 1 要素増えても再設計せず吸収できる柔らかいレイアウト」方針のみ。可視帯の上 ~100px を「呼吸スペース（ただのマージン）」として空け、時計を帯の上寄りに置く（垂直中央には置かない＝後でアドバイス band を足したとき時計が下にずれて fold に近づくのを防ぐ）。HTML に `<!-- 将来: アドバイス band はここ -->` のコメント 1 行のみ。
 
 ### 画面レイアウト（v0.2: industrial-refined / dashboard-redesign-2 team で確定）
@@ -231,18 +233,44 @@ dashboard/
 - [x] **時間ごと予報 strip** — 2026-05-16 実装。天気パネル下端に 6/9/12/15/18/21 時の 6 スロット (時刻 / アイコン / 気温 / 降水%) を追加。既存 `forecast_days=1` のレスポンスで賄える。`index.html` / `app.js` (renderHourly) / `style.css` (.wx-hourly grid) 更新。
 - [x] **v0.2 redesign（industrial-refined）** — 2026-05-16 実装。team `dashboard-redesign-2` (architect / ux / devil) で議論し本 STATUS の画面レイアウト section を全面書き換え。Inter / Noto Sans JP を撤去し Josefin Sans + DM Sans + Noto Sans CJK JP を自己ホスト (`web/fonts/`)。サイズリセット (weather/garbage 縮小・hourly 独立行)・column-gap 60px・vignette overlay・letter-spacing 精緻化を反映。grain と border-top は devil 反証で不採用。`app.js` 変更ゼロ。
 - [x] **〔ユーザー〕title 一致引き直しの本番確認** — 2026-05-25 朝 **失敗観測** (5/23 朝 user TV 確認漏れ、5/24 は journal 観察のみで TV 物理確認なし)。5/25 朝 user TV で「ダッシュボード非表示」報告 → journal: `firefox window not found within timeout — leaving as-is`、窓 0x04800003 が LVDS-1 座標 1974,153 へデフォルト着地、TV 黒。title 反映遅延 race が原因。設計引き直し → `--kiosk --kiosk-monitor=1` へ軸移行（次の Done エントリ参照）。
-- [ ] **〔ユーザー〕`--kiosk-monitor=1` 引き直しの本番確認**: 明朝 2026-05-26 05:30 発火で TV に dashboard が全画面表示されるか物理確認。journal の `firefox launched (kiosk on monitor 1 = HDMI-1)` 1 行のみ確認できれば成功（旧 polling・配置ログは消滅）。NG なら L113 ルールから外れた構造引き直しの再評価（`--kiosk-monitor` 番号体系 / firefox バージョン挙動）。
-- [ ] **B7 拡張系（v0.2 redesign 用の実機確認）**: 下記 B24-B27 を本番初発火 or 手動 start で目視
-  - B24: fold 高さ実測（v0.2 予測 ~696px が可視域内か）
-  - B25: vignette 中心 `50% 40%` で端部の wx-sub / gb-next が暗くなりすぎないか
-  - B26: `.gb-when` の日本語+ASCII 混在見た目（"あす(水)" のひらがな・漢字は Noto fallback、括弧 2 文字のみ Josefin）。NG なら `.gb-when` を `var(--font-body)` に 1 行変更（対症療法 2 周目ルール抵触なし）
-  - B27: Noto Sans CJK JP weight 700 スナップ表示（`.gb-when` `.wx-temp` `.time` の日本語要素、ただし数字主体なので影響軽微）
+- [x] **〔ユーザー〕`--kiosk-monitor=1` 引き直しの本番確認**: 2026-05-28 朝 user TV 物理確認で機能成功 (Done 詳細参照)。
+- [x] **B7 拡張系（v0.2 redesign 用の実機確認）**: B24-B27 を 2026-05-28 朝の本番表示で目視確認、崩れ・違和感なし (Done 詳細参照)。
 
 ## In progress
 
-（なし、2026-05-28 天気予報セリフ枠改修 3 件 Done 移管完了）
+（なし、2026-05-29 セリフ集 helper /quotes 集約 + 降水確率表示 Done 移管完了）
 
 ## Done
+
+- 2026-05-29 セリフ集を helper `/quotes` 集約に統一 + 天気各行に降水確率を表示 (orc 経由 implementer)。**ユーザー要望**: 「bot 経由 Telegram 通知と dashboard ブラウザ表示で同じ占い文 / 同じ news 並び / 同じ天気が出るようにしたい。さらに天気各行に降水確率を出して、傘がいらない根拠を読み取れるようにしたい」。旧実装は app.js (Mulberry32 JS) と notify script (random.Random Python) で占いを別実装しており同日でも結果が違った + news も時点ズレで順序がズレる可能性があった。
+  - **A. helper `GET /quotes` 新設** (`server/nowplaying-helper.py`): 返り値 `{"date": "YYYY-MM-DD", "weather": [...], "fortune": "...", "news": [...]}` を JST 当日の日付 key で in-memory cache。同日 1 回だけ build → 同じ JSON を返す。日付ロールオーバーで自動再 build（dashboard は 5:30-9:00 運用なので実質起動毎に新規 build）。failure 時は空配列で 200 を返す（既存 `/np` / `/news` と同方針、retry/backoff 無し）。helper に Open-Meteo 直 fetch / NHK RSS proxy（既存）/ 占い deterministic 生成（`random.Random(yyyymmdd seed)`）を集約。phrase pool (`FORTUNE_LUCK` / `FORTUNE_LEVEL` / `FORTUNE_COLOR` / `FORTUNE_TIP`) も helper に集中管理化 → 旧版の app.js / notify 二重管理は解消。
+  - **B. 天気行に降水確率「降水 N%」を追加** (`server/nowplaying-helper.py` の `_build_weather_line`): 温度の次に挿入。例 `きょうの天気：最高 28° / 最低 21°、降水 0%、半袖で十分、傘はいらなさそう`。pop_max が None のときは降水パートを省略（温度や服装と同じ扱い）。傘ワードはそのまま残す → 傘ワードの根拠（降水確率の数値）が一目で読み取れる。
+  - **C. notify script を helper `/quotes` 利用に書き換え** (`bin/dashboard-notify-ren-quotes.py`): 旧版の Open-Meteo 直 fetch / fortune 生成 / RSS fetch ロジックを全削除し、helper の `/quotes` を fetch して `weather + [fortune] + news` を順に並べて本文を組む。helper port は `dashboard-config.js` の `nowPlaying.port`（regex で抽出、失敗時はデフォルト 47823）。helper unreachable / JSON parse 失敗は stderr に記録して exit 0（本流非干渉、既存原則踏襲）。`.state/last-notify-date` 同日 skip 機構は維持。送信ヘッダ「今朝の ren セリフ集（YYYY-MM-DD (Day) HH:MM）」も維持。
+  - **D. app.js の quote frame ロジックを `/quotes` 利用に書き換え** (`web/app.js`): 旧版の `buildWeatherLines` / `_wxBandStats` / `_clothesPhrase` / `_umbrellaPhrase` / `_buildWeatherLine` / `FORTUNE_*` / `_fortuneSeed` / `_mulberry32` / `buildFortuneLine` / `buildNewsLines` / `pollNews` / `NEWS_POLL_MS` / `lastNewsItems` を全撤去（app.js のセリフ枠ロジックは ~180 行縮小）。新規 `fetchQuotes(callback)` で起動時に `/quotes` を 1 回 fetch、`lastQuotesPayload` に保持。`buildQuoteQueue()` は payload から純粋関数で queue を組む。helper unreachable / 空 payload 時は queue 空のままで cycle 静止（`showNext` 早期 return、既存 retry/backoff 無し方針と整合）。**weather パネル** (時間ごと予報 strip / 現在気温 / アイコン / `wx-pop`) は変更なし、Open-Meteo 直 fetch する既存ルート維持（生 hourly 配列が要るため）。
+  - **E. helper readiness 待機を dashboard-start.sh に追加** (`bin/dashboard-start.sh`): helper 起動 (`step 4`) と notify 起動 (`step 4.5`) の間に新規 `step 4.4` を挿入。`for _ in $(seq 1 25); do curl -sf -m 0.5 http://127.0.0.1:47823/np >/dev/null 2>&1 && break; sleep 0.2; done` で最大 5 秒の guard。helper 起動直後の race で notify が helper unreachable に落ちて空通知になるのを防ぐ。port 47823 は helper デフォルトを hardcode（コメントで「変えたら追従必要」と記録）。
+  - **対症療法 2 周目ガード非該当**: 既存条件分岐・閾値・fallback の追加延長ではなく、責務再配置（app.js / notify 両側で持っていた weather / fortune / news 計算ロジックを helper 1 箇所に集約）。failure 経路は「helper 失敗 = 空配列を 200 で返す → クライアントは queue 空で静止 or exit 0」の 1 段確定で fallback 連鎖なし。`~/companion/CLAUDE.md` 2 周目ルール準拠。
+  - **動作確認**:
+    - **/quotes 単体**: helper 手動起動 → `curl -sf -m 12 http://127.0.0.1:47823/quotes | python3 -m json.tool` で `date / weather (3 行、平日) / fortune (1 行) / news (3 行)` の JSON が返却。各 weather 行に「降水 N%」が温度の次に入ることを目視確認 (例: `きょうの天気：最高 28° / 最低 21°、降水 0%、半袖で十分、傘はいらなさそう`)。
+    - **cache 同一性**: 同 helper に 2 回叩いて `diff` で 0 行（同一 JSON）。
+    - **notify 単体**: `.state/last-notify-date` 削除後に notify 実行 → `dashboard-notify: sent (321 bytes) for 2026-05-29` + state file 作成。2 回目実行で `already sent for 2026-05-29, skipping`。
+    - **bot socket 不在ケース**: `XDG_RUNTIME_DIR=/tmp/nonexistent-dashboard-test` で notify → stderr `bot socket send failed: [Errno 2] No such file or directory` + exit 0 + state file 作られず（次回再送可能経路）。
+    - **helper unreachable ケース**: helper kill 後に notify → stderr `helper /quotes fetch failed: <urlopen error [Errno 111] Connection refused>` + `no lines built (helper unreachable or empty), skipping` + exit 0。
+    - **notify body と /quotes の完全一致**: notify の `build_message` 出力と `curl /quotes` 出力を並べて、weather 3 行 / fortune 1 行 / news 3 行が一字一句同じであることを確認。
+    - **helper readiness ループ単体**: ① helper 立てない状態でループ → 約 6 秒で抜ける (25 × 0.2s sleep + curl connection-refused は即返、5s 弱の guard 動作)。② 別 shell で 0.6 秒後に helper を起動するジョブを仕込んでループ → 約 1.35 秒で抜ける（helper 起動を検知して即先に進む）。
+    - **app.js payload → queue 変換**: node 単体で `buildQuoteQueue(payload)` を実行、平日 payload で queue length 7、土日 payload で 3、null / 空 payload で 0 を確認。
+    - **syntax check**: `python3 -m py_compile server/nowplaying-helper.py` pass、`python3 -m py_compile bin/dashboard-notify-ren-quotes.py` pass、`bash -n bin/dashboard-start.sh` pass、`node -e "new Function(fs.readFileSync('web/app.js'))"` pass。
+  - **設計判断の記録**:
+    - **/news の残置**: `GET /news` endpoint は app.js から呼ばれなくなったが、debug 用途で残置（NHK RSS 素データを確認する経路）。撤去は別タスクで実施可能、本改修では非干渉に倒した。
+    - **port 47823 の重複**: helper port は `dashboard-config.js` の `nowPlaying.port`（regex で抽出、notify 側）、helper Python の `PORT = 47823` （helper 自身）、dashboard-start.sh の readiness ループ（curl URL 内 hardcode）の 3 箇所で並ぶ。shell から JS を読むのは煩雑なため readiness ループは helper のデフォルトを hardcode で受ける（dashboard-config.js の値を変えるなら helper Python の PORT 定数と shell の URL 両方を追従させる必要、既存と同じ重複構造）。
+    - **fortune phrase pool の helper 集約**: 旧版は app.js と notify で別の pool を持っており、文言追加時に両方更新する drift リスクが残っていた。helper 集約で 1 箇所更新で全クライアントに反映される構造に転換（drift の構造的解消）。
+    - **`lastWeatherData` 撤去**: app.js のセリフ枠が `lastWeatherData` を使わなくなったので変数自体を撤去。weather パネル描画用には `renderWeather` が直接 data を受け取って描画するため影響なし。
+  - **意図との差分**: 委任時の意図と異なる対応はなし。
+  - **commit**: 1 論理単位 = 「セリフ集 helper 集約 + 天気行に降水確率追加」を 1 commit にまとめる（helper / notify / app.js / start.sh / STATUS.md の 5 ファイル）。push は orc / ユーザー側で実施 (implementer は commit 止め)。
+  - **残**: 〔ユーザー〕 ① helper の手動再起動 (memory 常駐のためコード変更を反映するため `pkill -f 'python3.*nowplaying-helper'` ではなく PID 直 kill + 手動 `python3 server/nowplaying-helper.py &`、または `systemctl --user restart dashboard.service` で次回 5:30 起動時に新コードが乗る)。② 実機 TV (HDMI-1 1920x1080i) で `systemctl --user restart dashboard.service` 後にセリフ枠の rotation を目視確認（各 weather 行に「降水 N%」が入ること、`[きょうの天気, 朝の天気, 夜の天気, 占い, ニュース×3]` の順で 30s 切替）。③ 明朝 2026-05-30 (土) 05:30 発火時の Telegram #maintenance 通知本文が `[きょうの天気, 占い, ニュース×1〜3]` の土日パターンで届くか確認、ブラウザ表示と同一であることも確認。
+
+- 2026-05-28 `--kiosk-monitor=1` 本番確認 + B7 拡張系 (B24-B27) 実機確認 完了。
+  - **`--kiosk-monitor=1` 本番確認**: 2026-05-28 朝 user TV 物理確認で機能成功。5/26 引き直し以降 3 朝 (5/26 / 5/27 / 5/28) を含めた本番運用で TV に dashboard が全画面表示されることを確定。journal `firefox launched (kiosk on monitor 1 = HDMI-1)` 1 行で成功。L113「3 朝連続失敗」ルール不発動。`--kiosk-monitor=1` への軸移行 (placement 軸、polling 廃止、fallback 連鎖なし) が想定通り機能。
+  - **B7 拡張系 (B24-B27)**: 同朝の TV 表示で崩れ・違和感なし。B24 fold 高さ (~696px 予測) / B25 vignette 中心 `50% 40%` 端部視認性 / B26 `.gb-when` 日本語+ASCII 混在見た目 / B27 Noto Sans CJK JP weight 700 スナップ表示、いずれも目視 OK で `.gb-when` の `var(--font-body)` 切替・vignette 中心調整等の追加対応は不要。
 
 - 2026-05-28 天気予報セリフ枠の改修 3 件 (orc 経由 implementer)。
   - **A. 平日セリフに「1 日の天気」を頭出しに追加**: 平日 = `[きょうの天気, 朝の天気, 夜の天気, 占い, ニュース×3]` (4→5 行)、土日は現状維持 `[きょうの天気, 占い, ニュース×3]`。`web/app.js` の `buildWeatherLines` 並び順を変更 (all → morning → evening) + 冒頭コメント更新、`bin/dashboard-notify-ren-quotes.py` の同等関数も同順に変更 + docstring 更新。
