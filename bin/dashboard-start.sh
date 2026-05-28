@@ -72,7 +72,7 @@ echo "dashboard-start.sh: nowplaying-helper started (pid $!)"
 #   client 側 retry/backoff は持たない設計原則は維持。これは server (helper) の readiness
 #   待機で別カテゴリ（curl が成功 = listen 確立を 1 回確認）。最大 5 秒 (25 回 × 0.2 秒)、
 #   超えても notify は起動 (notify 側で接続失敗を exit 0 でハンドル済み)。
-#   port は helper のデフォルト 47823 を hardcode。helper 起動オプションを変えたら追従要。
+#   port は helper のデフォルト 47823 を hardcode（dashboard-config.js / helper PORT 定数 / 本行の 3 箇所同期）。
 for _ in $(seq 1 25); do
   curl -sf -m 0.5 http://127.0.0.1:47823/np >/dev/null 2>&1 && break
   sleep 0.2
