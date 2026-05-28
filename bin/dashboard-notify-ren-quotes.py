@@ -195,7 +195,7 @@ def _build_weather_line(label, stats, day_hi):
         parts.append(umb)
     if not parts:
         return None
-    return f"{label}：{', '.join(parts)}"
+    return f"{label}：{'、'.join(parts)}"
 
 
 def build_weather_lines(now):
