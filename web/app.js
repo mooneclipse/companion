@@ -265,8 +265,8 @@
 
   // ─────────────────────────────────────────────────────────────
   // セリフ枠（30 秒ごとに 1 言ずつローテーション）。
-  //   月〜金: 一日天気 → 朝天気 → 夜天気 → 占い → ニュース 1..3
-  //   土日:   一日天気 → 占い → ニュース 1..3
+  //   月〜金: 一日天気 → 朝天気 → 夜天気 → 占い → ニュース 1..3 (→ Anthropic 新着)
+  //   土日:   一日天気 → 占い → ニュース 1..3 (→ Anthropic 新着)
   // データソース: helper の GET /quotes（JST 当日 cache、bot 通知と同じ JSON）。
   //   起動時に 1 回 fetch して queue にする。dashboard は 5:30-9:00 だけ動く想定なので
   //   日跨ぎは起こらず、refill 時も同じ cache を再利用する（同日内は何度叩いても同一 JSON）。
@@ -304,6 +304,11 @@
     var news = p.news || [];
     for (var j = 0; j < news.length && j < 3; j++) {
       if (typeof news[j] === 'string' && news[j]) q.push(news[j]);
+    }
+    // Anthropic 新着リリース（通常 0 件、新モデル/製品発表があった日だけ 1〜数件）。
+    var anthropic = p.anthropic || [];
+    for (var k = 0; k < anthropic.length; k++) {
+      if (typeof anthropic[k] === 'string' && anthropic[k]) q.push(anthropic[k]);
     }
     return q;
   }

@@ -27,6 +27,7 @@
 - 1 クライアント・低頻度ポーリング（~2.5s）前提。リクエスト毎に接続して即閉じる。
 """
 import datetime
+import html
 import json
 import os
 import random
@@ -150,15 +151,156 @@ def news_items():
     return []
 
 
+# ─── Anthropic 公式 news の「新着リリース」見出し ───────────────────────
+# 取得元: https://www.anthropic.com/news（公式 RSS / Atom / sitemap いずれも無いので
+# HTML をパースする）。改版に強い要素のみに依存する設計:
+#   - href="/news/<slug>" … ルーティング由来。記事の一意キー（CSS module ハッシュに非依存）。
+#   - 各 <a> ブロック内のテキストノードに [日付, カテゴリ, タイトル] が並ぶ。既知カテゴリ語
+#     (Product / Announcements / ...) を 1 つ拾って「製品・モデル発表」を判定する。
+#   - タイトルは記事ページの <meta property="og:title">（SEO 必須で最も安定）から取得。
+# Cloudflare がブラウザ以外の UA を 403 で弾く（default urllib UA = 403 を実測。
+# memory: reference_mintupgrade_cloudflare と同系）ため、ブラウザ UA を明示する。
+#
+# 「製品・モデル発表のみ」要件 → カテゴリ Product だけ通す。資金調達/採用 (Announcements)・
+# オフィス開設・ポリシー等は弾く。launch が Product 以外のカテゴリで出た場合は拾えないので、
+# その時は ANTHROPIC_CATEGORIES を広げる（経緯は docs/STATUS.md に記録）。
+ANTHROPIC_NEWS_URL = "https://www.anthropic.com/news"
+ANTHROPIC_ARTICLE_BASE = "https://www.anthropic.com/news/"
+# Cloudflare 回避用のブラウザ UA（companion-dashboard UA だと 403）。
+ANTHROPIC_UA = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+ANTHROPIC_CATEGORIES = {"Product"}  # 通すカテゴリ。広げる時はここに追加（STATUS 参照）。
+# index ブロックから拾う既知カテゴリ語（タイトルとカテゴリを区別するための語彙）。
+ANTHROPIC_KNOWN_CATEGORIES = {
+    "Product", "Announcements", "Policy", "Societal Impacts",
+    "Interpretability", "Research", "Company", "Alignment", "Education",
+}
+ANTHROPIC_MAX_TITLES = 3       # 1 朝に出す上限（通常 0〜1 件。多発時のフラッド防止）。
+ANTHROPIC_FETCH_TIMEOUT = 3.0  # index / 記事 1 本あたり。/quotes 全体の予算は notify 側参照。
+ANTHROPIC_SEEN_CAP = 100       # state に保持する既出 slug 数（index 表示は ~11 件なので十分）。
+ANTHROPIC_STATE_FILE = os.path.join(DASH_DIR, ".state", "anthropic-news-state.json")
+
+
+def _anthropic_fetch_html(url):
+    """ブラウザ UA で 1 URL を取得して本文を返す。失敗は ValueError/OSError を投げる。"""
+    req = urllib.request.Request(url, headers={"User-Agent": ANTHROPIC_UA})
+    with urllib.request.urlopen(req, timeout=ANTHROPIC_FETCH_TIMEOUT) as resp:
+        raw = resp.read(2 * 1024 * 1024)  # 2MB 上限（配信元事故対策）
+    return raw.decode("utf-8", "replace")
+
+
+def _anthropic_index():
+    """news index を fetch し [(slug, category), ...] を掲載順で返す。失敗時 []。
+    同一 slug（featured と list の重複等）は最初の 1 件のみ採用。category は不明なら None。
+    """
+    try:
+        page = _anthropic_fetch_html(ANTHROPIC_NEWS_URL)
+    except (OSError, ValueError):
+        return []
+    out = []
+    seen = set()
+    # 記事リンクブロック <a href="/news/slug" ...> ... </a> を非貪欲で切り出す。
+    for m in re.finditer(r'<a\s+href="/news/([a-z0-9-]+)"[^>]*>(.*?)</a>', page, re.DOTALL):
+        slug = m.group(1)
+        if slug in seen:
+            continue
+        seen.add(slug)
+        category = None
+        for t in re.findall(r'>([^<>]+)<', m.group(2)):
+            t = html.unescape(t).strip()
+            if t in ANTHROPIC_KNOWN_CATEGORIES:
+                category = t
+                break
+        out.append((slug, category))
+    return out
+
+
+def _anthropic_title(slug):
+    """記事ページの og:title を返す。取得 / 抽出失敗時 None。"""
+    try:
+        page = _anthropic_fetch_html(ANTHROPIC_ARTICLE_BASE + slug)
+    except (OSError, ValueError):
+        return None
+    m = re.search(r'<meta\s+property="og:title"\s+content="([^"]*)"', page)
+    if not m:
+        return None
+    title = html.unescape(m.group(1)).strip()
+    return title or None
+
+
+def _load_anthropic_state():
+    try:
+        with open(ANTHROPIC_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_anthropic_state(state):
+    """atomic 書き込み（tmp + os.replace）。失敗は握り潰す（次回再試行、無音破綻させない）。"""
+    try:
+        os.makedirs(os.path.dirname(ANTHROPIC_STATE_FILE), exist_ok=True)
+        tmp = ANTHROPIC_STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+        os.replace(tmp, ANTHROPIC_STATE_FILE)
+    except OSError:
+        pass
+
+
+def _anthropic_new_titles(today_ymd):
+    """JST 当日に「前回 build 以降 新規に出た Product カテゴリ記事」のタイトル一覧を返す。
+
+    state を 1 回引いて確定する（CLAUDE.md「state を持つ側を引いて 1 回で決める」準拠）:
+      - state.date が今日なら shown をそのまま返す（同日再 build / helper 再起動でも不変）。
+      - 初回（seen 未保有）は現状の全 slug を seen に取り込むだけで何も出さない
+        （初回デプロイ時に過去記事を一斉通知しないため）。
+      - index fetch 失敗時は state を進めず [] を返す（次回起動で再試行。retry ループは作らない）。
+    new 判定は slug 差分（日付パース・TZ に依存しない）。新着のうち Product のみ og:title を引く。
+    """
+    state = _load_anthropic_state()
+    if state.get("date") == today_ymd and isinstance(state.get("shown"), list):
+        return state["shown"]
+    index = _anthropic_index()
+    if not index:
+        return []  # 取得失敗: state を進めない（既存 /np /news と同じ no-retry 方針）
+    first_run = "seen" not in state
+    seen = list(state.get("seen", []))
+    seen_set = set(seen)
+    titles = []
+    if not first_run:
+        for slug, category in index:
+            if slug in seen_set or category not in ANTHROPIC_CATEGORIES:
+                continue
+            t = _anthropic_title(slug)
+            if t:
+                titles.append(t)
+            if len(titles) >= ANTHROPIC_MAX_TITLES:
+                break
+    # 現状の全 slug を「評価済み」として seen に取り込む（カテゴリ問わず）。
+    for slug, _ in index:
+        if slug not in seen_set:
+            seen.append(slug)
+            seen_set.add(slug)
+    # ThreadingHTTPServer で同日初回に複数リクエストが同時 build しても benign:
+    # 両者とも同じ index を見て同じ titles / 同じ seen を算出し os.replace で後勝ち統合。
+    # 各リクエストは自分の payload に同一 titles を得るので二重通知・重複行は起きない
+    # （weather/news の既存 race 許容と同方針。lock は導入しない）。
+    _save_anthropic_state({"date": today_ymd, "shown": titles, "seen": seen[-ANTHROPIC_SEEN_CAP:]})
+    return titles
+
+
 # ─── /quotes: 一日分の ren セリフ集を同日 cache で返す ──────────────────
 # notify script (bin/dashboard-notify-ren-quotes.py) と web/app.js が両方 fetch する。
 # JST 当日の日付を key にした in-memory cache で「同日同一 JSON」を保証する。
 # 占い random seed / 天気 fetch 時点 / news fetch 時点のズレを helper 側で吸収。
 #
 # build 内訳:
-#   weather: Open-Meteo に直接 fetch。平日 3 行 (きょう / 朝 / 夜) / 土日 1 行 (きょう)
-#   fortune: 日付 seed で random.Random deterministic 生成（双子座固定）
-#   news:    news_items() 流用（NHK RSS + 30 分 TTL）
+#   weather:   Open-Meteo に直接 fetch。平日 3 行 (きょう / 朝 / 夜) / 土日 1 行 (きょう)
+#   fortune:   日付 seed で random.Random deterministic 生成（双子座固定）
+#   news:      news_items() 流用（NHK RSS + 30 分 TTL）
+#   anthropic: anthropic.com/news の Product カテゴリ新着タイトル（_anthropic_new_titles）。
+#              通常 0 件、新モデル/製品発表があった朝だけ 1〜数件。
 #
 # 失敗時は該当配列を空で返す（retry なし、既存 /np / /news と同方針）。
 
@@ -373,6 +515,11 @@ def _build_news_lines():
     return [f"ニュース：{t}" for t in items]
 
 
+def _build_anthropic_lines(today_ymd):
+    """Anthropic 新着リリースを「Anthropic：<title>」形式に整形。新着無し / 失敗時は []。"""
+    return [f"Anthropic：{t}" for t in _anthropic_new_titles(today_ymd)]
+
+
 def _jst_today_ymd():
     """JST 当日の YYYY-MM-DD。helper を tz=Asia/Tokyo 運用の Linux Mint で動かしている前提だが、
     将来 TZ が変わっても JST 固定で日付を決められるように +9h を明示計算する。
@@ -386,7 +533,8 @@ def quotes_payload():
     """JST 当日の cache を返す。日付が変わったら build し直す。
 
     返り値（JSON 用 dict）:
-      {"date": "YYYY-MM-DD", "weather": [...lines...], "fortune": "...", "news": [...lines...]}
+      {"date": "YYYY-MM-DD", "weather": [...lines...], "fortune": "...",
+       "news": [...lines...], "anthropic": [...lines...]}
     """
     today_ymd = _jst_today_ymd()
     if _quotes_cache["date"] == today_ymd and _quotes_cache["payload"] is not None:
@@ -399,6 +547,7 @@ def quotes_payload():
         "weather": _build_weather_lines(now_jst),
         "fortune": _build_fortune_line(now_jst),
         "news": _build_news_lines(),
+        "anthropic": _build_anthropic_lines(today_ymd),
     }
     _quotes_cache["date"] = today_ymd
     _quotes_cache["payload"] = payload
@@ -435,7 +584,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(quotes_payload())
             except Exception:
                 # 失敗時は date だけ入れて空配列で返す（既存 /np / /news の方針と整合）
-                self._send_json({"date": _jst_today_ymd(), "weather": [], "fortune": "", "news": []})
+                self._send_json({"date": _jst_today_ymd(), "weather": [], "fortune": "", "news": [], "anthropic": []})
         else:
             self._send_json({"error": "not found"}, code=404)
 
