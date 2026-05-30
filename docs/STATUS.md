@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-05-28 (Phase 2.6 cold cut 切替完了 + smoke test 全 pass、Telegram 観察 14 日カウント開始)
+最終更新: 2026-05-30 (Telegram 観察 5/30 打ち切り [PROJECT.md 健全性履歴 2026-05-30 entry] + `/vault-push` コマンド追加を新規 active TODO として登録 [別セッション実装])
 
 ## 設計メモ
 
@@ -23,7 +23,32 @@
 
 ## TODO
 
-Phase 2.5「土管の耐久化（再設計）」T-A〜T-E 全完了 (T-D 後半 = 2026-05-19 即時前倒し)。残 TODO なし。
+### Telegram `/vault-push` コマンド追加 (別セッションで実装、ブリーフ 2026-05-30)
+
+**目的**: `web/scripts/vault-sync-from-transcript.sh` (Stop hook) は commit までで push は人手承認に委ねる設計 (design.md §5.2)。現状その人手承認は手元端末での `git push` 実行のみ。これをモバイル (Telegram) から `/vault-push` で起こせるようにする。**コマンド送信そのものが人手承認の置き換え** (bot 自律 push ではない、安全ゲートは保持)。
+
+**採用方針 (2026-05-30 lead + user 確認済)**: **Option A (コマンド追加) を採用**。Option B (Stop hook 自動 push / push を settings で自動許可) は **不採用** — push の人手ゲート (design §5.2 / 上位 CLAUDE.md git 運用方針「push は誤りの最終ゲート、完全自動化しない」) を外す + push reject を握り潰す/禁止された自動 rebase を呼ぶことになるため。
+
+**feasibility 検証済 (2026-05-30、lead bash 環境での確認)**: bot.service 環境 (systemd --user) は `SSH_AUTH_SOCK=/run/user/1000/keyring/ssh` (GNOME keyring agent) を持つ。その agent socket + `GIT_SSH_COMMAND="ssh -o BatchMode=yes"` で vault への `git push --dry-run origin develop` が **exit 0** (`9867b22..460a35c develop -> develop`)。= 鍵が agent に load 済・unlock 済なら非対話 push 可能。remote は SSH (`git@github.com:mooneclipse/obsidian-vault.git`)、credential helper なし。
+
+**実装で必ず守る設計制約**:
+1. push は **OWNER のみ起動** (既存 4 段防御に乗せる)。
+2. **push reject** (origin/develop が ahead = メイン機/Obsidian が先に push 済): **報告して止める。自動 rebase しない** (PROJECT.md「vault push reject 観察ルール」: 2 件目から設計仕切り直しサイン、自動回復で隠さない)。上位 CLAUDE.md 2 周目ルール = 失敗回復は state 引き or 人手介入。
+3. **agent refused / keyring ロック時** (cold boot で GUI 未ログイン等、`feedback_ssh_agent_lock` 事例): 明確に報告、リトライループにしない。`BatchMode=yes` で対話プロンプト hang を避け即 fail させる。
+4. 1 push = 成否 **1 回判定** (stderr 文言マッチで挙動分岐を増やさない、2 周目ルール)。
+5. 既存 `/quota` の Telegram コマンド登録パターン (`BotCommand` + handler) に揃える。設計メモ L22「OWNER 以外コマンド追加時の log 再評価」は OWNER 限定なので該当せず。
+
+**観察への影響 (重要)**: これは **bot.py 改変 = 新 14 日観察を発火する層**。**voice 統合と同時に入れない** (bot.py 同時 2 方向回避、N-T14 系原則)。単独タスクとして実施し、voice 統合との着手順序は着手時に user と確認する。
+
+**着手セッションで決める open question**: コマンド名 (`/vault-push` vs `/push`) / push 前に dry-run preview を返すか即 push か / reject と agent-lock を別メッセージで区別するか / 対象は vault のみか (汎用化しない = YAGNI 推奨)。
+
+**着手前の実機検証 (このセッションの dry-run は lead bash 環境、bot 実行時環境とは別物)**: (i) bot プロセス実行時に実際に push できるか (bot 経由で 1 回検証) (ii) reject 経路 (origin を意図的に ahead にして) の挙動 (iii) keyring ロック時の挙動。
+
+**関連**: design.md §5.2 / `web/scripts/vault-sync-from-transcript.sh` / PROJECT.md「vault push reject 観察ルール」+ 2026-05-30 健全性履歴 entry / `feedback_ssh_agent_lock` メモ。
+
+---
+
+Phase 2.5「土管の耐久化（再設計）」T-A〜T-E 全完了 (T-D 後半 = 2026-05-19 即時前倒し)。Phase 2.5 redesign の残 TODO なし (上記 `/vault-push` が新規 active TODO)。
 
 設計根拠:
 - `~/companion/workspace/redesign/design.md` (v0.2.3, 2026-05-14; §4.2 / §4.5 / §4.6 / §15 に 2026-05-19 CreditBudgetGuard 即時前倒し追補を反映済)
