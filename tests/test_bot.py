@@ -175,6 +175,103 @@ class CmdResetTest(unittest.TestCase):
         self.assertIn("no-op", out2)
 
 
+class ClassifyPushResultTest(unittest.TestCase):
+    """classify_push_result / _extract_push_range の純関数検証。
+
+    成否は呼び出し側が rc 1 回で確定済 = この関数は rc を判定し直さず、stderr
+    分類は **報告文言の整形だけ** に使う (回復行動を分岐させない)。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_success_with_range(self) -> None:
+        # git は fast-forward push の範囲行を stderr に出す。
+        stderr = (
+            "To github.com:mooneclipse/obsidian-vault.git\n"
+            "   9867b22..460a35c  develop -> develop\n"
+        )
+        out = self.bot.classify_push_result(0, "", stderr)
+        self.assertIn("push 完了", out)
+        self.assertIn("9867b22..460a35c  develop -> develop", out)
+
+    def test_success_new_branch(self) -> None:
+        stderr = (
+            "To github.com:mooneclipse/obsidian-vault.git\n"
+            " * [new branch]      develop -> develop\n"
+        )
+        out = self.bot.classify_push_result(0, "", stderr)
+        self.assertIn("push 完了", out)
+        self.assertIn("[new branch]", out)
+
+    def test_success_without_range_line(self) -> None:
+        # 範囲行が拾えなくても rc==0 は成功扱い (フォールバック文言)。
+        out = self.bot.classify_push_result(0, "", "")
+        self.assertIn("push 完了", out)
+
+    def test_everything_up_to_date(self) -> None:
+        out = self.bot.classify_push_result(0, "", "Everything up-to-date\n")
+        self.assertIn("既に同期済", out)
+        self.assertIn("push する変更はありません", out)
+
+    def test_reject_non_fast_forward(self) -> None:
+        stderr = (
+            " ! [rejected]        develop -> develop (non-fast-forward)\n"
+            "error: failed to push some refs to "
+            "'github.com:mooneclipse/obsidian-vault.git'\n"
+            "hint: Updates were rejected because the tip of your current branch is behind\n"
+        )
+        out = self.bot.classify_push_result(1, "", stderr)
+        self.assertIn("reject", out)
+        self.assertIn("pull", out)
+        # 自動 rebase をしない旨が明示されること
+        self.assertIn("自動 rebase", out)
+
+    def test_reject_fetch_first(self) -> None:
+        stderr = (
+            " ! [rejected]        develop -> develop (fetch first)\n"
+            "error: failed to push some refs\n"
+        )
+        out = self.bot.classify_push_result(1, "", stderr)
+        self.assertIn("reject", out)
+
+    def test_agent_refused(self) -> None:
+        stderr = "sign_and_send_pubkey: signing failed: agent refused operation\n"
+        out = self.bot.classify_push_result(128, "", stderr)
+        self.assertIn("ssh-add", out)
+        self.assertIn("SSH 認証", out)
+
+    def test_permission_denied_publickey(self) -> None:
+        stderr = (
+            "git@github.com: Permission denied (publickey).\n"
+            "fatal: Could not read from remote repository.\n"
+        )
+        out = self.bot.classify_push_result(128, "", stderr)
+        self.assertIn("ssh-add", out)
+
+    def test_host_key_verification_failed(self) -> None:
+        stderr = "Host key verification failed.\nfatal: Could not read from remote repository.\n"
+        out = self.bot.classify_push_result(128, "", stderr)
+        self.assertIn("SSH 認証", out)
+
+    def test_other_failure_includes_stderr_tail(self) -> None:
+        stderr = "fatal: some unexpected git error happened\n"
+        out = self.bot.classify_push_result(1, "", stderr)
+        self.assertIn("push 失敗", out)
+        self.assertIn("rc=1", out)
+        self.assertIn("unexpected git error", out)
+
+    def test_extract_range_fast_forward(self) -> None:
+        text = "To x\n   9867b22..460a35c  develop -> develop\n"
+        self.assertEqual(
+            self.bot._extract_push_range(text), "9867b22..460a35c  develop -> develop"
+        )
+
+    def test_extract_range_none_when_absent(self) -> None:
+        self.assertIsNone(self.bot._extract_push_range("Everything up-to-date\n"))
+
+
 class AuthorizedTest(unittest.TestCase):
     """OWNER 認可 4 段防御 (§4.2) を _authorized() レベルで検証する。"""
 

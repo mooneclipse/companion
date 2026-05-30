@@ -72,6 +72,20 @@ PLAY_ALLOWED_HOSTS = frozenset({
 })
 PLAY_TIMEOUT_S = 10.0
 
+# `/vault-push`: vault (`~/companion/vault`, branch develop) の commit 済変更を
+# GitHub に push する。コマンド送信そのものが push の人手承認の置き換え
+# (vault-sync-from-transcript.sh = Stop hook は commit までで止まる設計)。
+# bot 自律 push ではなく安全ゲートは保持する。
+VAULT_DIR = Path.home() / "companion" / "vault"
+VAULT_BRANCH = "develop"
+VAULT_REMOTE = "origin"
+# push subprocess の hang 上限。BatchMode=yes で対話プロンプトは即 fail するが、
+# 通信 stall 等の保険として timeout を併設する。
+VAULT_PUSH_TIMEOUT_S = 60.0
+# 対話プロンプトでの hang を避けて即 fail させる (agent 未 load / keyring ロック /
+# host key 未知などを対話待ちにせずエラーとして表面化させる)。
+VAULT_PUSH_SSH_COMMAND = "ssh -o BatchMode=yes"
+
 # stall 検知 (§4.6): 5 分間隔で getMe(), 連続 3 回失敗で sys.exit(1)。
 STALL_CHECK_INTERVAL_S = 300.0
 STALL_FAIL_THRESHOLD = 3
@@ -343,6 +357,104 @@ async def cmd_play(url: str) -> str:
     )
 
 
+def classify_push_result(rc: int, stdout: str, stderr: str) -> str:
+    """Format a user-facing message from a finished `git push` invocation.
+
+    成否は呼び出し側が rc 1 回で確定済 (この関数は判定し直さない)。本関数は
+    **エラーの表面化 (通知文言の整形) 専用** で、stderr を見て回復行動を分岐
+    させない (`~/companion/CLAUDE.md` 2 周目ルール / 失敗回復は state 引き or
+    人手介入のいずれか)。reject も agent-lock も回復行動は同一 =「止めて報告」。
+
+    Pure function (subprocess 非依存) なので直接 unit-test できる。
+    """
+    combined = f"{stdout}\n{stderr}"
+    if rc == 0:
+        # `git push` は進捗・結果を stderr に出す。Everything up-to-date は
+        # 「push する変更なし」を表す成功 (commit 済差分が remote に既にある)。
+        if "Everything up-to-date" in combined:
+            return "[vault-push] 既に同期済、push する変更はありません。"
+        # 成功時は push した commit 範囲 (`<old>..<new> develop -> develop`) を
+        # 含めて何が push されたか分かるようにする。git は範囲行を stderr に出す。
+        range_line = _extract_push_range(combined)
+        if range_line:
+            return f"[vault-push] push 完了: {range_line}"
+        return f"[vault-push] push 完了 ({VAULT_BRANCH} -> {VAULT_BRANCH})。"
+
+    # ここから rc != 0 = 失敗確定。stderr 分類は報告文言の整形だけに使う。
+    lower = combined.lower()
+    if "non-fast-forward" in lower or "[rejected]" in lower or "fetch first" in lower:
+        return (
+            "[vault-push] reject: メイン機 / Obsidian が先に push 済 "
+            f"(origin/{VAULT_BRANCH} が ahead)。手元で pull してから再実行してください。"
+            "\n(自動 rebase / 自動 pull はしません)"
+        )
+    if (
+        "permission denied (publickey)" in lower
+        or "agent refused operation" in lower
+        or "could not open a connection to your authentication agent" in lower
+        or "host key verification failed" in lower
+    ):
+        return (
+            "[vault-push] SSH 認証に失敗: 鍵が agent に未 load かロック中です。"
+            "手元端末で `ssh-add` 後に再実行してください。"
+        )
+    tail = stderr.strip()[-500:] if stderr.strip() else stdout.strip()[-500:]
+    return f"[vault-push] push 失敗 (rc={rc}):\n{tail}"
+
+
+def _extract_push_range(text: str) -> str | None:
+    """Extract the `<old>..<new> develop -> develop` style range line from git output.
+
+    git は fast-forward push 時に ``   9867b22..460a35c  develop -> develop`` 形式の
+    行を stderr に出す。new branch push は ``* [new branch] ...`` になる。
+    どちらも見つからなければ None。
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if "->" not in line:
+            continue
+        if ".." in line or "[new branch]" in line:
+            return line
+    return None
+
+
+async def cmd_vault_push() -> str:
+    """`git push` vault の commit 済変更を実行し、結果メッセージを返す。
+
+    成否は `git push` の exit code 1 回で確定する (制約 4)。失敗時のみ
+    classify_push_result が stderr を分類して報告文言を整形する (回復はしない)。
+    SSH_AUTH_SOCK は service unit の Environment で固定解決される (継承タイミング
+    依存を排除)。GIT_SSH_COMMAND=BatchMode=yes で対話 hang を即 fail させる。
+    """
+    env = dict(os.environ)
+    env["GIT_SSH_COMMAND"] = VAULT_PUSH_SSH_COMMAND
+    # git の対話プロンプト系を全方位で無効化 (credential helper は無いが保険)。
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", str(VAULT_DIR), "push", VAULT_REMOTE, VAULT_BRANCH,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+    except FileNotFoundError:
+        return "[vault-push] git が見つかりません。"
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(), timeout=VAULT_PUSH_TIMEOUT_S
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return (
+            f"[vault-push] push が {int(VAULT_PUSH_TIMEOUT_S)}s で応答せず中断しました。"
+            "ネットワーク / SSH 接続を確認してください。"
+        )
+    stdout = stdout_b.decode("utf-8", errors="replace")
+    stderr = stderr_b.decode("utf-8", errors="replace")
+    return classify_push_result(proc.returncode or 0, stdout, stderr)
+
+
 def cmd_status(
     chat_id: int,
     thread_id: int | None,
@@ -546,6 +658,20 @@ async def slash_play(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def slash_vault_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    output = await cmd_vault_push()
+    logger.info("cmd=/vault_push send len=%d", len(output))
+    await send_text(
+        context.bot, chat_id, thread_id, output,
+        reply_to=msg.message_id if msg else None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # notify socket (queue + 1 worker for order guarantee, §5.2)
 # ---------------------------------------------------------------------------
@@ -664,6 +790,7 @@ async def post_init(application: Application) -> None:
         BotCommand("quota", "bot 経由 prompt の予算 / 集計を表示"),
         BotCommand("status", "bot 稼働状況 / current session を表示"),
         BotCommand("play", "YouTube URL をこの PC のブラウザで開く"),
+        BotCommand("vault_push", "vault の commit 済変更を GitHub に push"),
     ]
     scope = BotCommandScopeChat(chat_id=NOTIFY_CHAT_ID)
     try:
@@ -742,6 +869,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("quota", slash_quota, filters=message_filter))
     app.add_handler(CommandHandler("status", slash_status, filters=message_filter))
     app.add_handler(CommandHandler("play", slash_play, filters=message_filter))
+    app.add_handler(CommandHandler("vault_push", slash_vault_push, filters=message_filter))
     # slash command 以外の text message → on_message
     app.add_handler(
         MessageHandler(
