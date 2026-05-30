@@ -473,6 +473,7 @@ Phase 2.5 健全性 2 週間観察期間中 (5/19-6/2) の **read-only 設計議
 **時系列影響 (更新)**:
 - Telegram 観察打ち切り → 5/30 (実効 2 日強)
 - voice bot/ 側統合 (bot.py 改変) 着手 → 5/30 以降 unblock (N-T14 = Telegram 観察完了後着手、を充足)。**着手で bot.py 改変による新 14 日観察が発火** (§10 観察 reset)
+- もう 1 つの bot.py 改変タスク `/vault-push` コマンド追加 (Telegram から手動 push をモバイル化、Option A) を別セッション実装用にブリーフ化 (`bot/docs/STATUS.md` TODO、feasibility 検証済 2026-05-30)。voice 統合とは **同時に入れない** (bot.py 同時 2 方向回避)、着手順序は着手時に user 確認
 - **Phase 4 着手条件 #2 の観察基準は voice 統合 +14 日に再基準化** (Telegram 単独観察でなく、bot.py 同時 2 方向回避の原則上 voice 統合観察が真の最終律速)。voice 統合観察にも event-based exit を pre-commit
 - Phase 4 着手判定 → 条件 #1 / #3 と合わせて user 宣言時
 
