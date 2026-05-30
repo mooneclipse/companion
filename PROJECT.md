@@ -154,7 +154,7 @@ Phase 3-1 (Web 検索 → vault 保存) で確認ラリー破綻と権限 whack-
 
 ---
 
-### Phase 2.6: Telegram 移行 ⬜ 設計確定、cold cut 2026-05-27 (lead 前倒し)
+### Phase 2.6: Telegram 移行 ✅ cold cut 2026-05-27 / 観察打ち切り 2026-05-30 (user 判断)
 
 Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session model) に置き換える。bot 指示はモバイル中心 + topic で分けたい要件 (user 確定済) に応える。
 
@@ -167,7 +167,7 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 - 切替日: **2026-05-27** (lead 単独判断で Phase 2.5 観察期間 8 日打ち切り、健全性チェック履歴 2026-05-27 entry §「Phase 2.5 観察打ち切り + cold cut 前倒し判断」参照)
 - OWNER 認可: `from_user.id == OWNER_ID` + privacy mode off (起動時 `can_read_all_group_messages` 確認、False なら `sys.exit(1)`) + 4 段防御
 - topic 構成 (initial 4): General / #chat / #research / #maintenance (#aidiary / #voice-log は実需時に追加、YAGNI)
-- voice/ 統合: Telegram 観察 14 日完了後に着手 (順序原則、bot.py 同時 2 方向回避)
+- voice/ 統合: Telegram 観察は **2026-05-30 打ち切り** (健全性履歴 2026-05-30 entry、user 判断 + S-1 5 回目境界化判定) で voice bot/ 側統合 着手可。着手 (bot.py 改変) で新 14 日観察が発火、Phase 4 #2 はそこに再基準化 (順序原則、bot.py 同時 2 方向回避は維持)
 - 採用すべきでない設計 14 件 (N-T1〜N-T14) + 対症療法 2 周目候補 6 件 (W-1〜W-6) 明示的不採用宣言
 
 **実装着手前検証**: 25+ 項目 (V-1〜V-25 + D-add-1〜D-add-12 + AIORateLimiter log level + Bot API up 監視等)、詳細は `bot/docs/STATUS.md` Phase 2.6 section
@@ -248,7 +248,7 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 
 1. **Phase 3 の能力が最低 1 つ、日常運用に自然に組み込まれている**（ユーザーが普段の生活で意識せず使う頻度があり、2 週間以上継続）
 2. **直近 2 週間、Phase 1〜3 のいずれかで「想定外の停止 / 誤動作 / 修正必須レベルの不具合」が発生していない**
-   - **Phase 2.6 (Telegram 移行) 反映**: Phase 2.5 観察 (5/19-5/27、8 日で打ち切り) は独立完了として記録、Phase 4 着手判定は **Telegram 観察 14 日単独判定** (cold cut 切替日 2026-05-27 起算 = 2026-06-10 観察完了予定)。voice/ 統合は Telegram 観察完了後に着手、voice/ 統合 +14 日でも安定継続が条件 #2 充足の判断材料 (telegram-design.md §9.2 / §10 layer 引き継ぎ可否表)
+   - **Phase 2.6 (Telegram 移行) 反映 (2026-05-30 更新)**: Phase 2.5 観察 (5/19-5/27、8 日) と Telegram 観察 (5/27-5/30、user 判断で打ち切り、健全性履歴 2026-05-30 entry) はいずれも独立完了として記録。**Phase 4 着手判定の主基準は voice bot/ 側統合 (bot.py 改変) +14 日の新観察**に再基準化 (bot.py 同時 2 方向回避の原則上これが真の最終律速、Telegram 単独観察では引き継げない layer がある)。voice 統合観察は event-based exit (bot.py 置換パスのイベント実観測カバレッジ) で締める (S-1 5 回目境界化判定の結論)
    - 「Phase 2.5 観察結果を Telegram 経路に引き継ぐ」は **採用しない** (N-T10 違反禁止、bot.py event handler は引き継げない layer)
 3. **ユーザー自身が「土台が落ち着いた、Phase 4 へ進む」と明示的に宣言している**
 
@@ -446,6 +446,39 @@ Phase 2.5 健全性 2 週間観察期間中 (5/19-6/2) の **read-only 設計議
 - Phase 4 着手判定 → 条件 #1 / #3 と合わせて user 宣言時 (最短 6/24 +α)
 
 次回チェック目安: 2026-06-10 (Telegram 観察 14 日完了タイミング)、その後 voice/ 統合着手前に条件 #2 を再判定する。
+
+### 2026-05-30: Telegram 観察を 5/30 で打ち切り (user 判断) + S-1 5 回目 境界化判定 (agent team companion-obs-truncation-0530)
+
+**判断**: user (SE, 最終決定者) が「Telegram 観察を前倒し打ち切りしたい。なんどかやり取りして問題ないと思った」と判断。lead は即追従せず、5/27(追) entry で予約した「次回 entry が 5 回目に該当したら仕切り直し境界化判定を実施」に従い devil レビュー (agent team) を起動。最終的に **観察を 2026-05-30 で打ち切り確定** (cold cut 5/28 00:26 起算 ≒ 実効 2 日強)。
+
+**客観健全性データ (lead 採取、5/28 00:26〜5/30)**:
+- `companion-bot.service`: NRestarts=0 / active 連続、ActiveEnter=2026-05-28 00:26:33 JST、ERROR/Traceback **0 件**
+- `bot.log` WARNING 2 件 = `stall_check_job: get_me() failed (consecutive 1)` (5/29 ×2)、再起動閾値 3 連続未達・自己回復
+- timer (system-report / unattended-upgrades / dashboard) 正常、ledger cold cut 以降 7 件 (`topic_key` schema 移行成功)・疎、最後 5/29 12:43
+- vault-sync.log 最終 5/16 = **Telegram 期 未稼働**
+
+**agent team companion-obs-truncation-0530 (devil + architect, mesh 3 巡で完全収束) の推奨と、その後の user 訂正**:
+- team 推奨は「即打ち切りでなく event-based exit (6/1 月跨ぎ correctness + vault-sync/重複確認 能動 exercise、最短 6/2)」だった。主柱は「6/1 budget guard 月跨ぎが window 内で決定的に発火する唯一の未観測 correctness パス」。
+- **user 訂正で主柱を撤回**: (a) 課金/クレジットの切れ目は暦の月初と別で、プラン更新で請求日が動く (先週更新済 = 既に別請求サイクル扱い)。`quota.py` の guard は暦月リセット (`_month_start` = day 1, 00:00 JST) で実請求サイクルと不整合 → 6/1 暦リセット観測の価値は薄い。(b) lead コード再確認: 月跨ぎ集計は `timestamp` と `total_cost_usd` のみ読み、`topic_key` を読まない → スキーマ移行は月境界ロジックに無関係、「新 schema で月境界が壊れる」懸念は的外れ (team の過大評価、lead 確認漏れ)。(c) 公式 $100 クレジット枠の運用開始は 6/15 から、現状 guard は前倒しの自衛自己上限で揃えるべき公式サイクルが未存在。
+- ∴ **6/1 月跨ぎは「打ち切りを止める理由」にならないと確定**、team 推奨の時間依存 blocker は消滅。実務リスクも小 (消費 ≒$0.5/月 vs $100 cap)。
+
+**S-1 5 回目 境界化判定の結論**: 本 entry は 5/9 / 5/14 / 5/18 / 5/20 に続く 5 回目 (5/27 cold cut は M-1 適用条件 (ii) で非該当)。境界判定の実体 = **「実害ゼロか (主観再評価)」を打ち切り基準に使うのを止める**。観察短縮 2 連続 (Phase2.5 14→8、Telegram 14→2強) の ratchet を自認し、今後 (特に voice 統合観察) の exit は「会話成立回数」や「消費額の小ささ」でなく **bot.py 置換パスのイベント実観測カバレッジ** で締める。team が提案した event-based exit の枠組みは、6/1 月跨ぎ項を除いた残り (下記残置観察項目) と voice 統合観察への pre-commit として採用。
+
+**残置観察項目 (打ち切りの blocker にしない、次の自然使用で 1 回ずつ閉じる)**:
+- vault-sync Stop hook + Phase 3-1 重複確認フロー (§7.4) を Telegram 経路で能動 exercise 各 1 回 (user 操作起動、時間非依存)
+- stall 3 連続→`sys.exit(1)`→systemd restart→catch-up 経路 (確率的、本番能動検証は危険ゆえ継続観察 + code review)
+
+**設計メモ (低優先, 将来の保留事項候補)**: `CreditBudgetGuard` は暦月リセットだが実 Anthropic 課金は請求日基準 (プラン更新で移動) + 公式枠は 6/15 開始。自衛用途では実害小だが、6/15 以降に実枠と揃えるなら billing-cycle aware な集計境界へ寄せる検討余地あり。
+
+**時系列影響 (更新)**:
+- Telegram 観察打ち切り → 5/30 (実効 2 日強)
+- voice bot/ 側統合 (bot.py 改変) 着手 → 5/30 以降 unblock (N-T14 = Telegram 観察完了後着手、を充足)。**着手で bot.py 改変による新 14 日観察が発火** (§10 観察 reset)
+- **Phase 4 着手条件 #2 の観察基準は voice 統合 +14 日に再基準化** (Telegram 単独観察でなく、bot.py 同時 2 方向回避の原則上 voice 統合観察が真の最終律速)。voice 統合観察にも event-based exit を pre-commit
+- Phase 4 着手判定 → 条件 #1 / #3 と合わせて user 宣言時
+
+**team cleanup**: shutdown_request → devil/architect 終了 → TeamDelete 完了。plan ファイル (devil `fluffy-stargazing-graham.md` / architect `modular-sprouting-widget.md`) は cleanup 削除済、要点は本 entry に転記 (落とし穴 F)。
+
+次回チェック目安: voice bot/ 側統合 着手時 (= 新観察カウント起点)。着手前に残置観察項目 2 件の exercise 計画を bot/docs/STATUS.md に落とす。
 
 ---
 
