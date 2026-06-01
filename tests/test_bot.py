@@ -341,5 +341,182 @@ class AuthorizedTest(unittest.TestCase):
         self.assertFalse(self.bot._authorized(upd))
 
 
+class ParseProactivePayloadTest(unittest.TestCase):
+    """自発発話 socket message の判別 (構造化 envelope の 1 回デコード)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_valid_proactive_marker(self) -> None:
+        text = '[[proactive-v1]]\n{"kind": "proactive", "version": 1, "seed_kind": "recent_conversation"}'
+        out = self.bot.parse_proactive_payload(text)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["seed_kind"], "recent_conversation")
+
+    def test_plain_text_is_not_proactive(self) -> None:
+        # 既存の素通し通知文字列は proactive 経路に乗らない (None を返す)。
+        self.assertIsNone(self.bot.parse_proactive_payload("システムレポート 2026-06-01"))
+
+    def test_critical_prefix_is_not_proactive(self) -> None:
+        self.assertIsNone(self.bot.parse_proactive_payload("[critical] bot stall"))
+
+    def test_marker_with_invalid_json_returns_none(self) -> None:
+        self.assertIsNone(self.bot.parse_proactive_payload("[[proactive-v1]]\nnot json"))
+
+    def test_marker_with_wrong_kind_returns_none(self) -> None:
+        text = '[[proactive-v1]]\n{"kind": "something_else"}'
+        self.assertIsNone(self.bot.parse_proactive_payload(text))
+
+    def test_vault_hint_passed_through(self) -> None:
+        text = '[[proactive-v1]]\n{"kind": "proactive", "seed_kind": "recent_conversation+vault", "vault_hint": "2026-06-01_x"}'
+        out = self.bot.parse_proactive_payload(text)
+        self.assertEqual(out["vault_hint"], "2026-06-01_x")
+
+
+class BuildProactivePromptTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_persona_always_present(self) -> None:
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertIn("対等な相方", prompt)
+        # 中身のない問いかけ / 引き止めを禁じる指示が prompt に乗ること
+        self.assertIn("情緒で引き止める", prompt)
+
+    def test_vault_hint_included_when_present(self) -> None:
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation+vault", "vault_hint": "2026-06-01_topic"}
+        )
+        self.assertIn("2026-06-01_topic", prompt)
+
+    def test_no_vault_hint_when_absent(self) -> None:
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("ノート名", prompt)
+
+
+class SnoozeTest(unittest.TestCase):
+    """/snooze の日数→snooze_until 計算と state 読み書き、snooze 中判定。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._state = Path(self._tmp.name) / "proactive"
+        self._orig = self.bot.PROACTIVE_STATE_FILE
+        self.bot.PROACTIVE_STATE_FILE = self._state
+
+    def tearDown(self) -> None:
+        self.bot.PROACTIVE_STATE_FILE = self._orig
+        self._tmp.cleanup()
+
+    def test_snooze_usage_when_no_args(self) -> None:
+        out = self.bot.cmd_snooze([])
+        self.assertIn("使い方", out)
+
+    def test_snooze_non_integer_rejected(self) -> None:
+        out = self.bot.cmd_snooze(["abc"])
+        self.assertIn("整数", out)
+
+    def test_snooze_sets_future_until_and_is_snoozed(self) -> None:
+        now = 1_000_000.0
+        out = self.bot.cmd_snooze(["3"], now_epoch=now)
+        self.assertIn("3 日間", out)
+        # snooze 中判定: now+1日 はまだ snooze 内
+        self.assertTrue(self.bot.is_snoozed(now_epoch=now + 86400))
+        # now+4日 は snooze 明け
+        self.assertFalse(self.bot.is_snoozed(now_epoch=now + 4 * 86400))
+
+    def test_snooze_zero_clears(self) -> None:
+        now = 1_000_000.0
+        self.bot.cmd_snooze(["3"], now_epoch=now)
+        out = self.bot.cmd_snooze(["0"], now_epoch=now)
+        self.assertIn("解除", out)
+        self.assertFalse(self.bot.is_snoozed(now_epoch=now))
+
+    def test_is_snoozed_false_when_no_state(self) -> None:
+        self.assertFalse(self.bot.is_snoozed(now_epoch=1_000_000.0))
+
+    def test_write_snooze_preserves_last_proactive_date(self) -> None:
+        # script が書く last_proactive_date 行を snooze 設定で潰さないこと。
+        self._state.write_text("last_proactive_date=2026-06-01\n", encoding="utf-8")
+        self.bot.write_snooze_until(2_000_000)
+        content = self._state.read_text(encoding="utf-8")
+        self.assertIn("last_proactive_date=2026-06-01", content)
+        self.assertIn("snooze_until=2000000", content)
+
+
+class ProactiveGuardNotBypassedTest(unittest.IsolatedAsyncioTestCase):
+    """_run_proactive が budget guard を迂回しないことの構造検証 (M-14 境界)。
+
+    guard.allow() が False のとき claude_runner を一切叩かず skip し、ledger に
+    reason=budget_guard を残すことを確認する。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._ledger = Path(self._tmp.name) / "proactive_ledger.jsonl"
+        self._orig_ledger = self.bot.PROACTIVE_LEDGER_PATH
+        self.bot.PROACTIVE_LEDGER_PATH = self._ledger
+        self._orig_state = self.bot.PROACTIVE_STATE_FILE
+        self.bot.PROACTIVE_STATE_FILE = Path(self._tmp.name) / "proactive"
+
+    def tearDown(self) -> None:
+        self.bot.PROACTIVE_LEDGER_PATH = self._orig_ledger
+        self.bot.PROACTIVE_STATE_FILE = self._orig_state
+        self._tmp.cleanup()
+
+    async def test_guard_denied_skips_without_running_claude(self) -> None:
+        import json as _json
+        from unittest import mock
+
+        called = {"run_discord": 0}
+
+        async def _fake_run_discord(*a, **kw):
+            called["run_discord"] += 1
+            raise AssertionError("claude_runner must not be invoked when guard denies")
+
+        # guard.allow を False に固定、runner.run_discord を監視 spy に差し替え。
+        with mock.patch.object(self.bot.budget_guard, "allow", return_value=False), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord):
+            app = mock.MagicMock()
+            await self.bot._run_proactive(app, {"kind": "proactive", "seed_kind": "recent_conversation"})
+
+        self.assertEqual(called["run_discord"], 0)
+        # ledger に budget_guard で skip した記録が残ること
+        lines = [l for l in self._ledger.read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        rec = _json.loads(lines[0])
+        self.assertFalse(rec["sent"])
+        self.assertEqual(rec["reason"], "budget_guard")
+
+    async def test_snoozed_skips_without_running_claude(self) -> None:
+        import json as _json
+        from unittest import mock
+
+        # snooze 中は guard を引くまでもなく skip。
+        self.bot.write_snooze_until(int(__import__("time").time()) + 86400)
+
+        async def _fake_run_discord(*a, **kw):
+            raise AssertionError("claude_runner must not be invoked when snoozed")
+
+        with mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord):
+            app = mock.MagicMock()
+            await self.bot._run_proactive(app, {"kind": "proactive", "seed_kind": "recent_conversation"})
+
+        lines = [l for l in self._ledger.read_text(encoding="utf-8").splitlines() if l.strip()]
+        rec = _json.loads(lines[-1])
+        self.assertFalse(rec["sent"])
+        self.assertEqual(rec["reason"], "snoozed")
+
+
 if __name__ == "__main__":
     unittest.main()

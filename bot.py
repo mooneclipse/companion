@@ -18,9 +18,11 @@ Design highlights wired in here:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -56,6 +58,12 @@ NOTIFY_CHAT_ID_RAW = os.environ.get("NOTIFY_CHAT_ID", "").strip()
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude").strip()
 CLAUDE_CWD = os.environ.get("CLAUDE_CWD", str(Path.home() / "companion" / "bot-workspace")).strip()
 CLAUDE_TIMEOUT = float(os.environ.get("CLAUDE_TIMEOUT", "300"))
+
+# 自発発話 (proactive companion messaging) のグローバル on/off。off にすると
+# bot 側でも依頼を無視する (script 側ガードと二重防御、env で全停止可能)。
+# 出典: ~/companion/vault/notes/2026-05-30_proactive-companion-messaging-design.md
+PROACTIVE_ENABLED_RAW = os.environ.get("PROACTIVE_ENABLED", "1").strip().lower()
+PROACTIVE_ENABLED = PROACTIVE_ENABLED_RAW in ("1", "true", "yes", "on")
 
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
@@ -100,6 +108,36 @@ NOTIFY_SOCKET_MAX_BYTES = 1_000_000
 # 2 種目要求は対症療法 2 周目認定で設計引き直し議論を起動する。
 CRITICAL_PREFIX = "[critical] "
 
+# 自発発話依頼の構造化メッセージ行マーカー。socket 接続ハンドラがこの行で始まる
+# payload を **proactive 経路** へ振り分ける。これは K-T9 (sentinel 種別上限 = 文字列
+# forward 経路の prefix マッチ拡張禁止) に抵触しない: forward 経路の `[critical] `
+# prefix マッチ (挙動分岐) は一切増やさず、socket 受信段階で「文字列を素通し forward
+# するか / claude を起こす proactive 依頼か」を JSON envelope で 1 回判別する別レイヤ
+# だから。proactive 経路の中で更に prefix マッチ分岐を生やすことは将来も禁止。
+PROACTIVE_MARKER = "[[proactive-v1]]"
+
+# 自発発話の ledger (発火時刻 / 種種別 / 送信可否 / guard 判定を残す)。
+# quota.py の ledger.jsonl とは別ファイル (こちらは budget 集計に混ぜない記録専用)。
+PROACTIVE_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "proactive_ledger.jsonl"
+
+# snooze 状態 = maintenance/.state/proactive (script と共有、key=value 行形式)。
+# bot 側 /snooze で snooze_until=<epoch> を書き、script 側で snooze 中 skip を判定。
+PROACTIVE_STATE_FILE = Path.home() / "companion" / "maintenance" / ".state" / "proactive"
+
+# ペルソナ prompt (軸 1「対等な相方」)。persona/docs/STATUS.md 軸 1 確定内容を
+# 自己完結した形で持たせる (vault CLAUDE.md には依存しない、register 統合は別タスク)。
+PROACTIVE_PERSONA_PROMPT = (
+    "あなたはこのユーザーの「対等な相方」として振る舞う。"
+    "タメ口ベースで短く、時々さりげない気遣いや軽口を一言添える。"
+    "急かさない、旅の道連れのような距離感。"
+    "今はユーザーから話しかけられたのではなく、しばらく会話が途切れていたので"
+    "あなたの方からふらっと一言声をかける場面。"
+    "「元気?」「何してる?」のような中身のない問いかけや、"
+    "「寂しい」「行かないで」のような情緒で引き止める言い回しは絶対に使わない。"
+    "直近の会話の流れに自然につながる一言を、1〜2 文の短さで送る。"
+    "前置きや自己説明はせず、本文だけを返す。"
+)
+
 _runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
 if _runtime_dir:
     NOTIFY_SOCKET = Path(_runtime_dir) / "companion-bot.sock"
@@ -136,6 +174,8 @@ def _thread_id_env(name: str) -> int | None:
 
 # BOT_THREAD_ID_MAINTENANCE は socket forward 先 (§5.2)、空の場合は General topic。
 BOT_THREAD_ID_MAINTENANCE = _thread_id_env("BOT_THREAD_ID_MAINTENANCE")
+# BOT_THREAD_ID_CHAT は自発発話 (proactive) の投げ先 = #chat。確定済パラメータ。
+BOT_THREAD_ID_CHAT = _thread_id_env("BOT_THREAD_ID_CHAT")
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # bot.log は OWNER 限定経路の URL 等を含む。本プロセスが作る file は 0o600 にする
@@ -144,7 +184,8 @@ os.umask(0o077)
 # 過去 0o644 で作られた既存ファイルがあれば 0o600 へ寄せる。ledger.jsonl は
 # CreditBudgetGuard の cost データを含むので明示的に追加 (T-D 後半 2026-05-19)。
 _LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "ledger.jsonl"
-for _existing in [LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*"), _LEDGER_PATH]:
+_PROACTIVE_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "proactive_ledger.jsonl"
+for _existing in [LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*"), _LEDGER_PATH, _PROACTIVE_LEDGER_PATH]:
     try:
         os.chmod(_existing, 0o600)
     except FileNotFoundError:
@@ -288,6 +329,147 @@ async def run_claude(prompt: str, chat_id: int, thread_id: int | None) -> str:
         f"[claude error: {result.error_kind.value} rc={result.rc}]\n"
         f"{result.raw_stderr[:1500]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# proactive companion messaging (自発発話)
+# ---------------------------------------------------------------------------
+
+
+def parse_proactive_payload(text: str) -> dict | None:
+    """Return the proactive request dict if `text` is a proactive socket message.
+
+    socket message format: ``[[proactive-v1]]\\n<json>``. Returns None for any
+    text that is not a proactive request (so the caller falls back to the plain
+    text-forward path). Pure function → unit-testable.
+
+    判別は「marker 行 + JSON decode」の 1 回で確定する。stderr 文言マッチ的な
+    挙動分岐ではなく、構造化 envelope の素直なデコード (2 周目ルール非該当)。
+    """
+    if not text.startswith(PROACTIVE_MARKER):
+        return None
+    body = text[len(PROACTIVE_MARKER):].lstrip("\n")
+    try:
+        obj = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(obj, dict) or obj.get("kind") != "proactive":
+        return None
+    return obj
+
+
+def build_proactive_prompt(payload: dict) -> str:
+    """Compose the claude prompt for a proactive utterance from persona + seed.
+
+    Pure function → unit-testable. payload は parse_proactive_payload の戻り。
+    """
+    parts = [PROACTIVE_PERSONA_PROMPT]
+    vault_hint = payload.get("vault_hint")
+    if vault_hint:
+        parts.append(
+            f"今日ユーザーが触れていた話題のヒント (ノート名): {vault_hint}。"
+            "無理に全部に触れず、自然な一言だけにする。"
+        )
+    parts.append("では、相方として軽く一言、話しかけて。")
+    return "\n".join(parts)
+
+
+def is_snoozed(now_epoch: float | None = None) -> bool:
+    """Return True if proactive messaging is currently snoozed.
+
+    snooze 状態は maintenance/.state/proactive の ``snooze_until=<epoch>`` 行。
+    script 側と同じ state を bot 側でも 1 回引いて判定する (二重防御)。
+    """
+    if now_epoch is None:
+        now_epoch = time.time()
+    until = _read_state_value(PROACTIVE_STATE_FILE, "snooze_until")
+    if until is None:
+        return False
+    try:
+        return now_epoch < float(until)
+    except ValueError:
+        return False
+
+
+def _read_state_value(path: Path, key: str) -> str | None:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                if k == key:
+                    return v
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def write_snooze_until(until_epoch: int, path: Path | None = None) -> None:
+    """Persist ``snooze_until`` while preserving ``last_proactive_date``.
+
+    state file は key=value 行形式 (script と共有)。snooze_until 以外の既存行
+    (last_proactive_date 等) は残す。path 未指定時は呼び出し時点の
+    PROACTIVE_STATE_FILE を解決する (テストでの差し替えを効かせるため)。
+    """
+    if path is None:
+        path = PROACTIVE_STATE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict[str, str] = {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                existing[k] = v
+    except FileNotFoundError:
+        pass
+    existing["snooze_until"] = str(until_epoch)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for k, v in existing.items():
+            f.write(f"{k}={v}\n")
+    os.replace(tmp, path)
+
+
+def cmd_snooze(args: list[str], now_epoch: float | None = None) -> str:
+    """`/snooze <日数>` 本体。snooze_until を now + 日数 に設定する純ロジック。
+
+    引数なし / 不正は使い方を返す。0 は即時解除 (snooze_until を過去に倒す)。
+    """
+    if now_epoch is None:
+        now_epoch = time.time()
+    if not args:
+        return (
+            "[snooze] 使い方: /snooze <日数>\n"
+            "例: /snooze 3 で 3 日間、自発発話を止めます。/snooze 0 で解除。"
+        )
+    raw = args[0]
+    try:
+        days = int(raw)
+    except ValueError:
+        return f"[snooze] 日数は整数で指定してください (受け取り: {raw!r})。"
+    if days < 0:
+        return "[snooze] 日数は 0 以上で指定してください。"
+    until = int(now_epoch) + days * 86400
+    write_snooze_until(until)
+    if days == 0:
+        return "[snooze] 自発発話の snooze を解除しました。"
+    until_jst = datetime.fromtimestamp(until, quota.JST)
+    return (
+        f"[snooze] 自発発話を {days} 日間止めます "
+        f"(再開: {until_jst.isoformat(timespec='minutes')})。"
+    )
+
+
+def _append_proactive_ledger(entry: dict) -> None:
+    PROACTIVE_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(entry, ensure_ascii=False)
+    with PROACTIVE_LEDGER_PATH.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -658,6 +840,20 @@ async def slash_play(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def slash_snooze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    output = cmd_snooze(context.args or [])
+    logger.info("cmd=/snooze args=%r send len=%d", context.args, len(output))
+    await send_text(
+        context.bot, chat_id, thread_id, output,
+        reply_to=msg.message_id if msg else None,
+    )
+
+
 async def slash_vault_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
@@ -698,6 +894,77 @@ async def _notify_worker(app: Application) -> None:
             queue.task_done()
 
 
+async def _proactive_worker(app: Application) -> None:
+    """Serialize proactive requests: claude 起動 (guard 経由) → #chat 送信 → ledger。
+
+    notify queue とは別 worker。claude 起動は **必ず run_claude (budget guard を
+    通る経路)** を再利用する。guard を迂回して claude_runner を直叩きしない
+    (M-14 単一 guard 境界)。guard が許可しなければ skip (ledger に残すだけ)。
+    """
+    queue: asyncio.Queue = app.bot_data["proactive_queue"]
+    while True:
+        payload = await queue.get()
+        try:
+            await _run_proactive(app, payload)
+        except Exception:
+            logger.exception("proactive request failed")
+        finally:
+            queue.task_done()
+
+
+async def _run_proactive(app: Application, payload: dict) -> None:
+    now = datetime.now(quota.JST)
+    seed_kind = payload.get("seed_kind", "unknown")
+    base = {
+        "timestamp": now.isoformat(),
+        "seed_kind": seed_kind,
+        "vault_hint": payload.get("vault_hint"),
+    }
+
+    # bot 側グローバル off / snooze の二重防御 (script 側でも見るが state すれ違い
+    # や手動 socket 投入に備え bot 側でも 1 回引いて確定する)。
+    if not PROACTIVE_ENABLED:
+        logger.info("proactive skip: PROACTIVE_ENABLED is off")
+        _append_proactive_ledger({**base, "sent": False, "reason": "disabled"})
+        return
+    if is_snoozed():
+        logger.info("proactive skip: snoozed")
+        _append_proactive_ledger({**base, "sent": False, "reason": "snoozed"})
+        return
+
+    chat_id = NOTIFY_CHAT_ID
+    thread_id = BOT_THREAD_ID_CHAT
+
+    # budget guard は run_claude の内部で必ず通る。ここで事前に summary を 1 回取って
+    # 「guard 拒否で skip だったか」を ledger に残せるようにする (run_claude は拒否時
+    # に exceeded_message 文字列を返すので、それを #chat に投げないため事前判定する)。
+    if not budget_guard.allow(now):
+        summary = budget_guard.summary(now)
+        logger.info("proactive skip: budget guard not allowing (kind=%s)", summary.guard_kind)
+        _append_proactive_ledger({
+            **base, "sent": False, "reason": "budget_guard",
+            "guard_kind": summary.guard_kind,
+        })
+        return
+
+    prompt = build_proactive_prompt(payload)
+    # run_claude は guard を通り、#chat の session を resume して claude を起動する。
+    output = await run_claude(prompt, chat_id, thread_id)
+    if not output or not output.strip():
+        logger.info("proactive skip: empty claude output")
+        _append_proactive_ledger({**base, "sent": False, "reason": "empty_output"})
+        return
+
+    await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
+    # 自発発話で送信した以上 last_prompt_at は run_claude 内 record_usage で更新済
+    # (連投防止 = 沈黙判定がこの時刻基準で再カウントされる)。
+    logger.info("proactive sent len=%d seed_kind=%s", len(output), seed_kind)
+    _append_proactive_ledger({
+        **base, "sent": True, "reason": "ok", "output_len": len(output),
+        "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
+    })
+
+
 async def _handle_notify_connection(
     app: Application,
     reader: asyncio.StreamReader,
@@ -711,7 +978,13 @@ async def _handle_notify_connection(
         text = data.decode("utf-8", errors="replace").strip()
         if not text:
             return
-        queue: asyncio.Queue = app.bot_data["notify_queue"]
+        # 構造化 envelope なら proactive 経路へ、それ以外は従来の素通し forward。
+        proactive = parse_proactive_payload(text)
+        if proactive is not None:
+            queue: asyncio.Queue = app.bot_data["proactive_queue"]
+            await queue.put(proactive)
+            return
+        queue = app.bot_data["notify_queue"]
         await queue.put(text)
     except Exception:
         logger.exception("notify socket recv failed")
@@ -791,6 +1064,7 @@ async def post_init(application: Application) -> None:
         BotCommand("status", "bot 稼働状況 / current session を表示"),
         BotCommand("play", "YouTube URL をこの PC のブラウザで開く"),
         BotCommand("vault_push", "vault の commit 済変更を GitHub に push"),
+        BotCommand("snooze", "自発発話を指定日数止める (例: /snooze 3、解除は /snooze 0)"),
     ]
     scope = BotCommandScopeChat(chat_id=NOTIFY_CHAT_ID)
     try:
@@ -807,6 +1081,7 @@ async def post_init(application: Application) -> None:
     except FileNotFoundError:
         pass
     application.bot_data["notify_queue"] = asyncio.Queue()
+    application.bot_data["proactive_queue"] = asyncio.Queue()
     server = await asyncio.start_unix_server(
         lambda r, w: _handle_notify_connection(application, r, w),
         path=str(NOTIFY_SOCKET),
@@ -816,7 +1091,11 @@ async def post_init(application: Application) -> None:
     application.bot_data["notify_worker_task"] = asyncio.create_task(
         _notify_worker(application)
     )
-    logger.info("notify socket listening at %s", NOTIFY_SOCKET)
+    application.bot_data["proactive_worker_task"] = asyncio.create_task(
+        _proactive_worker(application)
+    )
+    logger.info("notify socket listening at %s (proactive enabled=%s)",
+                NOTIFY_SOCKET, PROACTIVE_ENABLED)
 
     # stall check job (§4.6)
     application.job_queue.run_repeating(
@@ -835,13 +1114,14 @@ async def post_shutdown(application: Application) -> None:
             await server.wait_closed()
         except Exception:
             pass
-    worker_task: asyncio.Task | None = application.bot_data.get("notify_worker_task")
-    if worker_task is not None:
-        worker_task.cancel()
-        try:
-            await worker_task
-        except (asyncio.CancelledError, Exception):
-            pass
+    for key in ("notify_worker_task", "proactive_worker_task"):
+        worker_task: asyncio.Task | None = application.bot_data.get(key)
+        if worker_task is not None:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
     try:
         NOTIFY_SOCKET.unlink()
     except FileNotFoundError:
@@ -870,6 +1150,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("status", slash_status, filters=message_filter))
     app.add_handler(CommandHandler("play", slash_play, filters=message_filter))
     app.add_handler(CommandHandler("vault_push", slash_vault_push, filters=message_filter))
+    app.add_handler(CommandHandler("snooze", slash_snooze, filters=message_filter))
     # slash command 以外の text message → on_message
     app.add_handler(
         MessageHandler(
