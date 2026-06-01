@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-01 (Phase 3 を畳んで Phase 4 移送 = voice bot 統合 Phase 4 移送 + 条件 #2 判定日 6-11 確定 [PROJECT.md 健全性履歴 2026-06-01 entry])
+最終更新: 2026-06-01 (Phase 3 を畳んで Phase 4 移送 = voice bot 統合 Phase 4 移送 + 同日追加判断: 条件 #2 を Phase 4 着手の門から外す [bot.py 大改変時の様子見へ再定義]、Phase 4 は #1+#3 で着手可 [PROJECT.md 健全性履歴 2026-06-01 entry])
 
 ## 設計メモ
 
@@ -135,7 +135,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 - user 操作: 検証用 topic `#v4-new` の手動削除 (実害なし、当日 cleanup)
 - claude 実装: telegram-setup.md §6.2 step に従い bot.py / sessions.py / quota.py / requirements.txt / .env.example / companion-bot.service の cold cut commit 作成
 - user 操作: telegram-setup.md §6.2 step 0〜7 (commit pull → bot 停止 → venv swap → .env 追記 → bot 起動 → smoke test)
-- 観察: cold cut +14 日 (2026-06-16 目処) で Telegram 観察完了、Phase 4 着手条件 #2 判定起点
+- 観察: cold cut +14 日 (2026-06-16 目処) で Telegram 観察完了、Phase 4 着手条件 #2 判定起点 (※2026-06-01 追加判断で条件 #2 は Phase 4 着手の門から外れた → Done「Phase 3 を畳んで Phase 4 へ」参照)
 
 #### 実装着手後の運用ルール (lead 集約持ち越し 12 件 + K-* 観察項目への統合)
 
@@ -150,7 +150,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 9. **K-T9**: sentinel 種別上限 (1 種限定、2 種目要求 = 設計引き直し議論起動、W-6 / ax §7.2.1)
 10. **K-T10**: `[critical]` プレフィクス上限 (完全一致 1 件、`startswith("[critical] ")` 半角スペース込み、2 種目要求 = 設計引き直し議論起動、W-6)
 11. **K-T11**: edit event filter (`edited_message` 完全無視を維持、`MessageHandler(filters.UpdateType.MESSAGE & ~filters.UpdateType.EDITED_MESSAGE)`、W-6 / N-T7)
-12. **K-T12**: 新 2 週間観察カウント条文 (cold cut 切替日から 14 日、Phase 4 着手条件 #2 PROJECT.md L228 改訂反映済)
+12. **K-T12**: 新 2 週間観察カウント条文 (cold cut 切替日から 14 日、Phase 4 着手条件 #2 PROJECT.md L228 改訂反映済) (※2026-06-01 追加判断で #2 は Phase 4 着手の門から外れ、bot.py 大改変時の様子見へ再定義 → Done「Phase 3 を畳んで Phase 4 へ」参照)
 
 #### Phase 2.6 実装 TODO (cold cut 切替日に開始)
 
@@ -174,7 +174,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 
 ## Done
 
-### Phase 3 を畳んで Phase 4 へ (2026-06-01、user 方針転換) — voice bot 統合 Phase 4 移送 + 条件 #2 判定日 6-11 確定
+### Phase 3 を畳んで Phase 4 へ (2026-06-01、user 方針転換) — voice bot 統合 Phase 4 移送 + 同日追加判断: 条件 #2 を Phase 4 着手の門から外す
 
 **背景**: user 判断「voice は日常利用シーンが薄い (テレビ前は dashboard / YouTube)、bot/dashboard で土台確立、Phase 3 を畳んで Phase 4 へ」。center of truth = PROJECT.md 健全性履歴 2026-06-01 entry。
 
@@ -183,9 +183,11 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 - **`BOT_THREAD_ID_VOICE_LOG` (b)**: 「未実施項目」の VOICE_LOG 環境変数設定を「Phase 4 voice bot 統合時に追加 (2026-06-01 に Phase 3-2 から Phase 4 移送)」へ更新。
 - **Phase 4 着手条件 #2 観察カウント (c)**: 末尾の「Phase 4 着手目安 2026-06-25 +α (voice/ 統合 +14 日 = 6/25 目処)」を撤回。voice を Phase 4 移送したため「voice/ 統合 +14 日」律速は成立せず、bot.py の最後の大改変 = Telegram 移行 (5/28) として **条件 #2 判定日 = 2026-06-11** に戻す。前提 = 当面 bot.py を大きく触らない (remote v1-β 保留)。2026-06-11 完了予定の Telegram 観察 14 日カウントは継続。
 
+**同日追加判断 (2026-06-01): 条件 #2 を Phase 4 着手の門から外す**: 上記 6/11 判定をさらに見直し。user 問題提起「個人活用で 2 週間観察してフェーズを止める実益が不明、何度も観察を止めてきた」を受け、「2 週間」の定量根拠が台帳に無いこと・起算日/打ち切りの反復による形骸化を確認。Phase 4 (キャラ層) は bot.py 土管を大きく触らない装飾のため、観察を装飾フェーズの門にするのは紐付けの筋違いと判断。**条件 #2 は Phase 4 着手の門から外す (bot.py 大改変時の様子見へ再定義)。Phase 4 は条件 #1 (vault 充足) + #3 (user 宣言) で着手可**。観察は撤廃せず、次に bot.py 土管を大改変するとき (voice bot 統合 / remote v1-β を Phase 4 中に入れる等) のその変更への様子見へ再定義 (2 週間固定にしない)。6/11 判定は撤回。根拠: PROJECT.md 健全性履歴 2026-06-01 entry「追加判断」section。
+
 **code-reviewer**: PROJECT.md / voice / remote STATUS と一括で整合性点検 (同セッション)。
 
-**次タスク**: 2026-06-11 に条件 #2 判定 → 残置観察項目 2 件 (vault-sync Stop hook exercise / stall→restart→catch-up) 確認 → user 宣言 (#3) で Phase 4 着手。
+**次タスク**: Phase 4 着手は user 宣言 (#3) で随時可 (#1 vault 充足済)。残置観察項目 2 件 (vault-sync Stop hook exercise / stall→restart→catch-up) は次の自然使用で閉じる。次に bot.py 土管を大改変するときその変更を様子見観察する。
 
 ### Telegram `/vault_push` コマンド追加 (2026-05-30 実装、commit までで停止、検証/restart は user 操作)
 
@@ -263,7 +265,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
     - `claude_runner.py` の `run_discord` → `run_session_prompt` 改名 (telegram-design §8.5 commit 粒度 (4))、本 cold cut では platform 非依存なので無改変、別 commit 化
     - AIORateLimiter logger 2 名のうち 1 名削除判断 (実観測待ち、PTB v22 実機で retry 起きた時に bot.log でどちらの logger 名が出るか確認、不要な方を削る)
     - `BOT_THREAD_ID_VOICE_LOG` 環境変数設定 → Phase 4 voice bot 統合時に追加 (2026-06-01 に Phase 3-2 から Phase 4 移送)
-  - **Phase 4 着手条件 #2 観察カウント**: 2026-05-28 起算 = **2026-06-11 完了予定** (Telegram 観察 14 日)、PROJECT.md 2026-05-27 (追) entry のタイムライン (cold cut 5/27 起算 = 6/10 完了予定) から 1 日遅延 (cold cut 切替が 5/27 23:00 から 5/28 00:18 にまたいだため)。**2026-06-01 更新**: voice を Phase 4 移送したため『voice/ 統合 +14 日』律速は撤回。bot.py の最後の大改変は Telegram 移行 (5/28) で、条件 #2 判定日 = 2026-06-11。Phase 4 着手目安は最短 6/11 +α (条件 #1 vault 充足 / #2 6/11 判定 / #3 user 宣言)。前提 = 当面 bot.py を大きく触らない (remote v1-β 保留)
+  - **Phase 4 着手条件 #2 観察カウント**: 2026-05-28 起算 = **2026-06-11 完了予定** (Telegram 観察 14 日)、PROJECT.md 2026-05-27 (追) entry のタイムライン (cold cut 5/27 起算 = 6/10 完了予定) から 1 日遅延 (cold cut 切替が 5/27 23:00 から 5/28 00:18 にまたいだため)。**2026-06-01 更新**: voice を Phase 4 移送したため『voice/ 統合 +14 日』律速は撤回。bot.py の最後の大改変は Telegram 移行 (5/28) で、条件 #2 判定日 = 2026-06-11。Phase 4 着手目安は最短 6/11 +α (条件 #1 vault 充足 / #2 6/11 判定 / #3 user 宣言)。前提 = 当面 bot.py を大きく触らない (remote v1-β 保留)。**同日追加判断 (2026-06-01)**: 条件 #2 を Phase 4 着手の門から外す (bot.py 大改変時の様子見へ再定義、2 週間固定にしない)。Phase 4 は条件 #1 (vault 充足) + #3 (user 宣言) で着手可。6/11 判定は撤回。Telegram 観察は次の bot.py 大改変時の様子見の前例として扱い、フェーズの門にはしない
 
 - 2026-05-28 Phase 2.6 cold cut 実装: Discord SDK → python-telegram-bot v22.7 全面書き換え (commit までで停止、venv swap / systemctl restart / push は orc 外の次タスク)
   - **設計 center of truth**: `~/companion/workspace/redesign/telegram-design.md` §1〜§8 確定版、実装ガード 16 項目 (OWNER 4 段防御 / privacy mode off / chunk_telegram TELEGRAM_MAX=4000 / AIORateLimiter 委譲 / parse_mode 未指定 / BotCommandScopeChat 限定 / edited_message filter / stall_check_job / `_handle_notify` queue + worker / sessions schema 2 軸 / sessions ファイル path / sessions/channels/ 残置 / ledger.jsonl `topic_key` field / catch-up 無改変 / AIORateLimiter logger INFO / stale-thread-observation jsonl は YAGNI で未実装) すべて反映
