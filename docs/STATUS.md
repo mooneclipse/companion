@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-01 (Phase 3 を畳んで Phase 4 移送 = voice bot 統合 Phase 4 移送 + 同日追加判断: 条件 #2 を Phase 4 着手の門から外す [bot.py 大改変時の様子見へ再定義]、Phase 4 は #1+#3 で着手可 [PROJECT.md 健全性履歴 2026-06-01 entry])
+最終更新: 2026-06-01 (Phase 4 自発発話 [proactive companion messaging] 最小初版を実装 = bot.py 大改変、commit までで停止 [restart/timer enable は下記 user 操作]、本変更への様子見観察を開始)
 
 ## 設計メモ
 
@@ -173,6 +173,53 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### Phase 4 自発発話 (proactive companion messaging) 最小初版 (2026-06-01 実装、commit までで停止、restart/timer enable は user 操作)
+
+**目的**: bot 側から自発的に話しかける機能の最小初版。Phase 4 (相棒層) の能力タスク。設計 center of truth = `~/companion/vault/notes/2026-05-30_proactive-companion-messaging-design.md` (§3 blind spots / §4 推奨方向 / §5 最小スケッチ / §3.B budget guard 制約)。
+
+**確定済パラメータ (user 確認済)**: 沈黙閾値 6h (全 topic 横断 max(last_prompt_at))、発火帯 9-22 JST (深夜除外)、1 日 1 回上限 (JST 日付)、投げ先 #chat、種 = 直近会話文脈中心 (能動 Web 調査なし、同日 vault 追記は任意で種ヒント)、確率で間引く、種ゼロなら発火しない、off/snooze 同梱、ペルソナ軸 1「対等な相方」。
+
+**構成 (2 repo)**:
+- **maintenance/** (commit `b12dfb6`): `scripts/proactive-companion.sh` (判定: グローバル on/off → 9-22 JST → snooze → 沈黙 6h → 1 日 1 回 → 種有無 → 確率、すべて state を 1 回引いて確定。条件成立時のみ bot socket に `[[proactive-v1]]`+JSON 依頼を送る。claude 起動はしない)、`systemd/companion-proactive.{service,timer}` (oneshot, After=companion-bot.service, Wants/Requires なし=socket 不在時 script skip に揃え。timer は 9,11,13,15,17,19,21 JST 発火 + RandomizedDelaySec=40min + Persistent=true、catch-up 連続発火は last_proactive_date で 1 回抑止)。
+- **bot/** (commit `f57b049`): socket 接続ハンドラで構造化 envelope を 1 回判別し proactive 経路へ振り分け (既存 `[critical] ` 素通し forward 経路は無改変)。`_proactive_worker` / `_run_proactive` で **run_claude (budget guard を通る経路) を再利用**し #chat に送信。guard 拒否 / snooze / off / 空出力なら skip し `sessions/proactive_ledger.jsonl` に理由記録 (claude_runner 直叩きせず迂回しない、M-14 単一 guard 境界)。`/snooze <日数>` slash command (snooze_until を `.state/proactive` に書き script/bot 双方で skip 判定) + env `PROACTIVE_ENABLED` 全停止。
+
+**設計判断 (記録)**:
+1. **socket メッセージ形式**: `[[proactive-v1]]` 行マーカー + JSON envelope。K-T9 (sentinel 種別上限 = 文字列 forward 経路の prefix マッチ拡張禁止) には**非該当**と判断。理由: forward 経路の `[critical] ` prefix マッチ (挙動分岐) を一切増やさず、socket 受信段階で「素通し forward か / claude を起こす proactive 依頼か」を JSON decode で 1 回判別する別レイヤだから。proactive 経路の中で更に prefix マッチ分岐を生やすことは将来も禁止 (このルールをコードコメントにも明記)。
+2. **種の集め方**: 最小初版は「直近会話の存在 (= max(last_prompt_at)>0)」を種の核とし、当日 mtime の vault ノート**ファイル名**を最大 3 件まで種ヒントに足す (本文は渡さない=プライバシー)。bot 能動 Web 調査はしない (次拡張)。会話実績ゼロ (session なし) は種ゼロ扱いで発火しない (Meta ガード (b) 翻訳)。
+3. **guard 経路**: `_run_proactive` は `run_claude` を呼ぶ前に `budget_guard.allow()` を 1 回先読みする。これは迂回ではなく「guard 拒否時に run_claude が返す exceeded_message 文字列を #chat に誤送信しないため」。run_claude 内でも guard を再度通すので claude 起動は単一境界のまま。両 check とも同一 state (ledger) の読みで、stderr 分岐や場当たりリトライではない (2 周目ルール非該当)。
+4. **1 日消費の確定点**: script は socket handoff 成功を以て last_proactive_date を当日に更新 (1 日分消費)。bot 側 guard 拒否 / claude 失敗でも script から再試行しない (場当たりリトライ禁止)。bot 側成否は proactive_ledger に残す。
+
+**追加 env (`.env.example`)**: `PROACTIVE_ENABLED` (bot+script 双方参照、全停止)、`PROACTIVE_HOUR_START`/`PROACTIVE_HOUR_END`/`PROACTIVE_SILENCE_HOURS`/`PROACTIVE_PROBABILITY` (script 側調整)。
+
+**テスト**: `tests/test_bot.py` に 17 件追加 (parse_proactive_payload 6 / build_proactive_prompt 3 / snooze 6 / guard 迂回しないこと 2)。全 **83 tests pass** (旧 66 + 17)。script 側はローカルで fake HOME + fake socket により全判定パス (no-session / not-silent / no-socket / disabled / full-fire / once-per-day) を実弾確認。
+
+**様子見観察を開始 (PROJECT.md 2026-06-01 条件 #2 再定義「bot.py 大改変時の様子見」に従う)**。観察項目:
+- 自発発話の発火回数 (proactive_ledger.jsonl sent=true 件数、想定 = 1 日最大 1)
+- guard 通過 / 拒否の内訳 (ledger reason: ok / budget_guard / snoozed / disabled / empty_output)
+- 連投・多重発火の有無 (同日 2 回以上 sent=true が出ていないか、last_prompt_at 更新で沈黙が再カウントされ連投しないか)
+- off (PROACTIVE_ENABLED=0) と /snooze の効き (script log の skip 理由、ledger reason)
+- bot.service NRestarts / bot.log ERROR/WARN/Traceback
+- 自発メッセージの口調が「対等な相方」かつ空疎/引き止めでないか (内容の質的観察)
+
+**未実施 (user 操作 — Phase 2.6 / /vault_push の「commit までで停止、restart/検証は user」前例に揃える)**:
+
+`systemctl --user` は本実装環境のセッションバス事情で claude 側から叩かない。下記を user が手元端末で実施する:
+
+1. **timer 配置 + bot restart**:
+   ```
+   ln -sf ~/companion/maintenance/systemd/companion-proactive.service ~/.config/systemd/user/companion-proactive.service
+   ln -sf ~/companion/maintenance/systemd/companion-proactive.timer    ~/.config/systemd/user/companion-proactive.timer
+   systemctl --user daemon-reload
+   systemctl --user enable --now companion-proactive.timer
+   systemctl --user restart companion-bot.service           # bot.py 大改変の反映
+   systemctl --user status companion-bot.service            # active (running) 確認
+   systemctl --user list-timers companion-proactive.timer   # 次回発火確認
+   ```
+2. **動作確認**: bot.log に `notify socket listening ... (proactive enabled=True)` が出ること。手動発火テスト (沈黙 6h を満たす状況で) は `~/companion/maintenance/scripts/proactive-companion.sh` を直接実行 → `proactive-companion.log` で判定結果確認 → 発火時は #chat に短い自発メッセージが届くこと。`/snooze 1` で翌日まで止まること、`/snooze 0` で解除されること。
+3. **`git push` は claude 側で未実施** (maintenance/ repo・bot/ repo とも、commit まで)。
+
+**関連**: vault `notes/2026-05-30_proactive-companion-messaging-design.md` / `persona/docs/STATUS.md` (軸 1 確定) / PROJECT.md 健全性履歴 2026-06-01「条件 #2 再定義」。
 
 ### Phase 3 を畳んで Phase 4 へ (2026-06-01、user 方針転換) — voice bot 統合 Phase 4 移送 + 同日追加判断: 条件 #2 を Phase 4 着手の門から外す
 
