@@ -1,0 +1,9 @@
+[Unit]
+Description=companion-proactive: bot に自発発話 (proactive companion messaging) の発火依頼を出す判定
+# bot 起動順だけ後ろに寄せる。bot が落ちていても本体スクリプトは socket 不在
+# として skip するので Wants=/Requires= は付けない (notify-* と同方針)。
+After=companion-bot.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/miho/companion/maintenance/scripts/proactive-companion.sh
