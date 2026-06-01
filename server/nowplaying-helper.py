@@ -448,13 +448,19 @@ def _build_weather_line(label, stats, day_hi):
     最高気温 = all slot [6,21) の hi）で固定判定。傘ワードは slot ごとの pop_max（朝に傘・夜に傘
     の時間帯固有の意味を残す）。降水確率の数値表示「降水 N%」を温度の次に追加（傘ワードの
     根拠を可視化、傘がいらない日でも数字が出る）。pop_max が None のときは降水パートを省略。
+
+    最低は lo があれば常に出す（hi と丸め値が一致しても省かない）。梅雨/台風接近で一日中
+    気温がフラットな日（hi-lo < 1°）は「最高だけ」になって「最低最高が無い＝壊れている」と
+    見えるため、丸めで同値でも両方表示して情報の有無を明示する（2026-06-02 user 判断）。
+    hi/lo は `_wx_band_stats` が常にペアで set/None にして返す（同一ループ・同一ガードで更新）
+    ため、hi が出れば lo も必ずある。lo 単独 None は構造上起きない。
     """
     if not stats:
         return None
     parts = []
     if stats["hi"] is not None:
         t = f"最高 {round(stats['hi'])}°"
-        if stats["lo"] is not None and round(stats["lo"]) != round(stats["hi"]):
+        if stats["lo"] is not None:
             t += f" / 最低 {round(stats['lo'])}°"
         parts.append(t)
     if stats["pop_max"] is not None:
