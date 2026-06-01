@@ -362,6 +362,11 @@ def build_proactive_prompt(payload: dict) -> str:
     """Compose the claude prompt for a proactive utterance from persona + seed.
 
     Pure function → unit-testable. payload は parse_proactive_payload の戻り。
+
+    注入防止: prompt に展開してよいのは bounded/サニタイズ済みフィールドのみ
+    (現状 vault_hint = script 側で basename 化したノート名)。socket payload の
+    任意文字列フィールド (seed_kind 等) は prompt に流さない (ledger 記録専用)。
+    将来フィールドを足すときもこの境界を守る。
     """
     parts = [PROACTIVE_PERSONA_PROMPT]
     vault_hint = payload.get("vault_hint")
