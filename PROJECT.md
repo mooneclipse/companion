@@ -167,7 +167,7 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 - 切替日: **2026-05-27** (lead 単独判断で Phase 2.5 観察期間 8 日打ち切り、健全性チェック履歴 2026-05-27 entry §「Phase 2.5 観察打ち切り + cold cut 前倒し判断」参照)
 - OWNER 認可: `from_user.id == OWNER_ID` + privacy mode off (起動時 `can_read_all_group_messages` 確認、False なら `sys.exit(1)`) + 4 段防御
 - topic 構成 (initial 4): General / #chat / #research / #maintenance (#aidiary / #voice-log は実需時に追加、YAGNI)
-- voice/ 統合: Telegram 観察は **2026-05-30 打ち切り** (健全性履歴 2026-05-30 entry、user 判断 + S-1 5 回目境界化判定) で voice bot/ 側統合 着手可。着手 (bot.py 改変) で新 14 日観察が発火、Phase 4 #2 はそこに再基準化 (順序原則、bot.py 同時 2 方向回避は維持)
+- voice/ 統合: Telegram 観察は **2026-05-30 打ち切り** (健全性履歴 2026-05-30 entry、user 判断 + S-1 5 回目境界化判定)。**2026-06-01 更新**: voice bot 統合は Phase 4 移送 (voice/ 側技術基盤は完成済で Phase 3-2 を畳む)、「voice 統合着手で新 14 日観察発火 → Phase 4 #2 をそこに再基準化」は撤回。Phase 4 #2 判定は Telegram 移行 (5/28) +14 = 2026-06-11、前提は当面 bot.py を大きく触らない (健全性履歴 2026-06-01 entry)
 - 採用すべきでない設計 14 件 (N-T1〜N-T14) + 対症療法 2 周目候補 6 件 (W-1〜W-6) 明示的不採用宣言
 
 **実装着手前検証**: 25+ 項目 (V-1〜V-25 + D-add-1〜D-add-12 + AIORateLimiter log level + Bot API up 監視等)、詳細は `bot/docs/STATUS.md` Phase 2.6 section
@@ -176,9 +176,11 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 
 ---
 
-### Phase 3: 能力層 ⬜ 未着手
+### Phase 3: 能力層 🟡 一区切り (Web 検索 ✅ / voice 基盤 ✅・bot 統合 Phase 4 移送 / STT・ブラウザ 未着手)
 
 相棒に「できること」を増やす。**着手順序は軽 → 重で上から固定**（Phase 3 内なら次の項目への着手は合意不要、順に消化）:
+
+> **2026-06-01 整理 (Phase 3 を畳んで Phase 4 へ、user 判断)**: 1. Web 検索 → vault は完了、2. voice は技術基盤完成で bot 統合を Phase 4「声の確定」へ移送。これで Phase 3 の当面の能力整備は一区切りとし、着手条件 (#1 vault で充足 / #2 6-11 判定 / #3 user 宣言) を満たして Phase 4 (相棒層) に進む。残る 3. STT / 4. ブラウザ操作は Phase 4 着手を優先し、必要が生じた時点で Phase 4 と並行 or 後続で着手 (punt ではなく順序の後ろ倒し)。詳細は健全性履歴 2026-06-01 entry
 
 1. **Web 検索 → md 蓄積 + Obsidian vault 同期** ✅ TODO 全消化 (2026-05-17)
    - リソース負荷ほぼなし、Claude Code 経由で動く最軽量タスク
@@ -213,14 +215,14 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
    - `cp ~/companion/workspace/.githooks-template/pre-commit .git/hooks/ && chmod +x .git/hooks/pre-commit`
    - `~/bin/gitleaks dir . --no-banner` で初期スキャン確認
    - `git push --dry-run origin develop` で SSH 認証 + push 権限確認
-2. **TTS（VOICEVOX）: bot 駆動先行 + 朝自動発火 Phase 4 punt** ⬜ 設計確定 (v2.0.2, 2026-05-19)
+2. **TTS（VOICEVOX）: voice/ 側技術基盤 完成、bot 統合は Phase 4 移送** 🟡 voice/ 側完了 (2026-05-19) / bot 統合 Phase 4 へ (2026-06-01 user 判断)
    - CPU 軽量モードで実用域 (VOICEVOX 0.25.2 / 四国めたん speaker_id=2、AVX1 適合 + RTF 2.1-3.0 warm / RAM RSS 268MB 実測済)
    - 駆動: bot `/say` slash command (24h 受付)、朝自動発火 (旧 voice-greeting.timer) は Phase 4 punt
      (TV hot standby で xrandr gate 機能せず確定、case B 採用根拠は `voice/docs/STATUS.md` 参照)
-   - 着手順序 (v2.0.2 で voice/ 側前倒し):
-     - **voice/ 側 (bot.py を触らない部分: say.sh / bin/ / systemd/companion-voice-engine.service / git init)**: 2026-05 中下旬から前倒し着手
-     - **bot/ 側 (voice_command.py / voice_status.py / voice_ledger.jsonl / bot.py への slash registration)**: Phase 2.5 T-D 後半 (CreditBudgetGuard, 2026-05-19 即時前倒し完了) + 健全性 2 週間観察 (5/19〜6/2) 完了後、2026-06 上旬目処
-     - 前倒し根拠: voice/ 側単独は bot.py / bot.service を一切触らないため devil T-D-1(d) 構造原則 (bot.py 同時 2 方向回避 + Phase 2.5 健全性 2 週間観察) と独立。新規設計判断ではなく運用上の前倒し
+   - **2026-06-01 user 判断 (voice 後回し → Phase 3 畳み)**: voice の日常利用シーンが薄い (テレビ前は dashboard/YouTube) ため bot 統合を Phase 4「声の確定」と一体化して移送。voice-design v2.0 の Phase 4 trigger (bot /say 頻度・素声運用 2 ヶ月上限) は companion 全体の Phase 4 着手判断から切り離し「Phase 4 着手後の voice 拡張判断材料」へ格下げ。詳細は健全性履歴 2026-06-01 entry + `voice/docs/STATUS.md`
+   - 着手済 / 移送先:
+     - **voice/ 側 (say.sh / bin/ / systemd/companion-voice-engine.service / git init)**: ✅ 2026-05-19 完了 (完了基準 (i) 達成、技術基盤完成で Phase 3-2 を畳む)
+     - **bot/ 側 (voice_command.py / voice_status.py / voice_ledger.jsonl / bot.py への slash registration)**: → **Phase 4 移送** (声・キャラ確定後に着手、改修総量 ~15%)
    - 確定設計: `~/companion/workspace/redesign/voice-design.md` v2.0.2 (2026-05-19、§5.3 voice/ 側前倒し反映)
    - ディレクトリ: `~/companion/voice/` (台帳 + SETUP.md + engine 配置済、git init は voice/ 側実装着手と同時)
    - 台帳: `~/companion/voice/docs/STATUS.md`
@@ -247,9 +249,11 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 **着手発火条件**（全部満たすまで Phase 4 には進まない。「次へ次へ」で土台が整わないうちに装飾が始まるのを防ぐため明文化）:
 
 1. **Phase 3 の能力が最低 1 つ、日常運用に自然に組み込まれている**（ユーザーが普段の生活で意識せず使う頻度があり、2 週間以上継続）
+   - **2026-06-01 更新 (voice 後回し反映)**: 「Phase 3 の能力」該当は vault 同期 (3-1) と voice (3-2) のみ。voice を Phase 4 移送したため **vault 同期 (Stop hook 常時稼働・運用 2 週間以上継続) で形式充足**。加えて bot 無停止運用 (cold cut 以降 NRestarts=0 / ERROR 0) + dashboard 毎朝稼働 (timer 欠日なし) を土台確立の実質的傍証とする (両者は本条件のカウント対象外定義だが user『土台はできている』判断の客観根拠)。詳細は健全性履歴 2026-06-01 entry
 2. **直近 2 週間、Phase 1〜3 のいずれかで「想定外の停止 / 誤動作 / 修正必須レベルの不具合」が発生していない**
    - **Phase 2.6 (Telegram 移行) 反映 (2026-05-30 更新)**: Phase 2.5 観察 (5/19-5/27、8 日) と Telegram 観察 (5/27-5/30、user 判断で打ち切り、健全性履歴 2026-05-30 entry) はいずれも独立完了として記録。**Phase 4 着手判定の主基準は voice bot/ 側統合 (bot.py 改変) +14 日の新観察**に再基準化 (bot.py 同時 2 方向回避の原則上これが真の最終律速、Telegram 単独観察では引き継げない layer がある)。voice 統合観察は event-based exit (bot.py 置換パスのイベント実観測カバレッジ) で締める (S-1 5 回目境界化判定の結論)
    - 「Phase 2.5 観察結果を Telegram 経路に引き継ぐ」は **採用しない** (N-T10 違反禁止、bot.py event handler は引き継げない layer)
+   - **2026-06-01 更新 (voice Phase 4 移送に伴う再基準化撤回)**: voice を Phase 4 移送したため「voice 統合 +14 日」律速は成立しない。bot.py の最後の大改変を Telegram 移行 (cold cut 5/28) とみなし、**判定日を 5/28 + 14 = 2026-06-11 に戻す**。S-1 境界化原則「bot.py 置換パスのイベント実観測カバレッジで締める」は維持し、Telegram cold cut の 5/28-6/11 運用観察で締める。前提 = 当面 bot.py を大きく触らない (remote v1-β 保留)。詳細は健全性履歴 2026-06-01 entry
 3. **ユーザー自身が「土台が落ち着いた、Phase 4 へ進む」と明示的に宣言している**
 
 3 が最終ゲート。1〜2 が満たされていなければ Claude 側から「まだ条件未達です」と差し戻す。条件達成判定は PROJECT.md / 各 STATUS.md / bot ログを根拠に Claude が報告し、最終判断はユーザーが下す。
@@ -480,6 +484,43 @@ Phase 2.5 健全性 2 週間観察期間中 (5/19-6/2) の **read-only 設計議
 **team cleanup**: shutdown_request → devil/architect 終了 → TeamDelete 完了。plan ファイル (devil `fluffy-stargazing-graham.md` / architect `modular-sprouting-widget.md`) は cleanup 削除済、要点は本 entry に転記 (落とし穴 F)。
 
 次回チェック目安: voice bot/ 側統合 着手時 (= 新観察カウント起点)。着手前に残置観察項目 2 件の exercise 計画を bot/docs/STATUS.md に落とす。
+
+---
+
+### 2026-06-01: Phase 3 を畳んで Phase 4 へ — voice bot 統合 Phase 4 移送 + 着手条件 #1/#2 読み替え (user 方針転換)
+
+**判断**: user (SE, 最終決定者) が「voice は一旦後回し (テレビ起動時は dashboard / YouTube 視聴で bot 駆動 voice の実利用シーンが薄い)。bot も dashboard も安定稼働で土台はできている。Phase 3 をしっかり畳んで Phase 4 (相棒層 = キャラクター性) に進む」と判断。プロジェクト管理判断は lead 一任。
+
+**前提変化の確認 (5/30 entry からの差分、CLAUDE.md 対症療法 2 周目チェック)**: 5/30 entry は「voice bot/ 側統合 (bot.py 改変) +14 日」を条件 #2 の最終律速に再基準化したが、これは **voice 統合を実施する前提**だった。本 entry で user が voice 後回し + Phase 3 畳みを判断したため前提が変わる。よって 5/30 再基準化を撤回する。これは閾値・数値だけを動かす 2 周目修正 (CLAUDE.md) ではなく、上流方針転換 (voice をやるか否か) に伴う設計引き直しであることを明示。
+
+**設計判断 3 点**:
+
+1. **voice (Phase 3-2) の畳み方 = 技術基盤完成で畳む + bot 統合を Phase 4 移送**
+   - voice/ 側技術基盤 (say.sh / engine 起動経路 / systemd unit) は 2026-05-19 に完了基準 (i) 達成で完成済。未着手は bot 統合 (voice_command.py / voice_status.py / voice_ledger.jsonl / bot.py slash registration) のみ。
+   - 「声の確定 (VOICEVOX のどのキャラ)」はもともと Phase 4 スコープ (本 PROJECT.md Phase 4 定義)。声 = キャラクター性そのもので、「機能先・キャラは後のせ」原則 (本 PROJECT.md 冒頭) からしてキャラ確定後に bot へ声を載せる方が手戻りが出ない。Phase 3-2 の Phase 4 改修総量 ~15% (voice STATUS) で捨て駒リスク低。
+   - ∴ voice bot 統合は Phase 4 の「声の確定」と一体で着手。Phase 3-2 は技術基盤完成をもって畳む。
+
+2. **voice-design v2.0 の Phase 4 trigger を companion 全体の Phase 4 着手判断から切り離し (撤回でなく格下げ)**
+   - voice-design v2.0 は条件 #1 を「bot /say を 14 日 10 回以上 + 週 5 回 × 2 週間」と数値化 + 素声運用 2 ヶ月上限で縮退判断、と **voice を日常運用する前提**で設計。
+   - user 実態 (voice を日常的には使わない) で前提が成立しない。よってこの trigger は companion 全体の Phase 4 着手判断から外し、「**Phase 4 着手後に voice 機能をどう載せ拡張するかの判断材料**」へ位置づけ直す。voice-design v2.0 の設計内容自体は破棄せず Phase 4 の素材として残す。
+
+3. **着手条件 #1 / #2 の読み替え**
+   - **#1 (Phase 3 能力が日常運用 2 週間以上)**: 「Phase 3 の能力」該当は vault 同期 (3-1) と voice (3-2) のみ。voice 後回しのため **vault 同期 (Phase 3-1、Stop hook 常時稼働・運用 2 週間以上継続) で形式充足**。発火頻度は低いが土台能力として機能。加えて **bot 無停止運用 (cold cut 以降 NRestarts=0 / ERROR 0) + dashboard 毎朝稼働 (timer 欠日なし)** を「土台確立」の実質的傍証として記録 (両者は本条件のカウント対象外定義だが、user の『土台はできている』判断の客観根拠)。
+   - **#2 (直近 2 週間 想定外停止/誤動作なし)**: 5/30 の「voice 統合 +14 日」再基準化を撤回。voice を Phase 4 移送 = bot.py の最後の大改変は **Telegram 移行 (cold cut 5/28)**。よって **5/28 + 14 = 2026-06-11 を条件 #2 判定日に戻す**。S-1 5 回目境界化判定の原則「bot.py 置換パスのイベント実観測カバレッジで締める」は維持し、Telegram cold cut (bot.py 全面置換) の 5/28-6/11 運用観察で締める。前提 = **当面 bot.py を大きく触らない** (remote v1-β = F-1 bot.py 双方向化も Phase 4 着手見通しが立つまで保留、remote STATUS に注記)。
+
+**残置観察項目 (5/30 entry から継承、6/11 判定までに自然使用で 1 回ずつ閉じる)**:
+- vault-sync Stop hook + Phase 3-1 重複確認フローを Telegram 経路で能動 exercise 各 1 回
+- stall 3 連続→`sys.exit(1)`→systemd restart→catch-up 経路 (継続観察 + code review)
+
+**台帳反映 (別 commit)**: voice/docs/STATUS.md (Phase 3-2 畳み + trigger 格下げ) / bot/docs/STATUS.md (voice 移送 + #2 判定日 6/11) / remote/docs/STATUS.md (v1-β 当面保留)。code-reviewer で整合性破綻点検。
+
+**時系列影響 (更新)**:
+- Phase 3-2 voice: 技術基盤完成で畳み、bot 統合は Phase 4 移送
+- 条件 #2 判定日: voice 統合 +14 日 → **Telegram 移行 +14 = 2026-06-11**
+- bot.py 改変: 当面凍結 (remote v1-β 保留)、Phase 4 着手見通しが立つまで
+- Phase 4 着手判定: 条件 #1 (vault で充足) + #2 (6/11 判定) + #3 (user 宣言) で発火、最短 6/11 +α
+
+次回チェック目安: 2026-06-11 (条件 #2 判定タイミング)。残置観察項目 2 件の exercise 完了を確認して #2 を判定、user 宣言 (#3) で Phase 4 着手。
 
 ---
 
