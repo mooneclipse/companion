@@ -237,14 +237,18 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 
 ---
 
-### Phase 4: 相棒層 ⬜ 未着手
+### Phase 4: 相棒層 🟡 着手 (2026-06-01)
 
-キャラクター性の付与。
+キャラクター性の付与。4 軸を **orc で 1 軸ずつ決め打ち** で確定する（順番: 口調・性格 → 声 → 立ち絵・表象 → 存在感の調整、user 確定）。
 
-- 立ち絵（人型 or 記号 ◯■ 未定）
-- 声の確定（VOICEVOX のどのキャラ or 自作音声モデル）
-- 口調・キャラクター性の付与
-- 「相棒」としての存在感の調整
+- 立ち絵・表象（人型 or 記号 ◯■ 未定）— TODO
+- 声の確定（VOICEVOX のどのキャラ or 自作音声モデル、voice/ 技術基盤と接続 = voice bot 統合の gate）— TODO
+- 口調・性格コンセプト — ✅ 確定 (2026-06-01) = **対等な相方**（タメ口ベースで短く、時々さりげない気遣いや軽口を一言添える。素の bot 口調に温度を足す方向）
+- 「相棒」としての存在感の調整 — TODO
+
+**2026-06-01 着手**: 着手条件 #1 (vault 同期で形式充足) + #3 (user 宣言) を満たし着手（#2 は 2026-06-01 に Phase 4 着手の門から外れ済、下記 #2 / 健全性履歴 2026-06-01 entry「追加判断」参照）。進め方 = orc で 1 軸ずつ決め打ち。軸 1 口調・性格は「対等な相方」で確定。**軸の確定は概念記録のみで bot.py / システムプロンプトには配線しない**（口調配線は複数軸確定後に別タスク、土管の piecemeal 改変回避）。詳細台帳は `~/companion/persona/docs/STATUS.md`（Phase 4 の center of truth、本 section はポインタ + 要点のみ）。
+
+**台帳**: `~/companion/persona/docs/STATUS.md`
 
 **着手発火条件**（全部満たすまで Phase 4 には進まない。「次へ次へ」で土台が整わないうちに装飾が始まるのを防ぐため明文化）:
 
@@ -259,7 +263,7 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 
 3 が最終ゲート。**2026-06-01 以降、条件 #2 (2 週間観察) は Phase 4 着手の門ではない** (上記 #2 追加更新、bot.py 大改変時の様子見へ再定義)。1 が満たされていなければ Claude 側から「まだ条件未達です」と差し戻す。条件達成判定は PROJECT.md / 各 STATUS.md / bot ログを根拠に Claude が報告し、最終判断はユーザーが下す。
 
-**着手時**: `~/companion/persona/` に `docs/STATUS.md`。
+**着手時**: `~/companion/persona/` に `docs/STATUS.md`（2026-06-01 着手・作成済、persona/ は実装 substance が出る段まで git init しない＝ voice/ 前例踏襲）。
 
 ---
 
