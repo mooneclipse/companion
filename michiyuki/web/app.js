@@ -17,6 +17,13 @@ const overlay = document.getElementById("overlay");
 const fragTitleEl = document.getElementById("frag-title");
 const fragTextEl = document.getElementById("frag-text");
 const hintEl = document.getElementById("hint");
+const walkHintEl = document.getElementById("walkhint");
+
+// 「押しているあいだ、歩く」ヒント。断章が出ておらず・終端でなく・いま歩いて
+// いないとき(=止まっているとき)だけ薄く出す。歩き出すと消える。
+function updateWalkHint() {
+  walkHintEl.hidden = !(activeFrag === null && !finished && !walking);
+}
 
 let DPR = 1;
 let W = 0;
@@ -293,6 +300,7 @@ function showFragment(idx) {
   overlayAlpha = 0;
   overlay.hidden = false;
   overlay.classList.add("visible");
+  updateWalkHint();
 }
 
 function dismissFragment() {
@@ -306,6 +314,7 @@ function dismissFragment() {
   }, 800);
   activeFrag = null;
   paused = false;
+  updateWalkHint();
 }
 
 // ---- 入力 --------------------------------------------------------------
@@ -316,9 +325,11 @@ function pressStart() {
   }
   if (finished) return;
   walking = true;
+  updateWalkHint();
 }
 function pressEnd() {
   walking = false;
+  updateWalkHint();
 }
 
 canvas.addEventListener("pointerdown", (e) => {

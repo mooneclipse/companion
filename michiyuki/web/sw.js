@@ -3,7 +3,7 @@
 // - shell precache(install で固定アセットをキャッシュ → オフラインで再プレイ可能)。
 // - 和文フォント CDN はキャッシュ介在させない(取得失敗時は CSS の serif フォールバック)。
 // - cache versioning: CACHE 名を bump + skipWaiting で更新を即反映。
-const CACHE = "michiyuki-v1";
+const CACHE = "michiyuki-v2";
 const SHELL = [
   "/",
   "/index.html",

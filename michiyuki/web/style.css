@@ -106,8 +106,26 @@ body {
   }
 }
 
+/* 歩き方のヒント。画面下部に薄く。タップは下の canvas に通す。 */
+.walkhint {
+  position: fixed;
+  left: 50%;
+  bottom: calc(2.4rem + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  color: var(--ink);
+  font-family: var(--mincho);
+  font-size: 0.95rem;
+  letter-spacing: 0.24em;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
+  animation: breathe 3.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .hint {
+  .hint,
+  .walkhint {
     animation: none;
+    opacity: 0.55;
   }
 }
