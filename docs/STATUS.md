@@ -29,6 +29,20 @@ companion-remote の流儀を踏襲。
 
 ゲームはランタイムで claude / 外部 API を**一切呼ばない純静的 PWA**。断章テキストは**ビルド時に AI 生成した静的データ**(`michiyuki/web/fragments.js`)で、配信時は素朴なファイルサーブに徹する。これにより budget-guard 境界に踏み込まない。唯一の外部依存は和文フォントの Google Fonts CDN(`<link>`)で、取得失敗時は CSS の serif フォールバックで成立する(CSP で `fonts.googleapis.com` / `fonts.gstatic.com` のみ許可)。
 
+## 設計判断: 開発フェーズは Service Worker を使わない（2 周目回避）
+
+v1 初版で shell precache の cache-first SW(`michiyuki-v1`)を入れたが、実機(Pixel-6 Chrome)で「タップ・長押ししても画面が変わらない」事象。Chromium(Playwright)で配信中の現コードを SW 抜きで検証すると **PASS**(opening 表示 → タップ dismiss → 長押しで progress 前進、実行時エラー 0)。∴ コードは正常で、原因は **SW が壊れた中間状態の古い shell を cache-first で返し続けていた**こと。
+
+対処として CACHE 名 bump(`v1`→`v2`)を一度打ったが、これは「同じ境界(SW キャッシュ整合)への 2 周目の条件いじり」(`~/companion/CLAUDE.md` 2 周目ルール)。3 度目を打たず一段引いて設計を見直し、**複雑性の源である SW 自体を開発フェーズから外す**判断に切り替えた:
+
+- `sw.js` を **killer SW** に置換: 全キャッシュ削除 → 自身を `unregister` → 制御中ページを reload。fetch ハンドラを置かず、ブラウザ既定のネット直取得に戻す。ブラウザは navigation 時に byte 差分でこの新 sw.js を取得し旧 SW を置換するため、ユーザー端末は再アクセスで自動的に SW 無し状態へ収束する。
+- `app.js` の SW 登録を廃止し、既存登録・キャッシュの掃除コードに置換。
+- オフライン再プレイ(SW の本来目的)は tailscale 接続前提の本作では今は不要な装飾。**v1 のプレイ感が固まってから再導入**(下記 TODO)。
+
+## 実機検証基盤（Playwright + Chromium）
+
+「実機相当のデバッガを通してから報告する」運用要求に対応。`tests/debug-michiyuki.mjs` が Chromium(headless)で配信中の本体を開き、実行時エラー / 初期表示 / タップ dismiss / 長押し前進 を実観測して PASS/FAIL を返す。`devDependencies` に `playwright`、ブラウザ本体は `~/.cache/ms-playwright`(git 外)。実行: `node tests/debug-michiyuki.mjs`(サーバを 47825 で起動した状態で)。
+
 ## ディレクトリ構成
 
 ```
@@ -76,10 +90,14 @@ tailscale serve status                              # 公開状態確認
 - [x] ゲーム本体(`michiyuki/web`): canvas 全画面横歩き / 長押し(pointer)前進・→/Space でも前進 / フル踏破 約 3.5 分 / パララックス 3 層(決定論的 sin 和ノイズ) / 歩行者シルエット(bob) / progress に沿った空・地面色の線形補間(6 キーフレーム) / 夜の星 / 断章 8 本(opening + waypoint 6 + ending)を閾値到達でフェードイン・タップ dismiss / ending 後の静かな終端。
 - [x] 断章テキストは仕様の verbatim を `fragments.js` に構造化(progress 閾値 + text、ending は改行保持)。実装側で改変・創作しない。
 - [x] PWA: manifest.json(みちゆき / standalone / 夜明け色基調) / sw.js(shell precache, オフライン再プレイ) / icons 192・512(PIL で夜明け色グラデ生成)。
-- [x] 動作確認: `node --check` で app.js / fragments.js / sw.js 構文 OK、manifest.json JSON 妥当、テストポートで配信(全 allowlist 200 + 正 Content-Type / allowlist 外 404 / リスティング無効 / 127.0.0.1 bind)を確認。**ブラウザ目視プレイは環境上未実施**。
+- [x] 動作確認: `node --check` で構文 OK、manifest.json JSON 妥当、テストポートで配信(全 allowlist 200 + 正 Content-Type / allowlist 外 404 / リスティング無効 / 127.0.0.1 bind)を確認。
+- [x] **実機相当検証(Playwright + Chromium)**: opening 表示 → タップ dismiss → 「押しているあいだ、歩く」表示 → 長押しで progress 前進 → 離して停止、実行時エラー 0 を PASS 確認(`tests/debug-michiyuki.mjs`)。
+- [x] 操作導線: 止まっている間「押しているあいだ、歩く」を画面下に表示(初版は操作不明だった)。
+- [x] SW 無効化(killer SW + 登録廃止)。上記「設計判断」section 参照。
 
 ### TODO（今後の候補）
 - [ ] 音: ambient soundscape の追加(v1 は無音。風 / 足音 / 環境音を progress に連動)。**外部から音源を取得する形にする場合は index.html の CSP 更新が必須**(`connect-src` / `media-src` の追加。現状は Google Fonts 2 ドメイン以外の外向きを塞いでいる)。同一オリジン配置(web 配下に同梱)なら CSP 変更不要。
 - [ ] 複数ゲーム gallery 化: umbrella の 2 作目以降が出たら `/` をゲーム選択にし、server STATIC を分割。
 - [ ] 断章の増補: 道中の waypoint を増やす / 季節・天候バリエーション。
-- [ ] 実機目視プレイでのバランス調整(歩行速度 / 断章の出現タイミング / フォント表示)。
+- [ ] 実機目視プレイでのバランス調整(歩行速度 / 断章の出現タイミング / フォント表示)。Playwright で機能は検証済みだが、歩き心地・可読性は人の目で。
+- [ ] オフライン再プレイ(Service Worker)の再導入: v1 のプレイ感が固まってから。開発中は上記のとおり無効化している。
