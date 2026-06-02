@@ -2,6 +2,36 @@
 
 最終更新: 2026-06-02 (第 2 作「ともしび」着手 → 実装完了。呼びかけ=短タップで世界が応える[眠っている灯が呼び声の波紋に応じて点灯]。同一サーバ /tomoshibi/ prefix 配信、みちゆき URL は不変。Chromium 実機相当検証 PASS[ともしび + みちゆき回帰])
 
+## 次セッション提案: ゲーム制作ワークフローの専用化（検討、2026-06-02 / user 依頼）
+
+> user 所感「いまの構成（workspace + orc）がゲーム制作に向いていない。ゲーム用のスキルを作り、AI のみで作るゲーム制作に最適な構成を別にするか検討」を受けた検討メモ。**実装はまだ。方向はユーザー確認後に着手**（先に作ると感想を踏まえた手戻りになるため）。
+
+### 現状構成の問題（なぜ向かないか）
+
+- `orc` スキルは「意図が**固まった改修**タスク」用（implementer で実装 → code-reviewer → commit）。ゲーム制作は「AI が要望を聞かず**勝手に新規制作**する」クリエイティブ作業で、軸が違う。
+- ゲーム制作に固有の工程が orc に無い: ①一次資料（嗜好・過去作感想）の読み込み ②コンセプトの**発散と比較** ③核メカニクス／断章 verbatim ／配色／視認性の**美学判断** ④Playwright 実機検証必須 ⑤配信導線（3 点）⑥感想受領 → 次作の方向づけ。
+- 実際 第 1・2 作は orc を流用し「lead が設計を全確定 → implementer」という**変則**で回した。毎回、配信境界・Playwright 必須・一次資料パス・配信導線 3 点を STATUS から思い出している（暗黙知が台帳に散在）。
+
+### 推奨案（2 点セット）
+
+1. **ゲーム制作専用スキル**（仮 `/newgame`）。固定工程:
+   一次資料読込（vault `aidiary/2026-04-11_games-i-want-to-try.md` + 各作の review ノート＝**必須**） → コンセプト発散（複数案） → **AI 自決でコンセプト選定**（「要望を聞かない」趣旨を担保） → 核／verbatim 断章／PALETTE／視認性を lead 確定 → implementer 実装 → **Playwright 実機検証 PASS**（`feedback_game_debugger_before_report`） → **配信導線チェックリスト**（server STATIC に prefix 追加 / remote `GAMES` に 1 行 + **SW cache bump** / tailscale serve / VERSION bump） → code-reviewer + commit → 感想受領 → 次作方向づけを STATUS 記録。
+2. **games 固有 `games/CLAUDE.md` 新設**（CWD=games の auto-discovery で読まれる）。明文化する暗黙知:
+   配信境界（127.0.0.1 bind + tailscale serve のみ）/ 純静的 PWA・ランタイムで claude/外部 API 不可 / 断章は verbatim 静的データ（実装で創作しない）/ Playwright 実機検証必須 / 一次資料パス / 配信導線 3 点 / SW 運用（開発中は無効、cache bump 規律）/ VERSION 運用。
+
+### ユーザー判断が要る分岐（次セッション冒頭で確認）
+
+- (a) コンセプト発散を **agent team(mesh)** でやるか **subagent 並列**で十分か。team はトークン桁違い（CLAUDE.md は「発散探索は team」だが個人ゲーム制作には過剰の可能性）。**暫定推奨: まず subagent 並列、複雑化したら team**。
+- (b)「要望を聞かない」担保の度合い: 完全 AI 自決 か、今回運用（「提出してほしいデータがあれば言う」窓は残す）か。
+- (c) 構成分離の深さ: スキルのみ / **スキル + `games/CLAUDE.md`（推奨）** / さらに専用 agent（game-designer・playtester）まで。
+- (d) スキル配置: `workspace/.claude/skills/` 共有 か games 専用か。
+
+### 次アクション
+
+上記 (a)〜(d) をユーザー確認 → スキル + `games/CLAUDE.md` を実装。本セッションは提案のみで畳む。
+
+---
+
 ## 第 2 作「ともしび」（In progress → Done、2026-06-02）
 
 闇〜薄明の広い野を歩きながら **呼びかけると世界が応える** ゲーム。Journey の「歌で呼応」を参照点に、v1 みちゆきの「読むだけ」を超えて「歩く + 世界が応える」を核に据える。ユーザー嗜好一次資料の「ないものに触れる」を直接の手触りに = 呼ぶまで見えない灯が、呼び声に応えた瞬間だけ姿を見せる。コンセプト・核相互作用・断章テキストは発注時に verbatim 確定（実装側で創作・改変しない）。
