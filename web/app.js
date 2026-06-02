@@ -415,6 +415,7 @@ function initVideo() {
 // 第 2 作以降はこの配列に 1 行足すだけ(games 本番 URL は games/docs/STATUS.md 参照)。
 const GAMES = [
   { title: "みちゆき", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/" },
+  { title: "ともしび", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/tomoshibi/" },
 ];
 
 function renderGames() {
