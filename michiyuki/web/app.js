@@ -4,8 +4,8 @@
 // FRAGMENTS / PALETTE / 配色は fragments.js から読む(global)。
 
 // ---- 設定値 ------------------------------------------------------------
-// フル踏破に長押し約 3.5 分。progress は 0→1。
-const FULL_WALK_SECONDS = 210;
+// フル踏破に長押し約 2.5 分。progress は 0→1。
+const FULL_WALK_SECONDS = 150;
 const PROGRESS_PER_SEC = 1 / FULL_WALK_SECONDS;
 // waypoint 到達判定の許容幅(progress)。フレーム間で飛んでも取りこぼさない。
 const WALKER_X_RATIO = 0.32; // 歩行者は画面のやや左寄りに固定。
@@ -171,7 +171,7 @@ function shade(hex, factor) {
 function drawWalker() {
   const x = W * WALKER_X_RATIO;
   const groundY = H * 0.82;
-  const bob = walking && !paused ? Math.sin(bobPhase * 6) * 3 : 0;
+  const bob = walking && !paused ? Math.sin(bobPhase * 6) * 4 : 0;
   const baseY = groundY + bob;
   const h = Math.max(38, H * 0.072);
   const w = h * 0.34;
@@ -228,10 +228,11 @@ function render() {
   const pal = samplePalette(progress);
   const night = nightFactor(progress);
   drawSky(pal, night);
-  // 遠景の稜線(ゆっくり) → 中景の丘 → 近景の地面(速い)
+  // 遠景の稜線(ゆっくり) → 中景の丘 → 近景の地面(速い)。
+  // scrollSpeed は「歩いている」視認性のため大きめ(小さいと景色が流れず静止に見える)。
   drawLayer(
     progress,
-    140,
+    700,
     0.62,
     18,
     [
@@ -243,7 +244,7 @@ function render() {
   );
   drawLayer(
     progress,
-    360,
+    1800,
     0.72,
     34,
     [
@@ -255,7 +256,7 @@ function render() {
   );
   drawLayer(
     progress,
-    900,
+    4500,
     0.84,
     26,
     [
@@ -398,4 +399,31 @@ if ("serviceWorker" in navigator) {
 }
 if (window.caches) {
   caches.keys().then((ks) => ks.forEach((k) => caches.delete(k))).catch(() => {});
+}
+
+// 一時デバッグ HUD(?debug 付き URL のときだけ)。実機で入力が届くか観測する。
+// 本番(クエリ無し)では一切動かない。原因特定後に削除する。
+if (new URLSearchParams(location.search).has("debug")) {
+  const hud = document.createElement("div");
+  hud.style.cssText =
+    "position:fixed;top:0;left:0;z-index:99;background:rgba(0,0,0,.78);" +
+    "color:#0f0;font:13px/1.5 monospace;padding:8px 10px;white-space:pre;" +
+    "pointer-events:none;border-bottom-right-radius:8px;";
+  document.body.appendChild(hud);
+  const ev = { pd: 0, pu: 0, ts: 0, tm: 0, click: 0 };
+  addEventListener("pointerdown", () => ev.pd++, true);
+  addEventListener("pointerup", () => ev.pu++, true);
+  addEventListener("touchstart", () => ev.ts++, true);
+  addEventListener("touchmove", () => ev.tm++, true);
+  addEventListener("click", () => ev.click++, true);
+  const upd = () => {
+    hud.textContent =
+      "BUILD michiyuki-dbg1 (新版)\n" +
+      `pointerdown:${ev.pd}  pointerup:${ev.pu}\n` +
+      `touchstart:${ev.ts}  touchmove:${ev.tm}  click:${ev.click}\n` +
+      `walking:${walking}  paused:${paused}  finished:${finished}\n` +
+      `progress:${progress.toFixed(4)}  active:${activeFrag}`;
+    requestAnimationFrame(upd);
+  };
+  upd();
 }
