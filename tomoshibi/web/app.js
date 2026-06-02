@@ -14,7 +14,7 @@
 // トップ(opening)画面に表示する版番号。**ゲームに手を入れるたびに必ず上げる**。
 // 目的: 実機で見える番号と、こちらが出した番号がズレていれば「端末のキャッシュに
 // 旧版が残っている」、一致していれば「こちらの認識・検証不足」と切り分けられる。
-const VERSION = "v1.0.0";
+const VERSION = "v1.0.1";
 
 // ---- 設定値 ------------------------------------------------------------
 // フル踏破に長押し約 2.5 分。progress は 0→1。
@@ -56,7 +56,8 @@ let elapsed = 0; // 経過秒(波紋・灯のアニメ位相)
 const shownIdx = new Set();
 let activeFrag = null; // 現在オーバーレイ表示中の断章 index(null=非表示)
 
-// 呼び声の波紋。{x, y, born} の配列。テストから window.ripples で読める。
+// 呼び声の波紋。{born} の配列(中心は常に歩行者なので座標は持たず、描画時に算出)。
+// テストから window.ripples で読める。
 const ripples = [];
 window.ripples = ripples;
 let litCount = 0; // 点灯した種火の延べ数(UI には出さない)。テストから読める。
@@ -167,10 +168,13 @@ for (let i = 0; i < 70; i++) {
 // 各種火: lit(点灯済みか) / litAt(点灯時刻) / whisper(ささやく灯なら WHISPERS の index)。
 const SEED_SPEED = 2600; // 種火スクロール速度(中景〜近景の間)。
 const SEED_COUNT = 64;
+// 想定画面幅の概算(px)。実際の描画は実 W を使うが、種火の world 配置は描画前に
+// 一度だけ決める(乱数禁止の決定論配置)ため、ここでは代表値で射程を見積もる。
+const NOMINAL_SCREEN_W = 412;
 // 種火が画面に流れ込む world 範囲。progress 0→1 で off=worldOffset は 0→SEED_SPEED、
 // 画面 x は (W + wx - off)。踏破全行程で右→左へ順に現れるよう、wx をこの射程
 // [0, SEED_SPEED + W] に決定論的に均等分散させる(乱数禁止、sin で揺らぎだけ付与)。
-const SEED_SPAN = SEED_SPEED + 0.9 * 412; // 概算画面幅ぶん上乗せ(実 W は描画時に効く)。
+const SEED_SPAN = SEED_SPEED + 0.9 * NOMINAL_SCREEN_W; // 概算画面幅ぶん上乗せ(実 W は描画時に効く)。
 const SEEDS = [];
 for (let i = 0; i < SEED_COUNT; i++) {
   // 等間隔 + sin の決定論的揺らぎ(隣り合わせず自然にばらける)。
@@ -562,10 +566,7 @@ function pressMove(x, y) {
 
 function emitRipple() {
   ripples.push({ born: elapsed });
-  // 古い波紋を掃除(寿命切れ)。
-  for (let i = ripples.length - 1; i >= 0; i--) {
-    if (elapsed - ripples[i].born > RIPPLE_LIFE) ripples.splice(i, 1);
-  }
+  // 寿命切れの掃除は tick() 側の毎フレーム掃除に一本化(ここでは push のみ)。
 }
 
 function pressEnd() {
