@@ -52,6 +52,15 @@ STATIC = {
     "/tomoshibi/manifest.json": ("tomoshibi/web/manifest.json", "application/manifest+json"),
     "/tomoshibi/icons/icon-192.png": ("tomoshibi/web/icons/icon-192.png", "image/png"),
     "/tomoshibi/icons/icon-512.png": ("tomoshibi/web/icons/icon-512.png", "image/png"),
+    # 第 3 作「なごり」(/nagori/ prefix)
+    "/nagori/": ("nagori/web/index.html", "text/html; charset=utf-8"),
+    "/nagori/index.html": ("nagori/web/index.html", "text/html; charset=utf-8"),
+    "/nagori/app.js": ("nagori/web/app.js", "application/javascript; charset=utf-8"),
+    "/nagori/fragments.js": ("nagori/web/fragments.js", "application/javascript; charset=utf-8"),
+    "/nagori/style.css": ("nagori/web/style.css", "text/css; charset=utf-8"),
+    "/nagori/manifest.json": ("nagori/web/manifest.json", "application/manifest+json"),
+    "/nagori/icons/icon-192.png": ("nagori/web/icons/icon-192.png", "image/png"),
+    "/nagori/icons/icon-512.png": ("nagori/web/icons/icon-512.png", "image/png"),
 }
 
 
