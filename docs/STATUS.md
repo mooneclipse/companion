@@ -26,7 +26,7 @@
 - [x] playtester 実機検証 PASS（`tests/debug-nagori.mjs`、画面座標ヒットテスト経由）: `/nagori/` 200・pageerror 0、opening タップで dismiss→scene、1 本ドラッグで画面変化率 10.81%（採用 th=48＝明背景の崖を実測で確定。みちゆき th=24・ともしび th=8 は流用せず）・strokes=1/cleared=1/progress 0→0.143、全 7 淀みなぞりで cleared=7/7・progress=1.0 →ズームアウト俯瞰→ending（dismiss せず終端）。**同一起動サーバでみちゆき `/`・ともしび `/tomoshibi/` の回帰も PASS**（200・pageerror 0・progress 前進）＝既存 URL 不変の証明。初回実行で app.js の null 参照例外（`beginEnding` が `curStroke` を無効化した後の `pressMove` 末尾 push）を 1 件検出し、状態無効化地点の正規ガード `if (!drawing || !curStroke) return;` で解消（対症療法 2 周目には非該当）。
 - [x] code-reviewer 点検＝**修正必須なし**（配信境界・既存 URL 不変／純静的 PWA・CSP／overlay 罠対策／前景視認性／正しさ／VERSION／断章 verbatim の 7 観点 OK、playtester ガードも妥当判定）。軽微提案 2 件は独断適用（テスト BASE デフォルトを既存テストと同じ 47825 に統一／`beginEnding` の死にコード 2 行削除）。
 - [x] games repo に commit（`feat(games):`）。
-- [ ] **配信（本番反映＝ユーザー承認案件、未実施）**: ① `systemctl --user restart companion-games`（本番 47825 へ新 app.py を反映。現プロセス pid は旧 app.py を配信中）② remote `~/companion/remote/web/app.js` の `GAMES` に「なごり」1 行追加＋SW cache bump（remote repo 側 commit）③ tailscale serve は 8444→47825 で同一ポートのため変更不要。
+- [x] **配信（本番反映＝ユーザー承認のうえ実施）**: ① `systemctl --user restart companion-games` で本番 47825 を新 app.py へ差し替え（`/`・`/tomoshibi/`・`/nagori/` すべて 200・`/healthz` 200 を確認、既存 URL 不変）② remote `web/app.js` の `GAMES` に「なごり」1 行追加＋SW cache v8→v9 bump（remote `0d760d7` feat / `3985116` docs）③ tailscale serve は 8444→47825 で同一ポートのため変更不要。本番 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/nagori/`。
 - [ ] ユーザー実機プレイ → 感想受領 → §9 次作方向づけを記録。
 
 ## ゲーム制作ワークフローの専用化（着手・実装完了、2026-06-02 / user 依頼）
