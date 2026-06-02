@@ -66,6 +66,8 @@ tailscale serve status                              # 公開状態確認
 # ポート変更する場合は ~/companion/games/.env に GAMES_PORT=xxxxx を置く(EnvironmentFile=-)。
 ```
 
+> gitleaks pre-commit hook は `.git/hooks/` 配下(git 管理外)。この repo を別環境へ clone / 再 init した場合は消えるので、`~/companion/workspace/.githooks-template` か remote/ の hook を再配置すること(remote / web と同じ既知事項)。
+
 ## v1 で実装した範囲
 
 ### Done
@@ -77,7 +79,7 @@ tailscale serve status                              # 公開状態確認
 - [x] 動作確認: `node --check` で app.js / fragments.js / sw.js 構文 OK、manifest.json JSON 妥当、テストポートで配信(全 allowlist 200 + 正 Content-Type / allowlist 外 404 / リスティング無効 / 127.0.0.1 bind)を確認。**ブラウザ目視プレイは環境上未実施**。
 
 ### TODO（今後の候補）
-- [ ] 音: ambient soundscape の追加(v1 は無音。風 / 足音 / 環境音を progress に連動)。
+- [ ] 音: ambient soundscape の追加(v1 は無音。風 / 足音 / 環境音を progress に連動)。**外部から音源を取得する形にする場合は index.html の CSP 更新が必須**(`connect-src` / `media-src` の追加。現状は Google Fonts 2 ドメイン以外の外向きを塞いでいる)。同一オリジン配置(web 配下に同梱)なら CSP 変更不要。
 - [ ] 複数ゲーム gallery 化: umbrella の 2 作目以降が出たら `/` をゲーム選択にし、server STATIC を分割。
 - [ ] 断章の増補: 道中の waypoint を増やす / 季節・天候バリエーション。
 - [ ] 実機目視プレイでのバランス調整(歩行速度 / 断章の出現タイミング / フォント表示)。
