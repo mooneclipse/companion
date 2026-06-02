@@ -31,6 +31,10 @@ body {
   height: 100vh;
   position: fixed;
   inset: 0;
+  /* 画面を覆う canvas 自身に touch-action: none を付けないと、Android では
+     長押しがスクロール/選択ジェスチャに消費され pointerdown が届かない
+     (body の touch-action は body 上のタッチにしか効かない)。 */
+  touch-action: none;
 }
 
 /* 断章オーバーレイ。暗幕 + 中央寄せ、ゆっくりフェードイン。 */
@@ -49,6 +53,16 @@ body {
 .overlay.visible {
   opacity: 1;
   background: rgba(8, 8, 20, 0.55);
+}
+/* hidden 属性を確実に効かせる。UA の [hidden]{display:none} は詳細度が低く
+   .overlay{display:flex} に負けるため、透明な overlay が画面を覆ったまま残り
+   タッチを全部横取りしていた(実機で歩けない真因)。明示して打ち消す。 */
+.overlay[hidden] {
+  display: none !important;
+}
+/* フェードアウト中(visible 解除〜hidden=true まで)もタッチを下の canvas に通す。 */
+.overlay:not(.visible) {
+  pointer-events: none;
 }
 
 .frag {
