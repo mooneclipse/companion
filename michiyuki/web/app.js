@@ -387,9 +387,15 @@ function start() {
 }
 start();
 
-// service worker 登録(オフライン再プレイ)。失敗は無視(プレイには不要)。
+// 開発フェーズ: Service Worker は使わない(オフライン再プレイは v1 安定後に再導入)。
+// 過去に登録された SW とキャッシュが古い shell を返し続ける事故を防ぐため、
+// 登録は行わず、既存の登録・キャッシュを掃除する。sw.js 側も killer に置換済み。
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
-  });
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((rs) => rs.forEach((r) => r.unregister()))
+    .catch(() => {});
+}
+if (window.caches) {
+  caches.keys().then((ks) => ks.forEach((k) => caches.delete(k))).catch(() => {});
 }

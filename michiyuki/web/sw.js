@@ -1,50 +1,22 @@
 "use strict";
-// みちゆき service worker。
-// - shell precache(install で固定アセットをキャッシュ → オフラインで再プレイ可能)。
-// - 和文フォント CDN はキャッシュ介在させない(取得失敗時は CSS の serif フォールバック)。
-// - cache versioning: CACHE 名を bump + skipWaiting で更新を即反映。
-const CACHE = "michiyuki-v2";
-const SHELL = [
-  "/",
-  "/index.html",
-  "/app.js",
-  "/fragments.js",
-  "/style.css",
-  "/manifest.json",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
-];
-
-self.addEventListener("install", (e) => {
-  self.skipWaiting();
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
-});
+// みちゆき killer service worker。
+// 開発フェーズでは SW を使わない方針(オフライン再プレイは v1 安定後に再導入)。
+// 過去に登録された cache-first SW が古い shell を返し続ける事故を断つため、
+// この sw.js は「全キャッシュ削除 → 自身を unregister → 制御中ページを reload」
+// だけを行う。fetch ハンドラは置かない(=ブラウザ既定のネット直取得に戻す)。
+// ブラウザは navigation 時に byte 差分でこの新 sw.js を取得し、旧 SW を置き換える。
+self.addEventListener("install", () => self.skipWaiting());
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-      )
-      .then(() => self.clients.claim())
-  );
-});
-
-self.addEventListener("fetch", (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== "GET") return;
-  // 同一オリジンの shell のみ cache-first。フォント CDN 等の外部はそのままネットへ。
-  if (url.origin !== self.location.origin) return;
-  e.respondWith(
-    caches.match(e.request).then((hit) => {
-      if (hit) return hit;
-      return fetch(e.request).catch(() => {
-        if (e.request.mode === "navigate") {
-          return caches.match("/").then((idx) => idx || Response.error());
-        }
-        return Response.error();
-      });
-    })
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      await self.clients.claim();
+      await self.registration.unregister();
+      const clients = await self.clients.matchAll({ type: "window" });
+      // SW 抜きの素のネット版を読ませるため、制御中ページをリロード。
+      clients.forEach((c) => c.navigate(c.url));
+    })()
   );
 });
