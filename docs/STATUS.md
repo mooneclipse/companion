@@ -1,6 +1,6 @@
 # companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」）
 
-最終更新: 2026-06-02 (v1 実機プレイのユーザー感想を受領・反映。下記「v1 ユーザー感想と次への反映」section に教訓を記録。次セッションは v1 調整 + 第 2 作の方向づけへ)
+最終更新: 2026-06-02 (user 要望 2 件対応: ① みちゆきトップに版番号表示[VERSION 定数 v1.0.0、キャッシュ/検証切り分け用、ゲーム変更時は要 bump] ② リモコンからゲームへの導線[remote 側で対応済]。加えて v1 実機プレイ感想を受領・反映[下記「v1 ユーザー感想と次への反映」]。Chromium 検証 PASS、git クリーン)
 
 ## セッション引き継ぎ（2026-06-02、次セッションは別セッション想定）
 
@@ -144,6 +144,8 @@ tailscale serve status                              # 公開状態確認
 - [x] **実機相当検証(Playwright + Chromium)**: opening 表示 → タップ dismiss → 「押しているあいだ、歩く」表示 → 長押しで progress 前進 → 離して停止、実行時エラー 0 を PASS 確認(`tests/debug-michiyuki.mjs`)。
 - [x] 操作導線: 止まっている間「押しているあいだ、歩く」を画面下に表示(初版は操作不明だった)。
 - [x] SW 無効化(killer SW + 登録廃止)。上記「設計判断」section 参照。
+- [x] **トップ(opening)画面に版番号表示(2026-06-02, user 要望)**: `app.js` の `const VERSION`(現 `v1.0.0`)を単一真実源に、opening の断章カード内へ小さく薄く表示(`showFragment` で `fragVersionEl.hidden = f.kind !== "opening"`、歩行中/waypoint/ending は非表示)。目的=実機で見える番号とこちらが出した番号がズレれば「端末キャッシュに旧版残存」、一致すれば「こちらの認識・検証不足」と切り分ける。VERSION は app.js 内定数なので表示番号と app.js の鮮度が常に一致。Chromium 検証 PASS(opening で可視 / dismiss 後・歩行中は非可視 / pageerror 0)。**運用ルール: ゲーム本体(`michiyuki/web/*`)に手を入れるたびに必ず VERSION を上げる**(上げ忘れると切り分けが効かない。人手依存の残存リスク)。
+- [x] **リモコン(companion-remote)からゲームへの導線(2026-06-02, user 要望)**: remote 側で対応済。リモコン `#app` 最下部の折りたたみ「ゲーム」カードからアドレスのコピペ無しで開ける。リンク先は本番 `:8444/`。詳細は `~/companion/remote/docs/STATUS.md` Done(2026-06-02)。**games 本番ポートを変えたら remote 側 `web/app.js` の `GAMES` を直す**(現状 8444 を指す)。
 
 ### TODO（今後の候補）
 - [ ] 音: ambient soundscape の追加(v1 は無音。風 / 足音 / 環境音を progress に連動)。**外部から音源を取得する形にする場合は index.html の CSP 更新が必須**(`connect-src` / `media-src` の追加。現状は Google Fonts 2 ドメイン以外の外向きを塞いでいる)。同一オリジン配置(web 配下に同梱)なら CSP 変更不要。
