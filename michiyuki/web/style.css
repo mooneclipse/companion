@@ -101,6 +101,15 @@ body {
   margin-bottom: 0;
 }
 
+/* 版番号: トップ(opening)画面にだけ、ごく小さく薄く。静けさを乱さない。 */
+.frag-version {
+  margin-top: 1.4rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  opacity: 0.35;
+  font-family: var(--mincho);
+}
+
 .hint {
   margin-top: 2.4rem;
   font-size: 0.82rem;

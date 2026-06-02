@@ -3,6 +3,12 @@
 // ランタイムで外部 API / claude を呼ばない(唯一の外部依存は CSS の和文フォント CDN)。
 // FRAGMENTS / PALETTE / 配色は fragments.js から読む(global)。
 
+// ---- バージョン --------------------------------------------------------
+// トップ(opening)画面に表示する版番号。**ゲームに手を入れるたびに必ず上げる**。
+// 目的: 実機で見える番号と、こちらが出した番号がズレていれば「端末のキャッシュに
+// 旧版が残っている」、一致していれば「こちらの認識・検証不足」と切り分けられる。
+const VERSION = "v1.0.0";
+
 // ---- 設定値 ------------------------------------------------------------
 // フル踏破に長押し約 2.5 分。progress は 0→1。
 const FULL_WALK_SECONDS = 150;
@@ -18,6 +24,7 @@ const fragTitleEl = document.getElementById("frag-title");
 const fragTextEl = document.getElementById("frag-text");
 const hintEl = document.getElementById("hint");
 const walkHintEl = document.getElementById("walkhint");
+const fragVersionEl = document.getElementById("frag-version");
 
 // 「押しているあいだ、歩く」ヒント。断章が出ておらず・終端でなく・いま歩いて
 // いないとき(=止まっているとき)だけ薄く出す。歩き出すと消える。
@@ -299,6 +306,9 @@ function showFragment(idx) {
   }
   hintEl.textContent = f.kind === "ending" ? "" : "タップでつづける";
   hintEl.hidden = f.kind === "ending";
+  // 版番号はトップ(opening)画面にだけ。歩き出す断章では出さない。
+  fragVersionEl.textContent = VERSION;
+  fragVersionEl.hidden = f.kind !== "opening";
   overlayAlpha = 0;
   clearTimeout(dismissTimer); // 直前 dismiss の遅延 hidden が新断章を消さないように
   overlay.hidden = false;
