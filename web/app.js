@@ -416,6 +416,7 @@ function initVideo() {
 const GAMES = [
   { title: "みちゆき", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/" },
   { title: "ともしび", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/tomoshibi/" },
+  { title: "なごり", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/nagori/" },
 ];
 
 function renderGames() {
