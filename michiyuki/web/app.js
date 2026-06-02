@@ -33,6 +33,7 @@ let progress = 0;
 let walking = false; // 入力(押している)状態
 let paused = false; // 断章表示中は前進を止める
 let finished = false; // ending を出し切った終端
+let dismissTimer = 0; // フェードアウト後に overlay を隠す遅延 timer(再表示時にキャンセル)
 let lastT = 0;
 let bobPhase = 0; // 歩行者の上下 bob 用位相
 
@@ -299,6 +300,7 @@ function showFragment(idx) {
   hintEl.textContent = f.kind === "ending" ? "" : "タップでつづける";
   hintEl.hidden = f.kind === "ending";
   overlayAlpha = 0;
+  clearTimeout(dismissTimer); // 直前 dismiss の遅延 hidden が新断章を消さないように
   overlay.hidden = false;
   overlay.classList.add("visible");
   updateWalkHint();
@@ -309,8 +311,9 @@ function dismissFragment() {
   const f = FRAGMENTS[activeFrag];
   if (f.kind === "ending") return; // ending は dismiss しない(静かに終端)
   overlay.classList.remove("visible");
-  // フェードアウト後に非表示。CSS transition と揃える。
-  setTimeout(() => {
+  // フェードアウト後に非表示。CSS transition と揃える。再表示時は showFragment が
+  // この timer をキャンセルするので、遅延 hidden が新しい断章を消すことはない。
+  dismissTimer = setTimeout(() => {
     overlay.hidden = true;
   }, 800);
   activeFrag = null;
