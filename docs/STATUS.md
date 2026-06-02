@@ -1,10 +1,31 @@
 # companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」）
 
-最終更新: 2026-06-02 (第 2 作「ともしび」着手 → 実装完了。呼びかけ=短タップで世界が応える[眠っている灯が呼び声の波紋に応じて点灯]。同一サーバ /tomoshibi/ prefix 配信、みちゆき URL は不変。Chromium 実機相当検証 PASS[ともしび + みちゆき回帰])
+最終更新: 2026-06-02 (ゲーム制作ワークフロー専用化を着手・実装完了。専用スキル `/newgame` + 専用 agent game-designer/playtester [workspace/.claude/] + games 固有 `CLAUDE.md` を新設。下記「専用化」section に決定 (a)〜(d) と成果物を記録)
 
-## 次セッション提案: ゲーム制作ワークフローの専用化（検討、2026-06-02 / user 依頼）
+## ゲーム制作ワークフローの専用化（着手・実装完了、2026-06-02 / user 依頼）
 
-> user 所感「いまの構成（workspace + orc）がゲーム制作に向いていない。ゲーム用のスキルを作り、AI のみで作るゲーム制作に最適な構成を別にするか検討」を受けた検討メモ。**実装はまだ。方向はユーザー確認後に着手**（先に作ると感想を踏まえた手戻りになるため）。
+> user 所感「いまの構成（workspace + orc）がゲーム制作に向いていない。ゲーム用のスキルを作り、AI のみで作るゲーム制作に最適な構成を別にするか検討」を受け、(a)〜(d) をユーザー確認のうえ実装完了。
+
+### 決定（ユーザー確認済み、2026-06-02）
+
+- **(a) コンセプト発散 = subagent 並列**。複数 game-designer を並列起動し毛色の違う案 → lead 選定。「案が似通う / 行き詰まる / 振れ幅不足と lead 判断」で agent team(mesh) へ昇格する条件をスキルに明文化。
+- **(b) 完全 AI 自決**。一次資料（vault 嗜好メモ + 各作 review）だけを入力にコンセプト〜美学を AI が全確定。ユーザー確認窓は工程に置かない。選定理由は STATUS に 1 行残す。
+- **(c) スキル + games/CLAUDE.md + 専用 agent（game-designer / playtester）** の 3 点を作成。
+- **(d) 配置**: スキルと専用 agent は `workspace/.claude/`（ユーザーは workspace から起動＝discoverable）。games 固有暗黙知は `games/CLAUDE.md`（CWD=games の auto-discovery 用）。
+
+### 成果物（新設 4 ファイル、workspace `c43ac27` / games `1d0913a`）
+
+- `workspace/.claude/skills/newgame/SKILL.md` — 固定工程（一次資料読込 → 発散 → AI 自決選定 → 美学確定 → 実装 → playtester 実機検証 → 配信導線 → review+commit → 感想記録）。
+- `workspace/.claude/agents/game-designer.md`（read-only, color green）— 一次資料から既存作と毛色の違うコンセプト案を 1 つ提案。並列起動前提。
+- `workspace/.claude/agents/playtester.md`（color magenta）— Playwright+Chromium で画面座標ヒットテスト経由の実機検証 + 既存作回帰。
+- `games/CLAUDE.md` — 配信境界 / 純静的 PWA / verbatim 断章 / Playwright 必須 / 前景視認性 / 配信導線 3 点 / SW・VERSION 運用の暗黙知を明文化。共通項・対症療法 2 周目ルールは上位 `~/companion/CLAUDE.md` 参照。
+
+### 旧・検討時の分岐メモ（決定済み、参考）
+
+- (a) 暫定推奨「subagent 並列、複雑化したら team」→ 採用（昇格条件を明文化）。
+- (b) 「完全 AI 自決 か 提出窓を残すか」→ 完全 AI 自決を採用。
+- (c) 暫定推奨「スキル + games/CLAUDE.md」→ さらに専用 agent まで含めて採用。
+- (d) 「workspace 共有 か games 専用か」→ skill/agent は workspace、CLAUDE.md は games のハイブリッド。
 
 ### 現状構成の問題（なぜ向かないか）
 
