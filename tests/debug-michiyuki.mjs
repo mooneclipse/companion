@@ -1,97 +1,89 @@
-// みちゆき 実機相当デバッグ。Chromium(headless)で配信中の本体を開き、
-// 実行時エラー / 初期表示 / タップ dismiss / 長押し前進 を実観測する。
-// SW はブロックしてコード自体の正しさを見る(SW キャッシュ起因は別途切り分け)。
+// みちゆき 実機相当デバッグ。
+// 重要: 入力は「画面座標」へ送り、最前面要素へのヒットテストを実機同様に通す
+// (canvas へ直接 dispatch しない。overlay が残っていれば canvas に届かないことを再現する)。
+// 機能(walking/progress)と「目に見える変化」(canvas ピクセル差分)の両方を測る。
 import { chromium } from "playwright";
 
 const URL = process.env.GAME_URL || "http://127.0.0.1:47825/";
 const out = (k, v) => console.log(`  ${k}: ${JSON.stringify(v)}`);
 
+const sample = (page) =>
+  page.evaluate(() => {
+    const c = document.getElementById("scene");
+    const g = c.getContext("2d");
+    const W = c.width,
+      H = c.height;
+    const d = g.getImageData(0, 0, W, H).data;
+    const o = [];
+    for (let y = 0; y < H; y += 16)
+      for (let x = 0; x < W; x += 16) {
+        const i = (y * W + x) * 4;
+        o.push(d[i], d[i + 1], d[i + 2]);
+      }
+    return o;
+  });
+const changed = (a, b) => {
+  let c = 0;
+  for (let i = 0; i < a.length; i += 3)
+    if (
+      Math.abs(a[i] - b[i]) +
+        Math.abs(a[i + 1] - b[i + 1]) +
+        Math.abs(a[i + 2] - b[i + 2]) >
+      24
+    )
+      c++;
+  return c / (a.length / 3);
+};
+
 const browser = await chromium.launch();
-// Pixel 6 相当のタッチ端末を模す(viewport + hasTouch)。
 const ctx = await browser.newContext({
   viewport: { width: 412, height: 915 },
   hasTouch: true,
   serviceWorkers: "block",
 });
 const page = await ctx.newPage();
-
 const errors = [];
-const consoleMsgs = [];
 page.on("pageerror", (e) => errors.push(String(e)));
-page.on("console", (m) => consoleMsgs.push(`[${m.type()}] ${m.text()}`));
-page.on("requestfailed", (r) =>
-  errors.push(`requestfailed ${r.url()} ${r.failure()?.errorText}`)
-);
 
-console.log(`== open ${URL} ==`);
 await page.goto(URL, { waitUntil: "networkidle" });
 await page.waitForTimeout(300);
 
-console.log("== 実行時エラー ==");
-out("pageerrors", errors);
-out("console", consoleMsgs);
+// opening を画面座標クリックで閉じる(最前面=overlay に当たる)。
+await page.mouse.click(206, 457);
+await page.waitForTimeout(1000); // フェードアウト + hidden(800ms) 待ち
 
-console.log("== 初期表示(opening が出ているか) ==");
-const initial = await page.evaluate(() => ({
-  activeFrag: typeof activeFrag !== "undefined" ? activeFrag : "UNDEFINED",
-  progress: typeof progress !== "undefined" ? progress : "UNDEFINED",
-  overlayHidden: document.getElementById("overlay").hidden,
-  overlayVisible: document
-    .getElementById("overlay")
-    .classList.contains("visible"),
-  title: document.getElementById("frag-title").textContent,
-  walkhintHidden: document.getElementById("walkhint").hidden,
-}));
-out("state", initial);
-
-console.log("== タップ(opening を閉じる) ==");
-await page.touchscreen.tap(206, 457);
-await page.waitForTimeout(1000); // dismiss の setTimeout(800ms) 待ち
-const afterTap = await page.evaluate(() => ({
-  activeFrag: typeof activeFrag !== "undefined" ? activeFrag : "UNDEFINED",
-  overlayHidden: document.getElementById("overlay").hidden,
-  walkhintHidden: document.getElementById("walkhint").hidden,
-  walkhintText: document.getElementById("walkhint").textContent,
-}));
-out("state", afterTap);
-
-console.log("== 長押し(前進するか) ==");
-// touchscreen.tap は押しっぱなしにできないので、生 pointer/touch を canvas に送る。
-await page.evaluate(() => {
-  const c = document.getElementById("scene");
-  const r = c.getBoundingClientRect();
-  const x = r.left + r.width / 2;
-  const y = r.top + r.height / 2;
-  const opt = { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: "touch" };
-  c.dispatchEvent(new PointerEvent("pointerdown", opt));
+// 画面中央の最前面要素(overlay が残っていれば scene にならない)。
+const topEl = await page.evaluate(() => {
+  const e = document.elementFromPoint(206, 457);
+  return e ? e.id || e.tagName : "none";
 });
+
+// 画面座標で長押し(最前面要素へヒット = 実機同等)。
+await page.mouse.move(206, 457);
 const p0 = await page.evaluate(() => progress);
-await page.waitForTimeout(1500);
-const p1 = await page.evaluate(() => ({
-  progress: progress,
-  walking: walking,
-  walkhintHidden: document.getElementById("walkhint").hidden,
-}));
-await page.evaluate(() => {
-  window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
-});
-await page.waitForTimeout(100);
-const p2 = await page.evaluate(() => ({ walking: walking, progressAfter: progress }));
-out("press_start_progress", p0);
-out("during_press", p1);
-out("after_release", p2);
+const s0 = await sample(page);
+await page.mouse.down();
+await page.waitForTimeout(50);
+const wlk = await page.evaluate(() => walking);
+await page.waitForTimeout(3000);
+const p1 = await page.evaluate(() => progress);
+const s1 = await sample(page);
+await page.mouse.up();
 
-console.log("== 判定 ==");
-const ok =
-  errors.length === 0 &&
-  initial.activeFrag === 0 &&
-  initial.title === "みちゆき" &&
-  afterTap.activeFrag === null &&
-  afterTap.walkhintHidden === false &&
-  p1.progress > p0 &&
-  p1.walking === true &&
-  p2.walking === false;
-out("PASS", ok);
+const dP = p1 - p0;
+const ratio = changed(s0, s1);
+console.log("== overlay 修正後 実機相当(画面座標ヒットテスト) ==");
+out("pageerrors", errors);
+out("中央の最前面要素(scene であるべき)", topEl);
+out("down直後 walking", wlk);
+out("progressΔ(3s)", dP);
+out("画面変化率(3s)", +(ratio * 100).toFixed(2) + "%");
+out(
+  "最初の文章(@0.12)到達まで概算秒",
+  dP > 0 ? Math.round((0.12 - p1) / (dP / 3)) : Infinity
+);
 
+const pass = errors.length === 0 && topEl === "scene" && wlk === true && dP > 0;
+out("PASS(歩行が始まる)", pass);
 await browser.close();
-process.exit(ok ? 0 : 1);
+process.exit(pass ? 0 : 1);

@@ -39,9 +39,20 @@ v1 初版で shell precache の cache-first SW(`michiyuki-v1`)を入れたが、
 - `app.js` の SW 登録を廃止し、既存登録・キャッシュの掃除コードに置換。
 - オフライン再プレイ(SW の本来目的)は tailscale 接続前提の本作では今は不要な装飾。**v1 のプレイ感が固まってから再導入**(下記 TODO)。
 
+## 実機で歩けなかった真因(overlay)と視認性 — 2026-06-02
+
+実機(Pixel-6 Chrome/Edge)で「タイトルはタップで消えるが、その後押しても歩かない」。HUD(`?debug`)で実機の生イベントを観測し確定:
+
+- **真因**: opening を閉じる際 `overlay.hidden = true` にしていたが、UA の `[hidden]{display:none}` は詳細度が低く、`.overlay{display:flex}`(クラス指定)に負けて**消えていなかった**。透明な overlay が `inset:0` で画面全体を覆ったまま `pointer-events` を受け、canvas へ pointerdown が届かず `walking` が立たなかった(HUD で pointerdown は window capture では増えるが walking=false のまま、を実観測)。`.overlay[hidden]{display:none !important}` で打ち消し + フェードアウト中(`.overlay:not(.visible)`)は `pointer-events:none` で canvas へ透過。
+- **検証ミスの教訓**: 初版 Playwright は長押しを **canvas へ直接 dispatch** していたため overlay を飛び越え PASS していた。座標へのヒットテスト(`page.mouse` を画面座標へ)に直し、最前面要素判定を実機同様に通すよう修正。`elementFromPoint` が `scene` を返すことも assert。
+- **視認性**: 歩いても景色がほぼ流れず静止に見えた(3 秒で画面変化 0.66%)。scrollSpeed を約 5 倍(遠 700/中 1800/近 4500)、`FULL_WALK_SECONDS` 210→150、歩行者 bob 増。→ 3 秒で **15%** 変化、最初の文章まで約 15 秒。Playwright スクショを目視確認。
+- **canvas に `touch-action:none`** も明示(body だけでなく canvas 自身に必要。長押しがジェスチャに消費されるのを防ぐ保険)。
+
 ## 実機検証基盤（Playwright + Chromium）
 
-「実機相当のデバッガを通してから報告する」運用要求に対応。`tests/debug-michiyuki.mjs` が Chromium(headless)で配信中の本体を開き、実行時エラー / 初期表示 / タップ dismiss / 長押し前進 を実観測して PASS/FAIL を返す。`devDependencies` に `playwright`、ブラウザ本体は `~/.cache/ms-playwright`(git 外)。実行: `node tests/debug-michiyuki.mjs`(サーバを 47825 で起動した状態で)。
+「実機相当のデバッガを通してから報告する」運用要求に対応。`tests/debug-michiyuki.mjs` が Chromium(headless)で配信中の本体を開き、**画面座標へのヒットテスト経由で**(canvas へ直接 dispatch しない)実行時エラー / opening dismiss / 長押し前進 / 画面ピクセル変化率を実観測して PASS/FAIL を返す。`devDependencies` に `playwright`、ブラウザ本体は `~/.cache/ms-playwright`(git 外)。実行: `node tests/debug-michiyuki.mjs`(サーバを 47825 で起動した状態で)。
+
+`?debug` 付き URL で起動すると画面左上に HUD(pointerdown/touchstart/click 数 + walking/paused/progress)を表示し、実機の生入力を直接読める(本番=クエリ無しでは一切動かない)。実機で挙動が分かれたときの一次情報取得に使う。
 
 ## ディレクトリ構成
 
