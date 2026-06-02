@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """companion-games server — 127.0.0.1 バインドの stdlib http.server。
 
-「全部 AI で作るゲーム」umbrella の配信サーバ。v1 は静的 PWA「みちゆき」一本を配る。
+「全部 AI で作るゲーム」umbrella の配信サーバ。第 1 作「みちゆき」を `/` 直下、
+第 2 作「ともしび」を `/tomoshibi/` prefix で配る(いずれも静的 PWA)。
 外向きは tailscale serve(HTTPS, 前段リバースプロキシ)経由のみで、本プロセスは
 127.0.0.1 にしか bind しない(0.0.0.0 / tailnet IP 厳禁、companion-remote の流儀を踏襲)。
+
+複数ゲーム配信の設計判断(2026-06-02): 同一サーバ・同一ポートで prefix 分けする方式を採用。
+みちゆきの URL(`/`, `/app.js` 等)は完全に不変に保ち(ユーザーがホーム追加した本番互換を壊さない)、
+ともしびは `/tomoshibi/` 配下に絶対パスで配る。`/` をゲーム選択ギャラリーにする案は YAGNI
+で見送り(2 作なら直リンクで足りる、TODO に残置)。STATIC dict の rel をゲーム名込み
+(michiyuki/web/... / tomoshibi/web/...)に拡張し、WEB_DIR を games ルートへ引き上げた。
+allowlist 方式・FS への URL 連結禁止・リスティング無し・Content-Type 明示・generic エラーは不変。
 
 ガードレール(remote/server/app.py RA-1 と同じ土台):
  - 静的ファイルは固定 allowlist dict 配信。URL を FS に連結しない / ディレクトリ
@@ -18,21 +26,32 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("GAMES_PORT", "47825"))
-# web ルートは michiyuki/web。umbrella で複数ゲームになったら STATIC を増やす方針。
-WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "michiyuki", "web")
+# web ルートは games リポジトリ直下。各ゲームは <name>/web/ 配下に置く。
+WEB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。
+# 静的ファイル allowlist。{url_path: (games ルート配下の相対パス, content_type)}。
 # URL を FS に連結せず、この dict に列挙された固定パスのみ配信する(無認証)。
+# みちゆき(`/` 直下)の URL は不変(本番互換)。ともしびは `/tomoshibi/` prefix。
 STATIC = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/index.html": ("index.html", "text/html; charset=utf-8"),
-    "/app.js": ("app.js", "application/javascript; charset=utf-8"),
-    "/fragments.js": ("fragments.js", "application/javascript; charset=utf-8"),
-    "/style.css": ("style.css", "text/css; charset=utf-8"),
-    "/manifest.json": ("manifest.json", "application/manifest+json"),
-    "/sw.js": ("sw.js", "application/javascript; charset=utf-8"),
-    "/icons/icon-192.png": ("icons/icon-192.png", "image/png"),
-    "/icons/icon-512.png": ("icons/icon-512.png", "image/png"),
+    # 第 1 作「みちゆき」(URL 不変、本番互換を壊さない)
+    "/": ("michiyuki/web/index.html", "text/html; charset=utf-8"),
+    "/index.html": ("michiyuki/web/index.html", "text/html; charset=utf-8"),
+    "/app.js": ("michiyuki/web/app.js", "application/javascript; charset=utf-8"),
+    "/fragments.js": ("michiyuki/web/fragments.js", "application/javascript; charset=utf-8"),
+    "/style.css": ("michiyuki/web/style.css", "text/css; charset=utf-8"),
+    "/manifest.json": ("michiyuki/web/manifest.json", "application/manifest+json"),
+    "/sw.js": ("michiyuki/web/sw.js", "application/javascript; charset=utf-8"),
+    "/icons/icon-192.png": ("michiyuki/web/icons/icon-192.png", "image/png"),
+    "/icons/icon-512.png": ("michiyuki/web/icons/icon-512.png", "image/png"),
+    # 第 2 作「ともしび」(/tomoshibi/ prefix)
+    "/tomoshibi/": ("tomoshibi/web/index.html", "text/html; charset=utf-8"),
+    "/tomoshibi/index.html": ("tomoshibi/web/index.html", "text/html; charset=utf-8"),
+    "/tomoshibi/app.js": ("tomoshibi/web/app.js", "application/javascript; charset=utf-8"),
+    "/tomoshibi/fragments.js": ("tomoshibi/web/fragments.js", "application/javascript; charset=utf-8"),
+    "/tomoshibi/style.css": ("tomoshibi/web/style.css", "text/css; charset=utf-8"),
+    "/tomoshibi/manifest.json": ("tomoshibi/web/manifest.json", "application/manifest+json"),
+    "/tomoshibi/icons/icon-192.png": ("tomoshibi/web/icons/icon-192.png", "image/png"),
+    "/tomoshibi/icons/icon-512.png": ("tomoshibi/web/icons/icon-512.png", "image/png"),
 }
 
 
