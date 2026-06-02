@@ -409,6 +409,42 @@ function initVideo() {
   pollVideo();  // 初回: 既存セッション復元（§5.2）
 }
 
+// ===== ゲーム一覧 =====
+// 別オリジン(games サーバ, tailnet 同居の別ポート)への単純リンク集。リモコン機能の
+// 邪魔をしないよう既定は畳む(タップで展開)。リンク先は tailscale 境界で保護される。
+// 第 2 作以降はこの配列に 1 行足すだけ(games 本番 URL は games/docs/STATUS.md 参照)。
+const GAMES = [
+  { title: "みちゆき", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/" },
+];
+
+function renderGames() {
+  const list = $("games-list");
+  list.textContent = "";
+  GAMES.forEach((g) => {
+    const a = document.createElement("a");
+    a.className = "game-link";
+    a.href = g.url;
+    a.textContent = g.title;
+    a.rel = "noopener";  // 別オリジン遷移、opener を渡さない
+    list.appendChild(a);
+  });
+}
+
+function initGames() {
+  renderGames();
+  const toggle = $("games-toggle"), list = $("games-list");
+  const flip = () => {
+    const open = list.hidden;  // 今 hidden なら開く向き
+    list.hidden = !open;
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.classList.toggle("open", open);
+  };
+  toggle.addEventListener("click", flip);
+  toggle.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
+  });
+}
+
 function init() {
   $("token-save").addEventListener("click", () => {
     const t = $("token-input").value.trim();
@@ -421,6 +457,7 @@ function init() {
   $("say-send").addEventListener("click", sendSay);
   $("status-refresh").addEventListener("click", refreshGlance);
   initVideo();
+  initGames();
 
   const glance = $("glance");
   glance.addEventListener("click", () => {

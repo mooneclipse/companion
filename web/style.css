@@ -122,3 +122,26 @@ button.danger { background: var(--down); color: #fff; }
 .step-ctl { display: flex; align-items: center; gap: 0.4rem; }
 .step-ctl .step-btn { padding: 0.4rem 0.7rem; flex: none; }
 #video-step-label { flex: none; min-width: 2.5em; text-align: center; }
+
+/* --- ゲーム一覧(折りたたみ) --- */
+.card-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  margin: 0;  /* 畳んだ状態で余白を作らない(開いたら #games-list 側で間隔) */
+}
+.card-toggle .chevron { color: var(--muted); transition: transform 0.15s; }
+.card-toggle.open .chevron { transform: rotate(90deg); }
+#games-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.7rem; }
+.game-link {
+  display: block;
+  background: var(--bg);
+  color: var(--fg);
+  text-decoration: none;
+  border: 1px solid #3a4153;
+  border-radius: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  font-weight: 600;
+}

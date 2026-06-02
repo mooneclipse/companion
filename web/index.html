@@ -105,6 +105,16 @@
       <dl id="status-detail"></dl>
       <button id="status-refresh" type="button">更新</button>
     </section>
+
+    <!-- ゲーム: 既定で畳む(リモコン機能の邪魔をしない)。タップで一覧→各ゲームを開く。
+         リンク先は別オリジン(games サーバ, tailnet 同居の別ポート)。tailscale 境界で保護。 -->
+    <section class="card" id="games-card">
+      <h2 id="games-toggle" class="card-toggle" role="button" tabindex="0"
+          aria-expanded="false" aria-controls="games-list" aria-label="ゲーム一覧（タップで開閉）">
+        <span>ゲーム</span><span class="chevron" aria-hidden="true">▸</span>
+      </h2>
+      <div id="games-list" hidden></div>
+    </section>
   </section>
 </main>
 
