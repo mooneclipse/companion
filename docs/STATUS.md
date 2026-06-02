@@ -1,6 +1,19 @@
 # companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」）
 
-最終更新: 2026-06-02 (v1 初版 = michiyuki/web 一式 + 配信サーバ + systemd unit を新規作成、ローカル commit)
+最終更新: 2026-06-02 (v1 実機デバッグ完了 = overlay 真因修正で歩行可・視認性向上・SW 無効化。実機で踏破まで確認、ユーザー感想待ち。下記「セッション引き継ぎ」参照)
+
+## セッション引き継ぎ（2026-06-02、次セッションは別セッション想定）
+
+- **現状**: みちゆき v1 は実機(Pixel-6 Chrome/Edge)で opening → 長押し歩行 → 景色遷移 → ending「着いた」まで踏破確認済み。歩けない真因(overlay)・視認性(静止に見えた)・キャッシュ事故(SW)を解決済み。git クリーン、`companion-games.service` active+enabled。
+- **ユーザーが実機プレイの感想を執筆中**。受領は別セッション想定。次セッションは感想を読んで、歩行速度 / 断章の出現タイミング・文章 / 景色の流れ / フォント表示 のバランス調整に入る。
+- **配信 URL(現状 3 本とも生きている、tailscale serve --bg で永続)**:
+  - `https://miho-inspiron-3521.tail5e989b.ts.net:8444/` … 本番(クリーン origin、ユーザーが踏破したのはここ)
+  - `:8445/?debug=1` … HUD 付きデバッグ
+  - `:8443/` … 最初の origin(旧 SW キャッシュが端末に残りうる。killer SW で自浄)
+- **片付け候補(本番 URL 確定後に実施)**:
+  - tailscale serve を本番 1 本(推奨 8444)へ整理し、`tailscale serve --https=8443 off` / `--https=8445 off` で 8443・8445 を落とす。ユーザーがどの URL をホーム追加したか確認してから。
+  - `?debug` HUD(app.js 末尾)の除去 or 恒久デバッグ資産として明示保持の判断。
+  - オフライン再プレイ(Service Worker)の再導入可否(現在は killer で無効化中)。
 
 ## 概要
 
