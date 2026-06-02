@@ -1,6 +1,36 @@
-# companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」）
+# companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」）
 
-最終更新: 2026-06-02 (user 要望 2 件対応: ① みちゆきトップに版番号表示[VERSION 定数 v1.0.0、キャッシュ/検証切り分け用、ゲーム変更時は要 bump] ② リモコンからゲームへの導線[remote 側で対応済]。加えて v1 実機プレイ感想を受領・反映[下記「v1 ユーザー感想と次への反映」]。Chromium 検証 PASS、git クリーン)
+最終更新: 2026-06-02 (第 2 作「ともしび」着手 → 実装完了。呼びかけ=短タップで世界が応える[眠っている灯が呼び声の波紋に応じて点灯]。同一サーバ /tomoshibi/ prefix 配信、みちゆき URL は不変。Chromium 実機相当検証 PASS[ともしび + みちゆき回帰])
+
+## 第 2 作「ともしび」（In progress → Done、2026-06-02）
+
+闇〜薄明の広い野を歩きながら **呼びかけると世界が応える** ゲーム。Journey の「歌で呼応」を参照点に、v1 みちゆきの「読むだけ」を超えて「歩く + 世界が応える」を核に据える。ユーザー嗜好一次資料の「ないものに触れる」を直接の手触りに = 呼ぶまで見えない灯が、呼び声に応えた瞬間だけ姿を見せる。コンセプト・核相互作用・断章テキストは発注時に verbatim 確定（実装側で創作・改変しない）。
+
+### Done（2026-06-02）
+
+- [x] ゲーム本体 `tomoshibi/web/`（純静的 PWA、SW なし、VERSION=v1.0.0）。
+- [x] **歩く（長押し）**: みちゆき準拠の 3 層パララックス + progress 0→1、`FULL_WALK_SECONDS`=150、歩行者 `WALKER_X_RATIO`=0.32。
+- [x] **呼ぶ（短タップ）**: pointerdown 時刻と移動量で判別（`CALL_MAX_MS`=220ms / `CALL_MAX_MOVE`=16px 未満で離せば呼び声）。押した瞬間は歩行扱いで前進開始（短タップでも半歩進む＝立ち止まってひと声）。離した時に短タップ判定で歩行者中心の波紋（光の輪）を `ripples` 配列に発火。
+- [x] **種火（眠っている灯）**: 決定論的配置（sin/定数ベース、乱数禁止、`SEEDS` 90 個）。progress に応じ右→左へ流れる。通常ほぼ不可視。波紋の現在半径が種火の画面位置に届いた瞬間（縁 ±28px）に点灯し、暖色の放射グラデがふっと灯ってゆっくり減衰しやがて消える＝「世界が応える」核。点灯は `litCount` で数えるが UI に数値は出さない。
+- [x] **物語の出方**: 本線断章（opening/waypoint×5/ending、progress 閾値）は呼ばない人も読める（みちゆきの showFragment/dismissFragment 流用、ending は dismiss せず静かに終端）。灯のささやき（`WHISPERS`、ささやく灯＝`SEEDS` の約 1/6 を決定論選択）は点灯時にその灯の近くへ淡くフェードイン→数秒で消す in-canvas テキスト。本線断章中は出さない。
+- [x] **歩行者の視認性（v1 の教訓を初手から）**: 背景（land）の明度を `luminance` で見て歩行者の塗りを反転気味に追従（暗背景=明るめ / 明背景=暗め）+ ごく細い 1px 縁。強い縁取りで目立たせず「言われれば気づく」程度を常に確保。
+- [x] **overlay の罠回避（v1 真因）**: `.overlay[hidden]{display:none !important}` / `.overlay:not(.visible){pointer-events:none}` / canvas `touch-action:none` をみちゆき同様に投入。
+- [x] **配信**: 同一サーバ・同一ポートで `/tomoshibi/` prefix 配信（下記「複数ゲーム配信の設計判断」）。CSP はみちゆき同方針。icons は PIL 生成（闇に暖色の放射）。
+- [x] **実機相当検証（Playwright + Chromium, `tests/debug-tomoshibi.mjs`）PASS**: 画面座標ヒットテスト経由で pageerror 0 / opening タップで scene に / 長押し 3s で progressΔ=0.0204・画面変化率 39.79% / 短タップ 4 回で波紋 4 本立つ / 灯 1 点灯。**同一起動サーバでみちゆき回帰（`/` 200・pageerror 0・長押しで progress 前進）も PASS**＝みちゆき URL を壊していない証明。
+
+### 複数ゲーム配信の設計判断（2026-06-02、server を触る判断＝台帳に記録）
+
+`server/app.py` を最小拡張し **同一サーバ・同一ポートで prefix 分け**する方式を採用した。
+
+- みちゆきは `/`, `/app.js` 等の **URL を完全に不変**に保つ（ユーザーがホーム追加した本番 `:8444/` 互換を壊さない）。みちゆきの web ファイルも一切編集していない。
+- ともしびは `/tomoshibi/` 配下に **最初から絶対パス**で配る（HTML の `<link>`/`<script>`、manifest の start_url/scope すべて `/tomoshibi/`）。
+- 実装は `WEB_DIR` を games リポジトリ直下へ引き上げ、`STATIC` dict の rel をゲーム名込み（`michiyuki/web/...` / `tomoshibi/web/...`）に拡張しただけ。allowlist 方式・FS への URL 連結禁止・リスティング無し・Content-Type 明示・generic エラー・no-store・/healthz 無認証・127.0.0.1 bind・`GAMES_PORT` env は全部維持。
+- `/` をゲーム選択ギャラリーにする案は **YAGNI で見送り**（2 作なら直リンクで足りる。TODO に残置）。
+- systemd unit は同一サーバ・同一ポートのため **追加・変更不要**。
+
+### テスト計測しきい値の判断（PALETTE が暗背景ゆえの調整、対症療法 2 周目には非該当）
+
+`debug-tomoshibi.mjs` の画面ピクセル差分しきい値はみちゆきの `th=24`（明背景向け）では暗背景のともしびで成立しない。実測（3s 歩行）で `th=8`→約40% / `th=10`→0.7% と急峻な崖があり、暗背景の自然な可動域は `th=8` 付近。景色は確かに流れている（progress 前進 + 多数ピクセルが小さく変化）ため、**アプリ挙動は変えず計測側を `th=8` に合わせた**。これは「新規ゲームの計測基準を初めて定める」調整であり、同一バグへの 2 周目（しきい値の場当たりいじり）ではない。合格条件 `ratio>2%` は維持（`th=8` で 40% 出るためマージン十分）。
 
 ## セッション引き継ぎ（2026-06-02、次セッションは別セッション想定）
 
@@ -98,7 +128,7 @@ v1 初版で shell precache の cache-first SW(`michiyuki-v1`)を入れたが、
 ```
 games/
 ├── docs/STATUS.md
-├── michiyuki/web/
+├── michiyuki/web/        # 第 1 作。`/` 直下で配信(URL 不変)
 │   ├── index.html       # canvas + 断章オーバーレイ + CSP + フォント link
 │   ├── app.js           # ゲーム本体(歩行 / パララックス / 色補間 / 断章 / 入力)
 │   ├── fragments.js     # 断章テキスト(verbatim, AI 生成静的データ) + 色キーフレーム
@@ -106,7 +136,17 @@ games/
 │   ├── manifest.json    # PWA(name みちゆき / standalone / 夜明け色基調)
 │   ├── sw.js            # shell precache の service worker(オフライン再プレイ)
 │   └── icons/           # icon-192.png / icon-512.png(夜明け色グラデ, PIL 生成)
-├── server/app.py        # stdlib http.server, 127.0.0.1 bind, 固定 allowlist 配信
+├── tomoshibi/web/        # 第 2 作。`/tomoshibi/` prefix で配信
+│   ├── index.html       # canvas + 断章オーバーレイ + CSP(/tomoshibi/ 絶対パス)
+│   ├── app.js           # 歩行 + 呼び声(短タップ)→波紋→種火点灯 + ささやき + 歩行者の背景追従コントラスト
+│   ├── fragments.js     # 断章 + WHISPERS(灯のささやき) + HINTS + PALETTE(闇基調)
+│   ├── style.css        # みちゆき踏襲(overlay 罠対策含む)、テーマ色を闇基調に
+│   ├── manifest.json    # PWA(name ともしび / start_url=scope=/tomoshibi/)
+│   └── icons/           # icon-192.png / icon-512.png(闇に灯る暖色放射, PIL 生成)
+├── server/app.py        # stdlib http.server, 127.0.0.1 bind, 固定 allowlist 配信(2 作 prefix 分け)
+├── tests/
+│   ├── debug-michiyuki.mjs   # みちゆき実機相当(Playwright+Chromium)
+│   └── debug-tomoshibi.mjs   # ともしび実機相当 + みちゆき回帰(URL 不変の証明)
 └── systemd/companion-games.service
 ```
 
@@ -149,7 +189,7 @@ tailscale serve status                              # 公開状態確認
 
 ### TODO（今後の候補）
 - [ ] 音: ambient soundscape の追加(v1 は無音。風 / 足音 / 環境音を progress に連動)。**外部から音源を取得する形にする場合は index.html の CSP 更新が必須**(`connect-src` / `media-src` の追加。現状は Google Fonts 2 ドメイン以外の外向きを塞いでいる)。同一オリジン配置(web 配下に同梱)なら CSP 変更不要。
-- [ ] 複数ゲーム gallery 化: umbrella の 2 作目以降が出たら `/` をゲーム選択にし、server STATIC を分割。
+- [ ] 複数ゲーム gallery 化: 第 2 作「ともしび」は `/tomoshibi/` prefix 直リンクで配信し、`/` をギャラリーにする案は YAGNI で見送り済み（上記「複数ゲーム配信の設計判断」2026-06-02）。3 作目以降で直リンク運用が辛くなったら `/` をゲーム選択にし STATIC を分割する。
 - [ ] 断章の増補: 道中の waypoint を増やす / 季節・天候バリエーション。
 - [ ] 実機目視プレイでのバランス調整(歩行速度 / 断章の出現タイミング / フォント表示)。Playwright で機能は検証済みだが、歩き心地・可読性は人の目で。
 - [ ] オフライン再プレイ(Service Worker)の再導入: v1 のプレイ感が固まってから。開発中は上記のとおり無効化している。
