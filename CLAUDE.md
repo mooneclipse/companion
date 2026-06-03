@@ -36,11 +36,12 @@
 
 ## 一次資料パス
 
-新規ゲームの判断軸（継承資産・課題）は次から引く:
+新規ゲームの判断軸（継承資産・課題）は次から引く。**第 4 作あかり以降は Steam 実プレイ嗜好を主・願望ポエムメモを従**とする（3 作連続ポエム収束の真因＝願望メモ過固定の対策。詳細は STATUS「第 4 作 方向転換」）:
 
-- vault `aidiary/2026-04-11_games-i-want-to-try.md`（嗜好の正本）
+- **主**: `~/companion/games/docs/steam-library-2026-06-02.json`（ユーザー提示の Steam ライブラリ実データ＝行動の証拠。owned 289、`playtime_forever`/`playtime_2weeks`/`rtime_last_played`/collections。これを毎回フレッシュに再分析する＝過去の解釈に引きずられない）
+- 従: vault `aidiary/2026-04-11_games-i-want-to-try.md`（願望ポエムメモ。願望であって行動ではない点に注意。詩・静歩きに過収束させない）
 - vault `notes/*-review.md`（各作の感想、例 `notes/2026-06-02_michiyuki-review.md`）
-- `~/companion/games/docs/STATUS.md` の感想・設計起点メモ
+- `~/companion/games/docs/STATUS.md` の感想・設計起点メモ・方向転換記録
 
 ## 配信導線（新ゲーム追加時の 3 点 + VERSION）
 
