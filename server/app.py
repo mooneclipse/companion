@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import auth
 import status as os_status
+import tickets
 import urlguard
 import video
 import voice
@@ -182,6 +183,43 @@ def api_video_state(handler):
     return 200, s
 
 
+def api_todo_list(handler):
+    """GET /api/todo — done を除いた一覧 + counts(todo/doing 件数)。Bearer 必須。"""
+    return 200, tickets.active()
+
+
+def api_todo_add(handler):
+    """POST /api/todo {text} — 起票。UI 経由は常に by=user。Bearer 必須。"""
+    data, err = _read_json(handler)
+    if err:
+        return err
+    try:
+        ticket = tickets.add(data.get("text"), by="user")
+    except tickets.TicketError as e:
+        return 400, {"error": str(e)}
+    return 200, ticket
+
+
+def api_todo_status(handler):
+    """POST /api/todo/status {id, status} — 状態変更(done で一覧から外れる)。Bearer 必須。
+
+    分岐は state を引く前に確定: id/status を先に検証して 400、その後の
+    TicketError は「該当 id なし」=404 と一意に決まる(文言マッチで分岐しない)。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    tid = data.get("id")
+    if isinstance(tid, bool) or not isinstance(tid, int):
+        return 400, {"error": "id must be an integer"}
+    if data.get("status") not in tickets.STATUSES:
+        return 400, {"error": "invalid status"}
+    try:
+        return 200, tickets.set_status(tid, data["status"])
+    except tickets.TicketError:
+        return 404, {"error": "no such ticket"}
+
+
 # (i) API 明示ルートテーブル。値は (handler, auth_required)。ここに無い (method, path) は 404。
 #     self.path を FS に連結しない。auth_required=False は無認証 endpoint(生存確認のみ)、
 #     それ以外の /api/* は (iv) Bearer 必須。
@@ -197,6 +235,10 @@ ROUTES = {
     ("POST", "/api/video/seek"): (api_video_seek, True),
     ("POST", "/api/video/volume"): (api_video_volume, True),
     ("GET", "/api/video/state"): (api_video_state, True),
+    # 共用 TODO/inbox(F-todo、v1-α 系列 = bot.py 非依存)。全て Bearer 必須。
+    ("GET", "/api/todo"): (api_todo_list, True),
+    ("POST", "/api/todo"): (api_todo_add, True),
+    ("POST", "/api/todo/status"): (api_todo_status, True),
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。

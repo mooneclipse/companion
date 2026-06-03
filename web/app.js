@@ -448,6 +448,139 @@ function initGames() {
   });
 }
 
+// ===== やること(共用 TODO/inbox) =====
+// user(この PWA) と AI(claude セッション) 共用の inbox。実体は server の
+// .state/tickets.json(flock 排他)。各チケットは番号(#N)付きで、user は「#N やって」と
+// 番号で AI に渡せる。バッジ = 未対応(todo+doing)件数。既定は畳む(ゲームカードと同形)。
+const TODO_BY_MARK = { user: "🙋", ai: "🤖" };
+let todoBodyOpen = false;
+
+function updateTodoBadge(counts) {
+  const badge = $("todo-badge");
+  const n = counts ? (counts.todo || 0) + (counts.doing || 0) : 0;
+  if (n > 0) { badge.textContent = String(n); badge.hidden = false; }
+  else { badge.textContent = ""; badge.hidden = true; }
+}
+
+function renderTodo(tickets) {
+  const list = $("todo-list");
+  list.textContent = "";
+  if (!tickets.length) {
+    const li = document.createElement("li");
+    li.className = "todo-empty muted";
+    li.textContent = "(やることなし)";
+    list.appendChild(li);
+    return;
+  }
+  tickets.forEach((t) => {
+    const li = document.createElement("li");
+    li.className = "todo-item" + (t.status === "doing" ? " todo-doing" : "");
+
+    const id = document.createElement("span");
+    id.className = "todo-id";
+    id.textContent = "#" + t.id;
+
+    const by = document.createElement("span");
+    by.className = "todo-by";
+    by.textContent = TODO_BY_MARK[t.by] || "";
+    by.title = t.by === "ai" ? "AI 起票" : "あなたの依頼";
+
+    const text = document.createElement("span");
+    text.className = "todo-text";
+    text.textContent = t.text;
+    if (t.status === "doing") {
+      const tag = document.createElement("span");
+      tag.className = "todo-tag";
+      tag.textContent = "着手中";
+      text.appendChild(document.createTextNode(" "));
+      text.appendChild(tag);
+    }
+
+    const done = document.createElement("button");
+    done.className = "secondary todo-done";
+    done.type = "button";
+    done.textContent = "完了";
+    done.addEventListener("click", () => doneTodo(t.id));
+
+    li.appendChild(id);
+    li.appendChild(by);
+    li.appendChild(text);
+    li.appendChild(done);
+    list.appendChild(li);
+  });
+}
+
+// バッジは畳んでいても常時更新、一覧は展開中のみ描画(token 未設定なら api() が 401 で誘導)。
+async function refreshTodo() {
+  if (!getToken()) return;
+  try {
+    const r = await api("/api/todo");
+    if (!r.ok) return;
+    const data = await r.json();
+    updateTodoBadge(data.counts);
+    if (todoBodyOpen) renderTodo(data.tickets || []);
+  } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
+}
+
+async function addTodo() {
+  const input = $("todo-input"), out = $("todo-result");
+  const text = input.value.trim();
+  if (!text) { out.textContent = "内容を入力してください"; return; }
+  const btn = $("todo-add");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/todo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (r.ok) {
+      const t = await r.json();
+      input.value = "";
+      out.textContent = "追加しました（#" + t.id + "）";
+      await refreshTodo();
+    } else {
+      const j = await r.json().catch(() => ({}));
+      out.textContent = "失敗: " + (j.error || r.status);
+    }
+  } catch (e) {
+    if (e.message !== "unauthorized") out.textContent = "送信エラー";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doneTodo(id) {
+  try {
+    const r = await api("/api/todo/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status: "done" }),
+    });
+    if (r.ok || r.status === 404) await refreshTodo();  // 404=既に消えている→再取得で整合
+  } catch (e) { /* unauthorized は api() が処理 */ }
+}
+
+function initTodo() {
+  const toggle = $("todo-toggle"), body = $("todo-body");
+  const flip = () => {
+    const open = body.hidden;  // 今 hidden なら開く向き
+    body.hidden = !open;
+    todoBodyOpen = open;
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.classList.toggle("open", open);
+    if (open) refreshTodo();  // 展開時に最新一覧を取得
+  };
+  toggle.addEventListener("click", flip);
+  toggle.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
+  });
+  $("todo-add").addEventListener("click", addTodo);
+  $("todo-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addTodo(); }
+  });
+}
+
 function init() {
   $("token-save").addEventListener("click", () => {
     const t = $("token-input").value.trim();
@@ -456,11 +589,13 @@ function init() {
     $("token-input").value = "";
     showApp();
     refreshGlance();
+    refreshTodo();
   });
   $("say-send").addEventListener("click", sendSay);
   $("status-refresh").addEventListener("click", refreshGlance);
   initVideo();
   initGames();
+  initTodo();
 
   const glance = $("glance");
   glance.addEventListener("click", () => {
@@ -474,7 +609,9 @@ function init() {
 
   if (getToken()) showApp(); else showTokenSetup();
   refreshGlance();
+  refreshTodo();
   setInterval(refreshGlance, 15000);
+  setInterval(refreshTodo, 15000);
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

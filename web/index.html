@@ -106,6 +106,24 @@
       <button id="status-refresh" type="button">更新</button>
     </section>
 
+    <!-- やること(共用 TODO/inbox): user と AI 共用の inbox。既定で畳む(リモコン機能の邪魔をしない)。
+         見出しに未対応(todo+doing)件数バッジ。各チケットは番号(#N)付きで「#N やって」と AI に渡せる。 -->
+    <section class="card" id="todo-card">
+      <h2 id="todo-toggle" class="card-toggle" role="button" tabindex="0"
+          aria-expanded="false" aria-controls="todo-body" aria-label="やること一覧（タップで開閉）">
+        <span>やること<span id="todo-badge" class="badge" hidden></span></span>
+        <span class="chevron" aria-hidden="true">▸</span>
+      </h2>
+      <div id="todo-body" hidden>
+        <div class="row">
+          <input type="text" id="todo-input" maxlength="2000" placeholder="頼みたいことを書く">
+          <button id="todo-add" type="button">追加</button>
+        </div>
+        <p id="todo-result" class="result" role="status"></p>
+        <ul id="todo-list"></ul>
+      </div>
+    </section>
+
     <!-- ゲーム: 既定で畳む(リモコン機能の邪魔をしない)。タップで一覧→各ゲームを開く。
          リンク先は別オリジン(games サーバ, tailnet 同居の別ポート)。tailscale 境界で保護。 -->
     <section class="card" id="games-card">

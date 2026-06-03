@@ -145,3 +145,40 @@ button.danger { background: var(--down); color: #fff; }
   padding: 0.7rem 0.9rem;
   font-weight: 600;
 }
+
+/* --- やること(共用 TODO/inbox) --- */
+.badge {
+  display: inline-block;
+  min-width: 1.5em;
+  margin-left: 0.5em;
+  padding: 0 0.4em;
+  background: var(--accent);
+  color: #11151d;
+  border-radius: 0.9em;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.5em;
+}
+#todo-list { list-style: none; margin: 0.7rem 0 0; padding: 0; }
+.todo-empty { padding: 0.4rem 0; }
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid #3a4153;
+}
+.todo-id { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.todo-by { flex: none; }
+.todo-text { flex: 1; word-break: break-word; }
+.todo-doing .todo-text { color: var(--accent); }
+.todo-tag {
+  font-size: 0.75rem;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 0.4em;
+  padding: 0 0.35em;
+  white-space: nowrap;
+}
+.todo-done { flex: none; padding: 0.4rem 0.8rem; }
