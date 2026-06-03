@@ -79,9 +79,11 @@ const browser = await chromium.launch();
 
 // seedHowto=true なら akari_seen_howto=1 を navigation 前に仕込み、初回 howto を
 // スキップして title→battle 直行を維持する(howto 自体の検証ではないセクション用)。
+// vw/vh で viewport を上書きできる(v1.3.0: モバイル Chrome のツールバー表示時の短い
+// 可視高を再現するため)。
 async function openPage(opts = {}) {
   const ctx = await browser.newContext({
-    viewport: { width: VW, height: VH },
+    viewport: { width: opts.vw || VW, height: opts.vh || VH },
     hasTouch: true,
     serviceWorkers: "block",
   });
@@ -393,7 +395,7 @@ const overflowFails = [];
   akariPass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v1.2.0" &&
+    version === "v1.3.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "タップではじめる" &&
@@ -1150,6 +1152,221 @@ let visOverflowFails = [];
   await ctx.close();
 }
 
+// ---- (新 gate・v1.3.0) 短高 viewport: ターン終了ボタンが切れず可視 ------------------
+// 実機バグ: モバイル Chrome のアドレスバー(ツールバー)表示で可視高が縮み、bottom 基準
+// (inset:0 + 100vh)配置だと最下部のターン終了ボタンがツールバー裏=画面外に切れて
+// 押せなかった。修正: .battle/.overlay を top:0 基準 + 100svh、#scene を 100dvh。
+//
+// 重要な限界(正直に明記): headless Playwright には実ツールバーが無く、svh=lvh=dvh=vh=
+// innerHeight になる(実測で確認済み)。よって「lvh>svh のズレ」=元バグそのものは
+// headless では再現できない("PASS≠実機" の穴の本体)。本 gate は代わりに、修正後の
+// 受け入れ条件「短い可視高でも #end-turn / #battle-hint が innerHeight 内(bottom<=
+// innerHeight & top>=0)、3 領域がはみ出さない、ボタンが画面座標タップで機能する」を、
+// アドレスバー表示時の典型可視高(412x680 / 412x730)で必須化する。さらに .battle が
+// bottom 固定でなく top:0 起点(top≈0)で組まれていることをアサートし、修正方向
+// (bottom アンカー廃止)を直接担保する。
+const SHORT_VIEWPORTS = [
+  { vw: 412, vh: 680 }, // アドレスバー表示時の典型可視高(小さめ)
+  { vw: 412, vh: 730 }, // 同(やや大きめ)
+];
+
+// #end-turn / #battle-hint / .battle の可視性を測る。
+async function buttonsVisibility(page) {
+  return page.evaluate(() => {
+    const innerH = window.innerHeight, innerW = window.innerWidth;
+    const measure = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el || el.hidden) return null;
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden") return null;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return null;
+      return { top: +r.top.toFixed(1), bottom: +r.bottom.toFixed(1), left: +r.left.toFixed(1), right: +r.right.toFixed(1) };
+    };
+    const battle = document.getElementById("battle");
+    const br = battle.getBoundingClientRect();
+    return {
+      innerH, innerW,
+      endTurn: measure("#end-turn"),
+      hint: measure("#battle-hint"),
+      battleTop: +br.top.toFixed(1),
+      battleBottom: +br.bottom.toFixed(1),
+    };
+  });
+}
+// 可視判定: rect が存在し top>=-0.5 かつ bottom<=innerH+0.5(切れていない)。
+function fullyVisible(rect, innerH) {
+  if (!rect) return false;
+  return rect.top >= -0.5 && rect.bottom <= innerH + 0.5 && rect.left >= -0.5 && rect.right <= 999999;
+}
+
+let shortVpPass = true;
+const shortVpFails = [];
+const shortVpLog = [];
+const allActingClips = []; // 別件(viewport 非依存の acting-intent 上端クリップ)を集約。
+for (const VP of SHORT_VIEWPORTS) {
+  const tag = `${VP.vw}x${VP.vh}`;
+  const { ctx, page, errors } = await openPage({ seedHowto: true, vw: VP.vw, vh: VP.vh });
+  await page.goto(`${BASE}/akari/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToBattle(page);
+
+  const checks = []; // {state, endTurnVisible, hintVisible(該当時), overflow, vis}
+
+  // 既知・別件の overflow を本 gate の合否から切り離す判定(根拠は下記コメント)。
+  // 切り分けの根拠: 敵手番中、いま動いている敵(.enemy.acting)は CSS で translateY(-8px)
+  // 前進する。最上段の敵では intent バッジ(.enemy-intent「攻 8」)が y=0 を ~3.2px 上回り
+  // 上端で僅かにクリップする。これは viewport 高に依存せず 412x915 でも全く同値(top=-3.2)
+  // で出る = 今回のツールバー修正(v1.3.0)とは無関係の既存の軽微クリップ。よって本 gate
+  // (= 短高でターン終了ボタンが切れない事の検証)の合否には含めず、別途 actingClip として
+  // 明示報告する(隠蔽ではなく分離。lead が別件として扱えるようにする)。
+  // 2 周目ルール: しきい値の場当たり緩和ではなく「別バグの分離」。本 gate の本来の
+  // 受け入れ条件(button 可視 + 上基準 + battle 可視内 + acting 起因以外のはみ出し 0)を測る。
+  const actingClips = [];
+  function isActingIntentTopClip(item, innerH) {
+    return item && item.sel === ".enemy-intent" && item.rect && item.rect.t < 0 && item.rect.b <= innerH;
+  }
+
+  // 各 floor を走破しつつ、各 floor の battle でボタン可視 + はみ出しを測る。
+  const seenFloors = new Set();
+  async function recordState(stateLabel, opts = {}) {
+    const vis = await buttonsVisibility(page);
+    const ov = await overflowReport(page, `${tag}-${stateLabel}`);
+    // 既知の acting-intent 上端クリップを別件として除外し、残りを本 gate の overflow とする。
+    const realItems = ov.items.filter((it) => {
+      if (isActingIntentTopClip(it, vis.innerH)) { actingClips.push({ state: `${tag}/${stateLabel}`, item: it }); return false; }
+      return true;
+    });
+    const realOverflow = ov.overflowCount - (ov.items.length - realItems.length);
+    // .battle が top:0 起点(bottom 固定でない)= top≈0。
+    const topAnchored = Math.abs(vis.battleTop) <= 1.0;
+    const endTurnVisible = fullyVisible(vis.endTurn, vis.innerH);
+    const hintVisible = opts.requireHint ? fullyVisible(vis.hint, vis.innerH) : true;
+    const battleWithin = vis.battleBottom <= vis.innerH + 0.5;
+    const ok = endTurnVisible && hintVisible && realOverflow === 0 && topAnchored && battleWithin;
+    const rec = {
+      state: `${tag}/${stateLabel}`, innerH: vis.innerH,
+      endTurn: vis.endTurn, endTurnVisible,
+      hint: vis.hint, hintRequired: !!opts.requireHint, hintVisible,
+      battleTop: vis.battleTop, battleBottom: vis.battleBottom, topAnchored, battleWithin,
+      overflow: realOverflow, ok,
+    };
+    shortVpLog.push(rec);
+    if (!ok) { shortVpPass = false; shortVpFails.push({ ...rec, overflowItems: realItems }); }
+    return rec;
+  }
+
+  // floor1 通常状態。
+  await recordState("floor1");
+
+  // 詰まり状態(使えるカード無し → 「ターン終了」促し + ボタン強調)を短高で。
+  await page.evaluate(() => { window.G.hp = 9999; window.G.enemies.forEach((e) => { e.hp = 9999; e.block = 0; }); });
+  let sg = 0;
+  while (sg++ < 12) {
+    const idx = await page.evaluate(() => window.G.hand.findIndex((id) => window.CARDS[id].cost <= window.G.mana));
+    if (idx < 0) break;
+    await tapSelector(page, "#hand .card", idx);
+    await page.waitForTimeout(60);
+  }
+  await recordState("stuck-hint", { requireHint: true });
+
+  // 敵手番中(「てきのターン」表示中)に end-turn / hint が可視であること。
+  await tapSelector(page, "#end-turn");
+  await page.waitForFunction(() => window.G.busy === true, { timeout: 5000 });
+  await recordState("enemy-turn-busy", { requireHint: true });
+  await page.waitForFunction(() => window.G.screen === "battle" && window.G.busy === false, { timeout: 15000 });
+
+  // 全 floor を走破して各 floor の battle でボタン可視を測る + 短高でターン終了が機能。
+  async function clearWalkShort() {
+    let g = 0;
+    while (g++ < 60) {
+      const st = await page.evaluate(() => ({ screen: window.G.screen, floor: window.G.floor }));
+      if (st.screen === "battle") {
+        if (!seenFloors.has(st.floor)) {
+          seenFloors.add(st.floor);
+          await recordState("battle-floor" + st.floor);
+          // 対象選択(floor4 = 2 体)も短高で測る。
+          if (st.floor === 4) {
+            await page.evaluate(() => { window.G.mana = 3; window.G.enemies.forEach((e) => { e.block = 0; }); });
+            const ai = await page.evaluate(() => window.G.hand.findIndex((id) => window.CARDS[id].kind === "atk" && window.CARDS[id].cost <= window.G.mana));
+            if (ai >= 0) {
+              await tapSelector(page, "#hand .card", ai);
+              await page.waitForTimeout(80);
+              await recordState("floor4-target-select", { requireHint: true });
+              // キャンセルして戦闘継続。
+              await tapSelector(page, "#hand .card", ai);
+              await page.waitForTimeout(60);
+            }
+          }
+        }
+        // 即勝利で次 floor へ。
+        await page.evaluate(() => { window.G.enemies.forEach((e) => { if (!e.dead) { e.hp = 1; e.block = 0; } }); window.G.mana = 3; });
+        const idx = await page.evaluate(() => window.G.hand.findIndex((id) => window.CARDS[id].kind === "atk" && window.CARDS[id].cost <= window.G.mana));
+        if (idx < 0) { await endTurnAndWait(page); continue; }
+        const alive = await page.evaluate(() => window.G.enemies.filter((e) => !e.dead).length);
+        await tapSelector(page, "#hand .card", idx);
+        await page.waitForTimeout(80);
+        if (alive > 1) {
+          const ti = await page.evaluate(() => { const G = window.G; for (let i = 0; i < G.enemies.length; i++) if (!G.enemies[i].dead) return i; return 0; });
+          await tapSelector(page, ".enemy", ti);
+          await page.waitForTimeout(80);
+        }
+        continue;
+      }
+      if (st.screen === "reward") { await tapSelector(page, "#ov-cards .card", 0); await page.waitForTimeout(600); continue; }
+      if (st.screen === "clear") return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  }
+  const walkedAllShort = await clearWalkShort();
+
+  // 短高でターン終了ボタンが画面座標タップで機能する(端的な実証)を別途 1 回確認。
+  // 新規 battle に入り直し(clear 後)、ボタンを実タップ → 敵手番 → 自分の番に戻る。
+  let endTurnWorksShort = false;
+  {
+    // clear 画面から もう一度 → battle。
+    const scr = await page.evaluate(() => window.G.screen);
+    if (scr === "clear") {
+      await tapSelector(page, "#ov-action"); // retry = newRun(seen 済みなので直行)
+      await page.waitForTimeout(700);
+    }
+    const inBattle = await page.evaluate(() => window.G.screen === "battle");
+    if (inBattle) {
+      await page.evaluate(() => { window.G.hp = 9999; window.G.enemies.forEach((e) => { e.hp = 9999; }); });
+      const before = await page.evaluate(() => window.G.mana);
+      const vis = await buttonsVisibility(page);
+      const tappable = fullyVisible(vis.endTurn, vis.innerH);
+      await tapSelector(page, "#end-turn");
+      const back = await page.waitForFunction(() => window.G.screen === "battle" && window.G.busy === false, { timeout: 15000 }).then(() => true).catch(() => false);
+      endTurnWorksShort = tappable && back;
+    }
+  }
+  if (!endTurnWorksShort) { shortVpPass = false; shortVpFails.push({ state: `${tag}/end-turn-tap-functions`, ok: false }); }
+
+  if (errors.length) { shortVpPass = false; shortVpFails.push({ state: `${tag}/pageerror`, errors }); }
+
+  console.log(`== あかり 短高 viewport ${tag}: ターン終了ボタン可視(v1.3.0) ==`);
+  out("innerHeight", VP.vh);
+  out("計測した floor 集合", [...seenFloors].sort());
+  out("全 floor 走破(短高)", walkedAllShort);
+  out("ターン終了 短高で実タップ機能", endTurnWorksShort);
+  for (const r of shortVpLog.filter((x) => x.state.startsWith(tag))) {
+    out("  " + r.state, { endTurn可視: r.endTurnVisible, hint可視: r.hintRequired ? r.hintVisible : "n/a", topAnchored: r.topAnchored, battleWithin: r.battleWithin, overflow: r.overflow, endTurnBottom: r.endTurn ? r.endTurn.bottom : null });
+  }
+  allActingClips.push(...actingClips);
+  await ctx.close();
+}
+out("短高 viewport gate FAIL 件数", shortVpFails.length);
+for (const f of shortVpFails) out("  FAIL", f);
+out("PASS(短高 viewport: ターン終了ボタンが切れず可視・機能)", shortVpPass);
+// 別件(gate 外・報告のみ): viewport 高に依存しない acting-intent 上端クリップ。
+if (allActingClips.length) {
+  out("【別件・報告のみ】acting 中の敵 intent バッジ上端クリップ件数(viewport 非依存)", allActingClips.length);
+  out("  例", allActingClips[0]);
+  out("  注", "translateY(-8px) で最上段 acting 敵の intent が y=0 を ~3.2px 上回る。412x915 でも同値。今回のツールバー修正(v1.3.0)とは無関係の既存軽微クリップ。lead 判断用に分離報告。");
+}
+
 // ---- (追加・gate ではない) 簡易戦略 bot で N ラン → 到達 floor 分布/クリア率 -----
 let botSummary = null;
 {
@@ -1332,6 +1549,7 @@ out("対象選択 + 再タップキャンセル + floor4 可読性", targetPass)
 out("howto 2回目スキップ + 再読もどる", howtoPass);
 out("詰まり解消 + 敵手番見える化 + busy ガード", stuckPass);
 out("敵手番の見える化(acting順次/A/Dim/Charge/Guard)", visPass);
+out("短高 viewport: ターン終了ボタン可視(v1.3.0)", shortVpPass);
 out("みちゆき 回帰", michiyukiPass);
 out("ともしび 回帰", tomoshibiPass);
 out("なごり 回帰", nagoriPass);
@@ -1339,6 +1557,6 @@ out("バランス bot(参考)", botSummary);
 
 const allPass =
   akariPass && clearPass && defeatPass && targetPass && howtoPass && stuckPass && visPass &&
-  michiyukiPass && tomoshibiPass && nagoriPass;
+  shortVpPass && michiyukiPass && tomoshibiPass && nagoriPass;
 out("ALL PASS", allPass);
 process.exit(allPass ? 0 : 1);
