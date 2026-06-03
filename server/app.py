@@ -2,7 +2,7 @@
 """companion-games server — 127.0.0.1 バインドの stdlib http.server。
 
 「全部 AI で作るゲーム」umbrella の配信サーバ。第 1 作「みちゆき」を `/` 直下、
-第 2 作「ともしび」を `/tomoshibi/` prefix で配る(いずれも静的 PWA)。
+以降は prefix 分け(ともしび=/tomoshibi/、なごり=/nagori/、あかり=/akari/。いずれも静的 PWA)。
 外向きは tailscale serve(HTTPS, 前段リバースプロキシ)経由のみで、本プロセスは
 127.0.0.1 にしか bind しない(0.0.0.0 / tailnet IP 厳禁、companion-remote の流儀を踏襲)。
 
@@ -61,6 +61,17 @@ STATIC = {
     "/nagori/manifest.json": ("nagori/web/manifest.json", "application/manifest+json"),
     "/nagori/icons/icon-192.png": ("nagori/web/icons/icon-192.png", "image/png"),
     "/nagori/icons/icon-512.png": ("nagori/web/icons/icon-512.png", "image/png"),
+    # 第 4 作「あかり」(/akari/ prefix)。デッキ構築ローグライク。
+    "/akari/": ("akari/web/index.html", "text/html; charset=utf-8"),
+    "/akari/index.html": ("akari/web/index.html", "text/html; charset=utf-8"),
+    "/akari/app.js": ("akari/web/app.js", "application/javascript; charset=utf-8"),
+    "/akari/cards.js": ("akari/web/cards.js", "application/javascript; charset=utf-8"),
+    "/akari/enemies.js": ("akari/web/enemies.js", "application/javascript; charset=utf-8"),
+    "/akari/fragments.js": ("akari/web/fragments.js", "application/javascript; charset=utf-8"),
+    "/akari/style.css": ("akari/web/style.css", "text/css; charset=utf-8"),
+    "/akari/manifest.json": ("akari/web/manifest.json", "application/manifest+json"),
+    "/akari/icons/icon-192.png": ("akari/web/icons/icon-192.png", "image/png"),
+    "/akari/icons/icon-512.png": ("akari/web/icons/icon-512.png", "image/png"),
 }
 
 
