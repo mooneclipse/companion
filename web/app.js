@@ -1,5 +1,6 @@
 "use strict";
-// companion-remote PWA。F-2 発話 + F-3 OS status + トークン paste。
+// companion-remote PWA。ホーム型タイルランチャー + 各機能詳細画面。
+// 機能: F-video 動画 / F-2 発話 / F-3 OS status / F-todo やること / ゲーム + トークン paste。
 // XSS 面を絞るため innerHTML は使わず textContent / createElement のみで DOM 構築する。
 const TOKEN_KEY = "remote_token";
 const $ = (id) => document.getElementById(id);
@@ -32,32 +33,71 @@ function showApp() {
   $("app").hidden = false;
 }
 
-// glance: 接続ドット(無認証 /api/health) + OS health 要約(/api/status, 要トークン)
+// ===== 画面ナビゲーション(section.active 切替。mock の show/open_/home 方式) =====
+// ホーム(タイルランチャー)⇄ 各機能詳細。詳細は左上「‹ 戻る」でホームへ。
+const SCREENS = ["home", "video", "speak", "todo", "games", "os"];
+
+function showScreen(id) {
+  for (const s of SCREENS) {
+    const el = $(s);
+    if (el) el.classList.toggle("active", s === id);
+  }
+  window.scrollTo(0, 0);
+}
+function openScreen(id) {
+  showScreen(id);
+  // 詳細を開いた瞬間に最新を取りに行く(畳んでいた間の取りこぼし回収)。
+  if (id === "todo") refreshTodo();
+  if (id === "os") refreshGlance();
+}
+function goHome() { showScreen("home"); }
+
+// glance: 接続ドット(無認証 /api/health) + OS health 要約(/api/status, 要トークン)。
+// 要約専門(ホーム常駐)。詳細 dl は OS状態画面(renderStatus)。
 async function refreshGlance() {
   const dot = $("conn-dot");
+  const text = $("glance-text");
+  const metrics = $("glance-metrics");
   try {
     const h = await fetch("/api/health", { cache: "no-store" });
     if (!h.ok) throw new Error();
     dot.className = "dot ok";
   } catch (e) {
     dot.className = "dot down";
-    $("glance-text").textContent = "接続できません";
+    text.textContent = "接続できません";
+    metrics.hidden = true;
     return;
   }
-  if (!getToken()) { $("glance-text").textContent = "トークン未設定"; return; }
+  if (!getToken()) { text.textContent = "トークン未設定"; metrics.hidden = true; return; }
   try {
     const r = await api("/api/status");
     if (!r.ok) throw new Error();
     const s = await r.json();
-    const parts = [];
-    if (s.disk) parts.push("disk " + s.disk.pct);
-    if (s.cpu_temp_c != null) parts.push(s.cpu_temp_c + "℃");
-    if (s.mem) parts.push("mem " + s.mem.used + "/" + s.mem.total);
-    $("glance-text").textContent = parts.join("  ") || "OK";
+    text.textContent = "Connected";
+    renderGlanceMetrics(s);
     renderStatus(s);
   } catch (e) {
-    if (e.message !== "unauthorized") $("glance-text").textContent = "status 取得失敗";
+    if (e.message !== "unauthorized") { text.textContent = "status 取得失敗"; metrics.hidden = true; }
   }
+}
+
+// glance 右肩の要約メトリクス(disk / mem / temp)。値は <b> で強調(mock 準拠)。
+function renderGlanceMetrics(s) {
+  const metrics = $("glance-metrics");
+  metrics.textContent = "";
+  const add = (label, val) => {
+    const span = document.createElement("span");
+    if (label) span.appendChild(document.createTextNode(label + " "));
+    const b = document.createElement("b");
+    b.textContent = val;
+    span.appendChild(b);
+    metrics.appendChild(span);
+  };
+  let any = false;
+  if (s.disk) { add("disk", s.disk.pct); any = true; }
+  if (s.mem) { add("mem", s.mem.used); any = true; }
+  if (s.cpu_temp_c != null) { add("", s.cpu_temp_c + "℃"); any = true; }
+  metrics.hidden = !any;
 }
 
 function renderStatus(s) {
@@ -215,17 +255,30 @@ function renderTransport() {
   }
 }
 
+// 再生中バー(ホーム常駐、再生中のみ)。タップで動画詳細へ。現行 renderNow を昇格。
 function renderNow() {
-  const now = $("glance-now");
+  const bar = $("nowbar");
   const s = vState;
-  if (!s || s.phase === "idle") { now.hidden = true; now.textContent = ""; return; }
-  now.hidden = false;
+  if (!s || s.phase === "idle") { bar.hidden = true; return; }
+  bar.hidden = false;
+  const icon = $("nowbar-icon");
+  const title = $("nowbar-title");
+  const time = $("nowbar-time");
   if (s.phase === "resolving") {
     const el = vElapsed();
-    now.textContent = "⟳ 解決中…" + (el == null ? "" : " " + el + "s");
+    icon.textContent = "⟳";
+    title.textContent = "解決中…" + (el == null ? "" : " " + el + "s");
+    time.textContent = "";
   } else {
-    const icon = s.is_live ? "● LIVE" : (s.pause ? "⏸" : "▶");
-    now.textContent = icon + " " + (s.title || "");
+    icon.textContent = s.is_live ? "●" : (s.pause ? "⏸" : "▶");
+    title.textContent = s.title || "(タイトル取得中)";
+    if (s.is_live) {
+      time.textContent = "LIVE";
+    } else if (typeof s.duration === "number" && s.duration > 0) {
+      time.textContent = fmtTime(s.pos) + " / " + fmtTime(s.duration);
+    } else {
+      time.textContent = s.pause ? "一時停止中" : "再生中";
+    }
   }
 }
 
@@ -392,7 +445,7 @@ function initVideo() {
   $("video-stop").addEventListener("click", () => {
     if (confirm("再生を停止しますか？（TV の再生が止まります）")) videoStop();
   });
-  $("video-close").addEventListener("click", () => { vCollapsed = true; renderVideo(); });
+  $("video-close").addEventListener("click", () => { vCollapsed = true; renderVideo(); goHome(); });
   $("video-reopen").addEventListener("click", () => { vCollapsed = false; renderVideo(); });
   $("video-toggle").addEventListener("click", videoToggle);
   const seek = $("video-seek");
@@ -410,9 +463,9 @@ function initVideo() {
 }
 
 // ===== ゲーム一覧 =====
-// 別オリジン(games サーバ, tailnet 同居の別ポート)への単純リンク集。リモコン機能の
-// 邪魔をしないよう既定は畳む(タップで展開)。リンク先は tailscale 境界で保護される。
-// 第 2 作以降はこの配列に 1 行足すだけ(games 本番 URL は games/docs/STATUS.md 参照)。
+// 別オリジン(games サーバ, tailnet 同居の別ポート)への単純リンク集。
+// ゲーム詳細画面(タイル「ゲーム」→)に一覧を出す。リンク先は tailscale 境界で保護される。
+// 第 N 作はこの配列に 1 行足すだけ(games 本番 URL は games/docs/STATUS.md 参照)。
 const GAMES = [
   { title: "みちゆき", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/" },
   { title: "ともしび", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/tomoshibi/" },
@@ -435,31 +488,29 @@ function renderGames() {
 
 function initGames() {
   renderGames();
-  const toggle = $("games-toggle"), list = $("games-list");
-  const flip = () => {
-    const open = list.hidden;  // 今 hidden なら開く向き
-    list.hidden = !open;
-    toggle.setAttribute("aria-expanded", String(open));
-    toggle.classList.toggle("open", open);
-  };
-  toggle.addEventListener("click", flip);
-  toggle.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
-  });
+  // ホームのゲームタイル sub / 詳細画面 kicker に収録本数を出す(配列駆動で自動追従)。
+  $("tile-games-sub").textContent = GAMES.length + " 本 収録";
+  $("games-kicker").textContent = GAMES.length + " Titles";
 }
 
 // ===== やること(共用 TODO/inbox) =====
 // user(この PWA) と AI(claude セッション) 共用の inbox。実体は server の
 // .state/tickets.json(flock 排他)。各チケットは番号(#N)付きで、user は「#N やって」と
-// 番号で AI に渡せる。バッジ = 未対応(todo+doing)件数。既定は畳む(ゲームカードと同形)。
+// 番号で AI に渡せる。バッジ = 未対応(todo+doing)件数。ホームのやることタイルに表示。
 const TODO_BY_MARK = { user: "🙋", ai: "🤖" };
-let todoBodyOpen = false;
 
+// 未対応件数バッジ。ホームのタイル(#tile-todo-badge)に表示し、sub に件数文言。
 function updateTodoBadge(counts) {
-  const badge = $("todo-badge");
+  const badge = $("tile-todo-badge");
+  const sub = $("tile-todo-sub");
   const n = counts ? (counts.todo || 0) + (counts.doing || 0) : 0;
-  if (n > 0) { badge.textContent = String(n); badge.hidden = false; }
-  else { badge.textContent = ""; badge.hidden = true; }
+  if (n > 0) {
+    badge.textContent = String(n); badge.hidden = false;
+    sub.textContent = "未対応 " + n + " 件";
+  } else {
+    badge.textContent = ""; badge.hidden = true;
+    sub.textContent = "未対応なし";
+  }
 }
 
 function renderTodo(tickets) {
@@ -467,7 +518,7 @@ function renderTodo(tickets) {
   list.textContent = "";
   if (!tickets.length) {
     const li = document.createElement("li");
-    li.className = "todo-empty muted";
+    li.className = "todo-empty";
     li.textContent = "(やることなし)";
     list.appendChild(li);
     return;
@@ -497,7 +548,7 @@ function renderTodo(tickets) {
     }
 
     const done = document.createElement("button");
-    done.className = "secondary todo-done";
+    done.className = "todo-done";
     done.type = "button";
     done.textContent = "完了";
     done.addEventListener("click", () => doneTodo(t.id));
@@ -510,7 +561,7 @@ function renderTodo(tickets) {
   });
 }
 
-// バッジは畳んでいても常時更新、一覧は展開中のみ描画(token 未設定なら api() が 401 で誘導)。
+// バッジは常時更新(15s ポーリング)、一覧はやること画面表示中のみ最新描画。
 async function refreshTodo() {
   if (!getToken()) return;
   try {
@@ -518,7 +569,7 @@ async function refreshTodo() {
     if (!r.ok) return;
     const data = await r.json();
     updateTodoBadge(data.counts);
-    if (todoBodyOpen) renderTodo(data.tickets || []);
+    if ($("todo").classList.contains("active")) renderTodo(data.tickets || []);
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
 }
 
@@ -562,22 +613,29 @@ async function doneTodo(id) {
 }
 
 function initTodo() {
-  const toggle = $("todo-toggle"), body = $("todo-body");
-  const flip = () => {
-    const open = body.hidden;  // 今 hidden なら開く向き
-    body.hidden = !open;
-    todoBodyOpen = open;
-    toggle.setAttribute("aria-expanded", String(open));
-    toggle.classList.toggle("open", open);
-    if (open) refreshTodo();  // 展開時に最新一覧を取得
-  };
-  toggle.addEventListener("click", flip);
-  toggle.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
-  });
   $("todo-add").addEventListener("click", addTodo);
   $("todo-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); addTodo(); }
+  });
+}
+
+// ===== ナビゲーション初期化 =====
+// タイル(data-open) → 詳細画面、戻る(data-back/data-home) → ホーム。
+// 委譲ではなく要素列挙で結線(タイル枚数は少数、将来追加も局所で済む)。
+function initNav() {
+  document.querySelectorAll("[data-open]").forEach((el) => {
+    el.addEventListener("click", () => openScreen(el.getAttribute("data-open")));
+  });
+  document.querySelectorAll("[data-home]").forEach((el) => {
+    el.addEventListener("click", goHome);
+  });
+  // ホームの再生中バー: タップで動画詳細へ。
+  $("nowbar").addEventListener("click", () => openScreen("video"));
+  // glance(接続/health 要約): タップで OS状態詳細へ。
+  const glance = $("glance");
+  glance.addEventListener("click", () => openScreen("os"));
+  glance.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openScreen("os"); }
   });
 }
 
@@ -588,26 +646,19 @@ function init() {
     setToken(t);
     $("token-input").value = "";
     showApp();
+    goHome();
     refreshGlance();
     refreshTodo();
   });
   $("say-send").addEventListener("click", sendSay);
   $("status-refresh").addEventListener("click", refreshGlance);
+  initNav();
   initVideo();
   initGames();
   initTodo();
 
-  const glance = $("glance");
-  glance.addEventListener("click", () => {
-    const card = $("status-card");
-    card.hidden = !card.hidden;
-    if (!card.hidden) refreshGlance();
-  });
-  glance.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); glance.click(); }
-  });
-
   if (getToken()) showApp(); else showTokenSetup();
+  goHome();
   refreshGlance();
   refreshTodo();
   setInterval(refreshGlance, 15000);

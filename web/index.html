@@ -5,136 +5,220 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- CSP: 同一オリジンのみ。inline script/style 不許可(外部 app.js/style.css)、XSS 面を絞る -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'; base-uri 'none'">
-<meta name="theme-color" content="#1b1f2a">
+<meta name="theme-color" content="#f4f2ea">
 <title>リモコン</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
-<header class="glance" id="glance" role="button" tabindex="0" aria-label="接続状態と再生状況と OS health（タップで詳細）">
-  <span class="dot" id="conn-dot" aria-hidden="true"></span>
-  <span id="glance-now" class="now" hidden></span>
-  <span id="glance-text">接続確認中…</span>
-</header>
+<body class="pal-vermil">
 
-<main>
-  <!-- トークン未設定 / 失効時 -->
-  <section id="token-setup" class="card" hidden>
-    <h2>トークン設定</h2>
-    <p id="token-msg">SSH で発行したトークンを貼り付けてください。</p>
-    <input type="password" id="token-input" autocomplete="off" inputmode="text" placeholder="トークン">
-    <button id="token-save" type="button">保存</button>
+<div class="wrap">
+
+  <!-- トークン未設定 / 失効時。ホーム/詳細とは独立に最前面に出す(他は #app 配下)。 -->
+  <section id="token-setup" class="token-screen" hidden>
+    <header class="mast">
+      <div class="brand">Home Server / Remote</div>
+    </header>
+    <div class="body">
+      <div class="kicker">Setup</div>
+      <h1 class="h1">トークン設定</h1>
+      <div class="card">
+        <label class="fld" for="token-input">アクセストークン</label>
+        <p id="token-msg" class="note">SSH で発行したトークンを貼り付けてください。</p>
+        <input type="password" id="token-input" autocomplete="off" inputmode="text" placeholder="トークン">
+        <button class="btn mt" id="token-save" type="button">保存</button>
+      </div>
+    </div>
   </section>
 
-  <!-- 操作 -->
-  <section id="app" hidden>
-    <section class="card" id="video-card">
-      <h2>動画</h2>
+  <!-- 操作本体(token 設定済みのとき表示)。ホーム + 各機能詳細を section.screen で切替。 -->
+  <div id="app" hidden>
 
-      <!-- idle: URL 投入。close≠stop ゆえ再生中でも「閉じる」でこの view に戻れる(TV 継続) -->
-      <div id="video-idle">
-        <!-- 「閉じる」で transport を畳んだが TV 再生継続中のとき、操作へ戻る導線 -->
-        <button id="video-reopen" type="button" class="secondary" hidden>操作に戻る</button>
-        <p id="video-ended" class="result" role="status" hidden></p>
-        <textarea id="video-url" rows="2" maxlength="2000" placeholder="YouTube の URL"></textarea>
-        <div class="row">
-          <button id="video-play" type="button">再生</button>
-          <button id="video-clear" type="button" class="secondary">クリア</button>
-        </div>
-        <p id="video-play-err" class="result" role="status"></p>
+    <!-- ============ HOME ============ -->
+    <section id="home" class="screen active">
+      <header class="mast">
+        <div class="brand">Home Server / Remote</div>
+        <div class="ver">Remote</div>
+      </header>
+
+      <!-- glance: 接続ドット + OS health 要約(要約専門。詳細は OS状態タイル)。タップで OS詳細へ。 -->
+      <div class="glance" id="glance" role="button" tabindex="0"
+           aria-label="接続状態と OS health（タップで詳細）">
+        <span class="dot" id="conn-dot" aria-hidden="true"></span>
+        <span class="ok" id="glance-text">接続確認中…</span>
+        <span class="metrics" id="glance-metrics" hidden></span>
       </div>
 
-      <!-- resolving: yt-dlp 解決中(40〜70秒)。経過秒 + 目安 + キャンセル -->
-      <div id="video-resolving" hidden>
-        <p class="resolving"><span class="spinner" aria-hidden="true"></span>
-          <span id="video-resolve-text">読み込み中…</span></p>
-        <p class="muted" id="video-resolve-note">読み込みに最大1分ほどかかります</p>
-        <button id="video-cancel" type="button" class="secondary">キャンセル</button>
-      </div>
+      <!-- 再生中バー: 再生中のみ表示。タップで動画詳細へ(現行 renderNow を昇格)。 -->
+      <button class="nowbar" id="nowbar" type="button" hidden aria-label="再生中（タップで動画を操作）">
+        <div class="np-kicker">Now Playing</div>
+        <div class="np-title"><span class="play" id="nowbar-icon">▶</span><span id="nowbar-title"></span></div>
+        <div class="np-time"><span id="nowbar-time"></span></div>
+      </button>
 
-      <!-- transport: 再生中 / 一時停止 -->
-      <div id="video-transport" hidden>
-        <p id="video-title" class="now-title"></p>
-        <div id="video-seekrow" class="row">
-          <input type="range" id="video-seek" min="0" max="100" value="0"
-                 aria-label="再生位置">
-          <span id="video-time" class="muted"></span>
+      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">5</span></div>
+
+      <!-- タイルグリッド(2列)。
+           将来機能拡張: この .grid 内に <button class="tile" data-open="xxx"> を 1 枚足し、
+           対応する <section id="xxx" class="screen"> を下に追加するだけで増やせる。
+           GAMES のような単純リンク集なら配列駆動が綺麗だが、動画等は状態を持つので
+           一律配列化はしない。タイル追加が局所(この grid + 1 section)で済めばよい。
+           未実装の vault閲覧 / done履歴 は「押せないものは出さない」方針で今は出さない。 -->
+      <div class="grid" id="tile-grid">
+        <button class="tile" type="button" data-open="video">
+          <span class="t-mark">▶ 01</span><span class="t-name">動画</span><span class="t-sub">再生・シーク・音量</span>
+        </button>
+        <button class="tile" type="button" data-open="speak">
+          <span class="t-mark">~ 02</span><span class="t-name">発話</span><span class="t-sub">テキストを喋らせる</span>
+        </button>
+        <button class="tile" type="button" data-open="todo">
+          <span class="badge" id="tile-todo-badge" hidden></span>
+          <span class="t-mark">□ 03</span><span class="t-name">やること</span>
+          <span class="t-sub" id="tile-todo-sub">共用 inbox</span>
+        </button>
+        <button class="tile" type="button" data-open="games">
+          <span class="t-mark">◇ 04</span><span class="t-name">ゲーム</span>
+          <span class="t-sub" id="tile-games-sub">タイトル一覧</span>
+        </button>
+        <button class="tile" type="button" data-open="os">
+          <span class="t-mark"># 05</span><span class="t-name">OS状態</span><span class="t-sub">disk / mem / temp</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ============ VIDEO ============ -->
+    <section id="video" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">01 / Video</span></div>
+      <div class="body">
+        <div class="kicker">Video Player</div>
+        <h1 class="h1">動画</h1>
+
+        <!-- idle: URL 投入。close≠stop ゆえ再生中でも「閉じる」でこの view に戻れる(TV 継続) -->
+        <div id="video-idle">
+          <!-- 「閉じる」で transport を畳んだが TV 再生継続中のとき、操作へ戻る導線 -->
+          <button id="video-reopen" type="button" class="btn secondary" hidden>操作に戻る</button>
+          <p id="video-ended" class="result" role="status" hidden></p>
+          <div class="card">
+            <div class="ctitle">動画を再生</div>
+            <label class="fld" for="video-url">URL</label>
+            <textarea id="video-url" rows="2" maxlength="2000" placeholder="YouTube の URL"></textarea>
+            <div class="row mt">
+              <button id="video-play" type="button" class="btn">再生</button>
+              <button id="video-clear" type="button" class="btn secondary">クリア</button>
+            </div>
+            <p id="video-play-err" class="result" role="status"></p>
+          </div>
         </div>
-        <!-- ±N 秒スキップ + ステップ可変(RV-7)。seekable=VOD のみ表示(live は §5.1 で非表示) -->
-        <div id="video-skiprow" class="row" hidden>
-          <button id="video-skip-back" type="button" class="secondary">−10s</button>
-          <span class="step-ctl">
-            <button id="video-step-down" type="button" class="secondary step-btn"
-                    aria-label="スキップ秒数を短く">−</button>
-            <span id="video-step-label" class="muted">10s</span>
-            <button id="video-step-up" type="button" class="secondary step-btn"
-                    aria-label="スキップ秒数を長く">＋</button>
-          </span>
-          <button id="video-skip-fwd" type="button" class="secondary">＋10s</button>
+
+        <!-- resolving: yt-dlp 解決中(40〜70秒)。経過秒 + 目安 + キャンセル -->
+        <div id="video-resolving" hidden>
+          <div class="card">
+            <p class="resolving"><span class="spinner" aria-hidden="true"></span>
+              <span id="video-resolve-text">読み込み中…</span></p>
+            <p class="note" id="video-resolve-note">読み込みに最大1分ほどかかります</p>
+            <button id="video-cancel" type="button" class="btn secondary mt">キャンセル</button>
+          </div>
         </div>
-        <p id="video-live-badge" class="live-badge" hidden>● LIVE</p>
-        <div class="row">
-          <button id="video-toggle" type="button">一時停止</button>
-        </div>
-        <div class="row">
-          <span class="muted vol-label">音量</span>
-          <input type="range" id="video-volume" min="0" max="130" value="100"
-                 aria-label="音量">
-        </div>
-        <!-- 「閉じる」(可逆・TV 継続)と「停止」(不可逆・破壊的)を語彙/位置で分離(§5.1) -->
-        <div class="row video-bottom">
-          <button id="video-close" type="button" class="secondary">閉じる</button>
-          <button id="video-stop" type="button" class="danger">停止</button>
+
+        <!-- transport: 再生中 / 一時停止 -->
+        <div id="video-transport" hidden>
+          <div class="card">
+            <div class="ctitle">Now Playing</div>
+            <p id="video-title" class="now-title"></p>
+            <div id="video-seekrow" class="seekrow">
+              <input type="range" id="video-seek" min="0" max="100" value="0" aria-label="再生位置">
+              <div class="timeline"><span id="video-time"></span></div>
+            </div>
+            <!-- ±N 秒スキップ + ステップ可変(RV-7)。seekable=VOD のみ表示(live は §5.1 で非表示) -->
+            <div id="video-skiprow" class="row tight" hidden>
+              <button id="video-skip-back" type="button" class="btn ghost small">−10s</button>
+              <span class="step-ctl">
+                <button id="video-step-down" type="button" class="btn ghost small step-btn"
+                        aria-label="スキップ秒数を短く">−</button>
+                <span id="video-step-label" class="muted">10s</span>
+                <button id="video-step-up" type="button" class="btn ghost small step-btn"
+                        aria-label="スキップ秒数を長く">＋</button>
+              </span>
+              <button id="video-skip-fwd" type="button" class="btn ghost small">＋10s</button>
+            </div>
+            <p id="video-live-badge" class="live-badge" hidden>● LIVE</p>
+            <button id="video-toggle" type="button" class="btn mt">一時停止</button>
+            <label class="fld mt" for="video-volume">Volume</label>
+            <input type="range" id="video-volume" min="0" max="130" value="100" aria-label="音量">
+          </div>
+          <!-- 「閉じる」(可逆・TV 継続)と「停止」(不可逆・破壊的)を語彙/位置で分離(§5.1) -->
+          <div class="row mt">
+            <button id="video-close" type="button" class="btn secondary">閉じる</button>
+            <button id="video-stop" type="button" class="btn danger">停止</button>
+          </div>
         </div>
       </div>
     </section>
 
-    <section class="card">
-      <h2>発話</h2>
-      <textarea id="say-text" rows="3" maxlength="2000" placeholder="しゃべらせるテキスト"></textarea>
-      <div class="row">
-        <input type="number" id="say-speaker" min="0" inputmode="numeric" placeholder="speaker(任意)">
-        <button id="say-send" type="button">発話</button>
+    <!-- ============ SPEAK ============ -->
+    <section id="speak" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">02 / Speak</span></div>
+      <div class="body">
+        <div class="kicker">Text to Speech</div>
+        <h1 class="h1">発話</h1>
+        <div class="card">
+          <label class="fld" for="say-text">読み上げる文章</label>
+          <textarea id="say-text" rows="3" maxlength="2000" placeholder="しゃべらせるテキスト"></textarea>
+          <label class="fld mt" for="say-speaker">Speaker No.</label>
+          <input type="number" id="say-speaker" min="0" inputmode="numeric" placeholder="speaker(任意)">
+          <button id="say-send" type="button" class="btn mt">発話する</button>
+          <p id="say-result" class="result" role="status"></p>
+        </div>
       </div>
-      <p id="say-result" class="result" role="status"></p>
     </section>
 
-    <section class="card" id="status-card" hidden>
-      <h2>OS status</h2>
-      <dl id="status-detail"></dl>
-      <button id="status-refresh" type="button">更新</button>
-    </section>
-
-    <!-- やること(共用 TODO/inbox): user と AI 共用の inbox。既定で畳む(リモコン機能の邪魔をしない)。
-         見出しに未対応(todo+doing)件数バッジ。各チケットは番号(#N)付きで「#N やって」と AI に渡せる。 -->
-    <section class="card" id="todo-card">
-      <h2 id="todo-toggle" class="card-toggle" role="button" tabindex="0"
-          aria-expanded="false" aria-controls="todo-body" aria-label="やること一覧（タップで開閉）">
-        <span>やること<span id="todo-badge" class="badge" hidden></span></span>
-        <span class="chevron" aria-hidden="true">▸</span>
-      </h2>
-      <div id="todo-body" hidden>
-        <div class="row">
+    <!-- ============ TODO ============ -->
+    <section id="todo" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">03 / To-Do</span></div>
+      <div class="body">
+        <div class="kicker">Shared Inbox</div>
+        <h1 class="h1">やること</h1>
+        <div class="card">
+          <label class="fld" for="todo-input">新規追加</label>
           <input type="text" id="todo-input" maxlength="2000" placeholder="頼みたいことを書く">
-          <button id="todo-add" type="button">追加</button>
+          <button id="todo-add" type="button" class="btn mt">追加</button>
+          <p id="todo-result" class="result" role="status"></p>
         </div>
-        <p id="todo-result" class="result" role="status"></p>
-        <ul id="todo-list"></ul>
+        <div class="card">
+          <div class="ctitle">List</div>
+          <ul id="todo-list"></ul>
+        </div>
       </div>
     </section>
 
-    <!-- ゲーム: 既定で畳む(リモコン機能の邪魔をしない)。タップで一覧→各ゲームを開く。
-         リンク先は別オリジン(games サーバ, tailnet 同居の別ポート)。tailscale 境界で保護。 -->
-    <section class="card" id="games-card">
-      <h2 id="games-toggle" class="card-toggle" role="button" tabindex="0"
-          aria-expanded="false" aria-controls="games-list" aria-label="ゲーム一覧（タップで開閉）">
-        <span>ゲーム</span><span class="chevron" aria-hidden="true">▸</span>
-      </h2>
-      <div id="games-list" hidden></div>
+    <!-- ============ GAMES ============ -->
+    <section id="games" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">04 / Games</span></div>
+      <div class="body">
+        <div class="kicker" id="games-kicker">Titles</div>
+        <h1 class="h1">ゲーム</h1>
+        <div class="card">
+          <div id="games-list"></div>
+        </div>
+      </div>
     </section>
-  </section>
-</main>
+
+    <!-- ============ OS ============ -->
+    <section id="os" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">05 / System</span></div>
+      <div class="body">
+        <div class="kicker">Host Metrics</div>
+        <h1 class="h1">OS状態</h1>
+        <div class="card">
+          <dl class="os" id="status-detail"></dl>
+          <button id="status-refresh" type="button" class="btn mt">更新</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
 
 <script src="/app.js"></script>
 </body>
