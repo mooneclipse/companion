@@ -49,7 +49,9 @@
 - [x] playtester 正式実機検証（`tests/debug-akari.mjs`、画面座標ヒットテスト経由）**ALL PASS**: `/akari/` 200・pageerror 0、title→battle（最前面 overlay assert＝飛び越えなし）、**全画面（title/全 floor/reward/defeat/clear）テキスト・カードが 412×915 内に収まりはみ出し 0**（なごり真因の直接対策）、LIGHT→与ダメ追従（light100=9/50=6/10=4）、明暗変化率 100%（th=48 を初回基準に実測確定）、勝利経路（clear・best 記録）と敗北経路（HP0→defeat→再挑戦でデッキ初期化）、対象選択（floor4 二つ火 2 体）。**既存作回帰**（同一サーバ `/`・`/tomoshibi/`・`/nagori/` 200・pageerror 0・コア操作前進）＝既存 URL 不変の証明。
 - [x] **バランス 1 周目調整（出荷確定値）**: 初版は単純戦略 bot で**クリア率 0/20**（18/20 が floor5「篝」の Charge で停止、ボス未到達）＝デススパイラル（攻撃で暗くなる→被ダメ増→灯し直す→火力不足）が薄い HP・戦闘後回復の不在・終盤スパイクで詰む構造欠陥。**構造的に緩和**: `PLAYER_MAX_HP` 50→**52**、**`WIN_HEAL`=2 新設**（非ボス勝利時回復、ローグライク標準の欠落していた戦闘後リカバリ）、`SKIP_HEAL` 8→**14**、`TAKEN_DARK_FACTOR` 0.6→**0.45**、「打つ」LIGHT コスト −8→**−6**、篝 Charge A:18→**14**、ボス HP 75→**68**・A:24→**19**。再計測でクリア率 **30〜55%**（bot ヒューリスティクス差、死因は全て floor5/ボス＝晩成の壁が機能する健全分布）。**しきい値の無限ナッジはせず初回調整 1 回で確定**（2 周目ルール非該当＝playtest アサートとは別件の初回バランス確定。`tests/debug-akari.mjs` の旧値固定アサート hp50/-8 は新値 52/-6 へ機械追随、フル再実行で clean PASS）。
 - [x] code-reviewer 点検＝**全 7 観点 OK・commit 可**（配信境界・既存 URL 不変／純静的 PWA・CSP／状態機械の二重発火・null 参照なし＝`won-pending` 中間状態＋`reapEnemies` ガードで封じ／効果インタプリタ・被ダメ計算・集光1回消費・燭台ターン開始フック仕様どおり／可読性・視認性／VERSION／データ verbatim）。軽微提案 2 件（STATUS の旧数値乖離・CONST コメント要約）は独断適用。
-- [ ] commit（games repo）→ 配信（remote `GAMES` 追加・SW cache v9→v10 bump・systemd restart・tailscale 確認）。**配信＝本番反映はユーザー承認のうえ実施**。
+- [x] commit（games repo `18d1c40` feat / `4085ced` docs）。
+- [x] **配信（本番反映＝ユーザー承認のうえ実施、2026-06-03）**: ① `systemctl --user restart companion-games` で本番 47825 を新 app.py へ差し替え（`/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/healthz` 全 200、既存 URL 不変を確認）② remote `web/app.js` の `GAMES` に「あかり」1 行追加 + SW cache v9→v10 bump（remote `80b2ba0` feat）③ tailscale serve は `:8444 (tailnet only)` で同一ポートのため unit 変更不要。本番 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/akari/`。
+- [ ] ユーザー実機プレイ → 感想受領 → §9 記録（次作方向づけ）。
 
 ## 第 3 作「なごり」（In progress、2026-06-02 / `/newgame` 初の実戦投入）
 
