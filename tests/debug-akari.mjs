@@ -77,16 +77,37 @@ const changed = (a, b) => {
 
 const browser = await chromium.launch();
 
-async function openPage() {
+// seedHowto=true なら akari_seen_howto=1 を navigation 前に仕込み、初回 howto を
+// スキップして title→battle 直行を維持する(howto 自体の検証ではないセクション用)。
+async function openPage(opts = {}) {
   const ctx = await browser.newContext({
     viewport: { width: VW, height: VH },
     hasTouch: true,
     serviceWorkers: "block",
   });
+  if (opts.seedHowto) {
+    await ctx.addInitScript(() => {
+      try { localStorage.setItem("akari_seen_howto", "1"); } catch (e) {}
+    });
+  }
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   return { ctx, page, errors };
+}
+
+// title の「タップではじめる」→ (初回なら howto の「はじめる」→) battle まで進める。
+// seenHowto 済み context では直行。new-flow 追随のための共通導線。
+async function startToBattle(page) {
+  await tapSelector(page, "#ov-action"); // 「タップではじめる」or seen 済みなら直行 newRun
+  await page.waitForTimeout(300);
+  const scr = await page.evaluate(() => window.G.screen);
+  if (scr === "howto") {
+    await tapSelector(page, "#ov-action"); // howto の「はじめる」
+    await page.waitForTimeout(300);
+  }
+  // overlay フェードアウト完了待ち。
+  await page.waitForTimeout(700);
 }
 
 const topElAt = (page, x, y) =>
@@ -157,10 +178,11 @@ async function overflowReport(page, label) {
       const sels = [
         // overlay
         "#ov-title", "#ov-sub", "#ov-version", "#ov-action", "#ov-action2",
+        "#ov-howto", "#ov-howto .howto-line", // v1.1.0: あそびかた説明(縦並び 4 行)
         "#ov-cards .card", "#ov-cards .card *",
-        // battle HUD / カード
+        // battle HUD / カード / ヒント(v1.1.0)
         "#floor-label", ".light-cap", ".light-val", "#player-hp",
-        "#player-block", "#player-mana", "#end-turn",
+        "#player-block", "#player-mana", "#end-turn", "#battle-hint",
         ".enemy-name", ".enemy-intent", ".enemy-hp-text", ".enemy-block",
         "#hand .card", "#hand .card *",
       ];
@@ -206,17 +228,41 @@ const overflowFails = [];
   await page.waitForTimeout(400);
   const status = resp ? resp.status() : 0;
 
-  // --- (2) title overlay 表示 → 画面座標タップで battle 遷移 ---
+  // --- (2) title → (v1.1.0 初回 howto) → battle 遷移 ---
+  // フレッシュ context(seen フラグ未設定)なので、はじめる→初回 howto→はじめる→battle。
+  const version = await page.evaluate(() => window.G && document.getElementById("ov-version").textContent);
   const screenBefore = await page.evaluate(() => window.G.screen);
   const inOverlayTitle = await inOverlayAt(page, VW / 2, VH / 2);
-  // title 可読性(start ボタン・タイトル・version)。
+  // title に「タップではじめる」(#ov-action) と 副ボタン「あそびかた」(#ov-action2)。
+  const titleButtons = await page.evaluate(() => ({
+    start: document.getElementById("ov-action").textContent,
+    howto: document.getElementById("ov-action2").textContent,
+    startHidden: document.getElementById("ov-action").hidden,
+    howtoHidden: document.getElementById("ov-action2").hidden,
+  }));
+  // title 可読性。
   const ovTitleOverflow = await overflowReport(page, "title");
   if (ovTitleOverflow.overflowCount > 0) overflowFails.push(ovTitleOverflow);
 
-  // start ボタンを画面座標でタップ。
+  // 「タップではじめる」→ 初回 howto が出る(seen 未設定)。
   const tappedStart = await tapSelector(page, "#ov-action");
+  await page.waitForTimeout(900);
+  const screenHowto = await page.evaluate(() => window.G.screen);
+  const howtoInfo = await page.evaluate(() => ({
+    lines: document.querySelectorAll("#ov-howto .howto-line").length,
+    howtoHidden: document.getElementById("ov-howto").hidden,
+    action: document.getElementById("ov-action").textContent,
+  }));
+  const inOverlayHowto = await inOverlayAt(page, VW / 2, VH / 2);
+  // howto 可読性(4 行 + はじめるボタン)。
+  const howtoOverflow = await overflowReport(page, "howto-firstrun");
+  if (howtoOverflow.overflowCount > 0) overflowFails.push(howtoOverflow);
+
+  // howto の「はじめる」→ battle。seen フラグが記録される。
+  const tappedHowtoStart = await tapSelector(page, "#ov-action");
   await page.waitForTimeout(900); // overlay フェードアウト(0.7s)待ち
   const screenAfter = await page.evaluate(() => window.G.screen);
+  const seenFlag = await page.evaluate(() => localStorage.getItem("akari_seen_howto"));
   // overlay が消え、battle DOM が最前面(canvas を飛び越えていない)。HUD 座標で確認。
   const inBattleAfter = await inBattleAt(page, VW / 2, VH * 0.45);
 
@@ -306,10 +352,17 @@ const overflowFails = [];
   console.log("== あかり 実機相当(画面座標ヒットテスト) ==");
   out("status(/akari/)", status);
   out("pageerrors", errors);
+  out("VERSION 表示", version);
   out("title 中 screen", screenBefore);
   out("title 中 最前面が overlay subtree か", inOverlayTitle);
-  out("start タップ成功", tappedStart);
-  out("タップ後 screen", screenAfter);
+  out("title ボタン(start / あそびかた)", titleButtons);
+  out("はじめる タップ成功", tappedStart);
+  out("初回 howto 画面へ(screen)", screenHowto);
+  out("howto 情報(行数/非表示/action)", howtoInfo);
+  out("howto 中 最前面が overlay subtree か", inOverlayHowto);
+  out("howto の はじめる タップ成功", tappedHowtoStart);
+  out("howto後 screen", screenAfter);
+  out("seen フラグ記録(=1)", seenFlag);
   out("battle 遷移後 最前面が battle subtree か", inBattleAfter);
   out("floor1 初期状態", init);
   out("採用しきい値 th", TH);
@@ -321,10 +374,22 @@ const overflowFails = [];
   akariPass =
     errors.length === 0 &&
     status === 200 &&
+    version === "v1.1.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
+    titleButtons.start === "タップではじめる" &&
+    titleButtons.howto === "あそびかた" &&
+    titleButtons.startHidden === false &&
+    titleButtons.howtoHidden === false &&
     tappedStart === true &&
+    screenHowto === "howto" &&
+    howtoInfo.lines === 4 && // あそびかた 4 行
+    howtoInfo.howtoHidden === false &&
+    howtoInfo.action === "はじめる" &&
+    inOverlayHowto === true &&
+    tappedHowtoStart === true &&
     screenAfter === "battle" &&
+    seenFlag === "1" &&
     inBattleAfter === true &&
     init.floor === 1 &&
     init.hp === 52 && // 出荷値: PLAYER_MAX_HP 50→52
@@ -354,7 +419,8 @@ let clearPass = false;
 let clearOverflowFails = [];
 let bestAfterClear = null;
 {
-  const { ctx, page, errors } = await openPage();
+  // seedHowto: 初回 howto をスキップして title→battle 直行(howto は section 2 で検証済み)。
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
   await page.goto(`${BASE}/akari/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(300);
   // best をリセット(clear で 6 が記録されることを後で確認するため)。
@@ -362,8 +428,7 @@ let bestAfterClear = null;
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(300);
 
-  await tapSelector(page, "#ov-action"); // start
-  await page.waitForTimeout(900);
+  await startToBattle(page);
 
   // 各 floor の battle 可読性を 1 回ずつ記録するためのヘルパ。
   const recordedBattles = new Set();
@@ -566,11 +631,10 @@ let bestAfterClear = null;
 // ---- (5) 敗北経路: HP0 → defeat → 再挑戦でデッキ初期化 -----------------------
 let defeatPass = false;
 {
-  const { ctx, page, errors } = await openPage();
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
   await page.goto(`${BASE}/akari/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(300);
-  await tapSelector(page, "#ov-action"); // start
-  await page.waitForTimeout(900);
+  await startToBattle(page);
 
   // 報酬を 1 枚取ってデッキを 11 枚にしてから、HP を 0 へ追い込み defeat を出す。
   // まず floor1 を倒し reward でカード追加(デッキ初期化の検証材料)。
@@ -639,14 +703,13 @@ let defeatPass = false;
   await ctx.close();
 }
 
-// ---- (5) 対象選択: floor4 二つ火(敵2体)で単体攻撃の対象タップが通る -----------
+// ---- (5) 対象選択: floor4 二つ火(敵2体)で単体攻撃の対象タップ + 再タップキャンセル -----
 let targetPass = false;
 {
-  const { ctx, page, errors } = await openPage();
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
   await page.goto(`${BASE}/akari/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(300);
-  await tapSelector(page, "#ov-action");
-  await page.waitForTimeout(900);
+  await startToBattle(page);
 
   // floor4 へワープ: floor1〜3 を即勝利で抜ける(敵 HP=1 → 攻カードで倒す → reward 進む)。
   async function clearToFloor(targetFloor) {
@@ -676,29 +739,49 @@ let targetPass = false;
   const atFloor4 = await clearToFloor(4);
   const enemyCount = await page.evaluate(() => window.G.enemies.length);
 
-  // floor4 で単体攻撃カードをタップ → 対象選択モード → 敵をタップして与ダメ。
-  // 手札に攻カードを確保。
+  // floor4 で単体攻撃カードをタップ → 対象選択モード(ヒント「敵をえらぶ」+ targetable)。
+  // 手札に攻カードを確保(敵 block 0、mana 確保)。
   await page.evaluate(() => { window.G.mana = 3; window.G.enemies.forEach((e) => { e.block = 0; }); });
   const atkIdx = await page.evaluate(() => window.G.hand.findIndex((id) => window.CARDS[id].kind === "atk" && window.CARDS[id].cost <= window.G.mana));
   let selecting = false, dealtToTarget = false;
+  let hintWhenSelecting = "", targetableCount = 0;
+  let cancelCleared = false, handAfterCancel = -1;
   if (atkIdx >= 0 && enemyCount === 2) {
-    const beforeHps = await page.evaluate(() => window.G.enemies.map((e) => e.hp));
+    const handBefore = await page.evaluate(() => window.G.hand.length); // 5
+    // (a) カードタップ → 対象選択モード。
     await tapSelector(page, "#hand .card", atkIdx);
     await page.waitForTimeout(120);
     selecting = await page.evaluate(() => window.G.selectingTarget !== null);
-    // 敵 index 1(2体目)を画面座標タップ。
+    hintWhenSelecting = await page.evaluate(() => {
+      const h = document.getElementById("battle-hint");
+      return h.hidden ? "" : h.textContent;
+    });
+    targetableCount = await page.evaluate(() => document.querySelectorAll(".enemy.targetable").length);
+    // (b) 同カード再タップ → 選択キャンセル(手札非消費 = 5 枚維持)。
+    await tapSelector(page, "#hand .card", atkIdx);
+    await page.waitForTimeout(120);
+    cancelCleared = await page.evaluate(() => window.G.selectingTarget === null);
+    handAfterCancel = await page.evaluate(() => window.G.hand.length);
+    // (c) 改めて単体攻撃 → 対象(2体目)タップで与ダメ。
+    const beforeHps = await page.evaluate(() => window.G.enemies.map((e) => e.hp));
+    await tapSelector(page, "#hand .card", atkIdx);
+    await page.waitForTimeout(120);
     await tapSelector(page, ".enemy", 1);
     await page.waitForTimeout(120);
     const afterHps = await page.evaluate(() => window.G.enemies.map((e) => e.hp));
     dealtToTarget = afterHps[1] < beforeHps[1]; // 対象に当たった
   }
-  // floor4 battle 可読性(敵2体)。
+  // floor4 battle 可読性(敵2体・対象選択中ヒント表示時を含める)。
   const f4Overflow = await overflowReport(page, "battle-floor4-2enemies");
 
-  console.log("== あかり 対象選択: floor4 二つ火(敵2体) ==");
+  console.log("== あかり 対象選択: floor4 二つ火(敵2体) + 再タップキャンセル ==");
   out("floor4 到達", atFloor4);
   out("敵体数", enemyCount);
   out("単体攻撃で selectingTarget が立つ", selecting);
+  out("選択中ヒント", hintWhenSelecting);
+  out("targetable な敵数", targetableCount);
+  out("同カード再タップでキャンセル(selectingTarget=null)", cancelCleared);
+  out("キャンセル後 手札枚数(5 維持)", handAfterCancel);
   out("対象(2体目)タップで与ダメ", dealtToTarget);
   out("floor4 可読性 overflow", f4Overflow.overflowCount);
   if (f4Overflow.overflowCount > 0) out("  items", f4Overflow.items);
@@ -708,9 +791,147 @@ let targetPass = false;
     atFloor4 === true &&
     enemyCount === 2 &&
     selecting === true &&
+    hintWhenSelecting === "こうげきする敵をえらぶ" &&
+    targetableCount === 2 &&
+    cancelCleared === true &&
+    handAfterCancel === 5 && // 再タップキャンセルで手札非消費
     dealtToTarget === true &&
     f4Overflow.overflowCount === 0;
-  out("PASS(対象選択 + floor4 可読性)", targetPass);
+  out("PASS(対象選択 + 再タップキャンセル + floor4 可読性)", targetPass);
+  await ctx.close();
+}
+
+// ---- (新 gate) howto: 2 回目スキップ + title 副ボタン再読(もどるで title 復帰) ----
+let howtoPass = false;
+{
+  // seedHowto: 既読 context → はじめる で howto を出さず直行することを検証。
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/akari/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  const titleScreen = await page.evaluate(() => window.G.screen);
+  // (1) 2 回目: はじめる → howto をスキップして直行 battle。
+  await tapSelector(page, "#ov-action"); // 「タップではじめる」
+  await page.waitForTimeout(900);
+  const afterStart = await page.evaluate(() => window.G.screen); // battle 直行のはず
+
+  // title へ戻して(新規 context で)副ボタン再読を検証する。
+  const { ctx: ctx2, page: page2, errors: e2 } = await openPage({ seedHowto: true });
+  await page2.goto(`${BASE}/akari/`, { waitUntil: "networkidle" });
+  await page2.waitForTimeout(300);
+  // (2) 副ボタン「あそびかた」→ howto(再読経路)。
+  const tappedHowtoBtn = await tapSelector(page2, "#ov-action2");
+  await page2.waitForTimeout(700);
+  const rereadScreen = await page2.evaluate(() => window.G.screen);
+  const rereadInfo = await page2.evaluate(() => ({
+    lines: document.querySelectorAll("#ov-howto .howto-line").length,
+    action: document.getElementById("ov-action").textContent, // 「もどる」のはず
+  }));
+  const rereadOverflow = await overflowReport(page2, "howto-reread");
+  // (3) 「もどる」→ title(battle 開始しない)。
+  await tapSelector(page2, "#ov-action");
+  await page2.waitForTimeout(700);
+  const backScreen = await page2.evaluate(() => window.G.screen); // title のはず
+
+  console.log("== あかり howto: 2回目スキップ + 再読(もどる) ==");
+  out("title screen(既読 context)", titleScreen);
+  out("既読 context で はじめる → screen(battle 直行 = howto 非表示)", afterStart);
+  out("副ボタン あそびかた タップ成功", tappedHowtoBtn);
+  out("再読 screen", rereadScreen);
+  out("再読 情報(行数 / action=もどる)", rereadInfo);
+  out("再読 howto 可読性 overflow", rereadOverflow.overflowCount);
+  out("もどる → screen(title 復帰・開始しない)", backScreen);
+
+  howtoPass =
+    errors.length === 0 &&
+    e2.length === 0 &&
+    titleScreen === "title" &&
+    afterStart === "battle" && // 既読は howto を挟まず直行
+    tappedHowtoBtn === true &&
+    rereadScreen === "howto" &&
+    rereadInfo.lines === 4 &&
+    rereadInfo.action === "もどる" &&
+    rereadOverflow.overflowCount === 0 &&
+    backScreen === "title"; // もどるで title へ(開始しない)
+  out("PASS(howto 2回目スキップ + 再読もどる + 可読性)", howtoPass);
+  await ctx.close();
+  await ctx2.close();
+}
+
+// ---- (新 gate・最重要) 詰まり解消: 使えるカード無し → ヒント + ターン終了で進む ----
+let stuckPass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/akari/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToBattle(page);
+
+  // ユーザー主訴の状態を作る: マナを使い切る = 使えるカードが無い(全カード cost>mana)。
+  // mana=0 にして renderAll を起こすため、実プレイで mana を 0 まで使う代わりに、
+  // mana=0 を設定 → カードを 1 枚タップしようとして弾かれる経路ではなく、確実に
+  // updateTurnGuidance を再評価させるため end-turn 直前の状態を作る。
+  // 実プレイ準拠: mana を使い切る。手札のカードを撃てるだけ撃って mana を枯らす。
+  const turnBefore = await page.evaluate(() => window.G.floor); // floor 不変確認用ではなく進行確認は screen で
+  // 敵を倒さないよう敵 HP を上げてから、撃てるカードを尽くす。
+  await page.evaluate(() => { window.G.hp = 9999; window.G.enemies.forEach((e) => { e.hp = 9999; e.block = 0; }); });
+  let safety = 0;
+  while (safety++ < 12) {
+    const idx = await page.evaluate(() => window.G.hand.findIndex((id) => window.CARDS[id].cost <= window.G.mana));
+    if (idx < 0) break;
+    await tapSelector(page, "#hand .card", idx);
+    await page.waitForTimeout(80);
+    // 単体攻撃で敵2体以上なら対象選択 → floor1 は1体なので不要だが念のため。
+    const sel = await page.evaluate(() => window.G.selectingTarget !== null);
+    if (sel) { await tapSelector(page, ".enemy", 0); await page.waitForTimeout(60); }
+  }
+  // 使えるカードが無い状態の確認。
+  const stuckState = await page.evaluate(() => {
+    const anyPlayable = window.G.hand.some((id) => window.CARDS[id].cost <= window.G.mana);
+    const h = document.getElementById("battle-hint");
+    const btn = document.getElementById("end-turn");
+    return {
+      anyPlayable,
+      hintShown: !h.hidden,
+      hintText: h.textContent,
+      emphasize: btn.classList.contains("emphasize"),
+      mana: window.G.mana,
+      handLen: window.G.hand.length,
+    };
+  });
+  // 詰まり時の可読性(ヒント表示・強調ボタン込み)。
+  const stuckOverflow = await overflowReport(page, "battle-stuck-hint");
+
+  // 「ターン終了」を画面座標タップ → 次ターンへ進む(mana 回復 = 3、手札引き直し)。
+  const manaBeforeEnd = await page.evaluate(() => window.G.mana);
+  const tappedEndTurn = await tapSelector(page, "#end-turn");
+  await page.waitForTimeout(400);
+  const afterEnd = await page.evaluate(() => ({
+    screen: window.G.screen,
+    mana: window.G.mana, // 次ターン開始で MANA_PER_TURN=3 に戻る
+    handLen: window.G.hand.length, // 引き直しで 5
+    hintShown: !document.getElementById("battle-hint").hidden,
+    emphasize: document.getElementById("end-turn").classList.contains("emphasize"),
+  }));
+
+  console.log("== あかり 詰まり解消(最重要): 使えるカード無し → ヒント → ターン終了 ==");
+  out("詰まり状態", stuckState);
+  out("詰まり時 可読性 overflow", stuckOverflow.overflowCount);
+  if (stuckOverflow.overflowCount > 0) out("  items", stuckOverflow.items);
+  out("ターン終了 タップ成功", tappedEndTurn);
+  out("ターン終了後", afterEnd);
+
+  stuckPass =
+    errors.length === 0 &&
+    stuckState.anyPlayable === false && // 使えるカードが無い
+    stuckState.hintShown === true &&
+    stuckState.hintText === "つかえるカードが無い → ターン終了" &&
+    stuckState.emphasize === true && // ターン終了ボタンが脈動強調
+    stuckOverflow.overflowCount === 0 &&
+    tappedEndTurn === true &&
+    afterEnd.screen === "battle" && // ターン終了で進行(詰まらない)
+    afterEnd.mana === 3 && // 次ターンで mana 回復
+    afterEnd.handLen === 5 && // 手札引き直し
+    afterEnd.emphasize === false; // 使えるカードが戻り強調解除
+  out("PASS(詰まり解消: ヒント + ターン終了で進む)", stuckPass);
   await ctx.close();
 }
 
@@ -722,15 +943,15 @@ let botSummary = null;
   let clears = 0;
   let botErrors = 0;
   for (let run = 0; run < N; run++) {
-    const { ctx, page, errors } = await openPage();
+    const { ctx, page, errors } = await openPage({ seedHowto: true });
     let result = "unknown";
     let clearedFloors = 0;
     try {
     await page.goto(`${BASE}/akari/`, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(150);
     await page.evaluate(() => localStorage.removeItem("akari_best"));
-    await tapSelector(page, "#ov-action");
-    await page.waitForTimeout(500);
+    await tapSelector(page, "#ov-action"); // seedHowto 済みなので直行(howto を挟まない)
+    await page.waitForTimeout(400);
 
     let g = 0;
     while (g++ < 240) {
@@ -881,16 +1102,19 @@ const nagoriPass = await nagoriRegression();
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("あかり コア", akariPass);
-out("勝利経路 + 可読性", clearPass);
+out("あかり コア(title→初回howto→battle / LIGHT→与ダメ / 明暗)", akariPass);
+out("勝利経路 + 全画面可読性", clearPass);
 out("敗北経路", defeatPass);
-out("対象選択 + floor4 可読性", targetPass);
+out("対象選択 + 再タップキャンセル + floor4 可読性", targetPass);
+out("howto 2回目スキップ + 再読もどる", howtoPass);
+out("詰まり解消(ヒント + ターン終了)", stuckPass);
 out("みちゆき 回帰", michiyukiPass);
 out("ともしび 回帰", tomoshibiPass);
 out("なごり 回帰", nagoriPass);
 out("バランス bot(参考)", botSummary);
 
 const allPass =
-  akariPass && clearPass && defeatPass && targetPass && michiyukiPass && tomoshibiPass && nagoriPass;
+  akariPass && clearPass && defeatPass && targetPass && howtoPass && stuckPass &&
+  michiyukiPass && tomoshibiPass && nagoriPass;
 out("ALL PASS", allPass);
 process.exit(allPass ? 0 : 1);

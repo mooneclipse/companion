@@ -43,6 +43,20 @@ const TEXT = {
   floorPrefix: "第 ",
   floorSuffix: " 戦",
   bossLabel: "ボス",
+  // あそびかた説明(verbatim、実装側で改変しない)。
+  howtoTitle: "あそびかた",
+  howto: [
+    "「灯（ひ）」でカードを使う。攻＝攻撃／灯＝あかりを足す／守＝防御／技＝補助。",
+    "あかりが明るいほど攻撃が強い。暗いほど受けるダメージが増える。攻撃すると暗くなる。",
+    "使えるカードが無くなったら「ターン終了」を押す。",
+    "ＨＰ０で敗北。６戦を勝ち抜けばクリア。",
+  ],
+  howtoStart: "はじめる",
+  howtoBack: "もどる",
+  howtoButton: "あそびかた",
+  // battle 内ヒント(verbatim)。
+  hintSelectTarget: "こうげきする敵をえらぶ",
+  hintNoPlayable: "つかえるカードが無い → ターン終了",
 };
 
 if (typeof window !== "undefined") {

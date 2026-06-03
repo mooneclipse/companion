@@ -359,20 +359,46 @@ body {
   /* 文言は 12 字以内をデータ側で保証。万一に備え折返しは許すがはみ出しは封じる。 */
   overflow: hidden;
 }
+/* battle 内ヒント行。手札とボタンの間に薄く出す。canvas でなく DOM・白文字+黒縁。 */
+.battle-hint {
+  flex: 0 0 auto;
+  font-size: clamp(0.74rem, 3.4vw, 0.92rem);
+  letter-spacing: 0.06em;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.battle-hint[hidden] {
+  display: none !important;
+}
 .end-turn {
   flex: 0 0 auto;
   font-family: var(--mincho);
   font-size: clamp(0.82rem, 4vw, 1rem);
   letter-spacing: 0.14em;
   color: var(--ink);
-  background: rgba(230, 178, 90, 0.16);
-  border: 1px solid rgba(230, 178, 90, 0.6);
+  /* 平常時も一段ボタンらしく(背景を濃く・枠を強め・影で浮かせる)。 */
+  background: rgba(230, 178, 90, 0.32);
+  border: 1.5px solid rgba(230, 178, 90, 0.85);
   border-radius: 0.6rem;
-  padding: 0.45rem 1.6rem;
+  padding: 0.5rem 1.8rem;
   cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 .end-turn:active {
-  background: rgba(230, 178, 90, 0.3);
+  background: rgba(230, 178, 90, 0.5);
+}
+/* 使えるカードが無いときの強調(濃色 + 脈動)。詰まり感の直接対策。 */
+.end-turn.emphasize {
+  background: rgba(230, 178, 90, 0.6);
+  border-color: #fff0c8;
+  color: #2a1c08;
+  box-shadow: 0 0 14px rgba(230, 178, 90, 0.6);
+  animation: breathe 1.8s ease-in-out infinite;
 }
 
 /* ===== オーバーレイ(title / reward / defeat / clear) ===== */
@@ -407,6 +433,26 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 1.2rem;
+  /* あそびかた等で内容が増えても画面外へはみ出さない保険(なごり真因の再発防止)。 */
+  max-height: 100%;
+  overflow-y: auto;
+}
+/* あそびかた説明。縦並び・左寄せ・読みやすい行間。DOM のみ。 */
+.ov-howto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: 100%;
+  text-align: left;
+}
+.ov-howto[hidden] {
+  display: none !important;
+}
+.howto-line {
+  font-size: clamp(0.86rem, 4vw, 1.04rem);
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  color: var(--ink);
 }
 .ov-title {
   font-weight: 500;

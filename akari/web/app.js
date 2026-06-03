@@ -12,7 +12,7 @@
 // ---- バージョン --------------------------------------------------------
 // title 画面に薄く表示。**ゲーム本体に手を入れるたびに必ず上げる**(キャッシュ残存か
 // 検証不足かを切り分けるため)。
-const VERSION = "v1.0.0";
+const VERSION = "v1.1.0";
 
 // ---- CONSTANTS(初期値、playtester で実測調整可。バランスは全てここに集約) ----
 const CONST = {
@@ -60,10 +60,12 @@ const playerBlockEl = document.getElementById("player-block");
 const playerManaEl = document.getElementById("player-mana");
 const handEl = document.getElementById("hand");
 const endTurnBtn = document.getElementById("end-turn");
+const battleHintEl = document.getElementById("battle-hint");
 
 const overlayEl = document.getElementById("overlay");
 const ovTitleEl = document.getElementById("ov-title");
 const ovSubEl = document.getElementById("ov-sub");
+const ovHowtoEl = document.getElementById("ov-howto");
 const ovCardsEl = document.getElementById("ov-cards");
 const ovActionEl = document.getElementById("ov-action");
 const ovAction2El = document.getElementById("ov-action2");
@@ -140,6 +142,21 @@ function setBest(v) {
     localStorage.setItem(BEST_KEY, String(v));
   } catch (e) {
     /* localStorage 不可環境でもゲームは成立させる(記録のみ諦める) */
+  }
+}
+const HOWTO_KEY = "akari_seen_howto";
+function seenHowto() {
+  try {
+    return localStorage.getItem(HOWTO_KEY) === "1";
+  } catch (e) {
+    return false; // 読めない環境では「未読」扱い(初回 howto を出す。ゲームは成立)。
+  }
+}
+function markHowtoSeen() {
+  try {
+    localStorage.setItem(HOWTO_KEY, "1");
+  } catch (e) {
+    /* 記録できない環境でも進行はできる(毎回 howto が出るだけ) */
   }
 }
 
@@ -418,11 +435,14 @@ function hideOverlay() {
   overlayEl.classList.remove("visible");
   overlayEl.hidden = true;
   ovCardsEl.innerHTML = "";
+  ovHowtoEl.innerHTML = "";
 }
 function resetOverlayParts() {
   ovTitleEl.hidden = true;
   ovTitleEl.classList.remove("reward-title");
   ovSubEl.hidden = true;
+  ovHowtoEl.hidden = true;
+  ovHowtoEl.innerHTML = "";
   ovCardsEl.hidden = true;
   ovCardsEl.innerHTML = "";
   ovActionEl.hidden = true;
@@ -443,9 +463,52 @@ function showTitle() {
   ovSubEl.hidden = false;
   ovActionEl.textContent = TEXT.start;
   ovActionEl.hidden = false;
-  ovActionEl.onclick = () => newRun();
+  ovActionEl.onclick = () => onStartPressed();
+  // 副ボタン「あそびかた」: いつでも説明を再読できる。
+  ovAction2El.textContent = TEXT.howtoButton;
+  ovAction2El.hidden = false;
+  ovAction2El.onclick = () => showHowto("title");
   ovVersionEl.textContent = VERSION;
   ovVersionEl.hidden = false;
+  showOverlay();
+}
+
+// title の「はじめる」: 初回のみ あそびかた を挟んでから battle へ。2 回目以降は直行。
+function onStartPressed() {
+  if (!seenHowto()) {
+    showHowto("start");
+  } else {
+    newRun();
+  }
+}
+
+// あそびかた overlay。returnTo="start"=説明後に開始 / "title"=説明後にタイトルへ戻る。
+function showHowto(returnTo) {
+  G.screen = "howto";
+  battleEl.hidden = true;
+  resetOverlayParts();
+  ovTitleEl.textContent = TEXT.howtoTitle;
+  ovTitleEl.hidden = false;
+  ovTitleEl.classList.add("reward-title"); // 巨大タイトルサイズを使わない。
+  ovHowtoEl.innerHTML = "";
+  for (const line of TEXT.howto) {
+    const p = document.createElement("p");
+    p.className = "howto-line";
+    p.textContent = line;
+    ovHowtoEl.appendChild(p);
+  }
+  ovHowtoEl.hidden = false;
+  if (returnTo === "start") {
+    ovActionEl.textContent = TEXT.howtoStart;
+    ovActionEl.onclick = () => {
+      markHowtoSeen();
+      newRun();
+    };
+  } else {
+    ovActionEl.textContent = TEXT.howtoBack; // 再読経路は「もどる」でタイトルへ戻る(開始しない)。
+    ovActionEl.onclick = () => showTitle();
+  }
+  ovActionEl.hidden = false;
   showOverlay();
 }
 
@@ -569,6 +632,21 @@ function renderHand() {
     el.onclick = () => onCardTap(idx);
     handEl.appendChild(el);
   });
+  updateTurnGuidance();
+}
+
+// 使えるカードの有無で「ターン終了」の強調と battle ヒントを切り替える。
+// 詰まり(マナ枯渇でカードが灰色になり次の導線が分からない)の直接対策。
+function updateTurnGuidance() {
+  const anyPlayable = G.hand.some((id) => CARDS[id].cost <= G.mana);
+  // ターン終了ボタンの強調(使えるカードが無いときだけ脈動 + 濃色)。
+  endTurnBtn.classList.toggle("emphasize", !anyPlayable);
+  // ヒント行(優先度: 対象選択 > 使えるカード無し > 非表示)。
+  let hint = "";
+  if (G.selectingTarget) hint = TEXT.hintSelectTarget;
+  else if (!anyPlayable) hint = TEXT.hintNoPlayable;
+  battleHintEl.textContent = hint;
+  battleHintEl.hidden = hint === "";
 }
 
 function isSingleTargetAtk(card) {
@@ -577,6 +655,12 @@ function isSingleTargetAtk(card) {
 
 function onCardTap(idx) {
   if (G.busy || G.screen !== "battle") return;
+  // 対象選択中に同じカードを再タップ → 選択解除(詰まり防止のキャンセル)。
+  if (G.selectingTarget && G.selectingTarget.handIdx === idx) {
+    G.selectingTarget = null;
+    renderAll();
+    return;
+  }
   const id = G.hand[idx];
   const card = CARDS[id];
   if (!card || card.cost > G.mana) return;
