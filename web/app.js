@@ -35,7 +35,7 @@ function showApp() {
 
 // ===== 画面ナビゲーション(section.active 切替。mock の show/open_/home 方式) =====
 // ホーム(タイルランチャー)⇄ 各機能詳細。詳細は左上「‹ 戻る」でホームへ。
-const SCREENS = ["home", "video", "speak", "todo", "games", "os"];
+const SCREENS = ["home", "video", "speak", "todo", "games", "os", "vault"];
 
 function showScreen(id) {
   for (const s of SCREENS) {
@@ -49,6 +49,7 @@ function openScreen(id) {
   // 詳細を開いた瞬間に最新を取りに行く(畳んでいた間の取りこぼし回収)。
   if (id === "todo") refreshTodo();
   if (id === "os") refreshGlance();
+  if (id === "vault") openVault();
 }
 function goHome() { showScreen("home"); }
 
@@ -619,6 +620,244 @@ function initTodo() {
   });
 }
 
+// ===== ノート閲覧（F-vault、read-only） =====
+// 出先から vault の .md を閲覧。サーバは生 markdown を返すだけ（stdlib 縛り）。描画は
+// ここで marked(parse) + DOMPurify(sanitize) で行う。本文は owner 自身の信頼できる vault
+// 由来だが、レンダラ素通しの XSS を防ぐため必ず DOMPurify を通してから innerHTML する
+// （app.js は本来 innerHTML を使わない規律。本文描画はその唯一の例外。下記コメント参照）。
+let vaultLoaded = false;        // 一覧を一度取得したか（再入で再フェッチしない）
+let vaultViewingDoc = false;    // 本文ビュー表示中（戻るボタンの出し分け）
+let vaultSearchTimer = null;    // 検索 debounce
+
+// wikilink [[target]] / [[target|alias]] を解決可能なリンク（data 属性）に前処理する。
+// marked へ渡す前に置換し、DOMPurify には data-vault-link 属性を許可させてジャンプを結線。
+function vaultRewriteWikilinks(md) {
+  return md.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, target, alias) => {
+    const t = target.trim();
+    const label = (alias != null ? alias : target).trim();
+    // 属性値内の " と < を実体化（marked は raw HTML を素通しするため自前でエスケープ）。
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return '<a href="#" class="wikilink" data-vault-link="' + esc(t) + '">' + esc(label) + "</a>";
+  });
+}
+
+// frontmatter（先頭 --- ... --- ブロック）を本文から分離。{meta: [[k,v]...], body}。
+function vaultSplitFrontmatter(md) {
+  const m = md.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!m) return { meta: [], body: md };
+  const meta = [];
+  m[1].split("\n").forEach((line) => {
+    const i = line.indexOf(":");
+    if (i > 0) meta.push([line.slice(0, i).trim(), line.slice(i + 1).trim()]);
+  });
+  return { meta, body: md.slice(m[0].length) };
+}
+
+function vaultRenderFrontmatter(meta) {
+  const box = $("vault-frontmatter");
+  box.textContent = "";
+  if (!meta.length) { box.hidden = true; return; }
+  meta.forEach(([k, v]) => {
+    const row = document.createElement("span");
+    row.className = "fm-row";
+    const key = document.createElement("b");
+    key.textContent = k;
+    row.appendChild(key);
+    row.appendChild(document.createTextNode(" " + v));
+    box.appendChild(row);
+  });
+  box.hidden = false;
+}
+
+// markdown → サニタイズ済み HTML を本文要素へ。innerHTML はここだけ（DOMPurify 通過後）。
+function vaultRenderMarkdown(body) {
+  const html = marked.parse(body, { gfm: true, breaks: false });
+  // DOMPurify: 生 HTML を無害化。wikilink の data 属性 + class のみ追加許可。
+  const clean = DOMPurify.sanitize(html, {
+    ADD_ATTR: ["data-vault-link", "target", "rel"],
+    FORBID_TAGS: ["style", "form", "input", "textarea", "button"],
+    FORBID_ATTR: ["style", "onerror", "onload"],
+  });
+  const doc = $("vault-doc");
+  doc.innerHTML = clean;  // XSS 対策: 直前で DOMPurify.sanitize 済み。生 markdown 由来の唯一の例外。
+  // wikilink クリック → 同ビューア内でジャンプ。外部リンクは別タブ + noopener。
+  doc.querySelectorAll("a[data-vault-link]").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      vaultJumpTo(a.getAttribute("data-vault-link"));
+    });
+  });
+  doc.querySelectorAll("a:not([data-vault-link])").forEach((a) => {
+    const href = a.getAttribute("href") || "";
+    if (/^https?:\/\//i.test(href)) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
+    else a.addEventListener("click", (e) => e.preventDefault());  // 相対リンクは無効化
+  });
+}
+
+// 一覧ビュー / 本文ビューの切替（戻るボタンの挙動も連動）。
+function vaultShowList() {
+  vaultViewingDoc = false;
+  $("vault-list-view").hidden = false;
+  $("vault-doc-view").hidden = true;
+  $("vault-back").removeAttribute("data-vault-to-list");
+}
+function vaultShowDoc() {
+  vaultViewingDoc = true;
+  $("vault-list-view").hidden = true;
+  $("vault-doc-view").hidden = false;
+  $("vault-back").setAttribute("data-vault-to-list", "1");
+  window.scrollTo(0, 0);
+}
+
+// フォルダ別の一覧を描画（DOM 構築のみ、innerHTML 不使用）。
+function vaultRenderList(data) {
+  const root = $("vault-list");
+  root.textContent = "";
+  $("tile-vault-sub").textContent = (data.count || 0) + " 件";
+  if (!data.folders || !data.folders.length) {
+    $("vault-list-msg").textContent = "ノートがありません";
+    return;
+  }
+  $("vault-list-msg").hidden = true;
+  data.folders.forEach((grp) => {
+    const h = document.createElement("div");
+    h.className = "vault-folder";
+    h.textContent = grp.folder === "" ? "（ルート）" : grp.folder;
+    root.appendChild(h);
+    grp.notes.forEach((n) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "vault-item";
+      item.textContent = n.name;
+      item.addEventListener("click", () => vaultOpenDoc(n.path));
+      root.appendChild(item);
+    });
+  });
+}
+
+// 検索結果を一覧領域に描画（フォルダ別の代わりに path + snippet を列挙）。
+function vaultRenderSearch(data) {
+  const root = $("vault-list");
+  root.textContent = "";
+  const msg = $("vault-list-msg");
+  msg.hidden = false;
+  if (!data.results || !data.results.length) {
+    msg.textContent = '「' + data.query + "」に一致なし";
+    return;
+  }
+  msg.textContent = data.count + " 件ヒット";
+  data.results.forEach((r) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "vault-item vault-result";
+    const name = document.createElement("span");
+    name.className = "vault-result-name";
+    name.textContent = r.name;
+    item.appendChild(name);
+    if (r.snippet) {
+      const sn = document.createElement("span");
+      sn.className = "vault-result-snip";
+      sn.textContent = r.snippet;
+      item.appendChild(sn);
+    }
+    item.addEventListener("click", () => vaultOpenDoc(r.path));
+    root.appendChild(item);
+  });
+}
+
+async function vaultLoadList() {
+  if (!getToken()) return;
+  $("vault-list-msg").hidden = false;
+  $("vault-list-msg").textContent = "読み込み中…";
+  try {
+    const r = await api("/api/vault/list");
+    if (!r.ok) { $("vault-list-msg").textContent = "一覧の取得に失敗しました"; return; }
+    const data = await r.json();
+    vaultRenderList(data);
+    vaultBuildIndex(data);  // wikilink 解決辞書も同時に構築（追加フェッチ不要）
+    vaultLoaded = true;
+  } catch (e) {
+    if (e.message !== "unauthorized") $("vault-list-msg").textContent = "通信エラー";
+  }
+}
+
+async function vaultSearch(q) {
+  if (!q) { if (vaultLoaded) vaultLoadList(); return; }
+  try {
+    const r = await api("/api/vault/search?q=" + encodeURIComponent(q));
+    if (!r.ok) return;
+    vaultRenderSearch(await r.json());
+  } catch (e) { /* unauthorized は api() が処理 */ }
+}
+
+async function vaultOpenDoc(path) {
+  vaultShowDoc();
+  $("vault-doc-title").textContent = path;
+  $("vault-doc").textContent = "";
+  $("vault-frontmatter").hidden = true;
+  $("vault-doc-msg").textContent = "読み込み中…";
+  try {
+    const r = await api("/api/vault/get?path=" + encodeURIComponent(path));
+    if (!r.ok) {
+      $("vault-doc-msg").textContent = r.status === 404 ? "ノートが見つかりません" : "読み込めません";
+      return;
+    }
+    const data = await r.json();
+    $("vault-doc-msg").textContent = "";
+    const split = vaultSplitFrontmatter(data.content);
+    vaultRenderFrontmatter(split.meta);
+    vaultRenderMarkdown(vaultRewriteWikilinks(split.body));
+  } catch (e) {
+    if (e.message !== "unauthorized") $("vault-doc-msg").textContent = "通信エラー";
+  }
+}
+
+// wikilink ジャンプ: target（ノート名 or 相対 path）から実 path を一覧から解決して開く。
+// 解決できなければメッセージのみ（壊れたリンクで遷移しない）。
+let vaultIndex = null;  // {name(lower)->path, path(lower)->path} の解決辞書（list 取得時に構築）
+function vaultBuildIndex(data) {
+  vaultIndex = {};
+  (data.folders || []).forEach((g) => g.notes.forEach((n) => {
+    vaultIndex[n.name.toLowerCase()] = n.path;
+    vaultIndex[n.path.toLowerCase()] = n.path;
+    vaultIndex[n.path.toLowerCase().replace(/\.md$/, "")] = n.path;
+  }));
+}
+async function vaultEnsureIndex() {
+  if (vaultIndex) return;
+  try {
+    const r = await api("/api/vault/list");
+    if (r.ok) vaultBuildIndex(await r.json());
+  } catch (e) { /* noop */ }
+}
+async function vaultJumpTo(target) {
+  await vaultEnsureIndex();
+  const key = target.toLowerCase().replace(/\.md$/, "");
+  const path = vaultIndex && (vaultIndex[key] || vaultIndex[key + ".md"]);
+  if (path) { vaultOpenDoc(path); }
+  else { $("vault-doc-msg").textContent = "リンク先のノートが見つかりません: " + target; }
+}
+
+// 詳細画面を開いた時のエントリ（openScreen から）。一覧未取得なら取得、本文表示中なら一覧へ戻す。
+function openVault() {
+  vaultShowList();
+  if (!vaultLoaded) vaultLoadList();
+}
+
+function initVault() {
+  // 戻る: 本文ビュー中は一覧へ、一覧ビューではホームへ（data-home 既定挙動）。
+  $("vault-back").addEventListener("click", (e) => {
+    if (vaultViewingDoc) { e.stopImmediatePropagation(); vaultShowList(); }
+  }, true);
+  const search = $("vault-search");
+  search.addEventListener("input", () => {
+    clearTimeout(vaultSearchTimer);
+    const q = search.value.trim();
+    vaultSearchTimer = setTimeout(() => vaultSearch(q), 250);
+  });
+}
+
 // ===== ナビゲーション初期化 =====
 // タイル(data-open) → 詳細画面、戻る(data-back/data-home) → ホーム。
 // 委譲ではなく要素列挙で結線(タイル枚数は少数、将来追加も局所で済む)。
@@ -656,6 +895,7 @@ function init() {
   initVideo();
   initGames();
   initTodo();
+  initVault();
 
   if (getToken()) showApp(); else showTokenSetup();
   goHome();

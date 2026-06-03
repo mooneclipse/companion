@@ -3,10 +3,12 @@
 // - shell-only precache(install で固定アセットをキャッシュ)。
 // - /api/* は network-only(キャッシュしない=常に最新・トークン応答を残さない)。
 // - cache versioning: CACHE 名を bump + skipWaiting で更新を即反映。
-const CACHE = "remote-v12";
+const CACHE = "remote-v13";
 const SHELL = [
   "/",
   "/app.js",
+  "/marked.min.js",
+  "/purify.min.js",
   "/style.css",
   "/manifest.json",
   "/icons/icon-192.png",

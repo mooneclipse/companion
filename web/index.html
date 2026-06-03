@@ -57,7 +57,7 @@
         <div class="np-time"><span id="nowbar-time"></span></div>
       </button>
 
-      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">5</span></div>
+      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">6</span></div>
 
       <!-- タイルグリッド(2列)。
            将来機能拡張: この .grid 内に <button class="tile" data-open="xxx"> を 1 枚足し、
@@ -83,6 +83,10 @@
         </button>
         <button class="tile" type="button" data-open="os">
           <span class="t-mark"># 05</span><span class="t-name">OS状態</span><span class="t-sub">disk / mem / temp</span>
+        </button>
+        <button class="tile" type="button" data-open="vault">
+          <span class="t-mark">¶ 06</span><span class="t-name">ノート</span>
+          <span class="t-sub" id="tile-vault-sub">vault 閲覧</span>
         </button>
       </div>
     </section>
@@ -217,9 +221,51 @@
       </div>
     </section>
 
+    <!-- ============ VAULT（ノート閲覧、read-only） ============ -->
+    <!-- 一覧(フォルダ別)→ タップで本文。本文中は同ビューア内ナビ(戻る/wikilink ジャンプ)。 -->
+    <section id="vault" class="screen">
+      <div class="dhead">
+        <!-- 本文表示中は一覧へ、一覧ではホームへ戻る(JS が data-vault-back を出し分け) -->
+        <button class="back" type="button" id="vault-back" data-home>‹ 戻る</button>
+        <span class="dtitle">06 / Notes</span>
+      </div>
+      <div class="body">
+        <div class="kicker">Vault（閲覧専用）</div>
+        <h1 class="h1">ノート</h1>
+
+        <!-- 一覧ビュー: 検索 + フォルダ別リスト -->
+        <div id="vault-list-view">
+          <div class="card">
+            <label class="fld" for="vault-search">検索</label>
+            <input type="search" id="vault-search" maxlength="200" placeholder="ファイル名・本文を検索">
+            <p id="vault-list-msg" class="note">読み込み中…</p>
+          </div>
+          <div class="card">
+            <div id="vault-list"></div>
+          </div>
+        </div>
+
+        <!-- 本文ビュー: markdown 描画(クライアント側 marked+DOMPurify) -->
+        <div id="vault-doc-view" hidden>
+          <div class="card">
+            <div class="ctitle" id="vault-doc-title"></div>
+            <div id="vault-frontmatter" class="vault-fm" hidden></div>
+            <!-- 描画本文。owner 自身の vault 由来 markdown を DOMPurify で無害化してから
+                 ここへ流す唯一の innerHTML 例外(app.js のコメント参照)。 -->
+            <div id="vault-doc" class="vault-doc"></div>
+            <p id="vault-doc-msg" class="result" role="status"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 </div>
 
+<!-- F-vault: markdown 描画ライブラリ(同一オリジン vendored、CSP default-src 'self' を満たす)。
+     app.js より前に読み込み marked / DOMPurify をグローバルに用意する。 -->
+<script src="/marked.min.js"></script>
+<script src="/purify.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

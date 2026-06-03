@@ -17,11 +17,13 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 import auth
 import status as os_status
 import tickets
 import urlguard
+import vault
 import video
 import voice
 
@@ -220,6 +222,36 @@ def api_todo_status(handler):
         return 404, {"error": "no such ticket"}
 
 
+def _query(handler):
+    """self.path の query string を {key: 最初の値} に。複数値・空は無視(単純取得用)。"""
+    qs = urlsplit(handler.path).query
+    return {k: v[0] for k, v in parse_qs(qs, keep_blank_values=True).items()}
+
+
+def api_vault_list(handler):
+    """GET /api/vault/list — vault 配下の全 .md をフォルダ別に列挙(read-only)。Bearer 必須。"""
+    return 200, vault.list_notes()
+
+
+def api_vault_get(handler):
+    """GET /api/vault/get?path=<相対パス> — 指定 .md の生 markdown。Bearer 必須。
+
+    path 検証は vault._safe_abspath が realpath で1回確定(traversal/範囲外/非.md を弾く)。
+    VaultError は「path 不正/範囲外」=403、「not found」のみ 404 と一意に分ける
+    (state を持つ FS 側を引いて確定、stderr/文言マッチで分岐しない)。
+    """
+    path = _query(handler).get("path", "")
+    try:
+        return 200, vault.get_note(path)
+    except vault.VaultError as e:
+        return (404, {"error": "not found"}) if str(e) == "not found" else (403, {"error": "forbidden"})
+
+
+def api_vault_search(handler):
+    """GET /api/vault/search?q=<語> — 全 .md 横断の単純部分一致検索。Bearer 必須。"""
+    return 200, vault.search(_query(handler).get("q", ""))
+
+
 # (i) API 明示ルートテーブル。値は (handler, auth_required)。ここに無い (method, path) は 404。
 #     self.path を FS に連結しない。auth_required=False は無認証 endpoint(生存確認のみ)、
 #     それ以外の /api/* は (iv) Bearer 必須。
@@ -239,6 +271,10 @@ ROUTES = {
     ("GET", "/api/todo"): (api_todo_list, True),
     ("POST", "/api/todo"): (api_todo_add, True),
     ("POST", "/api/todo/status"): (api_todo_status, True),
+    # F-vault(出先からの read-only ノート閲覧)。全て GET / Bearer 必須。書き込み endpoint なし。
+    ("GET", "/api/vault/list"): (api_vault_list, True),
+    ("GET", "/api/vault/get"): (api_vault_get, True),
+    ("GET", "/api/vault/search"): (api_vault_search, True),
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。
@@ -247,6 +283,9 @@ STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "application/javascript; charset=utf-8"),
+    # F-vault: markdown 描画用に vendored(ビルド工程なし単一ファイル)。marked=parse / purify=sanitize。
+    "/marked.min.js": ("marked.min.js", "application/javascript; charset=utf-8"),
+    "/purify.min.js": ("purify.min.js", "application/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/manifest.json": ("manifest.json", "application/manifest+json"),
     "/sw.js": ("sw.js", "application/javascript; charset=utf-8"),
