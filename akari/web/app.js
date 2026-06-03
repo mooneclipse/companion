@@ -12,7 +12,7 @@
 // ---- バージョン --------------------------------------------------------
 // title 画面に薄く表示。**ゲーム本体に手を入れるたびに必ず上げる**(キャッシュ残存か
 // 検証不足かを切り分けるため)。
-const VERSION = "v1.1.0";
+const VERSION = "v1.2.0";
 
 // ---- CONSTANTS(初期値、playtester で実測調整可。バランスは全てここに集約) ----
 const CONST = {
@@ -350,35 +350,83 @@ function endTurn() {
   enemyTurn();
 }
 
+// 敵手番の段階間隔(秒)。同期一括処理だと「敵が動いたのが見えない」(押した瞬間に
+// 次の手札)ため、1 体ずつ間を置いて見せる。間こそが見える化の本体。
+const ENEMY_STEP_MS = 600;
+
+// 敵手番を「1 体ずつ間を置いて見せる」非同期シーケンスに。全期間 G.busy=true で入力ロック。
+// busy は全終了パスで必ず false に戻す。screen が battle でなくなったら以降の step を打ち切る。
 function enemyTurn() {
   G.busy = true;
-  // 各生存敵の現 intent を順に実行。
-  for (const e of aliveEnemies()) {
+  G.selectingTarget = null;
+  // 手札のヒントを「てきのターン」に差し替え(updateTurnGuidance より優先するため直接書く)。
+  battleHintEl.textContent = TEXT.enemyTurnLabel;
+  battleHintEl.hidden = false;
+  endTurnBtn.classList.remove("emphasize");
+
+  const queue = aliveEnemies(); // この手番に動く敵(処理開始時点の生存敵)。
+  let i = 0;
+
+  function finishEnemyTurn() {
+    G.busy = false;
+    reapEnemies();
+    if (G.hp <= 0) {
+      lose();
+      return;
+    }
+    if (G.screen !== "battle") return; // 念のため(敵手番中に勝利は起きないが保険)。
+    startPlayerTurn();
+  }
+
+  function step() {
+    // battle 以外へ遷移していたら打ち切り(busy も戻す)。
+    if (G.screen !== "battle") {
+      G.busy = false;
+      return;
+    }
+    if (G.hp <= 0) {
+      // 手番途中でプレイヤーが倒れた → 短い間を置いて敗北。
+      setTimeout(() => {
+        G.busy = false;
+        lose();
+      }, ENEMY_STEP_MS);
+      return;
+    }
+    if (i >= queue.length) {
+      finishEnemyTurn();
+      return;
+    }
+    const e = queue[i];
+    i++;
+    if (e.dead) {
+      // 既に死んでいる敵は飛ばす(間も置かない)。
+      step();
+      return;
+    }
+    // この敵を強調(acting フラグは enemy obj に持つ。renderAll で DOM 再生成されても残る)。
+    e.acting = true;
     const acts = currentIntent(e);
     for (const a of acts) {
-      enemyAct(e, a);
+      enemyAct(e, a); // 被ダメ計算/intent 内容は不変。
     }
     advanceIntent(e);
-    if (G.hp <= 0) break;
+    renderAll(); // HP/あかり/敵ブロック/intent/acting を反映。
+    // 約 0.6 秒見せてから強調を解除し次の敵へ。
+    G.enemyTurnTimer = setTimeout(() => {
+      e.acting = false;
+      renderAll();
+      step();
+    }, ENEMY_STEP_MS);
   }
-  reapEnemies();
-  if (G.hp <= 0) {
-    lose();
-    G.busy = false;
-    return;
-  }
-  if (G.screen !== "battle") {
-    G.busy = false;
-    return;
-  }
-  G.busy = false;
-  startPlayerTurn();
+
+  step();
 }
 
 function enemyAct(e, a) {
   if (a.type === "Charge") {
     // 予告のみ。intent 表示は次手番の大攻撃を指すよう charging を立てる。
     e.charging = true;
+    spawnCue(TEXT.cueCharge); // 「ためる」cue(ゲージ付近)。
     return;
   }
   e.charging = false;
@@ -390,9 +438,10 @@ function enemyAct(e, a) {
     G.hp = Math.max(0, G.hp - dmg);
     spawnPlayerPopup("-" + dmg);
   } else if (a.type === "Guard") {
-    e.block += a.n;
+    e.block += a.n; // 敵ブロックバッジは renderAll で表示される。
   } else if (a.type === "Dim") {
     G.light = clampLight(G.light - a.n);
+    spawnCue(TEXT.cueDimPrefix + "-" + a.n); // 「あかり -N」cue。
   }
 }
 
@@ -638,6 +687,8 @@ function renderHand() {
 // 使えるカードの有無で「ターン終了」の強調と battle ヒントを切り替える。
 // 詰まり(マナ枯渇でカードが灰色になり次の導線が分からない)の直接対策。
 function updateTurnGuidance() {
+  // 敵手番中(busy)は enemyTurn が「てきのターン」を出しているので上書きしない。
+  if (G.busy) return;
   const anyPlayable = G.hand.some((id) => CARDS[id].cost <= G.mana);
   // ターン終了ボタンの強調(使えるカードが無いときだけ脈動 + 濃色)。
   endTurnBtn.classList.toggle("emphasize", !anyPlayable);
@@ -707,6 +758,7 @@ function renderEnemies() {
     const el = document.createElement("div");
     el.className = "enemy";
     if (e.dead) el.classList.add("dead");
+    if (e.acting && !e.dead) el.classList.add("acting"); // 敵手番の見える化(前進+光輪)。
     if (G.selectingTarget && !e.dead) el.classList.add("targetable");
 
     // intent(頭上)。
@@ -831,6 +883,15 @@ function spawnPlayerPopup(text) {
   p.className = "popup";
   p.style.top = "50%";
   p.style.color = "#ff9a8a";
+  p.textContent = text;
+  battleEl.appendChild(p);
+  setTimeout(() => p.remove(), 900);
+}
+// Dim/Charge 等の cue(ゲージ少し上)。白文字+黒縁(CSS .popup)で読める。はみ出さない。
+function spawnCue(text) {
+  const p = document.createElement("div");
+  p.className = "popup cue";
+  p.style.top = "44%";
   p.textContent = text;
   battleEl.appendChild(p);
   setTimeout(() => p.remove(), 900);

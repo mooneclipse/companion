@@ -110,6 +110,26 @@ async function startToBattle(page) {
   await page.waitForTimeout(700);
 }
 
+// v1.2.0: 敵手番は非同期(1 体ずつ ENEMY_STEP_MS=600 のチェーン)。end-turn を押したら
+// 「敵手番完了で自分の番に戻る(busy 解除)」か「敗北(defeat)」まで状態で待つ。固定
+// timeout でなく状態待ちにする(敵数で所要が変わるため)。reward/clear は敵手番からは
+// 起きないが保険で battle 以外も終了条件に含める。
+async function endTurnAndWait(page) {
+  await tapSelector(page, "#end-turn");
+  // まず busy になる(敵手番開始)のを軽く待つ。即終了する敵がいなければ busy=true。
+  await page.waitForFunction(
+    () => {
+      const G = window.G;
+      // 自分の番に戻った(battle かつ busy 解除) or 戦闘外(defeat/reward/clear)に到達。
+      return (G.screen === "battle" && G.busy === false) || G.screen !== "battle";
+    },
+    { timeout: 15000 }
+  );
+  // renderAll 反映の一拍。
+  await page.waitForTimeout(60);
+  return page.evaluate(() => window.G.screen);
+}
+
 const topElAt = (page, x, y) =>
   page.evaluate(
     ([px, py]) => {
@@ -328,8 +348,7 @@ const overflowFails = [];
       const scr = await page.evaluate(() => window.G.screen);
       if (scr !== "battle") return false;
       await page.evaluate(() => { window.G.hp = 9999; });
-      await tapSelector(page, "#end-turn");
-      await page.waitForTimeout(150);
+      await endTurnAndWait(page); // v1.2.0: 非同期敵手番完了を待ってから引き直し確認。
     }
     return false;
   }
@@ -374,7 +393,7 @@ const overflowFails = [];
   akariPass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v1.1.0" &&
+    version === "v1.2.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "タップではじめる" &&
@@ -462,8 +481,7 @@ let bestAfterClear = null;
         return { kind: "card", idx: playable[0].i };
       });
       if (action.kind === "endturn") {
-        await tapSelector(page, "#end-turn");
-        await page.waitForTimeout(160);
+        await endTurnAndWait(page); // v1.2.0: 非同期敵手番の完了を待つ。
         continue;
       }
       // カードをタップ。単体攻撃で敵が2体以上なら対象選択へ → 生存敵をタップ。
@@ -589,8 +607,7 @@ let bestAfterClear = null;
             });
           });
           if (idx < 0) {
-            await tapSelector(page, "#end-turn");
-            await page.waitForTimeout(150);
+            await endTurnAndWait(page);
             await page.evaluate(() => { window.G.enemies.forEach((e) => { if (!e.dead) e.hp = 1; e.block = 0; }); window.G.mana = 3; });
             continue;
           }
@@ -642,7 +659,7 @@ let defeatPass = false;
   // 攻カードで倒す。
   for (let k = 0; k < 8; k++) {
     const idx = await page.evaluate(() => window.G.hand.findIndex((id) => window.CARDS[id].kind === "atk" && window.CARDS[id].cost <= window.G.mana));
-    if (idx < 0) { await tapSelector(page, "#end-turn"); await page.waitForTimeout(150); await page.evaluate(() => { window.G.enemies.forEach((e) => { e.hp = 1; e.block = 0; }); window.G.mana = 3; }); continue; }
+    if (idx < 0) { await endTurnAndWait(page); await page.evaluate(() => { window.G.enemies.forEach((e) => { e.hp = 1; e.block = 0; }); window.G.mana = 3; }); continue; }
     await tapSelector(page, "#hand .card", idx);
     await page.waitForTimeout(100);
     if (await page.evaluate(() => window.G.screen) !== "battle") break;
@@ -657,15 +674,15 @@ let defeatPass = false;
 
   // 次戦(floor2)で HP を 1 にして、敵に殴られて defeat。
   await page.evaluate(() => { window.G.hp = 1; window.G.block = 0; window.G.light = 0; });
-  // ターン終了 → 敵手番で被弾 → HP0 → lose。floor2 蛾は最初 Guard なので攻撃まで進める。
+  // ターン終了 → (非同期)敵手番で被弾 → HP0 → lose。floor2 蛾は最初 Guard なので攻撃まで進める。
+  // v1.2.0: endTurnAndWait は defeat(screen!=battle)でも返るので状態待ちで進める。
   let dguard = 0;
   while (dguard++ < 12) {
     const scr = await page.evaluate(() => window.G.screen);
     if (scr === "defeat") break;
     if (scr !== "battle") break;
     await page.evaluate(() => { window.G.hp = 1; window.G.block = 0; });
-    await tapSelector(page, "#end-turn");
-    await page.waitForTimeout(200);
+    await endTurnAndWait(page);
   }
   const defeatScreen = await page.evaluate(() => window.G.screen);
   const inOverlayDefeat = await inOverlayAt(page, VW / 2, VH / 2);
@@ -720,7 +737,7 @@ let targetPass = false;
       if (st.screen === "battle") {
         await page.evaluate(() => { window.G.enemies.forEach((e) => { if (!e.dead) { e.hp = 1; e.block = 0; } }); window.G.mana = 3; });
         const idx = await page.evaluate(() => window.G.hand.findIndex((id) => window.CARDS[id].kind === "atk" && window.CARDS[id].cost <= window.G.mana));
-        if (idx < 0) { await tapSelector(page, "#end-turn"); await page.waitForTimeout(150); continue; }
+        if (idx < 0) { await endTurnAndWait(page); continue; }
         const alive = await page.evaluate(() => window.G.enemies.filter((e) => !e.dead).length);
         await tapSelector(page, "#hand .card", idx);
         await page.waitForTimeout(90);
@@ -900,10 +917,39 @@ let stuckPass = false;
   // 詰まり時の可読性(ヒント表示・強調ボタン込み)。
   const stuckOverflow = await overflowReport(page, "battle-stuck-hint");
 
-  // 「ターン終了」を画面座標タップ → 次ターンへ進む(mana 回復 = 3、手札引き直し)。
-  const manaBeforeEnd = await page.evaluate(() => window.G.mana);
+  // 「ターン終了」を画面座標タップ → v1.2.0: 敵手番開始(busy + 「てきのターン」)→
+  // 敵手番完了で次ターンへ(mana 回復 = 3、手札引き直し)。
   const tappedEndTurn = await tapSelector(page, "#end-turn");
-  await page.waitForTimeout(400);
+  // busy 開始(敵手番)を待ち、その瞬間の hint/emphasize を読む(主訴の直接検証)。
+  await page.waitForFunction(() => window.G.busy === true, { timeout: 5000 });
+  const duringEnemy = await page.evaluate(() => ({
+    busy: window.G.busy,
+    hintShown: !document.getElementById("battle-hint").hidden,
+    hintText: document.getElementById("battle-hint").textContent,
+    emphasize: document.getElementById("end-turn").classList.contains("emphasize"),
+  }));
+  // 敵手番中のカードタップ/二度押しが無反応(busy ガードで詰まらない)ことを確認。
+  const manaDuring = await page.evaluate(() => window.G.mana);
+  await tapSelector(page, "#end-turn"); // 二度押し
+  // 手札があれば 1 枚タップを試みる(busy 中は onCardTap が return)。
+  await page.evaluate(() => { if (window.G.hand.length) window.__handLen0 = window.G.hand.length; });
+  const handCardBox = await page.evaluate(() => {
+    const el = document.querySelector("#hand .card");
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  if (handCardBox) { await page.mouse.click(handCardBox.x, handCardBox.y); }
+  const stillBusy = await page.evaluate(() => ({
+    busy: window.G.busy,
+    screen: window.G.screen,
+    selecting: window.G.selectingTarget !== null,
+  }));
+  // 敵手番完了 → 自分の番に戻る(状態待ち)。
+  await page.waitForFunction(
+    () => window.G.screen === "battle" && window.G.busy === false, { timeout: 15000 }
+  );
+  await page.waitForTimeout(60);
   const afterEnd = await page.evaluate(() => ({
     screen: window.G.screen,
     mana: window.G.mana, // 次ターン開始で MANA_PER_TURN=3 に戻る
@@ -917,7 +963,9 @@ let stuckPass = false;
   out("詰まり時 可読性 overflow", stuckOverflow.overflowCount);
   if (stuckOverflow.overflowCount > 0) out("  items", stuckOverflow.items);
   out("ターン終了 タップ成功", tappedEndTurn);
-  out("ターン終了後", afterEnd);
+  out("敵手番中(busy)の hint/強調", duringEnemy);
+  out("敵手番中の二度押し/カードタップ後(無反応で busy 継続)", stillBusy);
+  out("ターン終了後(自分の番に復帰)", afterEnd);
 
   stuckPass =
     errors.length === 0 &&
@@ -927,11 +975,178 @@ let stuckPass = false;
     stuckState.emphasize === true && // ターン終了ボタンが脈動強調
     stuckOverflow.overflowCount === 0 &&
     tappedEndTurn === true &&
+    duringEnemy.busy === true && // 敵手番開始で busy
+    duringEnemy.hintShown === true &&
+    duringEnemy.hintText === "てきのターン" && // 敵手番が始まったと分かる(主訴)
+    duringEnemy.emphasize === false && // 敵手番中は終了ボタン強調解除
+    stillBusy.busy === true && // 二度押し/カードタップは無反応(busy 継続)
+    stillBusy.screen === "battle" &&
+    stillBusy.selecting === false && // カードタップが効いていない(対象選択に入らない)
     afterEnd.screen === "battle" && // ターン終了で進行(詰まらない)
     afterEnd.mana === 3 && // 次ターンで mana 回復
     afterEnd.handLen === 5 && // 手札引き直し
+    afterEnd.hintShown === false && // 自分の番で「てきのターン」は消える
     afterEnd.emphasize === false; // 使えるカードが戻り強調解除
-  out("PASS(詰まり解消: ヒント + ターン終了で進む)", stuckPass);
+  out("PASS(詰まり解消 + 敵手番見える化 + busy ガード)", stuckPass);
+  await ctx.close();
+}
+
+// ---- (新 gate) 敵手番の見える化: acting 順次 / A被弾赤ポップ / Dim / Charge / Guard ----
+// 主訴「ターン終了しても敵が行動していないように見える」の直接検証。各 cue を確定的に
+// 起こすため、敵 intent を直接上書きして end-turn → busy 中をポーリング観測する
+// (intent 内容/被ダメ計算は実コード経路。観測のために intent を固定するだけ)。
+let visPass = false;
+let visOverflowFails = [];
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/akari/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToBattle(page);
+
+  // floor4(二つ火 2 体)まで進める(acting 順次の検証に 2 体必要)。
+  async function clearToFloor(targetFloor) {
+    let g = 0;
+    while (g++ < 40) {
+      const st = await page.evaluate(() => ({ screen: window.G.screen, floor: window.G.floor }));
+      if (st.screen === "battle" && st.floor >= targetFloor) return true;
+      if (st.screen === "battle") {
+        await page.evaluate(() => { window.G.enemies.forEach((e) => { if (!e.dead) { e.hp = 1; e.block = 0; } }); window.G.mana = 3; });
+        const idx = await page.evaluate(() => window.G.hand.findIndex((id) => window.CARDS[id].kind === "atk" && window.CARDS[id].cost <= window.G.mana));
+        if (idx < 0) { await endTurnAndWait(page); continue; }
+        const alive = await page.evaluate(() => window.G.enemies.filter((e) => !e.dead).length);
+        await tapSelector(page, "#hand .card", idx);
+        await page.waitForTimeout(90);
+        if (alive > 1) {
+          const ai = await page.evaluate(() => { const G = window.G; for (let i = 0; i < G.enemies.length; i++) if (!G.enemies[i].dead) return i; return 0; });
+          await tapSelector(page, ".enemy", ai);
+          await page.waitForTimeout(90);
+        }
+        continue;
+      }
+      if (st.screen === "reward") { await tapSelector(page, "#ov-cards .card", 0); await page.waitForTimeout(700); continue; }
+      await page.waitForTimeout(100);
+    }
+    return false;
+  }
+  const atFloor4 = await clearToFloor(4);
+  const enemyCount = await page.evaluate(() => window.G.enemies.length);
+
+  // --- (A) acting が 1 体ずつ進む(同時 acting 最大 1)+ A 被弾で player HP 減 + 赤ポップ ---
+  // 二つ火は両体 A 攻撃。player を安全 HP にし block 0、敵 HP 高めで生存させて 2 体動かす。
+  await page.evaluate(() => {
+    window.G.hp = 40; window.G.block = 0; window.G.light = 50;
+    window.G.enemies.forEach((e) => { e.hp = 9999; e.block = 0; e.turnIndex = 0; e.intentSet = [[{ type: "A", n: 6 }]]; });
+  });
+  const hpBeforeA = await page.evaluate(() => window.G.hp);
+  await tapSelector(page, "#end-turn");
+  await page.waitForFunction(() => window.G.busy === true, { timeout: 5000 });
+  // busy 中、acting 数を細かくサンプリングして「最大同時 acting」と「acting>0 を観測」を取る。
+  let maxActing = 0, sawActing = 0, sawRedPopup = 0, sawEnemyTurnHint = 0;
+  for (let s = 0; s < 40; s++) {
+    const snap = await page.evaluate(() => {
+      const acting = document.querySelectorAll(".enemy.acting").length;
+      const objActing = window.G.enemies.filter((e) => e.acting).length;
+      const reds = [...document.querySelectorAll("#battle .popup")].filter((p) => !p.classList.contains("cue")).length;
+      const hint = document.getElementById("battle-hint");
+      return { acting, objActing, reds, hintText: hint.hidden ? "" : hint.textContent, busy: window.G.busy };
+    });
+    maxActing = Math.max(maxActing, snap.acting, snap.objActing);
+    if (snap.acting >= 1) sawActing++;
+    if (snap.reds >= 1) sawRedPopup++;
+    if (snap.hintText === "てきのターン") sawEnemyTurnHint++;
+    // 見える化中の可読性(acting 光輪・赤ポップ・hint 表示時)。
+    if (snap.acting >= 1) {
+      const ov = await page.evaluate(([vw, vh]) => {
+        let bad = 0;
+        for (const el of document.querySelectorAll("#battle .popup, #battle-hint, .enemy.acting .enemy-name")) {
+          if (el.hidden) continue; const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) continue;
+          if (r.left < -0.5 || r.top < -0.5 || r.right > vw + 0.5 || r.bottom > vh + 0.5) bad++;
+        }
+        return bad;
+      }, [VW, VH]);
+      if (ov > 0) visOverflowFails.push({ label: "vis-acting", overflowCount: ov });
+    }
+    if (!snap.busy) break;
+    await page.waitForTimeout(40);
+  }
+  await page.waitForFunction(() => window.G.screen === "battle" && window.G.busy === false, { timeout: 15000 });
+  const hpAfterA = await page.evaluate(() => window.G.hp);
+
+  // --- (B) Dim 敵: light が減り「あかり -N」cue ---
+  await page.evaluate(() => {
+    window.G.hp = 9999; window.G.light = 60; window.G.block = 0;
+    window.G.enemies.forEach((e, idx) => { e.hp = 9999; e.block = 0; e.turnIndex = 0;
+      e.intentSet = idx === 0 ? [[{ type: "Dim", n: 14 }]] : [[{ type: "Guard", n: 9 }]]; });
+  });
+  const lightBeforeDim = await page.evaluate(() => window.G.light);
+  await tapSelector(page, "#end-turn");
+  await page.waitForFunction(() => window.G.busy === true, { timeout: 5000 });
+  let sawDimCue = 0, sawCharge = 0, sawGuardBadge = 0;
+  for (let s = 0; s < 50; s++) {
+    const snap = await page.evaluate(() => {
+      const cues = [...document.querySelectorAll("#battle .popup.cue")].map((p) => p.textContent);
+      const badges = document.querySelectorAll(".enemy-block").length;
+      return { cues, badges, busy: window.G.busy };
+    });
+    if (snap.cues.some((t) => t.startsWith("あかり"))) sawDimCue++;
+    if (snap.badges >= 1) sawGuardBadge++;
+    if (!snap.busy) break;
+    await page.waitForTimeout(40);
+  }
+  await page.waitForFunction(() => window.G.screen === "battle" && window.G.busy === false, { timeout: 15000 });
+  const lightAfterDim = await page.evaluate(() => window.G.light);
+
+  // --- (C) Charge 敵: 「ためる」cue + charging フラグ ---
+  await page.evaluate(() => {
+    window.G.hp = 9999; window.G.block = 0;
+    window.G.enemies.forEach((e, idx) => { e.hp = 9999; e.block = 0; e.dead = idx !== 0; e.turnIndex = 0;
+      e.intentSet = [[{ type: "Charge" }]]; });
+  });
+  await tapSelector(page, "#end-turn");
+  await page.waitForFunction(() => window.G.busy === true, { timeout: 5000 });
+  for (let s = 0; s < 40; s++) {
+    const snap = await page.evaluate(() => ({
+      cues: [...document.querySelectorAll("#battle .popup.cue")].map((p) => p.textContent),
+      busy: window.G.busy,
+    }));
+    if (snap.cues.some((t) => t === "ためる")) sawCharge++;
+    if (!snap.busy) break;
+    await page.waitForTimeout(40);
+  }
+  await page.waitForFunction(() => window.G.screen === "battle" && window.G.busy === false, { timeout: 15000 });
+  const chargingAfter = await page.evaluate(() => window.G.enemies.some((e) => e.charging));
+
+  console.log("== あかり 敵手番の見える化(主訴の直接検証) ==");
+  out("floor4 到達 / 敵体数", { atFloor4, enemyCount });
+  out("acting 同時最大(=1 であるべき)", maxActing);
+  out("acting>0 を観測した回数", sawActing);
+  out("「てきのターン」hint を観測", sawEnemyTurnHint);
+  out("A 被弾: HP 減(40→)", { before: hpBeforeA, after: hpAfterA });
+  out("A 被弾: 赤ポップ観測回数", sawRedPopup);
+  out("Dim: light 減(60→)", { before: lightBeforeDim, after: lightAfterDim });
+  out("Dim: 「あかり -N」cue 観測回数", sawDimCue);
+  out("Guard: 敵ブロックバッジ観測回数", sawGuardBadge);
+  out("Charge: 「ためる」cue 観測回数", sawCharge);
+  out("Charge 後 charging フラグ", chargingAfter);
+  out("見える化中 可読性 overflow 検出", visOverflowFails.length);
+
+  visPass =
+    errors.length === 0 &&
+    atFloor4 === true &&
+    enemyCount === 2 &&
+    maxActing === 1 && // 同時 acting は最大 1 体(1 体ずつ見せる)
+    sawActing >= 1 && // acting を実際に観測できた
+    sawEnemyTurnHint >= 1 && // 「てきのターン」が出ていた
+    hpAfterA < hpBeforeA && // A 攻撃で player HP が減った(敵が行動している)
+    sawRedPopup >= 1 && // 被ダメ赤ポップが見えた
+    lightAfterDim < lightBeforeDim && // Dim で light が減った
+    sawDimCue >= 1 && // 「あかり -N」cue
+    sawGuardBadge >= 1 && // Guard で敵ブロックバッジ
+    sawCharge >= 1 && // 「ためる」cue
+    chargingAfter === true && // Charge で charging
+    visOverflowFails.length === 0;
+  out("PASS(敵手番の見える化: acting順次/A/Dim/Charge/Guard)", visPass);
   await ctx.close();
 }
 
@@ -980,7 +1195,15 @@ let botSummary = null;
           if (G.hp < 18 && block.length) return { kind: "card", idx: block[0].i };
           return { kind: "card", idx: playable[0].i };
         });
-        if (action.kind === "endturn") { await tapSelector(page, "#end-turn"); await page.waitForTimeout(60); continue; }
+        if (action.kind === "endturn") {
+          // v1.2.0: 敵手番(非同期)完了 = busy 解除まで待ってから次手(busy 中タップは無反応)。
+          await tapSelector(page, "#end-turn");
+          await page.waitForFunction(
+            () => window.G.busy === false || window.G.screen !== "battle", { timeout: 15000 }
+          ).catch(() => {});
+          await page.waitForTimeout(40);
+          continue;
+        }
         const needT = await page.evaluate((idx) => {
           const G = window.G;
           const card = window.CARDS[G.hand[idx]];
@@ -1107,14 +1330,15 @@ out("勝利経路 + 全画面可読性", clearPass);
 out("敗北経路", defeatPass);
 out("対象選択 + 再タップキャンセル + floor4 可読性", targetPass);
 out("howto 2回目スキップ + 再読もどる", howtoPass);
-out("詰まり解消(ヒント + ターン終了)", stuckPass);
+out("詰まり解消 + 敵手番見える化 + busy ガード", stuckPass);
+out("敵手番の見える化(acting順次/A/Dim/Charge/Guard)", visPass);
 out("みちゆき 回帰", michiyukiPass);
 out("ともしび 回帰", tomoshibiPass);
 out("なごり 回帰", nagoriPass);
 out("バランス bot(参考)", botSummary);
 
 const allPass =
-  akariPass && clearPass && defeatPass && targetPass && howtoPass && stuckPass &&
+  akariPass && clearPass && defeatPass && targetPass && howtoPass && stuckPass && visPass &&
   michiyukiPass && tomoshibiPass && nagoriPass;
 out("ALL PASS", allPass);
 process.exit(allPass ? 0 : 1);

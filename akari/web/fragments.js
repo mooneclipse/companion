@@ -57,6 +57,10 @@ const TEXT = {
   // battle 内ヒント(verbatim)。
   hintSelectTarget: "こうげきする敵をえらぶ",
   hintNoPlayable: "つかえるカードが無い → ターン終了",
+  // 敵手番の見える化(verbatim)。
+  enemyTurnLabel: "てきのターン",
+  cueDimPrefix: "あかり ", // 「あかり -12」のように数値を付ける。
+  cueCharge: "ためる",
 };
 
 if (typeof window !== "undefined") {

@@ -89,6 +89,15 @@ body {
   outline-offset: 4px;
   border-radius: 0.6rem;
 }
+/* 敵手番の見える化: いま動いている敵を前進 + 光輪で強調。 */
+.enemy.acting {
+  transform: translateY(-8px);
+  transition: transform 0.18s ease;
+  outline: 2px solid #fff0c8;
+  outline-offset: 4px;
+  border-radius: 0.6rem;
+  filter: drop-shadow(0 0 10px rgba(255, 240, 200, 0.7));
+}
 .enemy.dead {
   opacity: 0.18;
   pointer-events: none;
@@ -169,6 +178,12 @@ body {
   border-radius: 0.4em;
   pointer-events: none;
   animation: popup-rise 0.9s ease-out forwards;
+  white-space: nowrap;
+  max-width: 92vw;
+}
+/* Dim/Charge 等の cue。被ダメの赤と区別し暖色寄りで「あかり -N」「ためる」を見せる。 */
+.popup.cue {
+  color: #ffe6a0;
 }
 @keyframes popup-rise {
   0% {
