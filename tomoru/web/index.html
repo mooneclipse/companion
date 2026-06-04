@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<!-- CSP: 同一オリジン + 和文フォント CDN のみ。inline script 不許可(外部 js)。
+     style は Google Fonts の <link> 取得のため fonts.googleapis.com を許可、
+     font 本体は fonts.gstatic.com。それ以外の外向きは塞ぐ。あかりと同方針。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'">
+<meta name="theme-color" content="#05030a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>ともる</title>
+<link rel="manifest" href="/tomoru/manifest.json">
+<link rel="icon" href="/tomoru/icons/icon-192.png">
+<!-- 和文 mincho。取得失敗時は style.css の serif フォールバックで成立する。 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;500&display=swap">
+<link rel="stylesheet" href="/tomoru/style.css">
+</head>
+<body>
+<!-- 縦坑の断面(タイル + 視界円 + 灯)だけ canvas に焼く。文字・バー・カウントは全て DOM。 -->
+<canvas id="scene" aria-label="ともる。灯量が視界・酸素・帰路を兼ねる採掘サバイバル"></canvas>
+
+<!-- ゲーム HUD。上 = 深度/鉱石カウント、左縦 = 灯量バー(帰路目盛り付き)。canvas の上に重ねる。 -->
+<div id="hud" class="hud" hidden>
+  <!-- 上部: 深度 + 鉱石カウント(鉄/結晶/コア)。 -->
+  <section class="top-bar">
+    <span id="depth-val" class="depth-val">深度 0 層</span>
+    <span class="ore-counts">
+      <span class="ore iron"><span class="ore-ico">鉄</span><span id="ore-iron">0</span></span>
+      <span class="ore cryst"><span class="ore-ico">晶</span><span id="ore-cryst">0</span></span>
+      <span class="ore core"><span class="ore-ico">核</span><span id="ore-core">0</span></span>
+    </span>
+  </section>
+
+  <!-- 左縦: 灯量バー + 帰路目盛り。 -->
+  <section class="light-rail">
+    <span class="light-cap">灯</span>
+    <div class="light-bar">
+      <div id="light-fill" class="light-fill"></div>
+      <div id="return-mark" class="return-mark"></div>
+    </div>
+    <span id="light-val" class="light-val">100</span>
+  </section>
+
+  <!-- 下部ヒント(撤退予告・喰らい闇など)。 -->
+  <div id="hud-hint" class="hud-hint" hidden></div>
+</div>
+
+<!-- 各種オーバーレイ(title / howto / upgrade / fail / clear)。hidden で完全非表示。 -->
+<div id="overlay" class="overlay" hidden>
+  <div class="panel">
+    <h1 id="ov-title" class="ov-title" hidden></h1>
+    <p id="ov-sub" class="ov-sub" hidden></p>
+    <!-- あそびかた説明(初回自動 + title からいつでも再読)。縦並び・左寄せ。 -->
+    <div id="ov-howto" class="ov-howto" hidden></div>
+    <!-- 強化 3 択。 -->
+    <div id="ov-upgrades" class="ov-upgrades" hidden></div>
+    <button id="ov-action" class="ov-action" type="button" hidden></button>
+    <button id="ov-action2" class="ov-action ov-action2" type="button" hidden></button>
+    <p id="ov-version" class="ov-version" hidden></p>
+  </div>
+</div>
+
+<script src="/tomoru/tiles.js"></script>
+<script src="/tomoru/upgrades.js"></script>
+<script src="/tomoru/fragments.js"></script>
+<script src="/tomoru/app.js"></script>
+</body>
+</html>

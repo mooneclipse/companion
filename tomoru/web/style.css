@@ -1,0 +1,430 @@
+/* ともる — 採掘/精錬サバイバル。文字・バー・カウントは全て DOM(canvas に文字を焼かない
+   = なごり「文字がはみ出して読めない」真因の直接対策)。emoji 不可。 */
+:root {
+  --ink: #f4eee2;
+  --mincho: "Zen Old Mincho", "Shippori Mincho", "Hiragino Mincho ProN",
+    "Yu Mincho", "Noto Serif JP", serif;
+  --c-lantern: #f4b860;
+  --c-iron: #c98a6a;
+  --c-cryst: #7ec8e3;
+  --c-core: #e0a85c;
+  /* 白文字 + 黒縁(4 方向 text-shadow)。暗い坑でも数値が読める。 */
+  --txt-edge: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
+    0 2px 3px rgba(0, 0, 0, 0.8);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  /* はみ出しを構造的に封じる(画面外スクロール禁止)。 */
+  overflow: hidden;
+  background: #05030a;
+  color: var(--ink);
+  font-family: var(--mincho);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#scene {
+  display: block;
+  width: 100vw;
+  /* 縦坑断面を全面に描く。dvh で実視高に追従(canvas 内部解像度は innerHeight 基準)。 */
+  height: 100vh;
+  height: 100dvh;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  /* 画面を覆う canvas 自身にも touch-action:none(なごり/みちゆきの overlay 罠対策の保険)。 */
+  touch-action: none;
+}
+
+/* ===== HUD: canvas の上の不透明レイヤー。上基準で配置(モバイル Chrome のツールバー
+   裏に押し出されないよう svh + top:0)。pointer は素通しし、操作は canvas が受ける。 ===== */
+.hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  /* svh = 小ビューポート(ツールバー表示時)基準。バー・カウントが必ず画面内に収まる。 */
+  height: 100vh;
+  height: 100svh;
+  z-index: 2;
+  padding: calc(env(safe-area-inset-top) + 0.4rem) 0.6rem
+    calc(env(safe-area-inset-bottom) + 0.5rem);
+  /* HUD 自体は掘る操作の邪魔をしない(子のうち操作系だけ pointer を拾う)。 */
+  pointer-events: none;
+}
+.hud[hidden] {
+  display: none !important;
+}
+
+/* ---- 上部: 深度 + 鉱石カウント ---- */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.depth-val {
+  font-size: clamp(0.8rem, 3.8vw, 1rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.ore-counts {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.ore {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  font-size: clamp(0.74rem, 3.4vw, 0.94rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  white-space: nowrap;
+}
+.ore-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: 0.35em;
+  font-size: 0.82em;
+  background: rgba(0, 0, 0, 0.45);
+}
+.ore.iron .ore-ico {
+  color: #e0a98a;
+}
+.ore.cryst .ore-ico {
+  color: var(--c-cryst);
+}
+.ore.core .ore-ico {
+  color: var(--c-core);
+}
+
+/* ---- 左縦: 灯量バー + 帰路目盛り ---- */
+.light-rail {
+  position: absolute;
+  left: 0.6rem;
+  top: 3rem;
+  bottom: 2.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+.light-cap {
+  font-size: clamp(0.72rem, 3.2vw, 0.88rem);
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.06em;
+}
+.light-bar {
+  flex: 1;
+  width: 0.9rem;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 0.5rem;
+  overflow: visible;
+  position: relative;
+  min-height: 0;
+}
+/* 縦バー: 下から上へ満ちる(下端=0、上端=満)。JS が高さと色を毎回更新。 */
+.light-fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  border-radius: 0.5rem;
+  /* 暗(青黒) → 明(暖色)へ。減るほど青黒寄り。 */
+  background: linear-gradient(0deg, #2a3358, #e6b25a, #fff0c8);
+  transition: height 0.2s linear, background 0.4s ease;
+}
+/* 帰路目盛り: 「今ここから地表へ戻るのに要る灯量」の高さに横線。割ると赤面(JS が色付け)。 */
+.return-mark {
+  position: absolute;
+  left: -0.18rem;
+  right: -0.18rem;
+  height: 2px;
+  background: #fff0c8;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  transition: bottom 0.2s linear, background 0.3s ease;
+}
+.return-mark.warn {
+  background: #ff6a4a;
+  box-shadow: 0 0 6px rgba(255, 80, 50, 0.9);
+}
+.light-val {
+  font-size: clamp(0.78rem, 3.4vw, 0.96rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  min-width: 1.6em;
+  text-align: center;
+}
+.light-rail.warn .light-val {
+  color: #ff8a6a;
+}
+
+/* ---- 下部ヒント(撤退予告・喰らい闇 cue) ---- */
+.hud-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 0.6rem);
+  text-align: center;
+  font-size: clamp(0.8rem, 3.8vw, 1rem);
+  letter-spacing: 0.08em;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-hint[hidden] {
+  display: none !important;
+}
+.hud-hint.warn {
+  color: #ff8a6a;
+}
+
+/* 数値ポップ(採取 +1 / 灯まき / 喰らい闇)。背後に半透明プレート。 */
+.popup {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  font-size: clamp(0.92rem, 4.6vw, 1.3rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  background: rgba(0, 0, 0, 0.42);
+  padding: 0.05em 0.4em;
+  border-radius: 0.4em;
+  pointer-events: none;
+  z-index: 5;
+  animation: popup-rise 0.85s ease-out forwards;
+  white-space: nowrap;
+  max-width: 90vw;
+}
+.popup.cue {
+  color: #ffe6a0;
+}
+.popup.warn {
+  color: #ff8a6a;
+}
+@keyframes popup-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -150%);
+  }
+}
+
+/* ===== オーバーレイ(title / howto / upgrade / fail / clear) ===== */
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100svh;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.4rem calc(2rem + env(safe-area-inset-bottom));
+  background: rgba(4, 3, 8, 0.82);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.overlay.visible {
+  opacity: 1;
+}
+.overlay[hidden] {
+  display: none !important;
+}
+.overlay:not(.visible) {
+  pointer-events: none;
+}
+.panel {
+  max-width: 30rem;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  /* 内容が増えても画面外へはみ出さない保険(なごり真因の再発防止)。 */
+  max-height: 100%;
+  overflow-y: auto;
+}
+.ov-howto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: 100%;
+  text-align: left;
+}
+.ov-howto[hidden] {
+  display: none !important;
+}
+.howto-line {
+  font-size: clamp(0.86rem, 4vw, 1.04rem);
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.ov-title {
+  font-weight: 500;
+  font-size: clamp(2.6rem, 14vw, 4.4rem);
+  letter-spacing: 0.32em;
+  text-indent: 0.32em;
+  color: var(--ink);
+  text-shadow: 0 0 24px rgba(244, 184, 96, 0.5);
+}
+.ov-title.small-title {
+  font-size: clamp(1.5rem, 7vw, 2.2rem);
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+  text-shadow: 0 0 16px rgba(244, 184, 96, 0.35);
+}
+.ov-sub {
+  font-size: clamp(0.9rem, 4.4vw, 1.1rem);
+  letter-spacing: 0.1em;
+  color: rgba(244, 238, 226, 0.85);
+}
+/* 強化 3 択。 */
+.ov-upgrades {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  width: 100%;
+}
+.ov-upgrades[hidden] {
+  display: none !important;
+}
+.upg-card {
+  flex: 1 1 0;
+  min-width: 0;
+  background: linear-gradient(160deg, #1c1426, #0a0710);
+  border: 1px solid rgba(244, 184, 96, 0.3);
+  border-radius: 0.6rem;
+  padding: 0.6rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.upg-card.afford {
+  box-shadow: 0 0 0 1px rgba(244, 184, 96, 0.5), 0 -2px 10px rgba(244, 184, 96, 0.18);
+}
+.upg-card.locked {
+  opacity: 0.4;
+  cursor: default;
+}
+.upg-tier {
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+  border-radius: 0.35em;
+  padding: 0.05em 0.4em;
+}
+.upg-tier.iron {
+  background: var(--c-iron);
+}
+.upg-tier.cryst {
+  background: var(--c-cryst);
+  color: #08222c;
+  text-shadow: none;
+}
+.upg-tier.core {
+  background: var(--c-core);
+  color: #2a1c08;
+  text-shadow: none;
+}
+.upg-name {
+  font-size: clamp(0.64rem, 3vw, 0.82rem);
+  color: var(--ink);
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.upg-desc {
+  font-size: clamp(0.54rem, 2.5vw, 0.68rem);
+  color: rgba(244, 238, 226, 0.8);
+  line-height: 1.35;
+  text-align: center;
+  overflow: hidden;
+}
+.upg-cost {
+  font-size: clamp(0.56rem, 2.6vw, 0.7rem);
+  color: #ffe6a0;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.ov-action {
+  font-family: var(--mincho);
+  font-size: clamp(0.9rem, 4.4vw, 1.1rem);
+  letter-spacing: 0.16em;
+  color: var(--ink);
+  background: rgba(244, 184, 96, 0.18);
+  border: 1px solid rgba(244, 184, 96, 0.65);
+  border-radius: 0.7rem;
+  padding: 0.6rem 2rem;
+  cursor: pointer;
+  animation: breathe 3.2s ease-in-out infinite;
+}
+.ov-action2 {
+  background: rgba(244, 238, 226, 0.08);
+  border-color: rgba(244, 238, 226, 0.3);
+  animation: none;
+}
+.ov-action[hidden],
+.ov-action2[hidden],
+.ov-title[hidden],
+.ov-sub[hidden],
+.ov-version[hidden] {
+  display: none !important;
+}
+.ov-version {
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  opacity: 0.35;
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-action,
+  .overlay {
+    animation: none;
+  }
+}

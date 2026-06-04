@@ -72,6 +72,17 @@ STATIC = {
     "/akari/manifest.json": ("akari/web/manifest.json", "application/manifest+json"),
     "/akari/icons/icon-192.png": ("akari/web/icons/icon-192.png", "image/png"),
     "/akari/icons/icon-512.png": ("akari/web/icons/icon-512.png", "image/png"),
+    # 第 5 作「ともる」(/tomoru/ prefix)。リアルタイム採掘/精錬サバイバル(縦坑ダイブ)。
+    "/tomoru/": ("tomoru/web/index.html", "text/html; charset=utf-8"),
+    "/tomoru/index.html": ("tomoru/web/index.html", "text/html; charset=utf-8"),
+    "/tomoru/app.js": ("tomoru/web/app.js", "application/javascript; charset=utf-8"),
+    "/tomoru/tiles.js": ("tomoru/web/tiles.js", "application/javascript; charset=utf-8"),
+    "/tomoru/upgrades.js": ("tomoru/web/upgrades.js", "application/javascript; charset=utf-8"),
+    "/tomoru/fragments.js": ("tomoru/web/fragments.js", "application/javascript; charset=utf-8"),
+    "/tomoru/style.css": ("tomoru/web/style.css", "text/css; charset=utf-8"),
+    "/tomoru/manifest.json": ("tomoru/web/manifest.json", "application/manifest+json"),
+    "/tomoru/icons/icon-192.png": ("tomoru/web/icons/icon-192.png", "image/png"),
+    "/tomoru/icons/icon-512.png": ("tomoru/web/icons/icon-512.png", "image/png"),
 }
 
 
