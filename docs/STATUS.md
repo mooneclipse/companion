@@ -52,6 +52,17 @@
 - **前景視認性（初手から）**: 鉱石は背景 luminance を読んで自発光を反転気味に追従（暗いほど強く光る＝なごりの線描画方式）。自機は視界円中心＝常時最明＋1px縁（ともしび方式）。喰らい闇は「無＝穴」として描き周囲の灯が縁取りになる。HUD は canvas 外 DOM 不透明レイヤーで背景明度変化に絶対埋もれない（あかりの全DOM化教訓）。
 - **実機fps（critic 罠c の対処、初手から）**: 視界/光は **per-pixel 禁止のタイル粒度ライティング**（各可視タイルの明度＝視界円寄与＋近傍の撒いた灯寄与をタイルごとに1回計算し rgba 矩形塗り、7×14≈100矩形/フレーム）。視界円の縁だけ放射グラデを**事前ベイク1枚**してスケール（毎フレーム gradient 再生成は禁止）。
 
+### 実装・検証・配信（§5〜§8、Done、2026-06-04）
+
+- [x] **実装（implementer）**: `tomoru/web/` 一式（`index.html`/`app.js`/`tiles.js`/`upgrades.js`/`fragments.js`/`style.css`/`manifest.json`/`icons/192・512`、VERSION=v1.0.0、SW なし）。CONST 単一ブロック集約（GRID_COLS=7/LIGHT_MAX=100/BASE_DRAIN=0.4・DEPTH_DRAIN_K=0.025/LANTERN_COST=12/RETURN_COST_K=1.0/DIG_TAPS{土1岩3鉱2}/MAW_DRAIN=25/CORE_DEPTH=40/BASE_SEED=73101 ほか）。決定論地形 `tileType(col,row,seed)`＋整数ハッシュ `tilesHash3`（Math.random 不使用）、掘削差分は `Set("col,row")`。全DOM-HUD（左縦灯量バー＝帰路目盛り重畳）、`100svh`/`100dvh`+safe-area、タイル粒度ライティング＋放射グラデ事前ベイク。`server/app.py` STATIC に `/tomoru/` prefix 10 エントリ追加（既存 `/`・`/tomoshibi/`・`/nagori/`・`/akari/` 不変）。lead 仕様からの逸脱は妥当な範囲（灯量バーを縦坑に自然な左縦バー化／勝利後「もっと深く」でエンドレス継続／強化3択は乱数禁止で diveCount 起点の決定論巡回）。
+- [x] **playtester 正式実機検証（`tests/debug-tomoru.mjs`、画面座標ヒットテスト経由）ALL PASS**: `/tomoru/` 200・pageerror 0、title→あそびかた→ダイブ。掘削前進（画面変化率45.9%、th=32 を初回基準に実測確定）／長押し灯まき（灯量 cost=12 減）／灯量減衰が深いほど速い（浅0.38<深0.92）／鉱石ティア帯整合／地表帰還→精錬→強化3択（**ティアゲート機能**＝結晶/コア在庫0で中盤/深層強化が出ない＝浅場ピストン無効化）／灯量0でダイブ失敗（未精錬ロスト・強化資産残る）／2ダイブ目で地形変化（62.9%差・同seedは決定論一致）／核到達→clear（暁演出）／喰らい闇（露出で灯量-25・灯で打ち消し）。**全画面（title/howto/dive/upgrade/fail/clear）テキスト・鉱石カウント・強化カードが 412×915 内ではみ出し0**。**短高 viewport 412×680/730 で灯量バー・帰路目盛り・各ボタンが innerHeight 内・top基準・タップ機能**（あかり v1.3.0 ツールバー切れ対策を初回から）。**既存4作回帰**（同一サーバ `/`・`/tomoshibi/`・`/nagori/`・`/akari/` 200・pageerror 0・コア操作前進）＝既存 URL 不変の証明。本番47825 非接触（空きポート47831 で検証、PID 直 kill で停止）。
+- [x] **面白さ代理レポート（gate 外、lead 判断材料）**: bot 各20ラン。**支配戦略なし**（pistonDominant=false）＝灯撒いて深く潜る戦略19層 vs 浅場ピストン6層で前者が明確に上＝ティアゲート＋帰路設計が単調化を防ぐ（critic 罠a/b が機能）。bot は保守的で帰還率100%・ロスト率0%＝灯量枯渇の緊張は表面化せず、核到達(40層)まで届かない＝深部の手応えはユーザー実機判断に委ねる（bot ヒューリスティクスの限界、面白さ判定は遊ぶユーザー）。
+- [x] **バランス（初版 CONST のまま出荷＝lead 判断）**: あかりは出荷前 bot で構造欠陥（クリア率0/20＝デススパイラル不在）を見つけ1回緩和したが、ともるは**構造欠陥なし**（支配戦略なし・理不尽死なし・ティアゲート機能）＝直す対象がない。緊張帯の「緩すぎ/手応え」は bot では測れず（保守 bot ゆえ枯渇を表面化しない）ユーザー実機感想で判断。ここで CONST を勘でいじるのは「数値だけ動かす」場当たり＝2周目ルール抵触のため打たない（あかりの「気を抜くと負ける難易度が良い」も出荷後感想で確認された前例）。
+- [x] **code-reviewer 点検**: 配信境界・CSP（Math.random 不使用確認）・状態機械・可読性/視認性・VERSION・データ verbatim・既存慣習＝全 OK。**修正必須1件＝強化「目利き＋」(`oreBonusAdd`／§4「高品位出現+」) が `onTileBroken` で消費側配線漏れ＝最高コスト強化(core×3)が完全無効**。lead 確定方式（端数を決定論ハッシュ `tilesHash3(col,row,seed+4242)<frac` で確率反映、Math.random 禁止）で implementer に最小修正（再委任1往復）→ oreBonusAdd 0→0.12 で同タイル集合のコア取得 231→263・再現一致・pageerror 0 を確認、修正必須解消。軽微提案（強化3択が連番固定でリプレイの妙が薄い）は v1.1 メモに留置。
+- [x] **commit**: games `e7fb254` feat（ともる本体+server STATIC+テスト）/ `677aa31` docs（§1-§4 正本）。remote `edea019` feat（ランチャー「ともる」追加+SW v13→v14）。Co-Authored-By なし。
+- [x] **配信（本番反映＝ユーザー承認のうえ実施、2026-06-04）**: `systemctl --user restart companion-games` で本番47825 を新 app.py へ差し替え（`/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/healthz` 全 200、`/tomoru/` 全9アセット 200・Content-Type 正常、既存 URL 不変を確認）。remote `web/app.js` GAMES に「ともる」追加+SW v14 bump（静的配信ゆえ次回読込で反映、GitHub push はユーザー実行）。tailscale serve は同一ポートで unit 変更不要。本番 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/tomoru/`。
+- [ ] **ユーザー実機プレイ → 感想受領**（後日 vault `notes/<date>-tomoru-review.md`）→ 受領後に §9 へ継承資産/課題を記録。
+
 ---
 
 ## 第 4 作 方向転換（着手、2026-06-03 / `/newgame` 2 度目、Steam 実データ起点）
