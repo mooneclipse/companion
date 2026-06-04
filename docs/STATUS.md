@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-04 12:40
+最終更新: 2026-06-04 12:45
 
 ## 設計メモ
 
@@ -30,6 +30,12 @@
 
 ## Done
 
+- 2026-06-04 fix: systemd 経由で skill `/trends-report` が解決されない問題
+  - 症状: `systemctl --user start companion-trends.service` で fetch は成功するが claude -p が `{"result":"Unknown command: /trends-report","num_turns":0}` を返し `abort: report.md が空または未生成` で exit 1。手元の `bash` 直接実行 (cwd=maintenance) では成功していた
+  - 原因: claude の project skill (`/trends-report` = `maintenance/.claude/skills/trends-report/SKILL.md`) は cwd 依存で解決される。systemd user service は `WorkingDirectory` 未指定で cwd=$HOME になり `$HOME/.claude/skills/` に skill が無く Unknown command になっていた。起動 cwd という state を固定していなかったのが根本
+  - 修正 (主+保険の二重化): (主) `systemd/companion-trends.service` に `WorkingDirectory=/home/miho/companion/maintenance` を追加。(保険) `scripts/trends-weekly.sh` の `REPO` を `readlink -f "$0"` 起点でスクリプト実体の親の親に解決し、claude 呼び出しを `( cd "$REPO" && timeout 600 claude -p ... )` のサブシェルで包んで cwd を固定。CONFIG/STATE/WORKDIR/VAULT_DIR/new_items/report は全て絶対パスなので cd しても他のパス解決は壊れない (確認済み)
+  - **service 定義 (WorkingDirectory) を変更したため、symlink 配置済みでも `systemctl --user daemon-reload` を要する** (再 enable は不要、daemon-reload のみで反映)
+  - 検証 OK: `bash -n` 構文 OK。`cd / && readlink -f` 起点で REPO=maintenance に解決し skill 実体が REPO 配下にあることを確認。`daemon-reload` 後 `systemctl --user show -p WorkingDirectory` で反映を確認。**systemd 経由 (`systemctl --user start`) 1 回で Result=success / exit 0**、ログに前回失敗 (Unknown command, num_turns:0) と今回成功 (cwd=maintenance, num_turns:3, total_new=33) が並んで残り cwd 固定の効果を確認。vault に `2026-W23 AIトレンド.md` 生成 → state 更新 → 通知送信まで完走。コスト実測 $0.34 (Opus)、検証は systemd 1 回にまとめ二重発生なし
 - 2026-06-04 AI トレンド週次収集レポート基盤
   - 週 1 回 systemd user timer で起動 → RSS から AI 関連記事を収集 → 重複排除 → `claude -p` で要約 → Obsidian vault に Markdown ノート 1 枚を書く。放置運用前提 (冪等・部分失敗許容・budget bound)。
   - 構成:

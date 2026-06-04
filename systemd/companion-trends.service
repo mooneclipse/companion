@@ -7,4 +7,9 @@ After=companion-bot.service
 
 [Service]
 Type=oneshot
+# claude の project skill (/trends-report) は cwd 依存で解決されるため、cwd を
+# maintenance ルートに固定する (未指定だと cwd=$HOME になり skill が見つからず
+# claude -p が Unknown command で失敗する)。スクリプト側でも cd で自己防衛しているが、
+# ここでも明示して二重化する。
+WorkingDirectory=/home/miho/companion/maintenance
 ExecStart=/home/miho/companion/maintenance/scripts/trends-weekly.sh

@@ -16,7 +16,11 @@
 
 set -euo pipefail
 
-REPO="${HOME}/companion/maintenance"
+# REPO はこのスクリプト実体 (scripts/trends-weekly.sh) の親の親 = maintenance ルート。
+# readlink -f で symlink 越しでも実体を辿る。どの cwd から起動されても以降のパスと
+# claude -p の cwd を maintenance ルートに固定するため (skill /trends-report は
+# project skill = <cwd>/.claude/skills/ にあり、cwd 依存で解決される)。
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 CONFIG="${REPO}/config/trends-sources.yaml"
 STATE="${REPO}/.state/trends-seen-urls.json"
 WORKDIR="${REPO}/.state/trends-work"
@@ -104,14 +108,18 @@ print(", ".join(fs))
     } > "$report"
 else
     # 1 件以上: claude -p で /trends-report skill を実行。rc は 1 回で確定する。
+    # project skill (/trends-report) は cwd 依存で解決されるため、必ず REPO を
+    # cwd にして呼ぶ (サブシェルで cd。これがないと systemd 経由の cwd=$HOME で
+    # Unknown command になる)。new_items / report は WORKDIR 派生の絶対パスなので
+    # cd しても読み書きは壊れない。
     prompt="/trends-report new-items.json は ${new_items} にあります。ISO 週ラベルは ${isoweek}、出力先は ${report} です。指定の書式で日本語の週次トレンドノートを ${report} に Write してください。"
-    log "invoking claude -p (/trends-report)"
-    if ! timeout 600 "$CLAUDE_BIN" -p "$prompt" \
+    log "invoking claude -p (/trends-report) in cwd=${REPO}"
+    if ! ( cd "$REPO" && timeout 600 "$CLAUDE_BIN" -p "$prompt" \
             --output-format json \
             --permission-mode acceptEdits \
             --allowedTools "Read Write Edit" \
             --max-budget-usd 1.0 \
-            < /dev/null >> "$OUR_LOG" 2>&1; then
+            < /dev/null ) >> "$OUR_LOG" 2>&1; then
         log "abort: claude -p 失敗 (state 未更新)"
         exit 1
     fi
