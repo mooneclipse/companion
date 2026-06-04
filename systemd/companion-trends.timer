@@ -1,0 +1,15 @@
+[Unit]
+Description=Weekly AI tech trends collection and report (Sat 08:00 JST)
+
+[Timer]
+# 週 1 回 土曜 08:00 JST。host tz = Asia/Tokyo (OnCalendar は JST)。
+OnCalendar=Sat 08:00:00
+# マシンが寝ていた分を起床後に補完。同週の重複実行は対象 vault ノートの
+# 存在チェック (trends-weekly.sh の冪等ゲート) で no-op に抑止する。
+Persistent=true
+# 発火時刻のゆらぎ (定刻ぴったりの集中アクセスを避ける)。
+RandomizedDelaySec=15min
+Unit=companion-trends.service
+
+[Install]
+WantedBy=timers.target
