@@ -1,34 +1,42 @@
-// ともる 実機相当デバッグ + みちゆき/ともしび/なごり/あかり 回帰。
+// ともる v1.1.0 実機相当デバッグ + みちゆき/ともしび/なごり/あかり 回帰。
 // リアルタイム採掘/精錬サバイバル(縦坑ダイブ)。灯量=視界=酸素=帰路の三位一体。
-// 文字・灯量バー・鉱石カウント・強化3択は全て DOM(なごり「文字がはみ出して読めない」
-// 真因の直接対策)。canvas には縦坑断面(タイル矩形 + per-tile ライティング + 視界円)のみ。
+// 文字・灯量バー・鉱石カウント・基地ショップ・十字キーは全て DOM(なごり「文字がはみ出して
+// 読めない」真因の直接対策)。canvas には縦坑断面(タイル矩形 + per-tile ライティング + 視界円)のみ。
 //
 // 重要: 入力は「画面座標」へ送り、最前面要素へのヒットテストを実機同様に通す。
-// 掘る/灯まきの操作は canvas が pointerdown/up で受けるが、送る前に必ず
-// elementFromPoint で最前面が #scene(=overlay を飛び越えていない)であることを assert する
-// (overlay が残って pointer を食っていればここで落ちる = みちゆき真因の検出器)。
+// 掘る/灯まきは canvas(タップ掘り/長押し)と十字キー(DOM ボタン)の両経路。送る前に必ず
+// elementFromPoint で最前面が想定要素(canvas は #scene、D-pad は btn-*)であることを assert
+// する(overlay/HUD が pointer を食っていればここで落ちる = みちゆき真因の検出器)。
 // viewport 412x915。短高 viewport(412x680/730)gate は別 section。
 //
-// 検証項目(ともる):
-//   1. /tomoru/ 200 + pageerror 0。title→(初回 howto)→もぐる=dive 遷移。
+// v1.1.0 の変更点(これを検証):
+//   - 強化が基地ショップ式(3択ガチャ廃止): 縦リスト一覧 → 在庫が足りる物を買い切り購入。
+//     鉄ティアは 2 個のみ。結晶/コアは該当鉱石所持で解放(浅場ピストン無効化)。
+//   - 基地ショップに stock(持ち帰り総量)表示 + 精錬「＋N」演出。
+//   - 操作: 十字キー(▲▼◀▶ + 中央「灯」)を画面下に追加。タップ掘り/長押しも併存。
+//   - 灯メカ再設計: LANTERN_DRAIN_FACTOR=0.3(灯の照射範囲内は灯量減×0.3=深追いの保険)、
+//     VISION_DEPTH_PENALTY=0.04(深いほど視界円上限が下がる、VISION_MIN 下限で真っ暗にしない)。
+//     あそびかた 4 行(灯の保険行追加)。
+//
+// 検証項目(ともる v1.1.0):
+//   1. /tomoru/ 200 + pageerror 0 + VERSION v1.1.1。title→あそびかた(4行)→ダイブ遷移。
 //      dive 中の最前面が #scene(overlay 飛び越えなし)。
-//   2. 核メカ: 隣接タップで掘る(深度=py が増える/掘ると前進・画面が流れる)、長押しで灯を
-//      撒く(灯数+1・灯量が LANTERN_COST 減)、時間経過で灯量減(深いほど速い)、鉱石取得
-//      (深度帯で iron/cryst/core が変わる)、地表帰還で精錬+強化3択、鉱石ティアゲート
-//      (結晶/コア在庫0なら cryst/core ティア強化が3択に出ない=浅場ピストン無効化)、
-//      灯量0でダイブ失敗(未精錬鉱石ロスト・強化資産は残る)、2ダイブ目で地形が変わる
-//      (決定論シード再生成)。
-//   3. テキスト可読性: title/howto/dive HUD/強化3択/失敗/勝利 で全テキスト・数値・鉱石
-//      カウント・強化カードの bounding rect が 412x915 内に収まりはみ出し 0。
-//   4. 実機リアリズム: 短高 viewport(412x680/730)で灯量バー・あそびかた/強化ボタン・
-//      帰路目盛りが innerHeight 内に収まり押せる。初見導線(howto 3 行)が可視。行動の
-//      フィードバック(掘った打点 popup・灯 cue・喰らい闇の灯量吸い)が見える。
-//   5. 既存作回帰: /・/tomoshibi/・/nagori/・/akari/ が 200・pageerror 0・コア操作前進。
-//   6. (gate 外)簡易戦略 bot で到達最深度分布/帰還成功率/鉱石ロスト率/1ダイブ長 + 支配戦略
-//      検出(灯を撒く vs 撒かず即帰還)。
+//   2. 十字キー操作: D-pad ボタンを画面座標タップで掘って前進(深度増)、灯ボタンで灯+1・
+//      灯量 cost 減。既存タップ掘りも前進。十字キー rect が画面内・押せる。
+//   3. ショップ式強化: 帰還で stock 表示 + 精錬「＋N」。鉄ティア2個 buyable、結晶/コアは
+//      在庫0で locked(浅場ピストン無効化)。買い切りで在庫減・取得済み化、次ダイブに永続。
+//   4. 灯メカ: 灯の近く vs 遠くで同時間窓の灯量減を比較し近くが明確に緩い(factor 0.3)。
+//      深部の視界円上限が浅部より小さく、かつ VISION_MIN 以上(真っ暗でない)。
+//   5. 核メカ(継続): 掘る前進/灯まき/灯量減衰/鉱石取得/失敗/シード再生成。
+//   6. テキスト可読性: title/howto/dive HUD/ショップ/失敗/勝利 で全テキスト・在庫・ショップ
+//      行・D-pad・数値の bounding rect が 412x915 内・はみ出し 0。
+//   7. 実機リアリズム: 短高 viewport(412x680/730)で十字キー全ボタン・灯ボタン・ショップの
+//      購入/もぐるボタンが innerHeight 内・top基準・タップ機能。初見導線(あそびかた4行)可視。
+//   8. 既存作回帰: /・/tomoshibi/・/nagori/・/akari/ が 200・pageerror 0・コア操作前進。
+//   9. (gate 外)bot で「灯撒いて深く」vs「鉄ティア買い切り後の浅場ピストン」を比較。
 import { chromium } from "playwright";
 
-const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47831";
+const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47833";
 const out = (k, v) => console.log(`  ${k}: ${JSON.stringify(v)}`);
 
 const VW = 412;
@@ -202,10 +210,14 @@ async function overflowReport(page, label, vw = VW, vh = VH) {
       // overlay
       "#ov-title", "#ov-sub", "#ov-version", "#ov-action", "#ov-action2",
       "#ov-howto", "#ov-howto .howto-line",
-      "#ov-upgrades", "#ov-upgrades .upg-card", "#ov-upgrades .upg-card *",
+      // 基地ショップ(v1.1.0): 在庫表示 + 強化縦リスト。
+      "#ov-stock", "#ov-stock .stock-ore", "#ov-stock .stock-ore *",
+      "#ov-upgrades", "#ov-upgrades .shop-row", "#ov-upgrades .shop-row *",
       // HUD
       "#depth-val", ".ore", ".ore *", ".light-cap", ".light-val",
       ".light-rail", ".light-bar", "#return-mark", "#hud-hint",
+      // 十字キー(v1.1.0)。
+      ".dpad", ".dpad-btn",
     ];
     const bad = [];
     const seen = new Set();
@@ -313,7 +325,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v1.0.0" &&
+    version === "v1.1.1" && // v1.1.1: 短高ショップ「もぐる」固定フッター修正
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "タップでもぐる" &&
@@ -322,7 +334,7 @@ let corePass = false;
     titleButtons.howtoHidden === false &&
     tappedStart === true &&
     screenHowto === "howto" &&
-    howtoInfo.lines === 3 && // あそびかた 3 行(fragments.js)
+    howtoInfo.lines === 4 && // あそびかた 4 行(v1.1.0: 灯の保険行を追加)
     howtoInfo.howtoHidden === false &&
     howtoInfo.action === "もぐる" &&
     inOverlayHowto === true &&
@@ -423,28 +435,45 @@ let mechPass = false;
     return { before, after: G.pending.iron, gainedIron: G.pending.iron > before };
   });
 
-  // --- (e) 地表帰還で精錬 + 強化3択。鉱石ティアゲート(結晶/コア在庫0で cryst/core 出ない) ---
-  // pending に鉄だけ持たせて surfaceReturn → upgrade 画面。3 択が全て iron ティアであること。
-  const upgradeGate = await page.evaluate(() => {
+  // --- (e) 地表帰還で精錬 + 基地ショップ(v1.1.0)。在庫表示 + 精錬「＋N」+ ティアゲート ---
+  // pending に鉄だけ持たせて surfaceReturn → ショップ画面。鉄ティア 2 個だけが buyable、
+  // 結晶/コアティアは在庫 0 で locked(浅場ピストン無効化: 鉄だけでは上位が買えない)。
+  const shopGate = await page.evaluate(() => {
     G.stock = { iron: 0, cryst: 0, core: 0 };
-    G.pending = { iron: 5, cryst: 0, core: 0 };
+    G.appliedUpgrades = [];
+    G.pending = { iron: 8, cryst: 0, core: 0 };
     G.py = 0;
     G.gotCore = false;
-    surfaceReturn(); // 実経路: 精錬(stock へ)→ showUpgrade。
-    const cards = [...document.querySelectorAll("#ov-upgrades .upg-card")];
-    const tiers = cards.map((c) => c.querySelector(".upg-tier").className.replace("upg-tier ", ""));
+    surfaceReturn(); // 実経路: 精錬(stock へ + lastSmelt)→ showUpgrade(renderShop)。
+    const rows = [...document.querySelectorAll("#ov-upgrades .shop-row")];
+    const ironTierIds = UPGRADES.filter((u) => u.tier === "iron").map((u) => u.id);
+    // 各行のティアと状態(buyable / locked / owned)を分類。
+    const classify = rows.map((r, i) => {
+      const u = UPGRADES[i]; // renderShop は UPGRADES 順で全件出す。
+      return { id: u.id, tier: u.tier, buyable: r.classList.contains("buyable"), locked: r.classList.contains("locked"), owned: r.classList.contains("owned") };
+    });
+    // 在庫表示(stock)に鉄 8 が出ているか。
+    const stockSpans = [...document.querySelectorAll("#ov-stock .stock-ore")];
+    const stockIronText = stockSpans.find((s) => s.className.includes("iron"))?.textContent || "";
+    // 精錬「＋N」演出(初回表示)。
+    const smeltPlus = [...document.querySelectorAll("#ov-stock .stock-plus")].map((p) => p.textContent);
     return {
       screen: G.screen,
-      stockIron: G.stock.iron, // 5 精錬されたか
-      cardCount: cards.length,
-      tiers,
-      anyNonIron: tiers.some((t) => t !== "iron"),
+      title: document.getElementById("ov-title").textContent,
+      stockIron: G.stock.iron, // 8 精錬されたか
+      rowCount: rows.length, // 全 UPGRADES(8 件)が縦リストに出る
+      ironTierCount: ironTierIds.length, // 鉄ティアは 2 個(v1.1.0)
+      ironBuyable: classify.filter((c) => c.tier === "iron" && c.buyable).length,
+      crystLockedAll: classify.filter((c) => c.tier === "cryst").every((c) => c.locked && !c.buyable),
+      coreLockedAll: classify.filter((c) => c.tier === "core").every((c) => c.locked && !c.buyable),
+      stockIronText, smeltPlus,
+      skipBtn: document.getElementById("ov-action2").textContent,
     };
   });
-  const upgradeOverflow = await overflowReport(page, "upgrade-3choice");
+  const upgradeOverflow = await overflowReport(page, "shop-baseshop");
   if (upgradeOverflow.overflowCount > 0) overflowFails.push(upgradeOverflow);
 
-  // 結晶在庫を持たせると cryst ティアが解放され 3 択に現れる(ゲートの対偶確認)。
+  // 結晶/コア在庫を持たせるとティアが解放される(ゲートの対偶)。
   const crystUnlocks = await page.evaluate(() => {
     G.stock = { iron: 5, cryst: 3, core: 0 };
     const unlocked = UPGRADES.filter((u) => upgradeUnlocked(u, G.stock));
@@ -454,13 +483,38 @@ let mechPass = false;
     };
   });
 
-  // 強化を 1 つ取って次ダイブ開始 → 強化が反映されたか(初期灯量+ なら lightMax 増)。
+  // 買い切り購入: ショップで鉄ティアを実 onclick で買う → 在庫が減り「取得済み」化、
+  // 次ダイブ開始で強化が永続反映(初期灯量+15 で lightMax 増)。
+  const shopBuy = await page.evaluate(() => {
+    G.stock = { iron: 8, cryst: 0, core: 0 };
+    G.appliedUpgrades = [];
+    G.pending = { iron: 0, cryst: 0, core: 0 };
+    G.py = 0; G.gotCore = false;
+    showUpgrade(); // ショップ再描画。
+    // iron_lightmax(cost iron3)の行を探して実 onclick で購入。
+    const ironIdx = UPGRADES.findIndex((u) => u.id === "iron_lightmax");
+    const row = document.querySelectorAll("#ov-upgrades .shop-row")[ironIdx];
+    const stockBefore = G.stock.iron;
+    const buyableBefore = row.classList.contains("buyable");
+    row.onclick(); // 実経路: 在庫から支払い + appliedUpgrades へ積み + renderShop。
+    const rowAfter = document.querySelectorAll("#ov-upgrades .shop-row")[ironIdx];
+    const ownedAfter = rowAfter.classList.contains("owned");
+    const ownedText = rowAfter.querySelector(".shop-owned")?.textContent || "";
+    // 次ダイブで強化が反映されるか。
+    startDive();
+    return {
+      buyableBefore,
+      stockBefore, stockAfter: G.stock.iron, // 3 減って 5
+      ownedAfter, ownedText,
+      appliedHas: G.appliedUpgrades.includes("iron_lightmax"),
+      lightMax: G.lightMax, expectedLightMax: CONST.LIGHT_MAX + 15,
+    };
+  });
+
+  // 強化適用の単体確認(recomputeUpg 経路、初期灯量+15)。
   const upgradeApplied = await page.evaluate(() => {
     G.stock = { iron: 10, cryst: 0, core: 0 };
-    G.appliedUpgrades = [];
-    const u = UPGRADES.find((x) => x.id === "iron_lightmax"); // 初期灯量+15
-    for (const k in u.cost) G.stock[k] -= u.cost[k];
-    G.appliedUpgrades.push(u.id);
+    G.appliedUpgrades = ["iron_lightmax"];
     recomputeUpg();
     return { lightMax: G.lightMax, expected: CONST.LIGHT_MAX + 15 };
   });
@@ -508,9 +562,10 @@ let mechPass = false;
   out("灯量減衰: 浅(py3) vs 深(py30) の 0.8s 減少量", { shallow: +drainShallow.toFixed(2), deep: +drainDeep.toFixed(2), deeperFaster: drainDeeperFaster });
   out("鉱石ティア帯整合(浅iron/中cryst/深core)", tierMap);
   out("鉱石取得 実経路で pending.iron 増", oreBrokeReal);
-  out("地表帰還: 精錬+強化3択, ティアゲート(鉄のみ→全iron)", upgradeGate);
-  out("強化3択 可読性 overflow", upgradeOverflow.overflowCount);
+  out("地表帰還: 基地ショップ(在庫表示/精錬＋N/鉄ティア2個buyable/結晶コアlocked)", shopGate);
+  out("基地ショップ 可読性 overflow", upgradeOverflow.overflowCount);
   out("結晶在庫で cryst 解放/core は据置ロック", crystUnlocks);
+  out("買い切り購入(在庫減/取得済み化/次ダイブ永続)", shopBuy);
   out("強化適用: 初期灯量+15 で lightMax 増", upgradeApplied);
   out("灯量0で失敗: pendingロスト/stock・強化は残る", failCase);
   out("失敗画面 可読性 overflow", failOverflow.overflowCount);
@@ -529,13 +584,28 @@ let mechPass = false;
     tierMap.midIsCryst === true &&
     tierMap.deepIsCore === true &&
     oreBrokeReal.gainedIron === true &&
-    upgradeGate.screen === "upgrade" &&
-    upgradeGate.stockIron === 5 && // 精錬された
-    upgradeGate.cardCount === 3 &&
-    upgradeGate.anyNonIron === false && // 鉄のみ在庫 → 3 択は全 iron ティア(ゲート機能)
+    // 基地ショップ(v1.1.0): 精錬 + 在庫表示 + 鉄ティア 2 個 buyable + 結晶/コア locked。
+    shopGate.screen === "upgrade" &&
+    shopGate.title === "基地（強化を買う）" &&
+    shopGate.stockIron === 8 && // 鉄 8 精錬された
+    shopGate.rowCount === 8 && // 全 UPGRADES(鉄2+結晶3+コア3)が縦リストに出る
+    shopGate.ironTierCount === 2 && // 鉄ティアは 2 個のみ(v1.1.0)
+    shopGate.ironBuyable === 2 && // 鉄ティア 2 個が buyable(在庫 8 で両方買える)
+    shopGate.crystLockedAll === true && // 結晶在庫 0 → 結晶ティア全 locked(浅場ピストン無効化)
+    shopGate.coreLockedAll === true && // コア在庫 0 → コアティア全 locked
+    shopGate.stockIronText.includes("8") && // 在庫表示に鉄 8
+    shopGate.smeltPlus.some((t) => t.includes("8")) && // 精錬「＋8」演出
+    shopGate.skipBtn === "もぐる" &&
     upgradeOverflow.overflowCount === 0 &&
     crystUnlocks.crystUnlockedNow === true && // 結晶在庫で cryst 解放(対偶)
     crystUnlocks.coreStillLocked === true && // コア在庫 0 で core は未解放
+    // 買い切り購入: 在庫減 + 取得済み化 + 次ダイブ永続。
+    shopBuy.buyableBefore === true &&
+    shopBuy.stockAfter === shopBuy.stockBefore - 3 && // iron_lightmax は cost iron3
+    shopBuy.ownedAfter === true &&
+    shopBuy.ownedText === "取得済み" &&
+    shopBuy.appliedHas === true &&
+    shopBuy.lightMax === shopBuy.expectedLightMax && // 次ダイブに永続反映(lightMax 115)
     upgradeApplied.lightMax === upgradeApplied.expected && // 強化が次ダイブに反映
     failCase.screen === "fail" &&
     failCase.pendingLost === true && // 未精錬鉱石ロスト
@@ -546,6 +616,183 @@ let mechPass = false;
     seedRegen.diffTiles > 0 && // 2 ダイブ目で地形が変わる
     seedRegen.deterministic === true; // 同 seed は同結果(決定論)
   out("PASS(核メカ: 掘る/灯/減衰/鉱石/精錬強化/ティアゲート/失敗/シード)", mechPass);
+  await ctx.close();
+}
+
+// ============================================================================
+// (新 gate・v1.1.0) 十字キー操作: D-pad ボタンを画面座標タップで掘って前進 / 灯ボタンで灯まき。
+// ============================================================================
+// D-pad は HUD 内の DOM ボタン(.dpad pointer-events:auto)。画面座標タップ(最前面が btn-* で
+// あることを assert)で digDir→digAdjacent 経路を通す。タップ掘り(canvas)と併存することも確認。
+let dpadPass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/tomoru/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToDive(page);
+
+  // D-pad ボタンの画面中心 + 最前面が当該ボタンであることを返すヘルパ。
+  async function dpadTopCheck(sel) {
+    return page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return { exists: false };
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const top = document.elementFromPoint(cx, cy);
+      const innerH = window.innerHeight, innerW = window.innerWidth;
+      return {
+        exists: true, cx, cy,
+        topIsBtn: !!top && (top === el || el.contains(top) || top.id === el.id),
+        topId: top ? (top.id || top.className) : "none",
+        within: r.top >= -0.5 && r.bottom <= innerH + 0.5 && r.left >= -0.5 && r.right <= innerW + 0.5,
+        rect: { t: +r.top.toFixed(1), b: +r.bottom.toFixed(1), l: +r.left.toFixed(1), r: +r.right.toFixed(1) },
+      };
+    }, sel);
+  }
+  // 下ボタンを「前進するまで」最大 6 回画面座標タップ(岩は複数手)。前進=py 増。
+  async function tapDpadUntilMove(sel, dirCheck) {
+    let allTopBtn = true, moved = false;
+    for (let k = 0; k < 6; k++) {
+      const before = await page.evaluate(() => ({ px: G.px, py: G.py, scr: G.screen }));
+      if (before.scr !== "dive") break;
+      const chk = await dpadTopCheck(sel);
+      if (!chk.exists) return { moved: false, allTopBtn: false, within: false };
+      if (!chk.topIsBtn) allTopBtn = false;
+      await page.mouse.move(chk.cx, chk.cy);
+      await page.mouse.click(chk.cx, chk.cy);
+      await page.waitForTimeout(70);
+      const after = await page.evaluate(() => ({ px: G.px, py: G.py }));
+      if (after.px !== before.px || after.py !== before.py) { moved = true; break; }
+    }
+    return { moved, allTopBtn };
+  }
+
+  // 全 D-pad ボタンが画面内・最前面が自身(HUD/overlay が pointer を食わない)。
+  const upChk = await dpadTopCheck("#btn-up");
+  const downChk = await dpadTopCheck("#btn-down");
+  const leftChk = await dpadTopCheck("#btn-left");
+  const rightChk = await dpadTopCheck("#btn-right");
+  const lanternChk = await dpadTopCheck("#btn-lantern");
+  const allBtnWithin = [upChk, downChk, leftChk, rightChk, lanternChk].every((c) => c.exists && c.within);
+  const allBtnTop = [upChk, downChk, leftChk, rightChk, lanternChk].every((c) => c.topIsBtn);
+
+  // 下ボタンで掘って前進(py 増)。最前面が btn-down であること(overlay/canvas 飛び越えなし)。
+  const pyBeforeDpad = await page.evaluate(() => G.py);
+  const downResult = await tapDpadUntilMove("#btn-down");
+  const pyAfterDpad = await page.evaluate(() => G.py);
+
+  // 灯ボタンで灯まき: 灯数+1・灯量 cost 減。画面座標タップ(最前面が btn-lantern)。
+  const lampBefore = await page.evaluate(() => ({ lanterns: G.lanterns.size, light: G.light, cost: Math.max(1, CONST.LANTERN_COST + G.upg.lanternCostAdd) }));
+  const lanternBtn = await dpadTopCheck("#btn-lantern");
+  await page.mouse.move(lanternBtn.cx, lanternBtn.cy);
+  await page.mouse.click(lanternBtn.cx, lanternBtn.cy);
+  await page.waitForTimeout(80);
+  const lampAfter = await page.evaluate(() => ({ lanterns: G.lanterns.size, light: G.light }));
+  const dpadLampAdded = lampAfter.lanterns === lampBefore.lanterns + 1;
+  const dpadLampCostOk = Math.abs((lampBefore.light - lampAfter.light) - lampBefore.cost) < 0.6;
+
+  // 併存確認: 既存のタップ掘り(canvas へ画面座標)も前進する。
+  const pyBeforeTap = await page.evaluate(() => G.py);
+  let tapMoved = false;
+  for (let s = 0; s < 8 && !tapMoved; s++) {
+    const r = await digUntilMove(page, 0, 1);
+    if (r.moved) tapMoved = true;
+    if (!r.allScene) break;
+  }
+  const pyAfterTap = await page.evaluate(() => G.py);
+
+  console.log("== ともる 十字キー操作(v1.1.0) ==");
+  out("D-pad 全ボタンが画面内", { allBtnWithin, up: upChk.rect, down: downChk.rect, lantern: lanternChk.rect });
+  out("D-pad 全ボタンの最前面が自身(pointer 食われなし)", { allBtnTop, downTopId: downChk.topId, lanternTopId: lanternChk.topId });
+  out("下ボタンで掘って前進: py", { before: pyBeforeDpad, after: pyAfterDpad, moved: downResult.moved, allTopBtn: downResult.allTopBtn });
+  out("灯ボタンで灯まき", { before: lampBefore.lanterns, after: lampAfter.lanterns, cost: lampBefore.cost, costOk: dpadLampCostOk });
+  out("併存: タップ掘りも前進", { before: pyBeforeTap, after: pyAfterTap, moved: tapMoved });
+
+  dpadPass =
+    errors.length === 0 &&
+    allBtnWithin === true && // 全 D-pad ボタンが innerHeight/innerWidth 内
+    allBtnTop === true && // 最前面が各ボタン自身(overlay/HUD/canvas に食われない)
+    downResult.moved === true && // 下ボタンで掘って前進
+    downResult.allTopBtn === true && // 全タップが btn-down に届いた
+    pyAfterDpad > pyBeforeDpad &&
+    dpadLampAdded === true && // 灯ボタンで灯+1
+    dpadLampCostOk === true && // 灯量が cost 減
+    tapMoved === true && // 既存タップ掘りも併存して前進
+    pyAfterTap > pyBeforeTap;
+  out("PASS(十字キー操作: 掘る前進/灯まき/タップ併存/全ボタン可視)", dpadPass);
+  await ctx.close();
+}
+
+// ============================================================================
+// (新 gate・v1.1.0) 灯メカ再設計: 灯の近くで灯量減が緩む(factor 0.3) + 深部の視界円上限低下。
+// ============================================================================
+let lightMechPass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/tomoru/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToDive(page);
+
+  // (A) LANTERN_DRAIN_FACTOR: 灯の照射範囲内 vs 範囲外で、同じ深度・同じ時間窓の灯量減を比較。
+  // tick が G.nearLantern を毎フレーム更新するので、実時間経過(実 tick)で drain を観測する。
+  // 灯のそば: 自機の現在地に灯を置く(範囲内)→ near=true。遠く: 灯を遠方に置く→ near=false。
+  const drainNear = await page.evaluate(async () => {
+    G.py = 15; G.light = 90;
+    G.lanterns = new Set([G.px + "," + G.py]); // 自機の足元に灯(照射範囲内)。
+    const before = G.light;
+    await new Promise((r) => setTimeout(r, 900)); // 実 tick が drain + nearLantern 更新。
+    return { drained: before - G.light, near: G.nearLantern };
+  });
+  const drainFar = await page.evaluate(async () => {
+    G.py = 15; G.light = 90;
+    G.lanterns = new Set(["0,0"]); // 遠方の灯(照射範囲外)。
+    const before = G.light;
+    await new Promise((r) => setTimeout(r, 900));
+    return { drained: before - G.light, near: G.nearLantern };
+  });
+  // 灯のそばが明確に緩い(factor 0.3 なので理論上 far の ~0.3 倍。マージンを見て near < far*0.6)。
+  const lanternSavesDrain = drainNear.drained < drainFar.drained * 0.6 && drainFar.drained > 0;
+
+  // 灯のそば状態が HUD バーの safe クラスとヒントに見える(利点の可視化)。
+  const nearVisible = await page.evaluate(async () => {
+    G.py = 15; G.light = 90;
+    G.lanterns = new Set([G.px + "," + G.py]);
+    await new Promise((r) => setTimeout(r, 200)); // tick が nearLantern を更新。
+    const rail = document.querySelector(".light-rail");
+    return { safeClass: rail.classList.contains("safe"), near: G.nearLantern };
+  });
+
+  // (B) VISION_DEPTH_PENALTY: 深部の視界円上限が浅部より小さい。かつ VISION_MIN 以上(真っ暗でない)。
+  const visionCaps = await page.evaluate(() => {
+    return {
+      capShallow: effVisionCap(2),
+      capMid: effVisionCap(20),
+      capDeep: effVisionCap(40),
+      visionMin: CONST.VISION_MIN,
+      visionMax: CONST.VISION_MAX,
+    };
+  });
+  const visionDeeperSmaller = visionCaps.capShallow > visionCaps.capMid && visionCaps.capMid > visionCaps.capDeep;
+  const visionNotPitchBlack = visionCaps.capDeep >= visionCaps.visionMin;
+
+  console.log("== ともる 灯メカ再設計(v1.1.0) ==");
+  out("灯のそば vs 遠く の灯量減(同 py15・0.9s)", { near: +drainNear.drained.toFixed(2), far: +drainFar.drained.toFixed(2), nearFlag: drainNear.near, farFlag: drainFar.near });
+  out("灯のそばで灯量減が緩む(factor 0.3)", lanternSavesDrain);
+  out("灯のそば状態が HUD バーに見える(safe class)", nearVisible);
+  out("視界円上限: 浅/中/深 + VISION_MIN/MAX", visionCaps);
+  out("深いほど視界円上限が小さい", visionDeeperSmaller);
+  out("深部でも VISION_MIN 以上(真っ暗でない)", visionNotPitchBlack);
+
+  lightMechPass =
+    errors.length === 0 &&
+    drainNear.near === true && // 足元の灯で near=true
+    drainFar.near === false && // 遠方の灯で near=false
+    lanternSavesDrain === true && // 灯のそばで灯量減が明確に緩む
+    nearVisible.safeClass === true && // 利点が HUD に見える
+    visionDeeperSmaller === true && // 深いほど視界円上限が下がる
+    visionNotPitchBlack === true && // VISION_MIN 下限で真っ暗にしない(理不尽死回避)
+    visionCaps.capShallow <= visionCaps.visionMax; // 浅部でも VISION_MAX を超えない
+  out("PASS(灯メカ: 灯のそば保険/深部視界低下/真っ暗回避)", lightMechPass);
   await ctx.close();
 }
 
@@ -722,10 +969,11 @@ let diveReadPass = false;
 // ============================================================================
 // 実機バグ対策(あかり v1.3.0): モバイル Chrome のアドレスバーで可視高が縮むと、bottom 基準
 // 配置だと最下部要素がツールバー裏に切れる。ともるは .hud/.overlay を top:0 + svh で組んで
-// いる。headless は実ツールバーが無く svh=vh=innerHeight になる限界(あかり同様)を理解し、
-// 修正後の受け入れ条件「短可視高でも 灯量バー(.light-bar)・帰路目盛り(#return-mark)・
-// あそびかた/もぐる/強化ボタンが innerHeight 内・top>=0、ボタンが画面座標タップで機能」を
-// 短高 viewport で必須化する。
+// いる。headless は実ツールバーが無く svh=vh=innerHeight になる限界(あかり同様。正直に明記)
+// を理解し、修正後の受け入れ条件を短高 viewport で必須化する。v1.1.0 では十字キー(D-pad は
+// .controls bottom 基準で配置=ツールバー裏に最も切れやすい)と基地ショップ縦リスト・購入ボタン
+// が追加されたので、これらも対象に含める:「短可視高でも 灯量バー・帰路目盛り・D-pad 全ボタン・
+// 灯ボタン・ショップの在庫/縦リスト/購入/もぐるボタンが innerHeight 内・top>=0・タップ機能」。
 const SHORT_VIEWPORTS = [
   { vw: 412, vh: 680 },
   { vw: 412, vh: 730 },
@@ -788,14 +1036,69 @@ for (const VP of SHORT_VIEWPORTS) {
   const markVisible = fullyVisible(returnMarkRect, innerH, innerW);
   const depthVisible = fullyVisible(depthRect, innerH, innerW);
 
-  // 強化3択でボタン(そのまま もぐる)とカードが innerHeight 内・タップ機能。
-  await page.evaluate(() => { G.stock = { iron: 0, cryst: 0, core: 0 }; G.pending = { iron: 6, cryst: 0, core: 0 }; G.py = 0; G.gotCore = false; surfaceReturn(); });
+  // 十字キー(v1.1.0): 全 D-pad ボタン + 灯ボタンが innerHeight 内・タップ機能(ツールバー裏に
+  // 切れない)。下ボタンを実タップして掘り前進が機能することも短高で確認。
+  const dpadRects = {};
+  for (const sel of ["#btn-up", "#btn-down", "#btn-left", "#btn-right", "#btn-lantern"]) {
+    dpadRects[sel] = await measureRect(page, sel);
+  }
+  const dpadAllVisible = Object.values(dpadRects).every((r) => fullyVisible(r, innerH, innerW));
+  // 下ボタンを実タップ → 掘って前進(短高でも D-pad が機能)。
+  const pyB = await page.evaluate(() => G.py);
+  let dpadWorksShort = false;
+  for (let k = 0; k < 6; k++) {
+    const box = await page.evaluate(() => { const el = document.getElementById("btn-down"); const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    const top = await page.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); return e ? e.id : "none"; }, [box.x, box.y]);
+    if (top !== "btn-down") break;
+    await page.mouse.click(box.x, box.y);
+    await page.waitForTimeout(70);
+    const pyN = await page.evaluate(() => G.py);
+    if (pyN !== pyB) { dpadWorksShort = true; break; }
+  }
+
+  // 基地ショップ(v1.1.0): 縦リスト + 在庫 + 購入/もぐるボタンが innerHeight 内・タップ機能。
+  // 鉄を持ち帰って買い切り購入ボタンが押せること、もぐるで dive へ戻ることを短高で確認。
+  await page.evaluate(() => { G.stock = { iron: 0, cryst: 0, core: 0 }; G.appliedUpgrades = []; G.pending = { iron: 8, cryst: 0, core: 0 }; G.py = 0; G.gotCore = false; surfaceReturn(); });
   await page.waitForTimeout(300);
   const upgScreen = await page.evaluate(() => G.screen);
-  const upgOv = await overflowReport(page, `${tag}-upgrade`, VP.vw, VP.vh);
+  const upgOv = await overflowReport(page, `${tag}-shop`, VP.vw, VP.vh);
+  const stockRect = await measureRect(page, "#ov-stock");
+  const firstRowRect = await measureRect(page, "#ov-upgrades .shop-row");
   const skipBtnRect = await measureRect(page, "#ov-action2");
+  const stockVisible = fullyVisible(stockRect, innerH, innerW);
+  const firstRowVisible = fullyVisible(firstRowRect, innerH, innerW);
   const skipVisible = fullyVisible(skipBtnRect, innerH, innerW);
-  // 「そのまま もぐる」を実タップ → dive へ戻る(短高でボタンが機能)。
+  // 鉄ティアの buyable 行を実タップ購入 → 取得済み化(短高でショップ行が押せる)。
+  const buyResult = await page.evaluate(() => {
+    const ironIdx = UPGRADES.findIndex((u) => u.id === "iron_lightmax");
+    const rows = document.querySelectorAll("#ov-upgrades .shop-row");
+    const row = rows[ironIdx];
+    if (!row) return { found: false };
+    const r = row.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const top = document.elementFromPoint(cx, cy);
+    const topInRow = !!top && (top === row || row.contains(top));
+    return { found: true, cx, cy, topInRow, within: r.top >= -0.5 && r.bottom <= window.innerHeight + 0.5 };
+  });
+  let buyWorksShort = false;
+  if (buyResult.found && buyResult.topInRow) {
+    await page.mouse.click(buyResult.cx, buyResult.cy);
+    await page.waitForTimeout(120);
+    buyWorksShort = await page.evaluate(() => G.appliedUpgrades.includes("iron_lightmax"));
+  }
+  // 「もぐる」ボタン中心の elementFromPoint がボタン自身を返すか(=実際に押せる)。rect が
+  // innerHeight 内でも、panel が overflow-y スクロールで中身を clip し、ボタンが panel の clip
+  // 境界の外(overlay 背景の上)に描画されると、見えていてもタップは overlay に当たり押せない。
+  // skipVisible(rect が画面内)だけでは拾えない実機相当のヒット不能をここで検出する。
+  const skipHittable = await page.evaluate(() => {
+    const el = document.getElementById("ov-action2");
+    if (!el || el.hidden) return false;
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const top = document.elementFromPoint(cx, cy);
+    return !!top && (top === el || el.contains(top)); // ボタン自身/子が最前面(overlay 背景でない)
+  });
+  // 「もぐる」を実タップ → dive へ戻る(短高でボタンが機能)。
   const tappedSkip = await tapSelector(page, "#ov-action2");
   await page.waitForTimeout(400);
   const backToDive = await page.evaluate(() => G.screen);
@@ -804,15 +1107,18 @@ for (const VP of SHORT_VIEWPORTS) {
     innerH, startVisible, howtoBtnVisible, titleOverflow: titleOv.overflowCount,
     howtoScreen, howtoStartVisible, howtoOverflow: howtoOv.overflowCount,
     barVisible, valVisible, markVisible, depthVisible, diveOverflow: diveOv.overflowCount,
-    upgScreen, skipVisible, upgradeOverflow: upgOv.overflowCount, tappedSkip, backToDive,
+    dpadAllVisible, dpadWorksShort,
+    upgScreen, stockVisible, firstRowVisible, skipVisible, skipHittable, shopOverflow: upgOv.overflowCount,
+    buyWorksShort, tappedSkip, backToDive,
   };
   const ok =
     errors.length === 0 &&
     startVisible && howtoBtnVisible && titleOv.overflowCount === 0 &&
     howtoScreen === "howto" && howtoStartVisible && howtoOv.overflowCount === 0 &&
     barVisible && valVisible && markVisible && depthVisible && diveOv.overflowCount === 0 &&
-    upgScreen === "upgrade" && skipVisible && upgOv.overflowCount === 0 &&
-    tappedSkip === true && backToDive === "dive";
+    dpadAllVisible && dpadWorksShort &&
+    upgScreen === "upgrade" && stockVisible && firstRowVisible && skipVisible && skipHittable && upgOv.overflowCount === 0 &&
+    buyWorksShort && tappedSkip === true && backToDive === "dive";
   shortVpLog.push({ tag, checks, ok });
   if (!ok) { shortVpPass = false; shortVpFails.push({ tag, checks, errors, titleOv, howtoOv, diveOv, upgOv }); }
   await ctx.close();
@@ -834,23 +1140,29 @@ let botSummary = null;
   // bot は実プレイ経路(digAdjacent/dropLantern/surfaceReturn/checkFail)を JS から駆動する。
   // 入力イベントの往復はバランス計測には重いので、ここはゲームロジック関数を直接回す
   // (合否 gate ではない＝面白さの相関指標。操作の実機性は上の gate で担保済み)。
-  async function runStrategy(strategy) {
+  async function runStrategy(strategy, opts = {}) {
     const reachedDepths = [];
     let returns = 0, fails = 0, oreLostRuns = 0;
     const diveDurations = [];
     let botErrors = 0;
+    // 浅場ピストン無意味化の集計: piston で稼いだ鉄に「使い道」が残るか。
+    // 鉄ティア 2 個を既取得(prebuyIron)にした上で浅場稼ぎした後、ショップで buyable な未取得
+    // 強化があるか(鉄だけで買えるものが残っているか)。鉄ティアが尽きていて結晶/コア在庫が無い
+    // なら buyable=0 = 浅場稼ぎの鉄に使い道が無い(深く潜る誘因が出ている)。
+    let pistonStuckRuns = 0, pistonBuyableSum = 0, ironStockSum = 0;
     for (let run = 0; run < N; run++) {
       const { ctx, page, errors } = await openPage({ seedHowto: true });
       try {
         await page.goto(`${BASE}/tomoru/`, { waitUntil: "domcontentloaded" });
         await page.waitForTimeout(120);
         // 記録をリセットしてからダイブ開始(startDive を直接呼ぶ＝howto を挟まずダイブへ)。
-        await page.evaluate(() => {
+        await page.evaluate((prebuyIron) => {
           try { localStorage.removeItem("tomoru_best_depth"); localStorage.removeItem("tomoru_best_smelt"); } catch (e) {}
-          G.appliedUpgrades = [];
+          // 鉄ティア 2 個を既取得にする(浅場ピストン無意味化の検証用)。
+          G.appliedUpgrades = prebuyIron ? UPGRADES.filter((u) => u.tier === "iron").map((u) => u.id) : [];
           G.stock = { iron: 0, cryst: 0, core: 0 };
           startDive();
-        });
+        }, !!opts.prebuyIron);
         await page.waitForTimeout(80);
 
         // 1 ダイブを strategy に従って自走。実時間の灯量減衰を使うと N×秒かかるので、
@@ -916,6 +1228,24 @@ let botSummary = null;
         if (result.returned) returns++;
         if (result.failed) { fails++; oreLostRuns++; }
         diveDurations.push(result.actions * 0.9); // 想定秒。
+
+        // 浅場ピストン無意味化の集計(prebuyIron 時のみ): 帰還してショップに居る状態で
+        // buyable(在庫が足りて未取得)な強化が残っているか。鉄ティア取得済み + 浅場稼ぎで
+        // 鉄しか無い → buyable=0 なら「稼いだ鉄に使い道なし=深く潜る誘因」を意味する。
+        if (opts.prebuyIron && result.returned) {
+          const shopState = await page.evaluate(() => {
+            // surfaceReturn で upgrade 画面に居る。buyable な未取得強化数 + 鉄在庫。
+            let buyable = 0;
+            for (const u of UPGRADES) {
+              const owned = G.appliedUpgrades.includes(u.id);
+              if (!owned && upgradeUnlocked(u, G.stock) && upgradeCanAfford(u, G.stock)) buyable++;
+            }
+            return { buyable, ironStock: G.stock.iron, crystStock: G.stock.cryst, coreStock: G.stock.core };
+          });
+          pistonBuyableSum += shopState.buyable;
+          ironStockSum += shopState.ironStock;
+          if (shopState.buyable === 0) pistonStuckRuns++; // 鉄に使い道が無い
+        }
         if (errors.length) botErrors += errors.length;
       } catch (e) {
         botErrors++;
@@ -935,12 +1265,19 @@ let botSummary = null;
       avgMaxDepth: avg(reachedDepths),
       maxReached: Math.max(...reachedDepths, 0),
       avgDiveSeconds: avg(diveDurations),
+      // 浅場ピストン無意味化(prebuyIron 時のみ意味を持つ)。
+      pistonStuckRate: opts.prebuyIron ? +((pistonStuckRuns / N) * 100).toFixed(1) + "%" : "n/a",
+      avgBuyableAfterDive: opts.prebuyIron && returns ? +(pistonBuyableSum / returns).toFixed(2) : "n/a",
+      avgIronStockPiston: opts.prebuyIron && returns ? +(ironStockSum / returns).toFixed(1) : "n/a",
       botErrors,
     };
   }
 
   const lantern = await runStrategy("lantern");
   const piston = await runStrategy("piston");
+  // 鉄ティア 2 個を既取得にして浅場ピストンを回す = v1.1.0 の核(鉄ティア買い切り後に浅場
+  // 稼ぎの意味が消えるか)を直接測る。
+  const pistonPrebought = await runStrategy("piston", { prebuyIron: true });
 
   // 支配戦略の検出: piston(灯撒かず浅場即帰還)が lantern(灯撒いて深く)より到達深度・帰還率
   // で明確に優位なら単調化リスクとして名指し。判定: piston の到達深度が lantern を上回り、かつ
@@ -950,11 +1287,17 @@ let botSummary = null;
     parseFloat(piston.returnRate) >= parseFloat(lantern.returnRate) &&
     piston.maxReached <= lantern.maxReached; // piston は深部に届かないのが健全(届くなら浅場で十分=支配)
 
-  botSummary = { lantern, piston, pistonDominant };
+  // 浅場ピストン無意味化(v1.1.0 の核): 鉄ティア買い切り後、浅場で稼いだ鉄に使い道が無い
+  // (= ショップに buyable が残らない)割合が高いなら、深く潜る誘因が出ている = 設計意図どおり。
+  const ironPistonNeutralized = parseFloat(pistonPrebought.pistonStuckRate) >= 50;
+
+  botSummary = { lantern, piston, pistonPrebought, pistonDominant, ironPistonNeutralized };
   console.log("== ともる 面白さ代理レポート(gate 外・lead のバランス判断材料) ==");
   out("灯を撒く戦略(lantern)", lantern);
   out("灯撒かず浅場即帰還(piston)", piston);
+  out("鉄ティア買い切り後の浅場ピストン(piston-prebought)", pistonPrebought);
   out("浅場ピストンが支配的か(単調化リスク)", pistonDominant);
+  out("鉄ティア買い切り後、浅場稼ぎの意味が消えているか(深潜誘因)", { ironPistonNeutralized, stuckRate: pistonPrebought.pistonStuckRate, avgBuyable: pistonPrebought.avgBuyableAfterDive });
 }
 
 // ============================================================================
@@ -1053,12 +1396,14 @@ const akariPass = await akariRegression();
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("ともる コア(遷移/初回howto/overlay飛び越えなし/可読性)", corePass);
-out("ともる 核メカ(掘る/灯/減衰/鉱石/精錬強化/ティアゲート/失敗/シード)", mechPass);
+out("ともる コア(遷移/あそびかた4行/overlay飛び越えなし/可読性)", corePass);
+out("ともる 核メカ(掘る/灯/減衰/鉱石/ショップ/ティアゲート/失敗/シード)", mechPass);
+out("ともる 十字キー操作(v1.1.0: 掘る前進/灯まき/タップ併存/可視)", dpadPass);
+out("ともる 灯メカ(v1.1.0: 灯のそば保険/深部視界低下/真っ暗回避)", lightMechPass);
 out("ともる 勝利経路(clear)", clearPass);
 out("ともる 喰らい闇 + フィードバック可視", mawPass);
 out("ともる dive HUD 可読性 + 帰路目盛り", diveReadPass);
-out("ともる 短高 viewport(実機リアリズム)", shortVpPass);
+out("ともる 短高 viewport(実機リアリズム: D-pad/ショップ込み)", shortVpPass);
 out("みちゆき 回帰", michiyukiPass);
 out("ともしび 回帰", tomoshibiPass);
 out("なごり 回帰", nagoriPass);
@@ -1068,7 +1413,7 @@ for (const f of overflowFails) out("  overflow", f);
 out("面白さ代理レポート(参考)", botSummary);
 
 const allPass =
-  corePass && mechPass && clearPass && mawPass && diveReadPass && shortVpPass &&
+  corePass && mechPass && dpadPass && lightMechPass && clearPass && mawPass && diveReadPass && shortVpPass &&
   michiyukiPass && tomoshibiPass && nagoriPass && akariPass && overflowFails.length === 0;
 out("ALL PASS", allPass);
 process.exit(allPass ? 0 : 1);

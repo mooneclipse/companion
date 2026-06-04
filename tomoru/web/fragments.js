@@ -36,10 +36,14 @@ const TEXT = {
   bestDepthSuffix: " 層",
   bestSmeltPrefix: "精錬 ",
   bestSmeltSuffix: "",
-  // 強化選択(地表帰還時)。
-  upgradeTitle: "強化を えらぶ",
-  upgradeNonePrefix: "鉱石が足りない",
-  upgradeSkip: "そのまま もぐる",
+  // 基地ショップ(地表帰還時)。v1.1.0: 全強化を一覧 → 在庫が足りるものを買い切り購入。
+  upgradeTitle: "基地（強化を買う）",
+  upgradeNonePrefix: "鉱石を持ち帰ると強化が買える",
+  upgradeSkip: "もぐる",
+  shopStockLabel: "在庫",
+  shopOwned: "取得済み",
+  shopBuy: "購入",
+  smeltPopupPrefix: "＋", // 精錬時の「＋N」演出。
   // 失敗(灯が尽きた)。
   failTitle: "灯が、消えた",
   failReachPrefix: "未精錬の鉱石を うしなった",
@@ -56,8 +60,9 @@ const TEXT = {
   // あそびかた説明(verbatim、実装側で改変しない)。3 行。
   howtoTitle: "あそびかた",
   howto: [
-    "自機のとなりをタップ＝掘る。掘ると前に進む。",
-    "長押し＝その場に灯を撒く（消えない目印・帰り道）。",
+    "となりをタップ／下の十字キー＝掘る。掘ると前に進む。",
+    "長押し／灯ボタン＝その場に灯を撒く（消えない目印・帰り道）。",
+    "灯のそばは灯量が減りにくい＝深追いの保険。",
     "灯量が尽きる前に地表（上）へ戻る。尽きると鉱石を失う。",
   ],
   howtoStart: "もぐる",
@@ -65,6 +70,8 @@ const TEXT = {
   howtoButton: "あそびかた",
   // 撤退予告(帰路が灯量を割ったとき)。
   returnWarn: "帰れない",
+  // 灯のそば(灯量が減りにくい)状態のヒント。
+  lanternSafe: "灯のそば（灯量が減りにくい）",
   // 喰らい闇 cue。
   cueMaw: "闇にのまれた",
   cueMawDispel: "灯で打ち消した",

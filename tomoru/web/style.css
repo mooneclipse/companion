@@ -119,15 +119,23 @@ body {
 }
 
 /* ---- 左縦: 灯量バー + 帰路目盛り ---- */
+/* 下端は十字キー領域(controls)の上で止める。 */
 .light-rail {
   position: absolute;
   left: 0.6rem;
   top: 3rem;
-  bottom: 2.4rem;
+  bottom: 10.5rem;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.4rem;
+}
+/* 灯のそば = 灯量が減りにくい。バーを緑がかった枠で示す(利点が目に見える)。 */
+.light-rail.safe .light-bar {
+  box-shadow: 0 0 0 2px rgba(130, 220, 150, 0.8), 0 0 8px rgba(130, 220, 150, 0.5);
+}
+.light-rail.safe .light-cap {
+  color: #b6f0c2;
 }
 .light-cap {
   font-size: clamp(0.72rem, 3.2vw, 0.88rem);
@@ -182,11 +190,12 @@ body {
 }
 
 /* ---- 下部ヒント(撤退予告・喰らい闇 cue) ---- */
+/* 十字キー領域の真上に出す(D-pad に重ならない)。 */
 .hud-hint {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(env(safe-area-inset-bottom) + 0.6rem);
+  bottom: calc(env(safe-area-inset-bottom) + 9.4rem);
   text-align: center;
   font-size: clamp(0.8rem, 3.8vw, 1rem);
   letter-spacing: 0.08em;
@@ -201,6 +210,73 @@ body {
 }
 .hud-hint.warn {
   color: #ff8a6a;
+}
+
+/* ---- 十字キー + 灯ボタン(canvas 外 DOM、タップ掘りと併用) ---- */
+.controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
+  display: flex;
+  justify-content: center;
+  /* HUD は pointer-events:none。十字キーだけ操作を拾う。 */
+  pointer-events: none;
+}
+.dpad {
+  position: relative;
+  width: 8.4rem;
+  height: 8.4rem;
+  pointer-events: auto;
+}
+.dpad-btn {
+  position: absolute;
+  width: 2.7rem;
+  height: 2.7rem;
+  font-family: var(--mincho);
+  font-size: 1.1rem;
+  color: var(--ink);
+  background: rgba(244, 184, 96, 0.18);
+  border: 1.5px solid rgba(244, 184, 96, 0.7);
+  border-radius: 0.7rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.dpad-btn:active {
+  background: rgba(244, 184, 96, 0.45);
+}
+.dpad-btn.up {
+  top: 0;
+  left: 2.85rem;
+}
+.dpad-btn.down {
+  bottom: 0;
+  left: 2.85rem;
+}
+.dpad-btn.left {
+  top: 2.85rem;
+  left: 0;
+}
+.dpad-btn.right {
+  top: 2.85rem;
+  right: 0;
+}
+.dpad-btn.center {
+  top: 2.85rem;
+  left: 2.85rem;
+  /* 灯ボタンは暖色を強めに(核操作)。 */
+  background: rgba(244, 184, 96, 0.4);
+  border-color: #fff0c8;
+  color: #2a1c08;
+  font-size: 0.92rem;
+}
+.dpad-btn.center:active {
+  background: rgba(244, 184, 96, 0.7);
 }
 
 /* 数値ポップ(採取 +1 / 灯まき / 喰らい闇)。背後に半透明プレート。 */
@@ -278,6 +354,37 @@ body {
   max-height: 100%;
   overflow-y: auto;
 }
+/* ---- 基地ショップ panel(v1.1.1): スクロール領域 + 固定フッター 2 段 ----
+   ショップは縦リストが行数で伸びる。panel ごとスクロールさせると最下部の「もぐる」が
+   panel の clip 境界を超えて描画され、短可視高(412×680 等)で elementFromPoint が
+   overlay を返し押せない(あかり v1.3.0 と同型の穴)。panel 自身は clip し、
+   在庫+強化リストだけをスクロールさせ、「もぐる」を flex フッターで下端固定する。 */
+.panel.shop-mode {
+  /* svh = 小可視高基準。短可視高でも panel が収まる。 */
+  max-height: 100vh;
+  max-height: 100svh;
+  overflow: hidden; /* panel 自体はスクロールしない(中のリストがスクロールする)。 */
+  gap: 0.7rem;
+  padding-bottom: calc(env(safe-area-inset-bottom));
+}
+/* タイトル/サブ/在庫はスクロール外で固定。 */
+.panel.shop-mode .ov-title,
+.panel.shop-mode .ov-sub,
+.panel.shop-mode .ov-stock {
+  flex: 0 0 auto;
+}
+/* 強化リストだけがスクロール領域(行が増えてもここが伸縮)。 */
+.panel.shop-mode .ov-upgrades.shop-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+}
+/* 「もぐる」を panel 下端の固定フッターに(リスト行数に関係なく常に clip 内・押せる)。 */
+.panel.shop-mode .ov-action2 {
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+}
 .ov-howto {
   display: flex;
   flex-direction: column;
@@ -322,6 +429,114 @@ body {
 }
 .ov-upgrades[hidden] {
   display: none !important;
+}
+/* ---- 基地ショップ(v1.1.0): 在庫表示 + 強化 縦リスト ---- */
+.ov-stock {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  width: 100%;
+}
+.ov-stock[hidden] {
+  display: none !important;
+}
+.stock-ore {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: clamp(0.84rem, 4vw, 1.05rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+}
+.stock-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: 0.35em;
+  font-size: 0.82em;
+  background: rgba(0, 0, 0, 0.45);
+}
+.stock-ore.iron .stock-ico {
+  color: #e0a98a;
+}
+.stock-ore.cryst .stock-ico {
+  color: var(--c-cryst);
+}
+.stock-ore.core .stock-ico {
+  color: var(--c-core);
+}
+.stock-plus {
+  font-size: 0.78em;
+  color: #b6f0c2;
+  margin-left: 0.1em;
+}
+/* 強化を縦リストで一覧。 */
+.ov-upgrades.shop-list {
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+.shop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  background: linear-gradient(160deg, #1c1426, #0a0710);
+  border: 1px solid rgba(244, 184, 96, 0.25);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  text-align: left;
+}
+.shop-row.buyable {
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(244, 184, 96, 0.5), 0 -2px 10px rgba(244, 184, 96, 0.16);
+}
+.shop-row.locked {
+  opacity: 0.45;
+}
+.shop-row.owned {
+  opacity: 0.65;
+  border-color: rgba(130, 220, 150, 0.45);
+}
+.shop-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.shop-body .upg-name {
+  text-align: left;
+}
+.shop-body .upg-desc {
+  text-align: left;
+}
+.shop-right {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
+.shop-right .upg-cost {
+  white-space: nowrap;
+}
+.shop-buy {
+  font-size: clamp(0.6rem, 2.8vw, 0.74rem);
+  letter-spacing: 0.06em;
+  color: #2a1c08;
+  background: rgba(244, 184, 96, 0.85);
+  border-radius: 0.4em;
+  padding: 0.1em 0.6em;
+}
+.shop-owned {
+  font-size: clamp(0.6rem, 2.8vw, 0.74rem);
+  letter-spacing: 0.06em;
+  color: #b6f0c2;
+  white-space: nowrap;
 }
 .upg-card {
   flex: 1 1 0;

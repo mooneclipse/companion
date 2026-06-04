@@ -10,7 +10,7 @@
 // 減り、灯量に応じて視界円の半径が決まる。地表へ戻ると自動精錬 → 強化を 3 択から 1 つ。
 
 // ---- バージョン --------------------------------------------------------
-const VERSION = "v1.0.0";
+const VERSION = "v1.1.1";
 
 // ---- CONSTANTS(初期値、playtester で実測調整可。バランスは全てここに集約) ----
 const CONST = {
@@ -31,6 +31,12 @@ const CONST = {
   LONGPRESS_MS: 320, // この時間以上 + 移動小 なら長押し(灯まき)。
   TAP_MAX_MOVE: 18, // タップ/長押し判定の移動許容(px)。
   ORE_PER_TILE: 1, // 鉱石 1 マスで得る基本量。
+  // 灯メカ再設計(v1.1.0): 撒いた灯の照射範囲内にいる間、灯量の減りを大きく減らす
+  // (帰り道の保険)。0.3 = そばにいるとき drain を 3 割に。
+  LANTERN_DRAIN_FACTOR: 0.3,
+  // 深いほど視界円の上限を下げる(深部では撒いた灯の局所照明が頼り)。
+  // 視界上限 = VISION_MAX - depth * これ。VISION_MIN は割らない(理不尽死回避)。
+  VISION_DEPTH_PENALTY: 0.04,
 };
 // バランス計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
@@ -54,13 +60,22 @@ const lightValEl = document.getElementById("light-val");
 const hudHintEl = document.getElementById("hud-hint");
 
 const overlayEl = document.getElementById("overlay");
+const panelEl = overlayEl.querySelector(".panel");
 const ovTitleEl = document.getElementById("ov-title");
 const ovSubEl = document.getElementById("ov-sub");
 const ovHowtoEl = document.getElementById("ov-howto");
 const ovUpgradesEl = document.getElementById("ov-upgrades");
+const ovStockEl = document.getElementById("ov-stock");
 const ovActionEl = document.getElementById("ov-action");
 const ovAction2El = document.getElementById("ov-action2");
 const ovVersionEl = document.getElementById("ov-version");
+
+// 操作: 十字キー + 灯ボタン(canvas 外 DOM、タップ掘りと併用)。
+const btnUpEl = document.getElementById("btn-up");
+const btnDownEl = document.getElementById("btn-down");
+const btnLeftEl = document.getElementById("btn-left");
+const btnRightEl = document.getElementById("btn-right");
+const btnLanternEl = document.getElementById("btn-lantern");
 
 // ---- canvas / 描画状態 -------------------------------------------------
 let DPR = 1;
@@ -137,6 +152,7 @@ const G = {
   upg: null, // 永続強化の累積効果。
   gotCore: false, // このダイブでコア大鉱脈を掘り当てたか(勝利条件)。
   busy: false, // overlay 遷移中などの入力ロック。
+  nearLantern: false, // 撒いた灯の照射範囲内にいるか(灯量の減りが緩む。演出用)。
 };
 window.G = G;
 
@@ -214,6 +230,12 @@ function effLanternRadius() {
 function effVisionMax() {
   return CONST.VISION_MAX + G.upg.visionAdd;
 }
+// 深部ほど視界円の上限を下げる(深部では撒いた灯の局所照明が頼り)。
+// VISION_MIN は割らない(理不尽死回避)。depth = 現在の自機行。
+function effVisionCap(depth) {
+  const cap = effVisionMax() - depth * CONST.VISION_DEPTH_PENALTY;
+  return Math.max(CONST.VISION_MIN, cap);
+}
 
 // ---- ダイブ開始 --------------------------------------------------------
 function startDive() {
@@ -249,7 +271,20 @@ function returnCost() {
   return G.py * CONST.RETURN_COST_K;
 }
 function effDrain() {
-  return (CONST.BASE_DRAIN + G.py * CONST.DEPTH_DRAIN_K) * G.upg.drainMult;
+  let d = (CONST.BASE_DRAIN + G.py * CONST.DEPTH_DRAIN_K) * G.upg.drainMult;
+  // 撒いた灯の照射範囲内にいる間は灯量の減りを大きく抑える(帰り道の保険)。
+  if (G.nearLantern) d *= CONST.LANTERN_DRAIN_FACTOR;
+  return d;
+}
+// 自機が撒いた灯のいずれかの照射範囲(LANTERN_RADIUS)内にいるか。
+function isNearLantern() {
+  if (!G.lanterns) return false;
+  const rad = effLanternRadius();
+  for (const k of G.lanterns) {
+    const [lc, lr] = k.split(",").map(Number);
+    if (Math.abs(lc - G.px) <= rad && Math.abs(lr - G.py) <= rad) return true;
+  }
+  return false;
 }
 
 // ---- 掘る(隣接タイルを 1 タップぶん掘削) ------------------------------
@@ -360,8 +395,10 @@ function surfaceReturn() {
   G.stock.iron += G.pending.iron;
   G.stock.cryst += G.pending.cryst;
   G.stock.core += G.pending.core;
+  const smelted = { iron: G.pending.iron, cryst: G.pending.cryst, core: G.pending.core };
   const smeltTotal = G.pending.iron + G.pending.cryst + G.pending.core;
   G.pending = { iron: 0, cryst: 0, core: 0 };
+  G.lastSmelt = smelted; // ショップで「＋N」演出に使う。
   // 精錬総量(累積)を記録。
   const newSmelt = getInt(BEST_SMELT_KEY) + smeltTotal;
   setInt(BEST_SMELT_KEY, newSmelt);
@@ -396,13 +433,17 @@ function hideOverlay() {
   overlayEl.hidden = true;
   ovUpgradesEl.innerHTML = "";
   ovHowtoEl.innerHTML = "";
+  ovStockEl.innerHTML = "";
 }
 function resetOverlayParts() {
+  panelEl.classList.remove("shop-mode"); // 他 overlay は通常 panel に戻す。
   ovTitleEl.hidden = true;
   ovTitleEl.classList.remove("small-title");
   ovSubEl.hidden = true;
   ovHowtoEl.hidden = true;
   ovHowtoEl.innerHTML = "";
+  ovStockEl.hidden = true;
+  ovStockEl.innerHTML = "";
   ovUpgradesEl.hidden = true;
   ovUpgradesEl.innerHTML = "";
   ovActionEl.hidden = true;
@@ -471,6 +512,9 @@ function showHowto(returnTo) {
   showOverlay();
 }
 
+// ---- 基地ショップ(v1.1.0) --------------------------------------------
+// 地表帰還で表示。全強化を縦リスト一覧 → 在庫が足りる & ティア解放済み & 未取得なら
+// タップで買い切り購入。購入後はその場で再描画(ショップは開いたまま)。「もぐる」で次ダイブ。
 function showUpgrade() {
   G.screen = "upgrade";
   hudEl.hidden = true;
@@ -478,67 +522,118 @@ function showUpgrade() {
   ovTitleEl.textContent = TEXT.upgradeTitle;
   ovTitleEl.hidden = false;
   ovTitleEl.classList.add("small-title");
-  ovUpgradesEl.hidden = false;
-  // 在庫で解放されている強化から 3 つを決定論的に選ぶ(乱数は山なし。diveCount で巡回)。
-  const unlocked = UPGRADES.filter((u) => upgradeUnlocked(u, G.stock));
-  const choices = pickUpgrades(unlocked, 3);
-  if (choices.length === 0) {
-    // 解放された強化が無い(鉄も足りない序盤) → スキップのみ。
+  // 何も持ち帰っていない & 在庫も空(序盤)はヒントを出す。
+  const totalStock = G.stock.iron + G.stock.cryst + G.stock.core;
+  if (totalStock === 0) {
     ovSubEl.textContent = TEXT.upgradeNonePrefix;
     ovSubEl.hidden = false;
-  }
-  for (const u of choices) {
-    const afford = upgradeCanAfford(u, G.stock);
-    const el = buildUpgradeEl(u, afford);
-    if (afford) {
-      el.onclick = () => {
-        // コストを在庫から支払い、取得を積む。
-        for (const k in u.cost) G.stock[k] -= u.cost[k];
-        G.appliedUpgrades.push(u.id);
-        startDive();
-      };
-    }
-    ovUpgradesEl.appendChild(el);
   }
   ovAction2El.textContent = TEXT.upgradeSkip;
   ovAction2El.hidden = false;
   ovAction2El.onclick = () => startDive();
+  // panel を「スクロール領域(在庫+強化リスト) + 固定フッター(もぐる)」の 2 段にする。
+  // リスト行が増えても最下部ボタンが常に clip 内で押せる(短高 viewport 対策)。
+  panelEl.classList.add("shop-mode");
+  renderShop(true); // 精錬の「＋N」演出は初回のみ。
   showOverlay();
 }
 
-// 解放済み強化から n 個を選ぶ。diveCount を起点に巡回(毎帰還で並びが変わる)。
-function pickUpgrades(pool, n) {
-  if (pool.length <= n) return pool.slice();
-  const out = [];
-  let i = G.diveCount % pool.length;
-  while (out.length < n) {
-    out.push(pool[i % pool.length]);
-    i++;
+// ショップ本体の再描画。在庫表示 + 強化一覧。afterSmelt = 精錬演出を出すか。
+function renderShop(afterSmelt) {
+  // 在庫表示(鉄/結晶/コアの持ち帰り総量)。
+  ovStockEl.innerHTML = "";
+  ovStockEl.hidden = false;
+  const oreLabel = { iron: "鉄", cryst: "晶", core: "核" };
+  for (const k of ["iron", "cryst", "core"]) {
+    const span = document.createElement("span");
+    span.className = "stock-ore " + k;
+    const ico = document.createElement("span");
+    ico.className = "stock-ico";
+    ico.textContent = oreLabel[k];
+    const num = document.createElement("span");
+    num.textContent = G.stock[k];
+    span.appendChild(ico);
+    span.appendChild(num);
+    // 精錬の「＋N」演出(初回表示時、持ち帰りがあった鉱石に付ける)。
+    if (afterSmelt && G.lastSmelt && G.lastSmelt[k] > 0) {
+      const plus = document.createElement("span");
+      plus.className = "stock-plus";
+      plus.textContent = TEXT.smeltPopupPrefix + G.lastSmelt[k];
+      span.appendChild(plus);
+    }
+    ovStockEl.appendChild(span);
   }
-  return out;
+  if (afterSmelt) G.lastSmelt = null; // 演出は 1 回だけ。
+
+  // 強化一覧(縦リスト)。全 UPGRADES を出し、状態で見た目を分ける。
+  ovUpgradesEl.innerHTML = "";
+  ovUpgradesEl.hidden = false;
+  for (const u of UPGRADES) {
+    const owned = G.appliedUpgrades.includes(u.id);
+    const unlocked = upgradeUnlocked(u, G.stock);
+    const afford = upgradeCanAfford(u, G.stock);
+    const buyable = !owned && unlocked && afford;
+    const el = buildShopRow(u, { owned, unlocked, afford, buyable });
+    if (buyable) {
+      el.onclick = () => {
+        for (const k in u.cost) G.stock[k] -= u.cost[k];
+        G.appliedUpgrades.push(u.id);
+        renderShop(false); // 在庫が減り、取得済みになった状態で即再描画。
+      };
+    }
+    ovUpgradesEl.appendChild(el);
+  }
 }
 
-function buildUpgradeEl(u, afford) {
+// ショップ 1 行: アイコン(ティア) / 名前 / 効果数値 / コスト / 状態。
+function buildShopRow(u, st) {
   const el = document.createElement("div");
-  el.className = "upg-card " + (afford ? "afford" : "locked");
+  el.className = "shop-row";
+  if (st.owned) el.classList.add("owned");
+  else if (st.buyable) el.classList.add("buyable");
+  else el.classList.add("locked"); // 未解放 or 在庫不足。
+
   const tierEl = document.createElement("span");
   tierEl.className = "upg-tier " + u.tier;
   tierEl.textContent = u.tier === "iron" ? "鉄" : u.tier === "cryst" ? "晶" : "核";
+
+  const body = document.createElement("div");
+  body.className = "shop-body";
   const nameEl = document.createElement("div");
   nameEl.className = "upg-name";
   nameEl.textContent = u.name;
   const descEl = document.createElement("div");
   descEl.className = "upg-desc";
   descEl.textContent = u.desc;
-  const costEl = document.createElement("div");
-  costEl.className = "upg-cost";
-  costEl.textContent = costStr(u.cost);
+  body.appendChild(nameEl);
+  body.appendChild(descEl);
+
+  const right = document.createElement("div");
+  right.className = "shop-right";
+  if (st.owned) {
+    const o = document.createElement("div");
+    o.className = "shop-owned";
+    o.textContent = TEXT.shopOwned;
+    right.appendChild(o);
+  } else {
+    const costEl = document.createElement("div");
+    costEl.className = "upg-cost";
+    costEl.textContent = costStr(u.cost);
+    right.appendChild(costEl);
+    if (st.buyable) {
+      const buy = document.createElement("div");
+      buy.className = "shop-buy";
+      buy.textContent = TEXT.shopBuy;
+      right.appendChild(buy);
+    }
+  }
+
   el.appendChild(tierEl);
-  el.appendChild(nameEl);
-  el.appendChild(descEl);
-  el.appendChild(costEl);
+  el.appendChild(body);
+  el.appendChild(right);
   return el;
 }
+
 function costStr(cost) {
   const parts = [];
   const label = { iron: "鉄", cryst: "晶", core: "核" };
@@ -600,6 +695,8 @@ function renderHud() {
   const warn = G.light < rc;
   returnMarkEl.classList.toggle("warn", warn);
   lightRailEl.classList.toggle("warn", warn);
+  // 灯のそば(灯量が減りにくい)状態をバーに反映(利点を目に見せる)。
+  lightRailEl.classList.toggle("safe", G.nearLantern && !warn);
   // 最深度の更新(このダイブ)。
   if (G.py > (G.maxDepthThisDive || 0)) G.maxDepthThisDive = G.py;
 }
@@ -699,12 +796,25 @@ canvas.addEventListener("pointercancel", () => {
   }
 });
 
+// ---- 十字キー + 灯ボタン(canvas 外 DOM、タップ掘りと併用) --------------
+// 押した方向の自機隣接タイルを掘る/移動(タップ掘りと同じ digAdjacent 経路)。
+function digDir(dc, dr) {
+  if (G.screen !== "dive" || G.busy) return;
+  digAdjacent(G.px + dc, G.py + dr);
+}
+btnUpEl.addEventListener("click", () => digDir(0, -1));
+btnDownEl.addEventListener("click", () => digDir(0, 1));
+btnLeftEl.addEventListener("click", () => digDir(-1, 0));
+btnRightEl.addEventListener("click", () => digDir(1, 0));
+btnLanternEl.addEventListener("click", () => dropLantern());
+
 // ---- per-tile ライティング(per-pixel 禁止、タイル粒度) ----------------
 // 各可視タイルの明度 = 視界円寄与(自機からの距離) + 撒いた灯/灯の島の寄与。
 // 暖色 rgba の矩形で重畳。視界円の縁グローだけ事前ベイク 1 枚をスケールして重ねる。
 function tileLight(col, row) {
   // 視界円寄与: 灯量で半径が決まる。中心(自機)で 1、縁で 0。
-  const vmax = effVisionMax();
+  // 深部ほど視界上限が下がる(effVisionCap)。VISION_MIN は割らない。
+  const vmax = effVisionCap(G.py);
   const ratio = Math.max(0, Math.min(1, G.light / G.lightMax));
   const vr = lerp(CONST.VISION_MIN, vmax, ratio);
   const d = Math.hypot(col - G.px, row - G.py);
@@ -822,8 +932,8 @@ function render() {
     }
   }
 
-  // 視界円グロー(事前ベイク 1 枚をスケールして自機中心に重ねる)。
-  const vmax = effVisionMax();
+  // 視界円グロー(事前ベイク 1 枚をスケールして自機中心に重ねる)。深部で半径上限が下がる。
+  const vmax = effVisionCap(G.py);
   const ratio = Math.max(0, Math.min(1, G.light / G.lightMax));
   const vr = lerp(CONST.VISION_MIN, vmax, ratio);
   const cx = G.px * tile + tile / 2;
@@ -867,6 +977,13 @@ function tick(t) {
   const dt = Math.min((t - lastT) / 1000, 0.1);
   lastT = t;
   elapsed += dt;
+  // 灯のそば判定(灯量の減りに効く)。dive 中つねに更新。
+  if (G.screen === "dive") {
+    const was = G.nearLantern;
+    G.nearLantern = isNearLantern();
+    // そばに入った瞬間に 1 回だけヒント(利点が目に見えるように)。
+    if (G.nearLantern && !was && G.py > 0) showHint(TEXT.lanternSafe, false);
+  }
   // 灯量の減少(降下中つねに。地表 row 0 では減らない=基地で安全)。
   if (G.screen === "dive" && G.py > 0) {
     G.light = Math.max(0, G.light - effDrain() * dt);

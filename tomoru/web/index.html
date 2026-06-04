@@ -47,6 +47,17 @@
 
   <!-- 下部ヒント(撤退予告・喰らい闇など)。 -->
   <div id="hud-hint" class="hud-hint" hidden></div>
+
+  <!-- 操作: 十字キー + 灯ボタン(canvas 外 DOM、タップ掘りと併用)。pointer を拾う。 -->
+  <section class="controls">
+    <div class="dpad">
+      <button id="btn-up" class="dpad-btn up" type="button" aria-label="上を掘る">▲</button>
+      <button id="btn-left" class="dpad-btn left" type="button" aria-label="左を掘る">◀</button>
+      <button id="btn-lantern" class="dpad-btn center" type="button" aria-label="灯を撒く">灯</button>
+      <button id="btn-right" class="dpad-btn right" type="button" aria-label="右を掘る">▶</button>
+      <button id="btn-down" class="dpad-btn down" type="button" aria-label="下を掘る">▼</button>
+    </div>
+  </section>
 </div>
 
 <!-- 各種オーバーレイ(title / howto / upgrade / fail / clear)。hidden で完全非表示。 -->
@@ -56,8 +67,10 @@
     <p id="ov-sub" class="ov-sub" hidden></p>
     <!-- あそびかた説明(初回自動 + title からいつでも再読)。縦並び・左寄せ。 -->
     <div id="ov-howto" class="ov-howto" hidden></div>
-    <!-- 強化 3 択。 -->
-    <div id="ov-upgrades" class="ov-upgrades" hidden></div>
+    <!-- 基地ショップの在庫表示(鉄/結晶/コアの持ち帰り総量)。 -->
+    <div id="ov-stock" class="ov-stock" hidden></div>
+    <!-- 基地ショップ: 全強化を縦リスト一覧 → 在庫が足りるものを買い切り購入。 -->
+    <div id="ov-upgrades" class="ov-upgrades shop-list" hidden></div>
     <button id="ov-action" class="ov-action" type="button" hidden></button>
     <button id="ov-action2" class="ov-action ov-action2" type="button" hidden></button>
     <p id="ov-version" class="ov-version" hidden></p>
