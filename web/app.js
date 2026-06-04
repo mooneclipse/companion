@@ -472,6 +472,7 @@ const GAMES = [
   { title: "ともしび", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/tomoshibi/" },
   { title: "なごり", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/nagori/" },
   { title: "あかり", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/akari/" },
+  { title: "ともる", url: "https://miho-inspiron-3521.tail5e989b.ts.net:8444/tomoru/" },
 ];
 
 function renderGames() {
