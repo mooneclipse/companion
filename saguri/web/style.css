@@ -1,0 +1,706 @@
+/* さぐり — 明るい断面の掘削救出デドゥース。文字・手がかり数字 chip・スタミナバー・気配
+   メーター・救出数は全て DOM(canvas に文字を焼かない = なごり「文字がはみ出して読めない」
+   真因の直接対策)。emoji 不可。 */
+:root {
+  --ink: #f4eee2;
+  --ink-dark: #20242e;
+  --mincho: "Zen Old Mincho", "Shippori Mincho", "Hiragino Mincho ProN",
+    "Yu Mincho", "Noto Serif JP", serif;
+  --c-light: #f4b860;
+  --c-girl: #ffcf8a;
+  --c-flag: #d8392a;
+  /* 白文字 + 黒縁(4 方向 text-shadow)。明背景でも暗背景でも数値が読める。 */
+  --txt-edge: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
+    0 2px 3px rgba(0, 0, 0, 0.8);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  /* はみ出しを構造的に封じる(画面外スクロール禁止)。 */
+  overflow: hidden;
+  background: #10131f;
+  color: var(--ink);
+  font-family: var(--mincho);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#scene {
+  display: block;
+  width: 100vw;
+  /* 断面を全面に描く。dvh で実視高に追従(canvas 内部解像度は innerHeight 基準)。 */
+  height: 100vh;
+  height: 100dvh;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  /* 画面を覆う canvas 自身にも touch-action:none(overlay 罠対策の保険)。 */
+  touch-action: none;
+}
+
+/* ===== 手がかり数字 chip 層: canvas の上、HUD の下。pointer は素通し(掘る操作は canvas)。 ===== */
+.clue-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.clue-layer[hidden] {
+  display: none !important;
+}
+/* 手がかり数字 chip: 白文字 + 黒縁。露出した未掘削面の中央に重ねる。 */
+.clue {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: clamp(0.8rem, 4vw, 1.1rem);
+  font-weight: 500;
+  line-height: 1;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  pointer-events: none;
+}
+/* 0 は淡色(安全)、数が増えるほど暖→朱で危険を読みやすく。 */
+.clue-0 {
+  color: rgba(255, 255, 255, 0.55);
+}
+.clue-1 {
+  color: #d9e2f0;
+}
+.clue-2 {
+  color: #ffe6a0;
+}
+.clue-3 {
+  color: #ffc06a;
+}
+.clue-4,
+.clue-5,
+.clue-6,
+.clue-7,
+.clue-8 {
+  color: #ff8a6a;
+}
+
+/* ===== HUD: canvas の上の不透明レイヤー。上基準で配置(モバイル Chrome のツールバー
+   裏に押し出されないよう svh + top:0)。pointer は素通しし、操作系だけ拾う。 ===== */
+.hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100svh;
+  z-index: 2;
+  padding: calc(env(safe-area-inset-top) + 0.4rem) 0.6rem
+    calc(env(safe-area-inset-bottom) + 0.5rem);
+  pointer-events: none;
+}
+.hud[hidden] {
+  display: none !important;
+}
+
+/* ---- 上部: 深度 + 救出/同行数 ---- */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.depth-val {
+  font-size: clamp(0.8rem, 3.8vw, 1rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.counts {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  font-size: clamp(0.74rem, 3.4vw, 0.94rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  white-space: nowrap;
+}
+.count-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: 0.35em;
+  font-size: 0.82em;
+  background: rgba(0, 0, 0, 0.5);
+}
+.count.rescue .count-ico {
+  color: var(--c-girl);
+}
+.count.escort .count-ico {
+  color: var(--c-light);
+}
+
+/* ---- 気配メーター(上右、深度バーの下に重ならないよう絶対配置) ---- */
+.sense-meter {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 2.4rem);
+  right: 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(0, 0, 0, 0.42);
+  border-radius: 0.5rem;
+  padding: 0.2rem 0.5rem;
+}
+.sense-cap {
+  font-size: clamp(0.66rem, 3vw, 0.8rem);
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.06em;
+}
+.sense-arrow {
+  font-size: clamp(0.9rem, 4.4vw, 1.2rem);
+  line-height: 1;
+  color: var(--c-girl);
+  text-shadow: var(--txt-edge);
+}
+.sense-heat {
+  font-size: clamp(0.7rem, 3.2vw, 0.86rem);
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  white-space: nowrap;
+}
+.sense-heat.heat-near {
+  color: var(--c-girl);
+}
+.sense-heat.heat-mid {
+  color: #ffe6a0;
+}
+.sense-heat.heat-far {
+  color: #d9e2f0;
+}
+
+/* ---- 左縦: スタミナバー ---- */
+.stamina-rail {
+  position: absolute;
+  left: 0.6rem;
+  top: 5.2rem;
+  bottom: 10.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+.stamina-cap {
+  font-size: clamp(0.72rem, 3.2vw, 0.88rem);
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.06em;
+}
+.stamina-bar {
+  flex: 1;
+  width: 0.9rem;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}
+.stamina-fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  border-radius: 0.5rem;
+  /* 低(朱) → 高(暖) へ。 */
+  background: linear-gradient(0deg, #7a2a2a, #e6b25a, #fff0c8);
+  transition: height 0.2s linear, background 0.4s ease;
+}
+.stamina-val {
+  font-size: clamp(0.78rem, 3.4vw, 0.96rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  min-width: 1.6em;
+  text-align: center;
+}
+.stamina-rail.warn .stamina-cap,
+.stamina-rail.warn .stamina-val {
+  color: #ff8a6a;
+}
+.stamina-rail.warn .stamina-bar {
+  box-shadow: 0 0 0 2px rgba(255, 90, 60, 0.7), 0 0 8px rgba(255, 90, 60, 0.5);
+}
+
+/* ---- 下部ヒント(落盤・救出・道具 cue) ---- */
+.hud-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 9.4rem);
+  text-align: center;
+  font-size: clamp(0.8rem, 3.8vw, 1rem);
+  letter-spacing: 0.08em;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 0.6rem;
+}
+.hud-hint[hidden] {
+  display: none !important;
+}
+.hud-hint.warn {
+  color: #ff8a6a;
+}
+
+/* ---- 十字キー + 印ボタン + 道具(canvas 外 DOM、タップ掘りと併用) ---- */
+.controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.dpad {
+  position: relative;
+  width: 8.4rem;
+  height: 8.4rem;
+  pointer-events: auto;
+}
+.dpad-btn {
+  position: absolute;
+  width: 2.7rem;
+  height: 2.7rem;
+  font-family: var(--mincho);
+  font-size: 1.1rem;
+  color: var(--ink);
+  background: rgba(244, 184, 96, 0.18);
+  border: 1.5px solid rgba(244, 184, 96, 0.7);
+  border-radius: 0.7rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.dpad-btn:active {
+  background: rgba(244, 184, 96, 0.45);
+}
+.dpad-btn.up {
+  top: 0;
+  left: 2.85rem;
+}
+.dpad-btn.down {
+  bottom: 0;
+  left: 2.85rem;
+}
+.dpad-btn.left {
+  top: 2.85rem;
+  left: 0;
+}
+.dpad-btn.right {
+  top: 2.85rem;
+  right: 0;
+}
+.dpad-btn.center {
+  top: 2.85rem;
+  left: 2.85rem;
+  /* 印ボタンは朱を帯びさせる(危険を読む操作)。 */
+  background: rgba(216, 57, 42, 0.32);
+  border-color: rgba(216, 57, 42, 0.8);
+  color: #fff;
+  font-size: 0.92rem;
+}
+.dpad-btn.center:active {
+  background: rgba(216, 57, 42, 0.6);
+}
+/* 道具ボタン(ハシゴ/センサ)。十字キーの下に横並び。 */
+.tool-bar {
+  display: flex;
+  gap: 0.5rem;
+  pointer-events: auto;
+}
+.tool-bar[hidden] {
+  display: none !important;
+}
+.tool-btn {
+  font-family: var(--mincho);
+  font-size: clamp(0.74rem, 3.4vw, 0.9rem);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  background: rgba(126, 200, 227, 0.18);
+  border: 1.5px solid rgba(126, 200, 227, 0.6);
+  border-radius: 0.6rem;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.tool-btn[hidden] {
+  display: none !important;
+}
+.tool-btn:active {
+  background: rgba(126, 200, 227, 0.4);
+}
+
+/* 数値ポップ(掘った打点・救出・落盤)。背後に半透明プレート。 */
+.popup {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  font-size: clamp(0.92rem, 4.6vw, 1.3rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  background: rgba(0, 0, 0, 0.42);
+  padding: 0.05em 0.4em;
+  border-radius: 0.4em;
+  pointer-events: none;
+  z-index: 5;
+  animation: popup-rise 0.85s ease-out forwards;
+  white-space: nowrap;
+  max-width: 90vw;
+}
+.popup.cue {
+  color: #ffe6a0;
+}
+.popup.warn {
+  color: #ff8a6a;
+}
+@keyframes popup-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -150%);
+  }
+}
+
+/* ===== オーバーレイ(title / howto / shop / fail / clear / fragment) ===== */
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100svh;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.4rem calc(2rem + env(safe-area-inset-bottom));
+  background: rgba(16, 19, 31, 0.84);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.overlay.visible {
+  opacity: 1;
+}
+.overlay[hidden] {
+  display: none !important;
+}
+.overlay:not(.visible) {
+  pointer-events: none;
+}
+.panel {
+  max-width: 30rem;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  /* 内容が増えても画面外へはみ出さない保険(なごり真因の再発防止)。 */
+  max-height: 100%;
+  overflow-y: auto;
+}
+/* ---- 基地ショップ panel: スクロール領域 + 固定フッター 2 段(tomoru v1.1.1 流用) ----
+   ショップは縦リストが行数で伸びる。panel ごとスクロールさせると最下部の「もぐる」が
+   panel の clip 境界を超えて描画され、短可視高(412×680 等)で elementFromPoint が
+   overlay を返し押せない。panel 自身は clip し、在庫+強化リストだけをスクロールさせ、
+   「もぐる」を flex フッターで下端固定する。 */
+.panel.shop-mode {
+  max-height: 100vh;
+  max-height: 100svh;
+  overflow: hidden;
+  gap: 0.7rem;
+  padding-bottom: calc(env(safe-area-inset-bottom));
+}
+.panel.shop-mode .ov-title,
+.panel.shop-mode .ov-sub,
+.panel.shop-mode .ov-stock {
+  flex: 0 0 auto;
+}
+.panel.shop-mode .ov-upgrades.shop-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+}
+.panel.shop-mode .ov-action2 {
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+}
+.ov-howto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  width: 100%;
+  text-align: left;
+}
+.ov-howto[hidden] {
+  display: none !important;
+}
+.howto-line {
+  font-size: clamp(0.82rem, 3.8vw, 1rem);
+  line-height: 1.65;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+}
+.ov-title {
+  font-weight: 500;
+  font-size: clamp(2.6rem, 14vw, 4.4rem);
+  letter-spacing: 0.32em;
+  text-indent: 0.32em;
+  color: var(--ink);
+  text-shadow: 0 0 24px rgba(244, 184, 96, 0.5);
+}
+.ov-title.small-title {
+  font-size: clamp(1.5rem, 7vw, 2.2rem);
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+  text-shadow: 0 0 16px rgba(244, 184, 96, 0.35);
+}
+.ov-sub {
+  font-size: clamp(0.9rem, 4.4vw, 1.1rem);
+  letter-spacing: 0.1em;
+  color: rgba(244, 238, 226, 0.85);
+}
+/* 救出ごとの断章(1 行・補助)。静かに浮かぶ。 */
+.ov-fragment {
+  font-size: clamp(1.05rem, 5.2vw, 1.5rem);
+  letter-spacing: 0.12em;
+  line-height: 1.8;
+  color: var(--c-girl);
+  text-shadow: 0 0 18px rgba(255, 207, 138, 0.4);
+  padding: 0 0.5rem;
+}
+.ov-fragment[hidden] {
+  display: none !important;
+}
+.ov-upgrades {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  width: 100%;
+}
+.ov-upgrades[hidden] {
+  display: none !important;
+}
+/* ---- 基地ショップ: ポイント在庫表示 + 強化縦リスト ---- */
+.ov-stock {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  width: 100%;
+}
+.ov-stock[hidden] {
+  display: none !important;
+}
+.stock-pt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: clamp(0.9rem, 4.4vw, 1.1rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+}
+.stock-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: 0.35em;
+  font-size: 0.82em;
+  color: var(--c-girl);
+  background: rgba(0, 0, 0, 0.5);
+}
+.stock-lbl {
+  font-size: 0.78em;
+  color: rgba(244, 238, 226, 0.75);
+  margin-left: 0.1em;
+}
+.ov-upgrades.shop-list {
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+.shop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  background: linear-gradient(160deg, #232a3a, #141823);
+  border: 1px solid rgba(244, 184, 96, 0.25);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  text-align: left;
+}
+.shop-row.buyable {
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(244, 184, 96, 0.5), 0 -2px 10px rgba(244, 184, 96, 0.16);
+}
+.shop-row.locked {
+  opacity: 0.45;
+}
+.shop-row.owned {
+  opacity: 0.65;
+  border-color: rgba(130, 220, 150, 0.45);
+}
+.shop-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.shop-body .upg-name {
+  text-align: left;
+}
+.shop-body .upg-desc {
+  text-align: left;
+}
+.shop-right {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
+.shop-right .upg-cost {
+  white-space: nowrap;
+}
+.shop-buy {
+  font-size: clamp(0.6rem, 2.8vw, 0.74rem);
+  letter-spacing: 0.06em;
+  color: #2a1c08;
+  background: rgba(244, 184, 96, 0.85);
+  border-radius: 0.4em;
+  padding: 0.1em 0.6em;
+}
+.shop-owned {
+  font-size: clamp(0.6rem, 2.8vw, 0.74rem);
+  letter-spacing: 0.06em;
+  color: #b6f0c2;
+  white-space: nowrap;
+}
+.upg-tier {
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+  border-radius: 0.35em;
+  padding: 0.05em 0.45em;
+  flex: 0 0 auto;
+}
+.upg-tier.near {
+  background: #b07a3e;
+}
+.upg-tier.mid {
+  background: #3a4a5c;
+}
+.upg-tier.deep {
+  background: #10131f;
+  border: 1px solid rgba(244, 184, 96, 0.4);
+}
+.upg-name {
+  font-size: clamp(0.72rem, 3.4vw, 0.92rem);
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+.upg-desc {
+  font-size: clamp(0.6rem, 2.8vw, 0.74rem);
+  color: rgba(244, 238, 226, 0.78);
+  line-height: 1.35;
+  overflow: hidden;
+}
+.upg-cost {
+  font-size: clamp(0.62rem, 3vw, 0.78rem);
+  color: #ffe6a0;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.ov-action {
+  font-family: var(--mincho);
+  font-size: clamp(0.9rem, 4.4vw, 1.1rem);
+  letter-spacing: 0.16em;
+  color: var(--ink);
+  background: rgba(244, 184, 96, 0.18);
+  border: 1px solid rgba(244, 184, 96, 0.65);
+  border-radius: 0.7rem;
+  padding: 0.6rem 2rem;
+  cursor: pointer;
+  animation: breathe 3.2s ease-in-out infinite;
+}
+.ov-action2 {
+  background: rgba(244, 238, 226, 0.08);
+  border-color: rgba(244, 238, 226, 0.3);
+  animation: none;
+}
+.ov-action[hidden],
+.ov-action2[hidden],
+.ov-title[hidden],
+.ov-sub[hidden],
+.ov-version[hidden] {
+  display: none !important;
+}
+.ov-version {
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  opacity: 0.4;
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-action,
+  .overlay {
+    animation: none;
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "さぐり",
+  "short_name": "さぐり",
+  "start_url": "/saguri/",
+  "scope": "/saguri/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#10131f",
+  "theme_color": "#10131f",
+  "icons": [
+    { "src": "/saguri/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/saguri/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/saguri/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
