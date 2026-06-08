@@ -65,7 +65,7 @@
 - [x] `server/app.py` STATIC に `/saguri/` prefix 10 エントリ追加（implementer、`/tomoru/` パターン踏襲、既存 URL `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/healthz` 完全不変）。
 - [x] remote `~/companion/remote/web/app.js` の `GAMES` に「さぐり」1 行追加 + `sw.js` CACHE `remote-v17`→`v18` bump（静的配信ゆえ次回読込で反映、GitHub push はユーザー実行）。
 - [x] tailscale serve は同一ポート（47825→`:8444`）のため systemd unit 変更不要。本番 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/saguri/`。
-- [ ] **本番反映＝`systemctl --user restart companion-games`（ユーザー承認必須）**: 本番プロセスは saguri を STATIC に足す前に起動済みのため現在 `/saguri/` は 404。restart で新 app.py を反映（既存 URL 不変）。**プロダクションデプロイ＝スキル例外操作のためユーザー承認を待つ**。
+- [x] **本番反映済み（ユーザー承認のうえ実施、2026-06-08）**: `systemctl --user restart companion-games`。本番47825 で `/saguri/`・`/saguri/app.js` 200、既存 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/healthz` 全 200（既存 URL 不変を確認）、service active。本番 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/saguri/`。remote の GitHub push はユーザー実行（`cd ~/companion/remote && git push origin main`）。
 
 ### code-reviewer + commit（§8、2026-06-08）
 
