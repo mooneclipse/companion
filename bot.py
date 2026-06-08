@@ -25,6 +25,7 @@ import logging
 import math
 import os
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -101,8 +102,9 @@ VAULT_PUSH_SSH_COMMAND = "ssh -o BatchMode=yes"
 
 # `/tweet <url>`: ツイート/ポスト URL を syndication API で取得し vault notes/ に
 # Markdown 保存する。取得は認証不要の cdn.syndication.twimg.com/tweet-result。
-# 保存後に vault (branch develop) へ commit するが push はしない (push は /vault_push
-# の人手承認ゲートに委ねる = `/vault_push` と同じ設計境界)。
+# 保存後に vault の現在ブランチ (運用上 develop) へ commit するが push はしない
+# (push は /vault_push の人手承認ゲートに委ねる = `/vault_push` と同じ設計境界。
+# branch は HEAD 依存で検証しない = vault-sync Stop フックと同じ慣習)。
 TWEET_ALLOWED_HOSTS = frozenset({
     "x.com",
     "www.x.com",
@@ -853,7 +855,7 @@ async def _fetch_tweet(tweet_id: str) -> dict | None:
 
 
 def _commit_tweet_note(filename: str, screen_name: str, tweet_id: str) -> tuple[bool, str]:
-    """flock を取って `notes/<filename>` を vault (develop) へ commit する。
+    """flock を取って `notes/<filename>` を vault の現在ブランチ (運用上 develop) へ commit する。
 
     Stop フック (vault-sync-from-transcript.sh) と同じ flock で直列化 (こちらは
     取りこぼしたくないので短いブロッキング取得)。add の pathspec は `-- notes/<file>`
@@ -877,7 +879,6 @@ def _commit_tweet_note(filename: str, screen_name: str, tweet_id: str) -> tuple[
         if not acquired:
             return False, "vault の lock を取得できませんでした (他の同期処理が実行中)。"
 
-        import subprocess
         add = subprocess.run(
             ["git", "-C", str(VAULT_DIR), "add", "--", rel],
             capture_output=True, text=True, env=env,
