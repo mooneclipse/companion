@@ -222,6 +222,17 @@ def api_todo_status(handler):
         return 404, {"error": "no such ticket"}
 
 
+class _Binary:
+    """ハンドラがバイナリ(画像)を返すときのラッパ。_dispatch がこの型を見て
+    JSON でなく生バイトを送る(1回の型判定で送出経路を決める。条件分岐を積まない)。
+    icon png の STATIC 配信と同じ _send のバイナリ対応を再利用する。"""
+    __slots__ = ("body", "content_type")
+
+    def __init__(self, body, content_type):
+        self.body = body
+        self.content_type = content_type
+
+
 def _query(handler):
     """self.path の query string を {key: 最初の値} に。複数値・空は無視(単純取得用)。"""
     qs = urlsplit(handler.path).query
@@ -252,6 +263,21 @@ def api_vault_search(handler):
     return 200, vault.search(_query(handler).get("q", ""))
 
 
+def api_vault_image(handler):
+    """GET /api/vault/image?path=<相対パス> — ノート埋め込みローカル画像を read 専用配信。Bearer 必須。
+
+    path 検証は vault.get_image が realpath/commonpath で1回確定(traversal/範囲外/非画像を弾く)。
+    VaultError は「path 不正/範囲外/非画像」=403、「not found」のみ 404 と一意に分ける
+    (api_vault_get と同じ写像。state を持つ FS 側を引いて確定、stderr/文言マッチで分岐しない)。
+    """
+    path = _query(handler).get("path", "")
+    try:
+        img = vault.get_image(path)
+    except vault.VaultError as e:
+        return (404, {"error": "not found"}) if str(e) == "not found" else (403, {"error": "forbidden"})
+    return 200, _Binary(img["bytes"], img["content_type"])
+
+
 # (i) API 明示ルートテーブル。値は (handler, auth_required)。ここに無い (method, path) は 404。
 #     self.path を FS に連結しない。auth_required=False は無認証 endpoint(生存確認のみ)、
 #     それ以外の /api/* は (iv) Bearer 必須。
@@ -275,6 +301,7 @@ ROUTES = {
     ("GET", "/api/vault/list"): (api_vault_list, True),
     ("GET", "/api/vault/get"): (api_vault_get, True),
     ("GET", "/api/vault/search"): (api_vault_search, True),
+    ("GET", "/api/vault/image"): (api_vault_image, True),
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。
@@ -372,7 +399,11 @@ class Handler(BaseHTTPRequestHandler):
                 # (v) 内部例外はスタック/パスを出さず generic 500
                 self._send_json(500, {"error": "internal error"})
                 return
-            self._send_json(code, obj)
+            # バイナリ(画像)応答は icon png と同じ _send を再利用、それ以外は JSON。
+            if isinstance(obj, _Binary):
+                self._send(code, obj.body, obj.content_type)
+            else:
+                self._send_json(code, obj)
             return
         if method == "GET":
             static = STATIC.get(path)

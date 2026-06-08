@@ -630,16 +630,31 @@ let vaultLoaded = false;        // 一覧を一度取得したか（再入で再
 let vaultViewingDoc = false;    // 本文ビュー表示中（戻るボタンの出し分け）
 let vaultSearchTimer = null;    // 検索 debounce
 
-// wikilink [[target]] / [[target|alias]] を解決可能なリンク（data 属性）に前処理する。
-// marked へ渡す前に置換し、DOMPurify には data-vault-link 属性を許可させてジャンプを結線。
+// 属性値内の特殊文字を実体化（marked は raw HTML を素通しするため自前でエスケープ）。
+function vaultEscAttr(s) {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const VAULT_IMG_EXT = /\.(jpe?g|png|gif|webp)$/i;
+
+// wikilink を解決可能なリンク（data 属性）に前処理する。marked へ渡す前に置換。
+//  - ローカル画像埋め込み ![[name.ext]] → <img data-vault-img="name">（後で blob fetch して表示）。
+//  - 通常リンク [[target]] / [[target|alias]] → <a data-vault-link>（同ビューア内ジャンプ）。
+// 画像埋め込みを先に処理（![[...]] の内側を [[...]] として二重置換しないため）。
 function vaultRewriteWikilinks(md) {
+  // (b-2) ![[name.(jpg|jpeg|png|gif|webp)]] のみ画像化。非画像埋め込み・通常リンクは下の置換へ残す。
+  md = md.replace(/!\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]/g, (m, target) => {
+    const t = target.trim();
+    if (!VAULT_IMG_EXT.test(t)) return m;  // 非画像埋め込みは現状の挙動を変えない
+    return '<img class="vault-img" data-vault-img="' + vaultEscAttr(t) + '" alt="' + vaultEscAttr(t) + '">';
+  });
+  // 通常 [[target]] / [[target|alias]]（! なし）はジャンプアンカーへ（既存挙動）。
   return md.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, target, alias) => {
     const t = target.trim();
     const label = (alias != null ? alias : target).trim();
-    // 属性値内の " と < を実体化（marked は raw HTML を素通しするため自前でエスケープ）。
-    const esc = (s) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
-      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return '<a href="#" class="wikilink" data-vault-link="' + esc(t) + '">' + esc(label) + "</a>";
+    return '<a href="#" class="wikilink" data-vault-link="' + vaultEscAttr(t) + '">'
+      + vaultEscAttr(label) + "</a>";
   });
 }
 
@@ -671,12 +686,43 @@ function vaultRenderFrontmatter(meta) {
   box.hidden = false;
 }
 
+// 本文中のローカル画像で生成した object URL を保持し、次のノートを開く前に解放する
+// （createObjectURL のリーク防止。ノートを開き直すたびに revoke してから作り直す）。
+let vaultObjectUrls = [];
+function vaultRevokeImageUrls() {
+  vaultObjectUrls.forEach((u) => { try { URL.revokeObjectURL(u); } catch (e) { /* noop */ } });
+  vaultObjectUrls = [];
+}
+
+// data-vault-img の画像を Bearer 付き fetch（api()）→ blob → object URL で表示する。
+// <img src> は Authorization を送れないため必ず blob 方式（生 src を直接読ませない）。
+// 契約: 本文の ![[name]] は vault attachments/<name> を指す（Obsidian attachmentFolderPath と一致）。
+function vaultLoadImages(doc) {
+  doc.querySelectorAll("img[data-vault-img]").forEach((img) => {
+    const name = img.getAttribute("data-vault-img") || "";
+    img.removeAttribute("data-vault-img");  // 二重ロード防止
+    api("/api/vault/image?path=" + encodeURIComponent("attachments/" + name))
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("img " + r.status))))
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        vaultObjectUrls.push(url);
+        img.src = url;
+      })
+      .catch(() => {
+        // 取得失敗は壊れアイコンを残さず軽いプレースホルダ表示で握り潰す（リトライしない）。
+        img.classList.add("vault-img-missing");
+        img.alt = "画像を読み込めませんでした: " + name;
+      });
+  });
+}
+
 // markdown → サニタイズ済み HTML を本文要素へ。innerHTML はここだけ（DOMPurify 通過後）。
 function vaultRenderMarkdown(body) {
+  vaultRevokeImageUrls();  // 前ノートの object URL を解放してから描画
   const html = marked.parse(body, { gfm: true, breaks: false });
-  // DOMPurify: 生 HTML を無害化。wikilink の data 属性 + class のみ追加許可。
+  // DOMPurify: 生 HTML を無害化。wikilink の data 属性 + ローカル画像マーカ + class のみ追加許可。
   const clean = DOMPurify.sanitize(html, {
-    ADD_ATTR: ["data-vault-link", "target", "rel"],
+    ADD_ATTR: ["data-vault-link", "data-vault-img", "target", "rel"],
     FORBID_TAGS: ["style", "form", "input", "textarea", "button"],
     FORBID_ATTR: ["style", "onerror", "onload"],
   });
@@ -694,6 +740,7 @@ function vaultRenderMarkdown(body) {
     if (/^https?:\/\//i.test(href)) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
     else a.addEventListener("click", (e) => e.preventDefault());  // 相対リンクは無効化
   });
+  vaultLoadImages(doc);  // ローカル画像（![[...]]）を Bearer fetch → blob で表示
 }
 
 // 一覧ビュー / 本文ビューの切替（戻るボタンの挙動も連動）。

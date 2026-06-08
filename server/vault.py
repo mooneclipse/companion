@@ -26,6 +26,16 @@ MD_EXT = ".md"
 SNIPPET_RADIUS = 40  # 検索ヒット箇所の前後文字数
 SEARCH_MAX_RESULTS = 100  # 結果上限(列挙コスト/レスポンスサイズの頭打ち)
 
+# ノート本文に埋め込まれたローカル画像(Obsidian ![[name.jpg]])を read 専用で配信するための
+# 拡張子→content-type 写像。任意ファイル読み出しを画像種に限定する allowlist。
+IMAGE_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
 
 class VaultError(Exception):
     """path 検証失敗 / 範囲外。API は 400/403 に写像する。"""
@@ -44,11 +54,13 @@ def _iter_md_files():
             yield rel, abspath
 
 
-def _safe_abspath(rel_path):
-    """要求 path を VAULT_ROOT 配下の安全な .md 絶対パスに解決。外れたら VaultError。
+def _resolve_in_vault(rel_path):
+    """要求 path を VAULT_ROOT 配下の安全な絶対パスに解決(拡張子は問わない)。
 
     realpath で symlink/`..` を畳んでから root の realpath 配下にあることを照合する
     (prefix 文字列一致でなく os.path.commonpath で境界を厳密判定。`vault-evil` 誤判定回避)。
+    範囲・traversal・symlink 脱出を realpath/commonpath で1回確定する(条件分岐を積まない。
+    ~/companion/CLAUDE.md 設計上限ルール準拠)。拡張子の許否は呼び出し側が決める。
     """
     if not isinstance(rel_path, str) or not rel_path:
         raise VaultError("path required")
@@ -58,6 +70,12 @@ def _safe_abspath(rel_path):
     # root 自身か、root 配下にあること(commonpath で prefix 偽装 vault-evil を弾く)。
     if candidate != VAULT_ROOT and os.path.commonpath([VAULT_ROOT, candidate]) != VAULT_ROOT:
         raise VaultError("path outside vault")
+    return candidate
+
+
+def _safe_abspath(rel_path):
+    """要求 path を VAULT_ROOT 配下の安全な .md 絶対パスに解決。外れたら VaultError。"""
+    candidate = _resolve_in_vault(rel_path)
     if not candidate.endswith(MD_EXT):
         raise VaultError("not a markdown file")
     return candidate
@@ -135,3 +153,23 @@ def search(query):
             break
     results.sort(key=lambda r: r["name"].lower())
     return {"query": q, "count": len(results), "results": results}
+
+
+def get_image(rel_path):
+    """ノート本文に埋め込まれたローカル画像1枚を read 専用で返す。範囲外/不在は VaultError。
+
+    .md と同じ realpath/commonpath で境界を1回確定し、拡張子は IMAGE_TYPES allowlist に
+    限定する(任意ファイル読み出しを画像種に絞る)。返り値: {"bytes": <bytes>, "content_type"}。
+    open は "rb" の read のみ(書き込み・削除・mkdir なし)。
+    """
+    candidate = _resolve_in_vault(rel_path)
+    ext = os.path.splitext(candidate)[1].lower()
+    content_type = IMAGE_TYPES.get(ext)
+    if content_type is None:
+        raise VaultError("not an image file")
+    try:
+        with open(candidate, "rb") as f:  # read 専用(書き込みモード厳禁)
+            data = f.read()
+    except OSError:
+        raise VaultError("not found")
+    return {"bytes": data, "content_type": content_type}

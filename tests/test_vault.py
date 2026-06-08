@@ -28,6 +28,10 @@ class VaultTestBase(unittest.TestCase):
         self._write("notes/not-markdown.txt", "これは .md でない")
         self._write(".obsidian/workspace.md", "除外されるべき設定")
         self._write(".git/config.md", "除外されるべき git")
+        # 埋め込みローカル画像(attachments/) — get_image 用。中身は擬似バイト列。
+        self._write_bytes("attachments/pic.png", b"\x89PNG\r\n\x1a\nfakebytes")
+        self._write_bytes("attachments/photo.jpg", b"\xff\xd8\xfffakejpeg")
+        self._write_bytes("attachments/evil.exe", b"MZ binary")
         self._orig_root = vault.VAULT_ROOT
         vault.VAULT_ROOT = self.root
 
@@ -39,6 +43,12 @@ class VaultTestBase(unittest.TestCase):
         path = os.path.join(self.root, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def _write_bytes(self, rel, content):
+        path = os.path.join(self.root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
             f.write(content)
 
 
@@ -166,6 +176,65 @@ class TestSearch(VaultTestBase):
 
     def test_no_hit(self):
         self.assertEqual(vault.search("存在しない語句zzz")["count"], 0)
+
+
+class TestImage(VaultTestBase):
+    def test_get_png(self):
+        res = vault.get_image("attachments/pic.png")
+        self.assertEqual(res["content_type"], "image/png")
+        self.assertTrue(res["bytes"].startswith(b"\x89PNG"))
+
+    def test_get_jpg(self):
+        res = vault.get_image("attachments/photo.jpg")
+        self.assertEqual(res["content_type"], "image/jpeg")
+        self.assertTrue(res["bytes"].startswith(b"\xff\xd8\xff"))
+
+    def test_non_image_extension(self):
+        # 実在する .exe でも拡張子で拒否(任意ファイル読み出し封じ)
+        with self.assertRaises(vault.VaultError):
+            vault.get_image("attachments/evil.exe")
+
+    def test_md_is_not_image(self):
+        # .md は画像エンドポイントからは取れない(拡張子 allowlist 外)
+        with self.assertRaises(vault.VaultError):
+            vault.get_image("notes/alpha.md")
+
+    def test_missing_image_raises(self):
+        with self.assertRaises(vault.VaultError) as cm:
+            vault.get_image("attachments/nope.png")
+        self.assertEqual(str(cm.exception), "not found")
+
+    def test_parent_escape(self):
+        for bad in ("../secret.png", "../../etc/shadow.png", "attachments/../../escape.png"):
+            with self.subTest(path=bad):
+                with self.assertRaises(vault.VaultError):
+                    vault.get_image(bad)
+
+    def test_absolute_path(self):
+        with self.assertRaises(vault.VaultError):
+            vault.get_image("/etc/passwd.png")
+
+    def test_null_byte(self):
+        with self.assertRaises(vault.VaultError):
+            vault.get_image("attachments/pic.png\x00.md")
+
+    def test_empty_and_nonstring(self):
+        for bad in ("", None, 123):
+            with self.subTest(path=bad):
+                with self.assertRaises(vault.VaultError):
+                    vault.get_image(bad)
+
+    def test_symlink_escape(self):
+        outside = os.path.join(os.path.dirname(self.root), "outside-secret.png")
+        with open(outside, "wb") as f:
+            f.write(b"outside-secret-image-bytes")
+        try:
+            link = os.path.join(self.root, "attachments", "link.png")
+            os.symlink(outside, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink unsupported")
+        with self.assertRaises(vault.VaultError):
+            vault.get_image("attachments/link.png")
 
 
 if __name__ == "__main__":
