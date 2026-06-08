@@ -518,5 +518,186 @@ class ProactiveGuardNotBypassedTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rec["reason"], "snoozed")
 
 
+class SyndicationTokenTest(unittest.TestCase):
+    """`_syndication_token` の固定値検証 (react-tweet 互換、実機検証済の 2 ID)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_token_for_id_20(self) -> None:
+        self.assertEqual(self.bot._syndication_token("20"), "6dq1a2xwd93jfti9")
+
+    def test_token_for_long_id(self) -> None:
+        self.assertEqual(
+            self.bot._syndication_token("1349129669258448897"),
+            "39qeyy97t9wsjr4724t2o6r",
+        )
+
+
+class ExtractTweetIdTest(unittest.TestCase):
+    """URL → tweet id 抽出: 各受理形式と弾く形式。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_x_com_https(self) -> None:
+        self.assertEqual(
+            self.bot.extract_tweet_id("https://x.com/user/status/1349129669258448897"),
+            "1349129669258448897",
+        )
+
+    def test_twitter_com_https(self) -> None:
+        self.assertEqual(
+            self.bot.extract_tweet_id("https://twitter.com/user/status/20"),
+            "20",
+        )
+
+    def test_www_prefix(self) -> None:
+        self.assertEqual(
+            self.bot.extract_tweet_id("https://www.twitter.com/user/status/20"),
+            "20",
+        )
+
+    def test_mobile_prefix(self) -> None:
+        self.assertEqual(
+            self.bot.extract_tweet_id("https://mobile.x.com/user/status/20"),
+            "20",
+        )
+
+    def test_query_string_ignored(self) -> None:
+        self.assertEqual(
+            self.bot.extract_tweet_id("https://x.com/user/status/20?s=20&t=abc"),
+            "20",
+        )
+
+    def test_http_scheme_accepted(self) -> None:
+        self.assertEqual(
+            self.bot.extract_tweet_id("http://x.com/user/status/20"),
+            "20",
+        )
+
+    def test_unknown_host_rejected(self) -> None:
+        self.assertIsNone(
+            self.bot.extract_tweet_id("https://evil.com/user/status/20")
+        )
+
+    def test_userinfo_spoof_rejected(self) -> None:
+        self.assertIsNone(
+            self.bot.extract_tweet_id("https://evil@x.com/user/status/20")
+        )
+
+    def test_non_http_scheme_rejected(self) -> None:
+        self.assertIsNone(self.bot.extract_tweet_id("ftp://x.com/user/status/20"))
+
+    def test_no_status_path_rejected(self) -> None:
+        self.assertIsNone(self.bot.extract_tweet_id("https://x.com/user"))
+
+    def test_non_numeric_status_rejected(self) -> None:
+        self.assertIsNone(self.bot.extract_tweet_id("https://x.com/user/status/abc"))
+
+    def test_whitespace_rejected(self) -> None:
+        self.assertIsNone(self.bot.extract_tweet_id("https://x.com/user/status/2 0"))
+
+
+class SafeScreenNameTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_alnum_kept(self) -> None:
+        self.assertEqual(self.bot._safe_screen_name("Jack_2024"), "Jack_2024")
+
+    def test_unsafe_chars_stripped(self) -> None:
+        self.assertEqual(self.bot._safe_screen_name("a/b\\c.d e"), "abcde")
+
+    def test_empty_falls_back(self) -> None:
+        self.assertEqual(self.bot._safe_screen_name(""), "unknown")
+
+
+class SelectMediaUrlsTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_photo_url(self) -> None:
+        details = [{"type": "photo", "media_url_https": "https://pbs/img.jpg"}]
+        self.assertEqual(self.bot._select_media_urls(details), ["https://pbs/img.jpg"])
+
+    def test_video_picks_highest_mp4_bitrate(self) -> None:
+        details = [{
+            "type": "video",
+            "video_info": {"variants": [
+                {"content_type": "application/x-mpegURL", "url": "https://v/playlist.m3u8"},
+                {"content_type": "video/mp4", "bitrate": 256000, "url": "https://v/low.mp4"},
+                {"content_type": "video/mp4", "bitrate": 2176000, "url": "https://v/high.mp4"},
+            ]},
+        }]
+        self.assertEqual(self.bot._select_media_urls(details), ["https://v/high.mp4"])
+
+    def test_animated_gif_mp4(self) -> None:
+        details = [{
+            "type": "animated_gif",
+            "video_info": {"variants": [
+                {"content_type": "video/mp4", "bitrate": 0, "url": "https://v/gif.mp4"},
+            ]},
+        }]
+        self.assertEqual(self.bot._select_media_urls(details), ["https://v/gif.mp4"])
+
+    def test_empty_and_none(self) -> None:
+        self.assertEqual(self.bot._select_media_urls([]), [])
+        self.assertEqual(self.bot._select_media_urls(None), [])
+
+
+class BuildTweetMarkdownTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _now(self):
+        from datetime import datetime
+        import quota
+        return datetime(2026, 6, 8, 12, 0, tzinfo=quota.JST)
+
+    def test_frontmatter_and_body(self) -> None:
+        data = {
+            "__typename": "Tweet",
+            "text": "hello &amp; world",
+            "user": {"name": "Jack", "screen_name": "jack"},
+            "created_at": "2026-06-08T01:00:00.000Z",
+            "mediaDetails": [{"type": "photo", "media_url_https": "https://pbs/img.jpg"}],
+        }
+        md = self.bot.build_tweet_markdown(
+            data, "https://x.com/jack/status/20", self._now()
+        )
+        self.assertIn("type: note", md)
+        self.assertIn("created: 2026-06-08", md)
+        self.assertIn("tags: [tweet, clip]", md)
+        self.assertIn("source: https://x.com/jack/status/20", md)
+        self.assertIn("author: @jack", md)
+        # HTML エンティティがデコードされること
+        self.assertIn("hello & world", md)
+        self.assertNotIn("&amp;", md)
+        # メディア URL が記載されること
+        self.assertIn("https://pbs/img.jpg", md)
+        # 著者表示
+        self.assertIn("Jack (@jack)", md)
+
+    def test_no_media_section_when_absent(self) -> None:
+        data = {
+            "__typename": "Tweet",
+            "text": "no media",
+            "user": {"name": "X", "screen_name": "x"},
+            "created_at": "2026-06-08T01:00:00.000Z",
+            "mediaDetails": [],
+        }
+        md = self.bot.build_tweet_markdown(data, "https://x.com/x/status/1", self._now())
+        self.assertNotIn("## メディア", md)
+
+
 if __name__ == "__main__":
     unittest.main()

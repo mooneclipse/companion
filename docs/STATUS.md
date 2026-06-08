@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-01 (Phase 4 自発発話 [proactive companion messaging] 最小初版を実装 = bot.py 大改変、配備済み [timer enable + bot restart 2026-06-01 19:17 JST 確認]、本変更への様子見観察を開始。残る user 操作は git push のみ)
+最終更新: 2026-06-08 (Telegram `/tweet <url>` コマンド追加を実装 = ツイート/ポストを syndication API で取得し vault notes/ に Markdown 保存 + vault commit [push しない]。commit までで停止、bot restart / push は user 操作)
 
 ## 設計メモ
 
@@ -173,6 +173,33 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### Telegram `/tweet <url>` コマンド追加 (2026-06-08 実装、commit までで停止、restart は user 操作)
+
+**目的**: ツイート/ポスト URL を渡すと本文・著者・投稿日時・メディア URL を取得して Obsidian vault `notes/` に Markdown 保存し、vault repo (branch develop) へ commit する。push はしない (GitHub 同期は既存 `/vault_push` の人手承認ゲートに委ねる)。`/play` / `/vault_push` の実装パターンに準拠。
+
+**取得方式**: `https://cdn.syndication.twimg.com/tweet-result?id=<ID>&token=<TOKEN>&lang=en` (認証不要)。TOKEN は react-tweet 互換アルゴリズムを ID から算出 (`_syndication_token`、実機検証済の固定値 2 件をユニットテストで固定)。HTTP は PTB 同梱 httpx の async client (新規依存追加なし)、`TWEET_HTTP_TIMEOUT_S=10`、ブラウザ風 User-Agent。成否は 1 レスポンスで確定 (リトライループ・stderr 文言分岐なし、2 周目ルール遵守)。
+
+**実装内容**:
+- `bot.py`:
+  - `_syndication_token(tid)` … react-tweet 互換トークン算出 (純関数)。
+  - `extract_tweet_id(url)` … x.com / twitter.com (www./mobile. 接頭辞含む) の `/status/<digits>` から ID 抽出。userinfo 詐称 / 非 http / 制御文字 / 未対応ホストを弾く (純関数、`_normalize_play_url` の弾き方に準拠)。
+  - `build_tweet_markdown(data, url, now)` / `_select_media_urls` / `_safe_screen_name` / `_tweet_note_filename` … frontmatter (type/created/tags/style/source/author) + 本文 (HTML エンティティデコード) + メディア URL を整形 (純関数)。photo は media_url_https、video/animated_gif は variants の mp4 最高 bitrate を 1 本。メディアは URL 記載のみ (バイナリ DL しない、vault 境界 notes/ のみ・YAGNI)。
+  - `_fetch_tweet(tweet_id)` … syndication API を 1 回 GET。HTTP 非200 / 非 JSON / 例外は None。
+  - `_commit_tweet_note()` … vault-sync Stop フックと同じ flock (`companion-vault-sync.lock`) で直列化。Stop フックは flock -n だが /tweet は取りこぼし回避のため短いタイムアウト付きブロッキング取得 (`VAULT_LOCK_TIMEOUT_S=15`)。`git add -- notes/<file>` 限定 (手書きエリア漏出防止) → `git commit`。`GIT_TERMINAL_PROMPT=0` で対話 hang 防止。push はしない。`asyncio.to_thread` 経由で event loop を塞がない。
+  - `cmd_tweet(url)` … URL→ID→取得→`__typename=="Tweet"` 検査 (削除/鍵垢 tombstone を弾く)→同名ファイル存在チェック (重複 commit 回避)→保存→commit。異常系はファイルを書かずユーザー向け文言を返す。
+  - `slash_tweet()` ハンドラ + `BotCommand("tweet", ...)` 登録 + `CommandHandler("tweet", ...)` 登録 (`_authorized` 4 段防御 + message_filter、`/play` の隣)。
+- `tests/test_bot.py`: token 固定値 2 / URL 抽出 12 / safe_screen_name 3 / media 選択 4 / markdown 整形 2 = **23 件追加**。ネットワーク非依存 (純関数のみ)。全 **106 tests pass** (旧 83 + 23)。
+
+**実 API 確認 (一度だけ手で実施、bot.service 非接触)**: ID=20 (jack 初ツイート) で `__typename=Tweet` / 本文 / created_at JST 変換 / frontmatter を確認。
+
+**設計判断 (記録)**:
+1. **httpx を requirements.txt に追加しない**: httpx は PTB の確定 transitive 依存で venv に 0.28.1 既存。ブリーフ指示「新規依存追加しない」に従い直接 import のみ (PTB が pin している前提)。
+2. **ファイル名安全化 / frontmatter**: 既存 notes 慣習 (type: note / created / tags / style) に最も寄る形を独断採用。tweet 専用に `tags: [tweet, clip]` / `style: clip` / `source:` / `author:` を追加。
+3. **commit メッセージ**: vault repo の auto-sync スタイル `add: notes <date> (...)` に揃え、tweet 識別子を括弧内に入れる。
+4. **テストランナー**: ブリーフは pytest を想定するが venv に pytest 未導入。既存 test 群は unittest 前提 (`_import_bot_with_stub_env` の SkipTest 機構含む) のため unittest で実行・検証 (既存慣習に準拠)。
+
+**未実施 (user 操作)**: bot.service restart は claude 側で実行しない。反映には `systemctl --user restart companion-bot.service` が必要。push もしない (commit までで停止)。
 
 ### Phase 4 自発発話 (proactive companion messaging) 最小初版 (2026-06-01 実装、commit までで停止、restart/timer enable は user 操作)
 

@@ -18,9 +18,13 @@ Design highlights wired in here:
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import html
 import json
 import logging
+import math
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -28,6 +32,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
+import httpx
 from dotenv import load_dotenv
 from telegram import (
     BotCommand,
@@ -93,6 +98,32 @@ VAULT_PUSH_TIMEOUT_S = 60.0
 # 対話プロンプトでの hang を避けて即 fail させる (agent 未 load / keyring ロック /
 # host key 未知などを対話待ちにせずエラーとして表面化させる)。
 VAULT_PUSH_SSH_COMMAND = "ssh -o BatchMode=yes"
+
+# `/tweet <url>`: ツイート/ポスト URL を syndication API で取得し vault notes/ に
+# Markdown 保存する。取得は認証不要の cdn.syndication.twimg.com/tweet-result。
+# 保存後に vault (branch develop) へ commit するが push はしない (push は /vault_push
+# の人手承認ゲートに委ねる = `/vault_push` と同じ設計境界)。
+TWEET_ALLOWED_HOSTS = frozenset({
+    "x.com",
+    "www.x.com",
+    "mobile.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com",
+})
+TWEET_SYNDICATION_URL = "https://cdn.syndication.twimg.com/tweet-result"
+# syndication API への HTTP 取得上限。成否は 1 レスポンスで確定する (リトライ
+# ループ・stderr/文言マッチ分岐は作らない、`~/companion/CLAUDE.md` 2 周目ルール)。
+TWEET_HTTP_TIMEOUT_S = 10.0
+# react-tweet と同じ User-Agent 偽装 (素の httpx UA だと HTML が返ることがある)。
+TWEET_USER_AGENT = "Mozilla/5.0"
+# vault git index を Stop フック (vault-sync-from-transcript.sh) と奪い合わないよう
+# 同じ flock で直列化する。Stop フックは flock -n (非ブロッキング即スキップ) だが、
+# /tweet は commit を取りこぼしたくないので短いタイムアウト付きブロッキング取得。
+VAULT_SYNC_LOCK_FILE = Path(
+    os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+) / "companion-vault-sync.lock"
+VAULT_LOCK_TIMEOUT_S = 15.0
 
 # stall 検知 (§4.6): 5 分間隔で getMe(), 連続 3 回失敗で sys.exit(1)。
 STALL_CHECK_INTERVAL_S = 300.0
@@ -642,6 +673,283 @@ async def cmd_vault_push() -> str:
     return classify_push_result(proc.returncode or 0, stdout, stderr)
 
 
+# ---------------------------------------------------------------------------
+# /tweet: syndication API → vault notes/ Markdown + vault commit (push しない)
+# ---------------------------------------------------------------------------
+
+
+def _syndication_token(tid: str) -> str:
+    """Compute the syndication API token from a tweet id (react-tweet 互換)。
+
+    JS の ``((id / 1e15) * Math.PI).toString(6)`` 相当を小数込みで base36 展開し、
+    末尾 ``0`` と ``.`` を除去したもの。実機検証済 (ID=20 → ``6dq1a2xwd93jfti9``、
+    ID=1349129669258448897 → ``39qeyy97t9wsjr4724t2o6r``)。純関数 → unit-test 固定。
+    """
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    x = (int(tid) / 1e15) * math.pi
+    intpart = int(x)
+    frac = x - intpart
+    s = ""
+    n = intpart
+    if n == 0:
+        s = "0"
+    while n > 0:
+        s = digits[n % 36] + s
+        n //= 36
+    out = s
+    if frac > 0:
+        out += "."
+        for _ in range(25):
+            frac *= 36
+            d = int(frac)
+            out += digits[d]
+            frac -= d
+            if frac == 0:
+                break
+    return re.sub(r"(0+|\.)", "", out)
+
+
+def extract_tweet_id(url: str) -> str | None:
+    """Return the numeric tweet id from an x.com / twitter.com status URL, else None.
+
+    受理: ``x.com`` / ``twitter.com`` (``www.`` / ``mobile.`` 接頭辞含む) の
+    ``/.../status/<digits>`` 形式 (https/http のみ、クエリは無視)。userinfo 詐称
+    (``https://evil@x.com/...``) や制御文字を含む URL は弾く。純関数 → unit-test。
+    """
+    if any(ch.isspace() or ord(ch) < 0x20 for ch in url):
+        return None
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    host = (parsed.hostname or "").lower()
+    if host not in TWEET_ALLOWED_HOSTS:
+        return None
+    m = re.search(r"/status/(\d+)", parsed.path)
+    if m is None:
+        return None
+    return m.group(1)
+
+
+def _safe_screen_name(name: str) -> str:
+    """Sanitize a screen_name for use in a filename (英数字 / _ / - のみ残す)。"""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "", name or "")
+    return cleaned or "unknown"
+
+
+def _select_media_urls(media_details: list) -> list[str]:
+    """Extract media URLs from `mediaDetails`: photo は media_url_https、video /
+
+    animated_gif は variants の mp4 最高 bitrate を 1 本。バイナリ DL はしない
+    (URL を Markdown に書くだけ = vault 境界 notes/ のみ・YAGNI)。純関数 → unit-test。
+    """
+    urls: list[str] = []
+    for item in media_details or []:
+        if not isinstance(item, dict):
+            continue
+        mtype = item.get("type")
+        if mtype == "photo":
+            u = item.get("media_url_https")
+            if u:
+                urls.append(u)
+        elif mtype in ("video", "animated_gif"):
+            variants = (item.get("video_info") or {}).get("variants") or []
+            best_url = None
+            best_bitrate = -1
+            for v in variants:
+                if not isinstance(v, dict):
+                    continue
+                if v.get("content_type") != "video/mp4":
+                    continue
+                bitrate = v.get("bitrate", 0) or 0
+                if bitrate > best_bitrate:
+                    best_bitrate = bitrate
+                    best_url = v.get("url")
+            if best_url:
+                urls.append(best_url)
+    return urls
+
+
+def build_tweet_markdown(data: dict, source_url: str, now: datetime) -> str:
+    """Render the vault note Markdown from a syndication `tweet-result` payload.
+
+    frontmatter は既存 notes 慣習 (type/created/tags/style) に寄せ、source に元 URL、
+    author に @screen_name を入れる。本文 HTML エンティティはデコード。bot 書き出しは
+    self-contained (vault CLAUDE.md に依存しない)。純関数 → unit-test。
+    """
+    user = data.get("user") or {}
+    name = user.get("name") or "(不明)"
+    screen_name = user.get("screen_name") or "unknown"
+    created_at = data.get("created_at") or ""
+    text = html.unescape(data.get("text") or "")
+    media_urls = _select_media_urls(data.get("mediaDetails") or [])
+
+    created_jst_line = ""
+    if created_at:
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            created_jst_line = dt.astimezone(quota.JST).isoformat(timespec="minutes")
+        except ValueError:
+            created_jst_line = created_at
+
+    lines = [
+        "---",
+        "type: note",
+        f"created: {now.strftime('%Y-%m-%d')}",
+        "tags: [tweet, clip]",
+        "style: clip",
+        f"source: {source_url}",
+        f"author: @{screen_name}",
+        "---",
+        "",
+        f"# {name} (@{screen_name}) のポスト",
+        "",
+        f"- 投稿: {created_jst_line or '(不明)'}",
+        f"- URL: {source_url}",
+        "",
+        "## 本文",
+        "",
+        text if text.strip() else "(本文なし)",
+    ]
+    if media_urls:
+        lines += ["", "## メディア", ""]
+        for u in media_urls:
+            lines.append(f"- {u}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _tweet_note_filename(screen_name: str, tweet_id: str, now: datetime) -> str:
+    return f"{now.strftime('%Y-%m-%d')}_tweet-{_safe_screen_name(screen_name)}-{tweet_id}.md"
+
+
+async def _fetch_tweet(tweet_id: str) -> dict | None:
+    """Fetch a tweet via the syndication API. Return the JSON dict or None on any
+
+    failure (HTTP 非200 / 非 JSON / 例外)。成否は 1 レスポンスで確定し、リトライ
+    ループや stderr 文言分岐は作らない (2 周目ルール)。
+    """
+    params = {
+        "id": tweet_id,
+        "token": _syndication_token(tweet_id),
+        "lang": "en",
+    }
+    headers = {"User-Agent": TWEET_USER_AGENT}
+    try:
+        async with httpx.AsyncClient(timeout=TWEET_HTTP_TIMEOUT_S) as client:
+            resp = await client.get(TWEET_SYNDICATION_URL, params=params, headers=headers)
+    except httpx.HTTPError:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        return resp.json()
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _commit_tweet_note(filename: str, screen_name: str, tweet_id: str) -> tuple[bool, str]:
+    """flock を取って `notes/<filename>` を vault (develop) へ commit する。
+
+    Stop フック (vault-sync-from-transcript.sh) と同じ flock で直列化 (こちらは
+    取りこぼしたくないので短いブロッキング取得)。add の pathspec は `-- notes/<file>`
+    限定で手書きエリアへの漏出を防ぐ。push はしない。同期 git 呼び出し (subprocess
+    1 回ずつ rc で確定)。戻り値 (ok, message)。
+    """
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    rel = f"notes/{filename}"
+    lock_fd = os.open(str(VAULT_SYNC_LOCK_FILE), os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        deadline = time.monotonic() + VAULT_LOCK_TIMEOUT_S
+        acquired = False
+        while time.monotonic() < deadline:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                time.sleep(0.2)
+        if not acquired:
+            return False, "vault の lock を取得できませんでした (他の同期処理が実行中)。"
+
+        import subprocess
+        add = subprocess.run(
+            ["git", "-C", str(VAULT_DIR), "add", "--", rel],
+            capture_output=True, text=True, env=env,
+        )
+        if add.returncode != 0:
+            return False, f"git add 失敗 (rc={add.returncode}): {add.stderr.strip()[:300]}"
+        msg = f"add: notes {datetime.now(quota.JST).strftime('%Y-%m-%d')} (tweet @{_safe_screen_name(screen_name)} {tweet_id})"
+        commit = subprocess.run(
+            ["git", "-C", str(VAULT_DIR), "commit", "-m", msg, "--", rel],
+            capture_output=True, text=True, env=env,
+        )
+        if commit.returncode != 0:
+            combined = (commit.stdout + commit.stderr).strip()
+            return False, f"git commit 失敗 (rc={commit.returncode}): {combined[:300]}"
+        return True, msg
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+
+
+async def cmd_tweet(url: str) -> str:
+    """`/tweet <url>` 本体: URL→ID 抽出 → 取得 → Markdown 保存 → vault commit。
+
+    push はしない (GitHub 同期は /vault_push に委ねる)。異常系はファイルを書かず
+    ユーザー向け文言を返す。成否は 1 レスポンスで確定 (リトライループなし)。
+    """
+    tweet_id = extract_tweet_id(url)
+    if tweet_id is None:
+        return (
+            "[tweet] 受け付けない URL です。"
+            "x.com / twitter.com の status URL のみ対応。"
+        )
+
+    now = datetime.now(quota.JST)
+    data = await _fetch_tweet(tweet_id)
+    if data is None:
+        return (
+            "[tweet] 取得に失敗しました (HTTP エラー / 不正な応答)。"
+            "URL が正しいか、ツイートが公開かを確認してください。"
+        )
+    if data.get("__typename") != "Tweet":
+        return (
+            "[tweet] このツイートは取得できません "
+            "(削除済 / 非公開 / 鍵アカウントの可能性)。"
+        )
+
+    user = data.get("user") or {}
+    screen_name = user.get("screen_name") or "unknown"
+    filename = _tweet_note_filename(screen_name, tweet_id, now)
+    note_path = VAULT_DIR / "notes" / filename
+    if note_path.exists():
+        return f"[tweet] 既に保存済です: notes/{filename}"
+
+    markdown = build_tweet_markdown(data, url, now)
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text(markdown, encoding="utf-8")
+
+    ok, message = await asyncio.to_thread(
+        _commit_tweet_note, filename, screen_name, tweet_id
+    )
+    if not ok:
+        return (
+            f"[tweet] notes/{filename} に保存しましたが commit に失敗しました:\n{message}"
+        )
+    return (
+        f"[tweet] 保存 + commit 済: notes/{filename} (@{screen_name})。"
+        "GitHub 同期は /vault_push で。"
+    )
+
+
 def cmd_status(
     chat_id: int,
     thread_id: int | None,
@@ -839,6 +1147,29 @@ async def slash_play(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     output = await cmd_play(url)
     # URL は OWNER 限定経路のため log に残してよい。allowlist 拒否時の原因切り分けに使う。
     logger.info("cmd=/play url=%r send len=%d", url, len(output))
+    await send_text(
+        context.bot, chat_id, thread_id, output,
+        reply_to=msg.message_id if msg else None,
+    )
+
+
+async def slash_tweet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    if not context.args:
+        await send_text(
+            context.bot, chat_id, thread_id,
+            "[tweet] URL を引数に指定してください。例: /tweet https://x.com/user/status/123",
+            reply_to=msg.message_id if msg else None,
+        )
+        return
+    url = context.args[0]
+    output = await cmd_tweet(url)
+    # URL は OWNER 限定経路のため log に残してよい (STATUS.md log 方針)。
+    logger.info("cmd=/tweet url=%r send len=%d", url, len(output))
     await send_text(
         context.bot, chat_id, thread_id, output,
         reply_to=msg.message_id if msg else None,
@@ -1068,6 +1399,7 @@ async def post_init(application: Application) -> None:
         BotCommand("quota", "bot 経由 prompt の予算 / 集計を表示"),
         BotCommand("status", "bot 稼働状況 / current session を表示"),
         BotCommand("play", "YouTube URL をこの PC のブラウザで開く"),
+        BotCommand("tweet", "ツイート/ポストを vault に保存"),
         BotCommand("vault_push", "vault の commit 済変更を GitHub に push"),
         BotCommand("snooze", "自発発話を指定日数止める (例: /snooze 3、解除は /snooze 0)"),
     ]
@@ -1154,6 +1486,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("quota", slash_quota, filters=message_filter))
     app.add_handler(CommandHandler("status", slash_status, filters=message_filter))
     app.add_handler(CommandHandler("play", slash_play, filters=message_filter))
+    app.add_handler(CommandHandler("tweet", slash_tweet, filters=message_filter))
     app.add_handler(CommandHandler("vault_push", slash_vault_push, filters=message_filter))
     app.add_handler(CommandHandler("snooze", slash_snooze, filters=message_filter))
     # slash command 以外の text message → on_message
