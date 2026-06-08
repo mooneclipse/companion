@@ -67,6 +67,12 @@
 - [x] tailscale serve は同一ポート（47825→`:8444`）のため systemd unit 変更不要。本番 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/saguri/`。
 - [ ] **本番反映＝`systemctl --user restart companion-games`（ユーザー承認必須）**: 本番プロセスは saguri を STATIC に足す前に起動済みのため現在 `/saguri/` は 404。restart で新 app.py を反映（既存 URL 不変）。**プロダクションデプロイ＝スキル例外操作のためユーザー承認を待つ**。
 
+### code-reviewer + commit（§8、2026-06-08）
+
+- [x] **code-reviewer 点検＝全観点 OK・修正必須なし・commit 可**: 配信境界（既存6 URL 完全不変・STATIC allowlist・Content-Type 明示）／純静的PWA・CSP（同一オリジン＋Google Fonts 2ドメインのみ・SW は register でなく unregister＝開発フェーズ不使用方針）／**決定論（Math.random/Date.now 0件・hash3/girlPositions・seed=BASE_SEED+diveCount・Set差分）**／状態機械（checkFail の screen ガード・BFS guard・買い切り原子性・busy ロック）／可読性視認性／VERSION 単一真実源 v1.0.0／断章8行 verbatim 一致／既存慣習整合。軽微提案3件は独断判断: #1 死に分岐畳み込み・#2 コメント不一致修正＝**適用**（挙動不変・検証済み動作に非影響）、#3 girlPositions の稀なマス重複＝**見送り**（実害なし＝同マス2人は無害、決定論生成を変えると playtester 検証済み seed 出力がずれ再検証要のため検証済みを優先）。
+- [x] **commit**（push なし＝ユーザー実行、Co-Authored-By なし、gitleaks 各 pass）: games `9cd9d77` feat（さぐり本体+server STATIC+tests）/ `f52f253` docs（§1-§7 正本）。remote `6979bff` feat（ランチャー「さぐり」+SW v17→v18）。**games は (C) ローカル git のみ＝push なし（意図的）**、remote は GitHub バックアップありで push 対象（ユーザー実行）。
+- [ ] **ユーザー実機プレイ → 感想受領**（後日 vault `notes/<date>-saguri-review.md`）→ 受領後に §9 へ継承資産/課題を記録。
+
 
 
 
