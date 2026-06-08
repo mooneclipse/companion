@@ -836,6 +836,50 @@ def _yaml_quote(value: str) -> str:
     return f'"{escaped}"'
 
 
+def expand_tweet_text(text: str, entities: dict) -> str:
+    """Expand t.co short URLs in tweet body and strip media t.co URLs.
+
+    syndication API の ``entities.urls`` は ``{"url": <t.co>, "expanded_url": <実URL>}``
+    の外部リンクマッピング、``entities.media`` は本文に冗長に載る画像/動画への t.co。
+    本文整形ルール (既存クリップ慣習に準拠):
+      1. ``entities.urls`` の各 t.co (``url``) を実 URL (``expanded_url``) に置換
+      2. ``entities.media`` の各 t.co (``url``) を本文から除去 (空文字に置換)
+      3. 除去で生じた行末空白・末尾の余分な空行を整える
+
+    置換は 1 パスで確定する (条件分岐の積み増し・stderr 文言マッチ・リトライなし、
+    `~/companion/CLAUDE.md` 設計上限ルール準拠)。``entities`` が無い / 空でも安全に
+    no-op (text を整形だけして返す)。純関数 → unit-test。
+    """
+    result = text or ""
+    ents = entities or {}
+    for u in ents.get("urls") or []:
+        if not isinstance(u, dict):
+            continue
+        short = u.get("url")
+        expanded = u.get("expanded_url")
+        if short and expanded:
+            result = result.replace(short, expanded)
+    for m in ents.get("media") or []:
+        if not isinstance(m, dict):
+            continue
+        short = m.get("url")
+        if short:
+            result = result.replace(short, "")
+    # 媒体 t.co 除去で残った行末空白を落とし、末尾の余分な空行を畳む。
+    lines = [line.rstrip() for line in result.split("\n")]
+    return "\n".join(lines).strip("\n")
+
+
+def canonical_tweet_url(handle: str, tweet_id: str) -> str:
+    """Build the canonical ``https://x.com/<handle>/status/<tweet_id>`` URL.
+
+    ユーザーが渡す ``?s=20`` 等のトラッキングパラメータを持ち込まないため、API から
+    得た handle と tweet_id で組み立て直す。純関数 → unit-test。
+    """
+    safe_handle = _safe_screen_name(handle)
+    return f"https://x.com/{safe_handle}/status/{tweet_id}"
+
+
 def _tweet_published_date(created_at: str, now: datetime) -> str:
     """Return the post date (JST) as ``YYYY-MM-DD``. Falls back to `now` の日付。"""
     if created_at:
@@ -872,21 +916,26 @@ def _tweet_title(text: str, screen_name: str, created_at: str, now: datetime,
     return f"{screen_name}({dt_str})"
 
 
-def build_tweet_markdown(data: dict, source_url: str, media: list[dict],
+def build_tweet_markdown(data: dict, tweet_id: str, media: list[dict],
                          now: datetime) -> str:
     """Render the vault clip Markdown from a syndication `tweet-result` payload.
 
     frontmatter / 本文は最新クリップ慣習 (`clips/2026-03-27 @trickcal_GW 1.md`) に寄せる。
+    本文は ``expand_tweet_text`` で t.co 短縮 URL を実 URL に展開し、媒体 t.co を除去
+    してから HTML エンティティをデコードする。frontmatter の ``url:`` は handle と
+    tweet_id から正規形 ``https://x.com/<handle>/status/<tweet_id>`` を組み立てる
+    (ユーザー入力のトラッキングパラメータを持ち込まない)。
     画像 (photo) は attachments/ に DL 済 (`media` の filename)、本文では folder 名なしの
     ``![[basename]]`` 埋め込み wikilink で参照する (remote 閲覧アプリ契約)。video/gif は
-    ``[動画](url)`` リンク。本文 HTML エンティティはデコード。純関数 → unit-test。
+    ``[動画](url)`` リンク。純関数 → unit-test。
     `media` は `_select_media` の戻り (photo は DL 成功分のみ呼び出し側が渡す)。
     """
     user = data.get("user") or {}
     name = user.get("name") or "(不明)"
     screen_name = user.get("screen_name") or "unknown"
     created_at = data.get("created_at") or ""
-    text = html.unescape(data.get("text") or "")
+    text = html.unescape(expand_tweet_text(data.get("text") or "", data.get("entities") or {}))
+    source_url = canonical_tweet_url(screen_name, tweet_id)
     published = _tweet_published_date(created_at, now)
     title = _tweet_title(text, screen_name, created_at, now)
 
@@ -1107,7 +1156,7 @@ async def cmd_tweet(url: str) -> str:
         else:
             logger.warning("tweet image DL skipped: %s", m.get("dl_url"))
 
-    markdown = build_tweet_markdown(data, url, saved_media, now)
+    markdown = build_tweet_markdown(data, tweet_id, saved_media, now)
     clip_path.parent.mkdir(parents=True, exist_ok=True)
     clip_path.write_text(markdown, encoding="utf-8")
 

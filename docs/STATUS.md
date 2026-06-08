@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-08 (Telegram `/tweet <url>` 改修 = 保存先を notes/ → clips/ に変更、ツイート画像 [photo] を attachments/ にローカル DL し本文を `![[basename]]` 埋め込み参照に、frontmatter/本文を最新クリップ慣習に合わせる [OWNER 依頼]。commit までで停止、bot restart / push は user 操作)
+最終更新: 2026-06-08 (Telegram `/tweet <url>` に本文 t.co 展開を追加 = `entities.urls` の t.co → 実 URL 置換 + `entities.media` t.co 除去 + frontmatter `url:` を正規形に組み立て [OWNER 依頼]。既存 amarunavr ノートを新形式で取り直し notes/→clips/ 移動。commit までで停止、bot restart / push は user 操作)
 
 ## 設計メモ
 
@@ -173,6 +173,29 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### Telegram `/tweet <url>`: 本文 t.co 展開 + frontmatter url 正規化 + 既存ノート取り直し (2026-06-08 実装、commit までで停止、restart は user 操作)
+
+**目的 (OWNER 依頼)**: (1) `/tweet` 全件に本文中の t.co 短縮 URL 展開を追加、(2) 旧形式で `notes/` に保存済の amarunavr ノート 1 件を新コードで取り直して `clips/` に移動。
+
+**変更1 — 本文 URL 展開 (`bot.py`、全 `/tweet` に適用)**:
+- `expand_tweet_text(text, entities)` を純関数として追加。`entities.urls` の各 `url`(t.co) を `expanded_url`(実 URL) に置換し、`entities.media` の各 `url`(t.co) を本文から除去、除去で生じた行末空白・末尾余分空行を整える。`entities` 無し/空でも安全に no-op。置換は 1 パスで確定 (条件分岐積み増し・stderr 文言マッチ・リトライなし、2 周目ルール遵守)。
+- `canonical_tweet_url(handle, tweet_id)` を追加。frontmatter `url:` を `https://x.com/<handle>/status/<tweet_id>` 正規形で組み立て、ユーザー入力の `?s=20` 等トラッキングパラメータを持ち込まない。
+- `build_tweet_markdown` のシグネチャを `(data, source_url, media, now)` → `(data, tweet_id, media, now)` に変更。本文に `expand_tweet_text` を適用 (HTML デコード前)、`url:` は `canonical_tweet_url` で生成。caller `cmd_tweet` は `tweet_id` を渡すよう更新。
+
+**変更2 — 既存ノート取り直し & clips 移動 (本番 vault データ操作、OWNER 明示依頼で承認済)**:
+- 旧 `notes/2026-06-08_tweet-amarunavr-2063267371713020257.md` (旧形式・本文 t.co のまま) を新コードで tweet id `2063267371713020257` から取り直し、`clips/2026-06-06 @amarunavr.md` (published=2026-06-06 JST) として書き出し、画像 `HKIyQfpbcAAEICT.jpg` を `attachments/` に DL。生成物で本文末尾 `https://t.co/3E7TXHPjKA` → `https://booth.pm/ja/items/4503244` 展開、媒体 `https://t.co/rYtonSwjkh` の本文消去、`![[HKIyQfpbcAAEICT.jpg]]` 埋め込み、正規 url を確認。
+- 旧 notes ファイルを `git rm` で削除。clips ノート + attachments 画像の追加と旧ファイル削除を vault repo で **1 commit** (pathspec を `clips/` `attachments/` `notes/<旧ファイル>` に限定、flock 直列化、`GIT_TERMINAL_PROMPT=0`、push しない)。vault commit: `0e25d49 refactor: amarunavr tweet を新形式で取り直し notes/→clips/ 移動 (t.co 展開)`。
+
+**テスト (`tests/test_bot.py`)**: 既存 `BuildTweetMarkdownTest` の `build_tweet_markdown` 呼び出しを新シグネチャ (`tweet_id`) へ更新 + canonical url / 本文 t.co 展開アサート追加。新規 `ExpandTweetTextTest` 6 件 (amarunavr 実 entities 模倣 / no-op / 空 / 複数 URL / 媒体除去の行末整形 / 不正エントリスキップ) + `CanonicalTweetUrlTest` 2 件 = 純関数のみ (ネットワーク非依存)。全 **133 tests pass**。
+
+**設計判断 (記録)**:
+1. **`build_tweet_markdown` のシグネチャ変更 (source_url → tweet_id)**: frontmatter `url:` を正規形で生成する責務を関数内に閉じるため、渡された生 URL を持ち回るより tweet_id から組み立てる方が「トラッキングパラメータを持ち込まない」契約に直結。既存慣習 (純関数で frontmatter を組む) に寄せた。
+2. **取り直しノートのファイル名**: 既存 clips 慣習 `<published JST> @<handle>.md` に従い `2026-06-06 @amarunavr.md` (依頼指定どおり)。published は API created_at `2026-06-06T14:30:49Z` → JST `2026-06-06` で一致。
+
+**実 API 確認 (一度だけ手で実施、bot.service 非接触、一時スクリプトで bot.py 関数を直接呼び作業ツリー非汚染)**: tweet id `2063267371713020257` を fetch → entities (urls 1 / media 1) 確認 → 画像 DL (`attachments/HKIyQfpbcAAEICT.jpg`、154KB JPEG) → 生成 clips ノートで booth.pm 展開・媒体 t.co 消去・`![[...]]` 埋め込み・正規 url を目視確認。一時スクリプトは削除済。
+
+**未実施 (user 操作)**: bot.service restart は claude 側で実行しない (**restart 未実施**)。反映には `systemctl --user restart companion-bot.service` が必要。push もしない (bot repo / vault repo とも commit までで停止)。
 
 ### Telegram `/tweet <url>` 改修: clips/ 保存 + 画像ローカル DL + クリップ慣習 frontmatter (2026-06-08 実装、commit までで停止、restart は user 操作)
 

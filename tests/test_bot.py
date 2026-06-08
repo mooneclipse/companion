@@ -819,7 +819,7 @@ class BuildTweetMarkdownTest(unittest.TestCase):
         media = [{"kind": "photo", "filename": "ErkSSFgW4AMKude.jpg",
                   "dl_url": "https://pbs/x.jpg?name=large"}]
         md = self.bot.build_tweet_markdown(
-            data, "https://x.com/jack/status/20", media, self._now()
+            data, "20", media, self._now()
         )
         self.assertIn('url: "https://x.com/jack/status/20"', md)
         self.assertIn('title: "hello & world"', md)  # 本文先頭行を流用 + デコード
@@ -850,7 +850,7 @@ class BuildTweetMarkdownTest(unittest.TestCase):
             "created_at": "2026-06-08T01:00:00.000Z",
         }
         media = [{"kind": "video", "url": "https://v/high.mp4"}]
-        md = self.bot.build_tweet_markdown(data, "https://x.com/x/status/1", media, self._now())
+        md = self.bot.build_tweet_markdown(data, "1", media, self._now())
         self.assertIn('  - "media"', md)  # 動画も media タグ対象
         self.assertIn("[動画](https://v/high.mp4)", md)
         self.assertNotIn("![[", md)  # 動画は埋め込まない
@@ -863,7 +863,7 @@ class BuildTweetMarkdownTest(unittest.TestCase):
             "user": {"name": "X", "screen_name": "x"},
             "created_at": "2026-06-08T01:00:00.000Z",
         }
-        md = self.bot.build_tweet_markdown(data, "https://x.com/x/status/1", [], self._now())
+        md = self.bot.build_tweet_markdown(data, "1", [], self._now())
         self.assertNotIn("## Media", md)
         self.assertNotIn('  - "media"', md)
         self.assertNotIn("image:", md)
@@ -875,8 +875,124 @@ class BuildTweetMarkdownTest(unittest.TestCase):
             "user": {"name": "X", "screen_name": "x"},
             "created_at": "2026-06-08T01:00:00.000Z",
         }
-        md = self.bot.build_tweet_markdown(data, "https://x.com/x/status/1", [], self._now())
+        md = self.bot.build_tweet_markdown(data, "1", [], self._now())
         self.assertIn('title: "x(2026-06-08 10:00)"', md)
+
+    def test_canonical_url_in_frontmatter(self) -> None:
+        # tweet_id から正規 URL を組み立て、トラッキングパラメータは持ち込まない。
+        data = {
+            "__typename": "Tweet",
+            "text": "hi",
+            "user": {"name": "X", "screen_name": "amarunavr"},
+            "created_at": "2026-06-08T01:00:00.000Z",
+        }
+        md = self.bot.build_tweet_markdown(data, "2063267371713020257", [], self._now())
+        self.assertIn(
+            'url: "https://x.com/amarunavr/status/2063267371713020257"', md
+        )
+
+    def test_body_expands_and_strips_tco(self) -> None:
+        # amarunavr の実 entities を模す: 外部リンク t.co → booth.pm 展開、媒体 t.co 除去。
+        data = {
+            "__typename": "Tweet",
+            "text": "本文だよ\n\nhttps://t.co/3E7TXHPjKA https://t.co/rYtonSwjkh",
+            "user": {"name": "天江るな", "screen_name": "amarunavr"},
+            "created_at": "2026-06-06T14:30:00.000Z",
+            "entities": {
+                "urls": [
+                    {
+                        "url": "https://t.co/3E7TXHPjKA",
+                        "expanded_url": "https://booth.pm/ja/items/4503244",
+                        "display_url": "booth.pm/ja/items/4503244",
+                    }
+                ],
+                "media": [{"url": "https://t.co/rYtonSwjkh"}],
+            },
+        }
+        md = self.bot.build_tweet_markdown(data, "2063267371713020257", [], self._now())
+        self.assertIn("https://booth.pm/ja/items/4503244", md)
+        self.assertNotIn("https://t.co/3E7TXHPjKA", md)
+        self.assertNotIn("https://t.co/rYtonSwjkh", md)
+
+
+class ExpandTweetTextTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_expand_url_and_strip_media(self) -> None:
+        # amarunavr の実 entities を模したケース (ネットワーク非依存)。
+        text = "対応めっちゃ楽になる😭🩶\n\nhttps://t.co/3E7TXHPjKA https://t.co/rYtonSwjkh"
+        entities = {
+            "urls": [
+                {
+                    "url": "https://t.co/3E7TXHPjKA",
+                    "expanded_url": "https://booth.pm/ja/items/4503244",
+                    "display_url": "booth.pm/ja/items/4503244",
+                }
+            ],
+            "media": [{"url": "https://t.co/rYtonSwjkh"}],
+        }
+        out = self.bot.expand_tweet_text(text, entities)
+        self.assertEqual(
+            out,
+            "対応めっちゃ楽になる😭🩶\n\nhttps://booth.pm/ja/items/4503244",
+        )
+
+    def test_no_entities_is_noop(self) -> None:
+        text = "ただの本文\n\n末尾"
+        self.assertEqual(self.bot.expand_tweet_text(text, {}), text)
+        self.assertEqual(self.bot.expand_tweet_text(text, None), text)
+
+    def test_empty_text(self) -> None:
+        self.assertEqual(self.bot.expand_tweet_text("", {}), "")
+        self.assertEqual(self.bot.expand_tweet_text(None, {}), "")
+
+    def test_multiple_urls_expanded(self) -> None:
+        text = "a https://t.co/AAA b https://t.co/BBB"
+        entities = {
+            "urls": [
+                {"url": "https://t.co/AAA", "expanded_url": "https://example.com/1"},
+                {"url": "https://t.co/BBB", "expanded_url": "https://example.com/2"},
+            ]
+        }
+        out = self.bot.expand_tweet_text(text, entities)
+        self.assertEqual(out, "a https://example.com/1 b https://example.com/2")
+
+    def test_media_only_strip_trims_trailing_whitespace(self) -> None:
+        # 媒体 t.co 除去で行末に空白が残らず、末尾の余分な空行も畳まれること。
+        text = "本文\n\nhttps://t.co/MEDIA"
+        entities = {"media": [{"url": "https://t.co/MEDIA"}]}
+        out = self.bot.expand_tweet_text(text, entities)
+        self.assertEqual(out, "本文")
+
+    def test_malformed_entities_entries_skipped(self) -> None:
+        text = "x https://t.co/AAA"
+        entities = {"urls": ["not a dict", {"url": "https://t.co/AAA"}]}
+        # expanded_url 欠落 / 非 dict は no-op (落ちない)。
+        out = self.bot.expand_tweet_text(text, entities)
+        self.assertEqual(out, "x https://t.co/AAA")
+
+
+class CanonicalTweetUrlTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_build_canonical(self) -> None:
+        self.assertEqual(
+            self.bot.canonical_tweet_url("amarunavr", "2063267371713020257"),
+            "https://x.com/amarunavr/status/2063267371713020257",
+        )
+
+    def test_handle_sanitized(self) -> None:
+        # handle に不正文字が混じっても英数字 / _ / - のみ残す。
+        self.assertEqual(
+            self.bot.canonical_tweet_url("ab/cd", "20"),
+            "https://x.com/abcd/status/20",
+        )
 
 
 if __name__ == "__main__":
