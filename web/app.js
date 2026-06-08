@@ -53,6 +53,21 @@ function openScreen(id) {
 }
 function goHome() { showScreen("home"); }
 
+// ホーム masthead の版表示。デプロイ中の git short hash + コミット日(/api/version, 要トークン)。
+// 「今スマホに乗っているのが最新か」を一目で確認するためのもの。
+// トークン未設定/取得失敗は控えめに既定文言へ戻し、リトライループは作らない(握り潰す)。
+async function refreshVersion() {
+  const el = $("app-version");
+  if (!el) return;
+  if (!getToken()) { el.textContent = "Remote"; return; }
+  try {
+    const r = await api("/api/version");
+    if (!r.ok) throw new Error();
+    const s = await r.json();
+    el.textContent = s.version ? "v" + s.version : "Remote";
+  } catch (e) { el.textContent = "Remote"; }
+}
+
 // glance: 接続ドット(無認証 /api/health) + OS health 要約(/api/status, 要トークン)。
 // 要約専門(ホーム常駐)。詳細 dl は OS状態画面(renderStatus)。
 async function refreshGlance() {
@@ -934,6 +949,7 @@ function init() {
     $("token-input").value = "";
     showApp();
     goHome();
+    refreshVersion();
     refreshGlance();
     refreshTodo();
   });
@@ -947,6 +963,7 @@ function init() {
 
   if (getToken()) showApp(); else showTokenSetup();
   goHome();
+  refreshVersion();
   refreshGlance();
   refreshTodo();
   setInterval(refreshGlance, 15000);

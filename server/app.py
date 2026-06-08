@@ -24,6 +24,7 @@ import status as os_status
 import tickets
 import urlguard
 import vault
+import version
 import video
 import voice
 
@@ -54,6 +55,16 @@ def health(handler):
 def api_status(handler):
     """GET /api/status — F-3 OS status(df/free/sensors/uptime)。Bearer 必須。"""
     return 200, os_status.collect()
+
+
+def api_version(handler):
+    """GET /api/version — デプロイ中の版(git short hash + コミット日)。Bearer 必須。
+
+    値は version.APP_VERSION(起動時に1回確定)を返すだけ。/api/health は無認証で
+    情報を絞る既存方針を維持するため、版は authed 側に置く(home は token 設定済みで
+    のみ版を取りに行く)。
+    """
+    return 200, {"version": version.APP_VERSION}
 
 
 def api_say(handler):
@@ -284,6 +295,7 @@ def api_vault_image(handler):
 ROUTES = {
     ("GET", "/api/health"): (health, False),
     ("GET", "/api/status"): (api_status, True),
+    ("GET", "/api/version"): (api_version, True),
     ("POST", "/api/say"): (api_say, True),
     # F-video(全て Bearer 必須)。state のみ GET、他は POST。
     ("POST", "/api/video/play"): (api_video_play, True),
