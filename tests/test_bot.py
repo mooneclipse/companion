@@ -825,7 +825,7 @@ class BuildTweetMarkdownTest(unittest.TestCase):
         self.assertIn('title: "hello & world"', md)  # 本文先頭行を流用 + デコード
         self.assertIn("author:", md)
         self.assertIn('  - "Jack"', md)
-        self.assertIn("handle: jack", md)
+        self.assertIn('handle: "jack"', md)
         self.assertIn('  - "tweet"', md)
         self.assertIn('  - "clippings"', md)
         self.assertIn('  - "media"', md)  # 画像ありなので media タグ

@@ -688,7 +688,7 @@ async def cmd_vault_push() -> str:
 
 
 # ---------------------------------------------------------------------------
-# /tweet: syndication API → vault notes/ Markdown + vault commit (push しない)
+# /tweet: syndication API → vault clips/ Markdown + 画像 attachments/ DL + vault commit (push しない)
 # ---------------------------------------------------------------------------
 
 
@@ -900,7 +900,7 @@ def build_tweet_markdown(data: dict, source_url: str, media: list[dict],
         f"title: {_yaml_quote(title)}",
         "author:",
         f"  - {_yaml_quote(name)}",
-        f"handle: {screen_name}",
+        f"handle: {_yaml_quote(screen_name)}",
         "tags:",
         '  - "tweet"',
         '  - "clippings"',
