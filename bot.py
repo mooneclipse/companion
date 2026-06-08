@@ -100,11 +100,14 @@ VAULT_PUSH_TIMEOUT_S = 60.0
 # host key 未知などを対話待ちにせずエラーとして表面化させる)。
 VAULT_PUSH_SSH_COMMAND = "ssh -o BatchMode=yes"
 
-# `/tweet <url>`: ツイート/ポスト URL を syndication API で取得し vault notes/ に
+# `/tweet <url>`: ツイート/ポスト URL を syndication API で取得し vault clips/ に
 # Markdown 保存する。取得は認証不要の cdn.syndication.twimg.com/tweet-result。
-# 保存後に vault の現在ブランチ (運用上 develop) へ commit するが push はしない
-# (push は /vault_push の人手承認ゲートに委ねる = `/vault_push` と同じ設計境界。
-# branch は HEAD 依存で検証しない = vault-sync Stop フックと同じ慣習)。
+# 画像 (photo) は attachments/ にローカル DL し、本文では `![[basename]]` の Obsidian
+# 埋め込み wikilink で参照する (remote 閲覧アプリ側がこの参照を attachments/ 配下と
+# 解釈して画像配信エンドポイントに解決する契約)。保存後に vault の現在ブランチ
+# (運用上 develop) へ commit するが push はしない (push は /vault_push の人手承認
+# ゲートに委ねる = `/vault_push` と同じ設計境界。branch は HEAD 依存で検証しない
+# = vault-sync Stop フックと同じ慣習)。
 TWEET_ALLOWED_HOSTS = frozenset({
     "x.com",
     "www.x.com",
@@ -119,6 +122,15 @@ TWEET_SYNDICATION_URL = "https://cdn.syndication.twimg.com/tweet-result"
 TWEET_HTTP_TIMEOUT_S = 10.0
 # react-tweet と同じ User-Agent 偽装 (素の httpx UA だと HTML が返ることがある)。
 TWEET_USER_AGENT = "Mozilla/5.0"
+# ツイート画像 (photo) のローカル DL 先 = vault attachments/。本文では folder 名なしの
+# `![[basename]]` で参照し、remote 閲覧アプリ側が attachments/ 配下と解釈して解決する。
+TWEET_ATTACHMENTS_DIR = "attachments"
+TWEET_CLIPS_DIR = "clips"
+# pbs.twimg.com から高解像度を取るための name サフィックス (large / orig)。
+TWEET_IMAGE_NAME_PARAM = "large"
+# 画像 DL の HTTP 取得上限。成否は 1 取得で確定し、失敗ならその画像だけスキップする
+# (リトライループ・stderr 文言分岐は作らない、`~/companion/CLAUDE.md` 2 周目ルール)。
+TWEET_IMAGE_HTTP_TIMEOUT_S = 20.0
 # vault git index を Stop フック (vault-sync-from-transcript.sh) と奪い合わないよう
 # 同じ flock で直列化する。Stop フックは flock -n (非ブロッキング即スキップ) だが、
 # /tweet は commit を取りこぼしたくないので短いタイムアウト付きブロッキング取得。
@@ -743,21 +755,62 @@ def _safe_screen_name(name: str) -> str:
     return cleaned or "unknown"
 
 
-def _select_media_urls(media_details: list) -> list[str]:
-    """Extract media URLs from `mediaDetails`: photo は media_url_https、video /
+def _safe_attachment_name(url: str) -> str | None:
+    """Derive a safe local filename from a media URL's basename.
 
-    animated_gif は variants の mp4 最高 bitrate を 1 本。バイナリ DL はしない
-    (URL を Markdown に書くだけ = vault 境界 notes/ のみ・YAGNI)。純関数 → unit-test。
+    例: ``https://pbs.twimg.com/media/ErkSSFgW4AMKude.jpg`` → ``ErkSSFgW4AMKude.jpg``。
+    パストラバーサル防止のため basename を取った上で ``[A-Za-z0-9_.-]`` 以外を除去する。
+    除去後に拡張子しか残らない / 空になる場合は None (DL 対象外)。純関数 → unit-test。
     """
-    urls: list[str] = []
+    if not url:
+        return None
+    # クエリ / フラグメントを落としてから basename を取る。
+    path = urlparse(url).path
+    base = os.path.basename(path)
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]", "", base)
+    # ".." や "." 単体、先頭ドットのみ等の退化形を弾く。
+    stem = cleaned.lstrip(".")
+    if not stem:
+        return None
+    return cleaned
+
+
+def _high_res_image_url(media_url_https: str) -> str:
+    """Append ``?name=large`` (高解像度) to a pbs.twimg.com media URL.
+
+    既にクエリが付いている場合でも name パラメータを上書きせず素直に付けない (基本
+    media_url_https はクエリなし)。純関数 → unit-test。
+    """
+    if "?" in media_url_https:
+        return media_url_https
+    return f"{media_url_https}?name={TWEET_IMAGE_NAME_PARAM}"
+
+
+def _select_media(media_details: list) -> list[dict]:
+    """Extract structured media items from `mediaDetails`.
+
+    返すのは dict のリスト。photo は ``{"kind": "photo", "filename": <safe basename>,
+    "dl_url": <high-res url>}``、video / animated_gif は ``{"kind": "video",
+    "url": <mp4 最高 bitrate or media_url_https fallback>}``。photo は basename を
+    取れなかったらスキップ。純関数 (DL はしない) → unit-test。
+    """
+    items: list[dict] = []
     for item in media_details or []:
         if not isinstance(item, dict):
             continue
         mtype = item.get("type")
         if mtype == "photo":
-            u = item.get("media_url_https")
-            if u:
-                urls.append(u)
+            src = item.get("media_url_https")
+            if not src:
+                continue
+            filename = _safe_attachment_name(src)
+            if filename is None:
+                continue
+            items.append({
+                "kind": "photo",
+                "filename": filename,
+                "dl_url": _high_res_image_url(src),
+            })
         elif mtype in ("video", "animated_gif"):
             variants = (item.get("video_info") or {}).get("variants") or []
             best_url = None
@@ -771,62 +824,126 @@ def _select_media_urls(media_details: list) -> list[str]:
                 if bitrate > best_bitrate:
                     best_bitrate = bitrate
                     best_url = v.get("url")
-            if best_url:
-                urls.append(best_url)
-    return urls
+            url = best_url or item.get("media_url_https")
+            if url:
+                items.append({"kind": "video", "url": url})
+    return items
 
 
-def build_tweet_markdown(data: dict, source_url: str, now: datetime) -> str:
-    """Render the vault note Markdown from a syndication `tweet-result` payload.
+def _yaml_quote(value: str) -> str:
+    """Quote a string for a double-quoted YAML scalar (escape ``\\`` and ``"``)。"""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
-    frontmatter は既存 notes 慣習 (type/created/tags/style) に寄せ、source に元 URL、
-    author に @screen_name を入れる。本文 HTML エンティティはデコード。bot 書き出しは
-    self-contained (vault CLAUDE.md に依存しない)。純関数 → unit-test。
+
+def _tweet_published_date(created_at: str, now: datetime) -> str:
+    """Return the post date (JST) as ``YYYY-MM-DD``. Falls back to `now` の日付。"""
+    if created_at:
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            return dt.astimezone(quota.JST).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return now.strftime("%Y-%m-%d")
+
+
+def _tweet_title(text: str, screen_name: str, created_at: str, now: datetime,
+                 max_len: int = 80) -> str:
+    """Derive a clip title: 本文先頭の非空行を流用 (長ければ truncate)。
+
+    本文が空なら ``<handle>(<JST datetime>)`` 形式 (既存 clips 慣習)。純関数 → unit-test。
+    """
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if line:
+            if len(line) > max_len:
+                return line[:max_len].rstrip() + "…"
+            return line
+    # 本文なし: handle + 投稿日時 (JST)
+    dt_str = ""
+    if created_at:
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            dt_str = dt.astimezone(quota.JST).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            dt_str = created_at
+    if not dt_str:
+        dt_str = now.strftime("%Y-%m-%d %H:%M")
+    return f"{screen_name}({dt_str})"
+
+
+def build_tweet_markdown(data: dict, source_url: str, media: list[dict],
+                         now: datetime) -> str:
+    """Render the vault clip Markdown from a syndication `tweet-result` payload.
+
+    frontmatter / 本文は最新クリップ慣習 (`clips/2026-03-27 @trickcal_GW 1.md`) に寄せる。
+    画像 (photo) は attachments/ に DL 済 (`media` の filename)、本文では folder 名なしの
+    ``![[basename]]`` 埋め込み wikilink で参照する (remote 閲覧アプリ契約)。video/gif は
+    ``[動画](url)`` リンク。本文 HTML エンティティはデコード。純関数 → unit-test。
+    `media` は `_select_media` の戻り (photo は DL 成功分のみ呼び出し側が渡す)。
     """
     user = data.get("user") or {}
     name = user.get("name") or "(不明)"
     screen_name = user.get("screen_name") or "unknown"
     created_at = data.get("created_at") or ""
     text = html.unescape(data.get("text") or "")
-    media_urls = _select_media_urls(data.get("mediaDetails") or [])
+    published = _tweet_published_date(created_at, now)
+    title = _tweet_title(text, screen_name, created_at, now)
 
-    created_jst_line = ""
-    if created_at:
-        try:
-            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            created_jst_line = dt.astimezone(quota.JST).isoformat(timespec="minutes")
-        except ValueError:
-            created_jst_line = created_at
+    photos = [m for m in media if m.get("kind") == "photo"]
+    videos = [m for m in media if m.get("kind") == "video"]
+    has_media = bool(media)
 
-    lines = [
+    fm = [
         "---",
-        "type: note",
-        f"created: {now.strftime('%Y-%m-%d')}",
-        "tags: [tweet, clip]",
-        "style: clip",
-        f"source: {source_url}",
-        f"author: @{screen_name}",
-        "---",
-        "",
-        f"# {name} (@{screen_name}) のポスト",
-        "",
-        f"- 投稿: {created_jst_line or '(不明)'}",
-        f"- URL: {source_url}",
-        "",
-        "## 本文",
+        f"url: {_yaml_quote(source_url)}",
+        f"title: {_yaml_quote(title)}",
+        "author:",
+        f"  - {_yaml_quote(name)}",
+        f"handle: {screen_name}",
+        "tags:",
+        '  - "tweet"',
+        '  - "clippings"',
+    ]
+    if has_media:
+        fm.append('  - "media"')
+    fm.append('  - "processed"')
+    fm.append(f"published: {published}")
+    fm.append(f"created: {now.strftime('%Y-%m-%d')}")
+    if photos:
+        fm.append(f"image: {_yaml_quote(f'{TWEET_ATTACHMENTS_DIR}/' + photos[0]['filename'])}")
+    fm.append("---")
+
+    lines = list(fm)
+    lines += [
+        "## Tweet",
         "",
         text if text.strip() else "(本文なし)",
     ]
-    if media_urls:
-        lines += ["", "## メディア", ""]
-        for u in media_urls:
-            lines.append(f"- {u}")
-    lines.append("")
+    if has_media:
+        media_parts: list[str] = []
+        for m in photos:
+            media_parts.append(f"![[{m['filename']}]]")
+        for m in videos:
+            media_parts.append(f"[動画]({m['url']})")
+        lines += ["", "## Media", "", " ".join(media_parts)]
+    lines += ["", "## Notes", ""]
     return "\n".join(lines)
 
 
-def _tweet_note_filename(screen_name: str, tweet_id: str, now: datetime) -> str:
-    return f"{now.strftime('%Y-%m-%d')}_tweet-{_safe_screen_name(screen_name)}-{tweet_id}.md"
+def _tweet_clip_filename(handle: str, tweet_id: str, published: str,
+                         exists: "callable") -> str:
+    """Return the clip filename ``<published> @<handle>.md``, suffixing ``<tweet_id>``
+    on collision (既存 clips の suffix 運用に準拠)。
+
+    `exists(filename) -> bool` で衝突判定する (テストで差し替え可能、I/O 非依存)。
+    純関数的 (副作用は呼び出し側の exists のみ)。
+    """
+    safe_handle = _safe_screen_name(handle)
+    base = f"{published} @{safe_handle}.md"
+    if not exists(base):
+        return base
+    return f"{published} @{safe_handle} {tweet_id}.md"
 
 
 async def _fetch_tweet(tweet_id: str) -> dict | None:
@@ -854,17 +971,45 @@ async def _fetch_tweet(tweet_id: str) -> dict | None:
         return None
 
 
-def _commit_tweet_note(filename: str, screen_name: str, tweet_id: str) -> tuple[bool, str]:
-    """flock を取って `notes/<filename>` を vault の現在ブランチ (運用上 develop) へ commit する。
+async def _download_image(dl_url: str, dest: Path) -> bool:
+    """Download a single image to `dest`. Return True on success, False on any failure.
+
+    成否は 1 取得で確定する (リトライループ・stderr 文言分岐は作らない、2 周目ルール)。
+    失敗時はその画像だけスキップし、呼び出し側は処理全体を止めない。
+    """
+    headers = {"User-Agent": TWEET_USER_AGENT}
+    try:
+        async with httpx.AsyncClient(timeout=TWEET_IMAGE_HTTP_TIMEOUT_S,
+                                     follow_redirects=True) as client:
+            resp = await client.get(dl_url, headers=headers)
+    except httpx.HTTPError:
+        return False
+    if resp.status_code != 200 or not resp.content:
+        return False
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(resp.content)
+    except OSError:
+        return False
+    return True
+
+
+def _commit_tweet_clip(
+    clip_filename: str, attachment_filenames: list[str],
+    handle: str, tweet_id: str,
+) -> tuple[bool, str]:
+    """flock を取って `clips/<file>` + `attachments/<各画像>` を vault へ commit する。
 
     Stop フック (vault-sync-from-transcript.sh) と同じ flock で直列化 (こちらは
-    取りこぼしたくないので短いブロッキング取得)。add の pathspec は `-- notes/<file>`
-    限定で手書きエリアへの漏出を防ぐ。push はしない。同期 git 呼び出し (subprocess
-    1 回ずつ rc で確定)。戻り値 (ok, message)。
+    取りこぼしたくないので短いブロッキング取得)。add の pathspec は `clips/<file>` と
+    DL した `attachments/<画像>` に限定し、手書きエリアへの漏出を防ぐ。push はしない。
+    同期 git 呼び出し (subprocess 1 回ずつ rc で確定)。戻り値 (ok, message)。
     """
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
-    rel = f"notes/{filename}"
+    clip_rel = f"{TWEET_CLIPS_DIR}/{clip_filename}"
+    attach_rels = [f"{TWEET_ATTACHMENTS_DIR}/{n}" for n in attachment_filenames]
+    pathspecs = [clip_rel, *attach_rels]
     lock_fd = os.open(str(VAULT_SYNC_LOCK_FILE), os.O_CREAT | os.O_WRONLY, 0o600)
     try:
         deadline = time.monotonic() + VAULT_LOCK_TIMEOUT_S
@@ -880,14 +1025,17 @@ def _commit_tweet_note(filename: str, screen_name: str, tweet_id: str) -> tuple[
             return False, "vault の lock を取得できませんでした (他の同期処理が実行中)。"
 
         add = subprocess.run(
-            ["git", "-C", str(VAULT_DIR), "add", "--", rel],
+            ["git", "-C", str(VAULT_DIR), "add", "--", *pathspecs],
             capture_output=True, text=True, env=env,
         )
         if add.returncode != 0:
             return False, f"git add 失敗 (rc={add.returncode}): {add.stderr.strip()[:300]}"
-        msg = f"add: notes {datetime.now(quota.JST).strftime('%Y-%m-%d')} (tweet @{_safe_screen_name(screen_name)} {tweet_id})"
+        msg = (
+            f"add: clips {datetime.now(quota.JST).strftime('%Y-%m-%d')} "
+            f"(tweet @{_safe_screen_name(handle)} {tweet_id})"
+        )
         commit = subprocess.run(
-            ["git", "-C", str(VAULT_DIR), "commit", "-m", msg, "--", rel],
+            ["git", "-C", str(VAULT_DIR), "commit", "-m", msg, "--", *pathspecs],
             capture_output=True, text=True, env=env,
         )
         if commit.returncode != 0:
@@ -902,10 +1050,12 @@ def _commit_tweet_note(filename: str, screen_name: str, tweet_id: str) -> tuple[
 
 
 async def cmd_tweet(url: str) -> str:
-    """`/tweet <url>` 本体: URL→ID 抽出 → 取得 → Markdown 保存 → vault commit。
+    """`/tweet <url>` 本体: URL→ID→取得→画像 DL→clips Markdown 保存→vault commit。
 
-    push はしない (GitHub 同期は /vault_push に委ねる)。異常系はファイルを書かず
-    ユーザー向け文言を返す。成否は 1 レスポンスで確定 (リトライループなし)。
+    photo は attachments/ にローカル DL し、本文では `![[basename]]` 埋め込みで参照する
+    (remote 閲覧アプリ契約)。video/gif は本文に URL リンクとして残し DL しない。push は
+    しない (GitHub 同期は /vault_push に委ねる)。成否は 1 レスポンスで確定 (リトライ
+    ループなし)。画像 DL は 1 取得で成否確定、失敗ならその画像だけスキップしてログに残す。
     """
     tweet_id = extract_tweet_id(url)
     if tweet_id is None:
@@ -928,25 +1078,52 @@ async def cmd_tweet(url: str) -> str:
         )
 
     user = data.get("user") or {}
-    screen_name = user.get("screen_name") or "unknown"
-    filename = _tweet_note_filename(screen_name, tweet_id, now)
-    note_path = VAULT_DIR / "notes" / filename
-    if note_path.exists():
-        return f"[tweet] 既に保存済です: notes/{filename}"
+    handle = user.get("screen_name") or "unknown"
+    published = _tweet_published_date(data.get("created_at") or "", now)
 
-    markdown = build_tweet_markdown(data, url, now)
-    note_path.parent.mkdir(parents=True, exist_ok=True)
-    note_path.write_text(markdown, encoding="utf-8")
+    clips_dir = VAULT_DIR / TWEET_CLIPS_DIR
+    filename = _tweet_clip_filename(
+        handle, tweet_id, published, lambda f: (clips_dir / f).exists()
+    )
+    clip_path = clips_dir / filename
+    if clip_path.exists():
+        # collision-resolved 名 (` <tweet_id>` suffix) まで存在 = 完全な重複保存。
+        return f"[tweet] 既に保存済です: {TWEET_CLIPS_DIR}/{filename}"
+
+    # photo は attachments/ に DL。1 取得で成否確定、失敗はその画像だけスキップ。
+    media = _select_media(data.get("mediaDetails") or [])
+    attachments_dir = VAULT_DIR / TWEET_ATTACHMENTS_DIR
+    saved_media: list[dict] = []
+    saved_attachment_names: list[str] = []
+    for m in media:
+        if m.get("kind") != "photo":
+            saved_media.append(m)
+            continue
+        dest = attachments_dir / m["filename"]
+        ok_dl = await _download_image(m["dl_url"], dest)
+        if ok_dl:
+            saved_media.append(m)
+            saved_attachment_names.append(m["filename"])
+        else:
+            logger.warning("tweet image DL skipped: %s", m.get("dl_url"))
+
+    markdown = build_tweet_markdown(data, url, saved_media, now)
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_path.write_text(markdown, encoding="utf-8")
 
     ok, message = await asyncio.to_thread(
-        _commit_tweet_note, filename, screen_name, tweet_id
+        _commit_tweet_clip, filename, saved_attachment_names, handle, tweet_id
     )
     if not ok:
         return (
-            f"[tweet] notes/{filename} に保存しましたが commit に失敗しました:\n{message}"
+            f"[tweet] {TWEET_CLIPS_DIR}/{filename} に保存しましたが commit に失敗しました:\n{message}"
         )
+    img_note = (
+        f" 画像 {len(saved_attachment_names)} 枚を attachments/ に保存。"
+        if saved_attachment_names else ""
+    )
     return (
-        f"[tweet] 保存 + commit 済: notes/{filename} (@{screen_name})。"
+        f"[tweet] 保存 + commit 済: {TWEET_CLIPS_DIR}/{filename} (@{handle})。{img_note}"
         "GitHub 同期は /vault_push で。"
     )
 

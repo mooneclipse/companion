@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-08 (Telegram `/tweet <url>` コマンド追加を実装 = ツイート/ポストを syndication API で取得し vault notes/ に Markdown 保存 + vault commit [push しない]。commit までで停止、bot restart / push は user 操作)
+最終更新: 2026-06-08 (Telegram `/tweet <url>` 改修 = 保存先を notes/ → clips/ に変更、ツイート画像 [photo] を attachments/ にローカル DL し本文を `![[basename]]` 埋め込み参照に、frontmatter/本文を最新クリップ慣習に合わせる [OWNER 依頼]。commit までで停止、bot restart / push は user 操作)
 
 ## 設計メモ
 
@@ -173,6 +173,30 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### Telegram `/tweet <url>` 改修: clips/ 保存 + 画像ローカル DL + クリップ慣習 frontmatter (2026-06-08 実装、commit までで停止、restart は user 操作)
+
+**目的 (OWNER 依頼)**: `/tweet` の保存先・frontmatter・メディア参照を Obsidian の単発ツイートクリップ慣習 (`clips/2026-03-27 @trickcal_GW 1.md`) に合わせる。(1) 保存先を `notes/` → `clips/` に変更、(2) ツイート画像 (photo) を `attachments/` にローカル DL、(3) frontmatter/本文を最新クリップ慣習に合わせる。
+
+**実装内容 (`bot.py`)**:
+- 保存先を `clips/<published JST> @<handle>.md` に変更。同名が既に存在する場合は ` <tweet_id>` suffix で衝突回避 (`_tweet_clip_filename`、`exists` callback 注入で純関数的にテスト)。published は投稿日 (JST 基準、取得不能なら now 日付)。
+- 画像 DL: `_select_media` が `mediaDetails` を構造化 (`{kind:photo, filename, dl_url}` / `{kind:video, url}`)。photo は `media_url_https` の basename を `[A-Za-z0-9_.-]` 以外除去で安全化 (`_safe_attachment_name`、パストラバーサル防止)、`?name=large` で高解像度取得 (`_high_res_image_url`)。`_download_image` が httpx async で 1 取得・成否確定 (リトライループ/stderr 分岐なし、2 周目ルール遵守)、失敗はその画像だけスキップして `logger.warning`。video/animated_gif は DL せず本文に `[動画](url)` リンクとして残す。
+- frontmatter/本文を `build_tweet_markdown(data, url, media, now)` で最新クリップ慣習に整形: `url`/`title` (本文先頭非空行を流用・長ければ truncate、無ければ `<handle>(<JST datetime>)`)/`author` リスト/`handle`/`tags` (`tweet`/`clippings`/`media` [メディアありのみ]/`processed`)/`published`/`created`/`image` (先頭 photo の `attachments/<basename>`、photo ありのみ)。本文は `## Tweet` → `## Media` (photo は `![[basename]]` 埋め込み wikilink、video は `[動画](url)`) → `## Notes`。HTML エンティティはデコード。
+- **remote 閲覧アプリ契約**: DL 画像は `attachments/<basename>` に置き、本文では folder 名なしの `![[basename]]` で参照 (remote アプリが `attachments/` 配下と解釈して画像配信に解決する規約を遵守)。
+- `_commit_tweet_clip` が `clips/<file>` + DL した `attachments/<各画像>` を同一 commit に含める (pathspec を両ディレクトリに限定、手書きエリア漏出なし)。flock (`companion-vault-sync.lock`) で vault-sync Stop フックと直列化、`GIT_TERMINAL_PROMPT=0`、push しない。commit メッセージは vault auto-sync スタイル `add: clips <date> (tweet @<handle> <id>)`。
+- 旧 `_select_media_urls` / `_tweet_note_filename` / `_commit_tweet_note` / 旧 `build_tweet_markdown` シグネチャは新版に置換 (notes/ 経路は撤去)。
+
+**テスト (`tests/test_bot.py`)**: 旧 `SelectMediaUrlsTest` / `BuildTweetMarkdownTest` を新仕様へ更新 + `_safe_attachment_name` 4 / `_high_res_image_url` 2 / `_select_media` 5 / `_tweet_title` 3 / `_tweet_clip_filename` 3 / `_tweet_published_date` 2 / `build_tweet_markdown` 4 = 純関数のみ (ネットワーク非依存)。全 **123 tests pass**。
+
+**実 API 確認 (一度だけ手で実施、bot.service 非接触、tmp dir で作業ツリー非汚染)**: 画像付きツイート ID=1349129669258448897 で fetch → `_select_media` で photo 1 件 → `_download_image` で `attachments/ErkSSFgW4AMKude.jpg` (93KB) DL 成功 → frontmatter (`image: "attachments/ErkSSFgW4AMKude.jpg"`) + 本文 `![[ErkSSFgW4AMKude.jpg]]` 生成を確認。DL 画像と生成 Markdown は tmp dir で完結させ削除済 (作業ツリー clean)。
+
+**設計判断 (記録)**:
+1. **frontmatter は依頼書の新契約を正とする**: 既存 `clips/2026-03-27 @trickcal_GW 1.md` 等は `![](url)` の外部 URL 直参照 (旧形式) だが、依頼書がより新しい契約 (`attachments/` ローカル DL + `![[basename]]` 埋め込み + remote アプリ解決) を明示指定。依頼書に従い、外部 URL 直参照ではなくローカル DL + wikilink 埋め込みを採用。タグ/著者リスト/published/created の YAML 構造は既存クリップと一致させた。
+2. **ファイル名衝突回避**: 既存 clips の ` 1` suffix 運用に寄せるが、依頼書指定どおり衝突時の suffix は ` <tweet_id>` を採用 (一意性が tweet_id で保証され連番管理が不要)。
+3. **video の本文リンク URL**: variants の mp4 最高 bitrate (なければ `media_url_https` fallback)。video は DL せず `[動画](url)` リンクのみ。
+4. **vault 書き込み境界**: 本来 `notes/` のみだが OWNER 明示依頼で `/tweet` が `clips/` + `attachments/` に書く例外 (CLAUDE.md 本体の境界記述更新は orc 側が実施、本タスクは STATUS.md 記録のみ)。
+
+**未実施 (user 操作)**: bot.service restart は claude 側で実行しない (**restart 未実施**)。反映には `systemctl --user restart companion-bot.service` が必要。push もしない (commit までで停止)。
 
 ### Telegram `/tweet <url>` コマンド追加 (2026-06-08 実装、commit までで停止、restart は user 操作)
 

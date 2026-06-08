@@ -617,15 +617,77 @@ class SafeScreenNameTest(unittest.TestCase):
         self.assertEqual(self.bot._safe_screen_name(""), "unknown")
 
 
-class SelectMediaUrlsTest(unittest.TestCase):
+class SafeAttachmentNameTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.bot = _import_bot_with_stub_env()
 
-    def test_photo_url(self) -> None:
-        details = [{"type": "photo", "media_url_https": "https://pbs/img.jpg"}]
-        self.assertEqual(self.bot._select_media_urls(details), ["https://pbs/img.jpg"])
+    def test_basename_from_pbs_url(self) -> None:
+        self.assertEqual(
+            self.bot._safe_attachment_name(
+                "https://pbs.twimg.com/media/ErkSSFgW4AMKude.jpg"
+            ),
+            "ErkSSFgW4AMKude.jpg",
+        )
+
+    def test_query_stripped(self) -> None:
+        self.assertEqual(
+            self.bot._safe_attachment_name(
+                "https://pbs.twimg.com/media/AbC_1-2.png?format=png&name=large"
+            ),
+            "AbC_1-2.png",
+        )
+
+    def test_traversal_chars_removed(self) -> None:
+        # basename を取った後に残る危険文字を除去 (パストラバーサル防止)。
+        self.assertEqual(
+            self.bot._safe_attachment_name("https://pbs/media/a b/c$%d.jpg"),
+            "cd.jpg",
+        )
+
+    def test_empty_or_dot_only_returns_none(self) -> None:
+        self.assertIsNone(self.bot._safe_attachment_name(""))
+        self.assertIsNone(self.bot._safe_attachment_name("https://pbs/media/"))
+        self.assertIsNone(self.bot._safe_attachment_name("https://pbs/media/..."))
+
+
+class HighResImageUrlTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_appends_name_large(self) -> None:
+        self.assertEqual(
+            self.bot._high_res_image_url("https://pbs.twimg.com/media/x.jpg"),
+            "https://pbs.twimg.com/media/x.jpg?name=large",
+        )
+
+    def test_leaves_existing_query_alone(self) -> None:
+        url = "https://pbs.twimg.com/media/x.jpg?format=jpg"
+        self.assertEqual(self.bot._high_res_image_url(url), url)
+
+
+class SelectMediaTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_photo_structured(self) -> None:
+        details = [{
+            "type": "photo",
+            "media_url_https": "https://pbs.twimg.com/media/ErkSSFgW4AMKude.jpg",
+        }]
+        out = self.bot._select_media(details)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["kind"], "photo")
+        self.assertEqual(out[0]["filename"], "ErkSSFgW4AMKude.jpg")
+        self.assertEqual(
+            out[0]["dl_url"],
+            "https://pbs.twimg.com/media/ErkSSFgW4AMKude.jpg?name=large",
+        )
 
     def test_video_picks_highest_mp4_bitrate(self) -> None:
         details = [{
@@ -636,7 +698,8 @@ class SelectMediaUrlsTest(unittest.TestCase):
                 {"content_type": "video/mp4", "bitrate": 2176000, "url": "https://v/high.mp4"},
             ]},
         }]
-        self.assertEqual(self.bot._select_media_urls(details), ["https://v/high.mp4"])
+        out = self.bot._select_media(details)
+        self.assertEqual(out, [{"kind": "video", "url": "https://v/high.mp4"}])
 
     def test_animated_gif_mp4(self) -> None:
         details = [{
@@ -645,11 +708,94 @@ class SelectMediaUrlsTest(unittest.TestCase):
                 {"content_type": "video/mp4", "bitrate": 0, "url": "https://v/gif.mp4"},
             ]},
         }]
-        self.assertEqual(self.bot._select_media_urls(details), ["https://v/gif.mp4"])
+        out = self.bot._select_media(details)
+        self.assertEqual(out, [{"kind": "video", "url": "https://v/gif.mp4"}])
+
+    def test_photo_without_basename_skipped(self) -> None:
+        details = [{"type": "photo", "media_url_https": "https://pbs/media/"}]
+        self.assertEqual(self.bot._select_media(details), [])
 
     def test_empty_and_none(self) -> None:
-        self.assertEqual(self.bot._select_media_urls([]), [])
-        self.assertEqual(self.bot._select_media_urls(None), [])
+        self.assertEqual(self.bot._select_media([]), [])
+        self.assertEqual(self.bot._select_media(None), [])
+
+
+class TweetTitleTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _now(self):
+        from datetime import datetime
+        import quota
+        return datetime(2026, 6, 8, 12, 0, tzinfo=quota.JST)
+
+    def test_first_nonblank_line(self) -> None:
+        text = "\n\n  最初の行  \n二行目"
+        self.assertEqual(
+            self.bot._tweet_title(text, "jack", "2026-06-08T01:00:00.000Z", self._now()),
+            "最初の行",
+        )
+
+    def test_truncates_long_line(self) -> None:
+        text = "あ" * 200
+        out = self.bot._tweet_title(text, "jack", "", self._now(), max_len=80)
+        self.assertTrue(out.endswith("…"))
+        self.assertLessEqual(len(out), 81)
+
+    def test_empty_text_falls_back_to_handle_datetime(self) -> None:
+        out = self.bot._tweet_title("", "jack", "2026-06-08T01:00:00.000Z", self._now())
+        # created_at は JST に変換される (01:00 UTC → 10:00 JST)
+        self.assertEqual(out, "jack(2026-06-08 10:00)")
+
+
+class TweetClipFilenameTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_no_collision_plain_name(self) -> None:
+        out = self.bot._tweet_clip_filename(
+            "jack", "20", "2026-06-08", lambda f: False
+        )
+        self.assertEqual(out, "2026-06-08 @jack.md")
+
+    def test_collision_suffixes_tweet_id(self) -> None:
+        existing = {"2026-06-08 @jack.md"}
+        out = self.bot._tweet_clip_filename(
+            "jack", "20", "2026-06-08", lambda f: f in existing
+        )
+        self.assertEqual(out, "2026-06-08 @jack 20.md")
+
+    def test_unsafe_handle_sanitized(self) -> None:
+        out = self.bot._tweet_clip_filename(
+            "a/b c", "20", "2026-06-08", lambda f: False
+        )
+        self.assertEqual(out, "2026-06-08 @abc.md")
+
+
+class TweetPublishedDateTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _now(self):
+        from datetime import datetime
+        import quota
+        return datetime(2026, 6, 8, 12, 0, tzinfo=quota.JST)
+
+    def test_jst_conversion(self) -> None:
+        # 2026-06-08 16:00 UTC → 2026-06-09 01:00 JST (日付が繰り上がる)
+        self.assertEqual(
+            self.bot._tweet_published_date("2026-06-08T16:00:00.000Z", self._now()),
+            "2026-06-09",
+        )
+
+    def test_fallback_to_now_when_missing(self) -> None:
+        self.assertEqual(self.bot._tweet_published_date("", self._now()), "2026-06-08")
 
 
 class BuildTweetMarkdownTest(unittest.TestCase):
@@ -663,29 +809,52 @@ class BuildTweetMarkdownTest(unittest.TestCase):
         import quota
         return datetime(2026, 6, 8, 12, 0, tzinfo=quota.JST)
 
-    def test_frontmatter_and_body(self) -> None:
+    def test_frontmatter_and_body_with_photo(self) -> None:
         data = {
             "__typename": "Tweet",
             "text": "hello &amp; world",
             "user": {"name": "Jack", "screen_name": "jack"},
             "created_at": "2026-06-08T01:00:00.000Z",
-            "mediaDetails": [{"type": "photo", "media_url_https": "https://pbs/img.jpg"}],
         }
+        media = [{"kind": "photo", "filename": "ErkSSFgW4AMKude.jpg",
+                  "dl_url": "https://pbs/x.jpg?name=large"}]
         md = self.bot.build_tweet_markdown(
-            data, "https://x.com/jack/status/20", self._now()
+            data, "https://x.com/jack/status/20", media, self._now()
         )
-        self.assertIn("type: note", md)
+        self.assertIn('url: "https://x.com/jack/status/20"', md)
+        self.assertIn('title: "hello & world"', md)  # 本文先頭行を流用 + デコード
+        self.assertIn("author:", md)
+        self.assertIn('  - "Jack"', md)
+        self.assertIn("handle: jack", md)
+        self.assertIn('  - "tweet"', md)
+        self.assertIn('  - "clippings"', md)
+        self.assertIn('  - "media"', md)  # 画像ありなので media タグ
+        self.assertIn('  - "processed"', md)
+        self.assertIn("published: 2026-06-08", md)  # 01:00 UTC → 10:00 JST、同日
         self.assertIn("created: 2026-06-08", md)
-        self.assertIn("tags: [tweet, clip]", md)
-        self.assertIn("source: https://x.com/jack/status/20", md)
-        self.assertIn("author: @jack", md)
+        self.assertIn('image: "attachments/ErkSSFgW4AMKude.jpg"', md)
+        self.assertIn("## Tweet", md)
         # HTML エンティティがデコードされること
         self.assertIn("hello & world", md)
         self.assertNotIn("&amp;", md)
-        # メディア URL が記載されること
-        self.assertIn("https://pbs/img.jpg", md)
-        # 著者表示
-        self.assertIn("Jack (@jack)", md)
+        # Obsidian 埋め込み wikilink (folder 名なし) で参照
+        self.assertIn("## Media", md)
+        self.assertIn("![[ErkSSFgW4AMKude.jpg]]", md)
+        self.assertIn("## Notes", md)
+
+    def test_video_link_not_embedded(self) -> None:
+        data = {
+            "__typename": "Tweet",
+            "text": "vid",
+            "user": {"name": "X", "screen_name": "x"},
+            "created_at": "2026-06-08T01:00:00.000Z",
+        }
+        media = [{"kind": "video", "url": "https://v/high.mp4"}]
+        md = self.bot.build_tweet_markdown(data, "https://x.com/x/status/1", media, self._now())
+        self.assertIn('  - "media"', md)  # 動画も media タグ対象
+        self.assertIn("[動画](https://v/high.mp4)", md)
+        self.assertNotIn("![[", md)  # 動画は埋め込まない
+        self.assertNotIn("image:", md)  # photo なしなので image フィールドなし
 
     def test_no_media_section_when_absent(self) -> None:
         data = {
@@ -693,10 +862,21 @@ class BuildTweetMarkdownTest(unittest.TestCase):
             "text": "no media",
             "user": {"name": "X", "screen_name": "x"},
             "created_at": "2026-06-08T01:00:00.000Z",
-            "mediaDetails": [],
         }
-        md = self.bot.build_tweet_markdown(data, "https://x.com/x/status/1", self._now())
-        self.assertNotIn("## メディア", md)
+        md = self.bot.build_tweet_markdown(data, "https://x.com/x/status/1", [], self._now())
+        self.assertNotIn("## Media", md)
+        self.assertNotIn('  - "media"', md)
+        self.assertNotIn("image:", md)
+
+    def test_empty_text_title_falls_back(self) -> None:
+        data = {
+            "__typename": "Tweet",
+            "text": "",
+            "user": {"name": "X", "screen_name": "x"},
+            "created_at": "2026-06-08T01:00:00.000Z",
+        }
+        md = self.bot.build_tweet_markdown(data, "https://x.com/x/status/1", [], self._now())
+        self.assertIn('title: "x(2026-06-08 10:00)"', md)
 
 
 if __name__ == "__main__":
