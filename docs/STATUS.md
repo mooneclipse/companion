@@ -382,10 +382,10 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
     - `python3 -m venv venv` + `venv/bin/pip install --upgrade pip` + `venv/bin/pip install -r requirements.txt` (PTB v22.7 + aiolimiter 1.2.1 + apscheduler 3.11.2 + httpx 0.28.1 + dotenv 1.2.2 等 13 packages 導入)
     - `venv/bin/python -m unittest discover -s tests` → **54 tests 全 pass** (PTB skip 5 件が pass に転じた + 既存 quota 17 + 新規 sessions 12 + 新規 bot 5 + パラメータ展開分込)
     - `systemctl --user daemon-reload` + `systemctl --user start companion-bot.service`
-  - **初回起動 (2026-05-28 00:18:41 JST) は OWNER 認可 4 段の段 1 で全 reject = 完全沈黙** = 想定通りの設計挙動だが原因切り分けに時間消費。原因: `.env` の `OWNER_ID=816507905758986301` は Discord snowflake (18 桁) のまま、Telegram user.id (10 桁前後) ではなかった。setup.md §6.2 step 4 が「TELEGRAM_BOT_TOKEN / NOTIFY_CHAT_ID / BOT_THREAD_ID_* 追記」のみ示し OWNER_ID 上書きを明示していなかった手順穴 (本 entry で setup.md 修正反映済)
+  - **初回起動 (2026-05-28 00:18:41 JST) は OWNER 認可 4 段の段 1 で全 reject = 完全沈黙** = 想定通りの設計挙動だが原因切り分けに時間消費。原因: `.env` の `OWNER_ID=<旧 Discord OWNER_ID>` は Discord snowflake (18 桁) のまま、Telegram user.id (10 桁前後) ではなかった。setup.md §6.2 step 4 が「TELEGRAM_BOT_TOKEN / NOTIFY_CHAT_ID / BOT_THREAD_ID_* 追記」のみ示し OWNER_ID 上書きを明示していなかった手順穴 (本 entry で setup.md 修正反映済)
   - **OWNER_ID 修正** (00:26:33 再起動):
-    - user が `@userinfobot` (Telegram 公式) で `/start` → Telegram user.id `8395385864` 取得
-    - `cp .env .env.discord-backup` (chmod 600、rollback path) + `sed -i 's/^OWNER_ID=.*/OWNER_ID=8395385864/' .env`
+    - user が `@userinfobot` (Telegram 公式) で `/start` → Telegram user.id `<Telegram OWNER_ID>` 取得
+    - `cp .env .env.discord-backup` (chmod 600、rollback path) + `sed -i 's/^OWNER_ID=.*/OWNER_ID=<Telegram OWNER_ID>/' .env`
     - `systemctl --user start companion-bot.service` で再起動 → `logged in as @companion_renbot (id=8688439843)` / `notify chat verified: id=-1003851931893 title='my group' type=supergroup` / `slash commands registered: ['reset', 'quota', 'status', 'play']` / `notify socket listening` の 4 行で正常起動
   - **smoke test 全 5 項目 + 1 catch-up 経路 pass** (2026-05-28 00:27〜00:30 JST):
     - `00:27:36 send len=10` → `#chat` (thread_id=3) で `@companion_renbot こんにちは` → claude 応答 + `sessions/topics/-1003851931893_3.json` 生成 (session_id=`71d8895f-3147-4dc4-876e-1b4b0f40abee`)
