@@ -121,7 +121,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 - `can_join_groups: True` / `supports_inline_queries: False`
 
 **V-5 pass** (General topic thread_id 確定):
-- supergroup `my group` (chat_id `-1003851931893`) の General topic で OWNER が `@companion_renbot test general` を送信 → getUpdates で `message_thread_id: None`, `is_topic_message: None` を確認
+- supergroup `my group` (chat_id `<NOTIFY_CHAT_ID>`) の General topic で OWNER が `@companion_renbot test general` を送信 → getUpdates で `message_thread_id: None`, `is_topic_message: None` を確認
 - 設計 §2.3 General topic 扱い (ファイル名 `<chat_id>_general.json` 固定 suffix、PTB の `update.effective_message.message_thread_id` も `None` で返る前提) と整合
 
 **V-4 pass** (削除 thread_id 再利用なし):
@@ -135,7 +135,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 - 副次観察: 失敗 API 呼び出しでも内部 id allocator は前進する (V-4 で観察された 12 スキップの原因)
 
 **取得確定値** (cold cut 当日 6/2 に `bot/.env` 記載予定):
-- `NOTIFY_CHAT_ID=-1003851931893` (supergroup `my group`)
+- `NOTIFY_CHAT_ID=<NOTIFY_CHAT_ID>` (supergroup `my group`)
 - `BOT_THREAD_ID_CHAT=3` / `BOT_THREAD_ID_RESEARCH=4` / `BOT_THREAD_ID_MAINTENANCE=5` / `BOT_THREAD_ID_VOICE_LOG=` (空、Phase 3-2 voice 着手時に追加)
 
 **残作業** (cold cut 当日 6/2 以降):
@@ -386,16 +386,16 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
   - **OWNER_ID 修正** (00:26:33 再起動):
     - user が `@userinfobot` (Telegram 公式) で `/start` → Telegram user.id `<Telegram OWNER_ID>` 取得
     - `cp .env .env.discord-backup` (chmod 600、rollback path) + `sed -i 's/^OWNER_ID=.*/OWNER_ID=<Telegram OWNER_ID>/' .env`
-    - `systemctl --user start companion-bot.service` で再起動 → `logged in as @companion_renbot (id=8688439843)` / `notify chat verified: id=-1003851931893 title='my group' type=supergroup` / `slash commands registered: ['reset', 'quota', 'status', 'play']` / `notify socket listening` の 4 行で正常起動
+    - `systemctl --user start companion-bot.service` で再起動 → `logged in as @companion_renbot (id=<bot id>)` / `notify chat verified: id=<NOTIFY_CHAT_ID> title='my group' type=supergroup` / `slash commands registered: ['reset', 'quota', 'status', 'play']` / `notify socket listening` の 4 行で正常起動
   - **smoke test 全 5 項目 + 1 catch-up 経路 pass** (2026-05-28 00:27〜00:30 JST):
-    - `00:27:36 send len=10` → `#chat` (thread_id=3) で `@companion_renbot こんにちは` → claude 応答 + `sessions/topics/-1003851931893_3.json` 生成 (session_id=`71d8895f-3147-4dc4-876e-1b4b0f40abee`)
-    - `00:28:11 send len=21` → `#research` (thread_id=4) で `@companion_renbot 何か検索して` → claude 応答 + `sessions/topics/-1003851931893_4.json` 生成 (session_id=`a73353cf-7202-45e6-99ed-5808ed89b601`) **= #chat と別 session として分離** ✓ (設計 §2.1 `(chat_id, thread_id)` 複合キー成立)
+    - `00:27:36 send len=10` → `#chat` (thread_id=3) で `@companion_renbot こんにちは` → claude 応答 + `sessions/topics/<NOTIFY_CHAT_ID>_3.json` 生成 (session_id=`71d8895f-3147-4dc4-876e-1b4b0f40abee`)
+    - `00:28:11 send len=21` → `#research` (thread_id=4) で `@companion_renbot 何か検索して` → claude 応答 + `sessions/topics/<NOTIFY_CHAT_ID>_4.json` 生成 (session_id=`a73353cf-7202-45e6-99ed-5808ed89b601`) **= #chat と別 session として分離** ✓ (設計 §2.1 `(chat_id, thread_id)` 複合キー成立)
     - `00:28:36 cmd=/quota send len=319` → `/quota` slash command 動作 (BotCommandScopeChat 登録通り)
     - `00:29:01 cmd=/status send len=264` → `/status` slash command 動作
     - `00:29:23 cmd=/reset send len=68` → `/reset` で `#research` session 破棄
     - `00:30:02 send len=345` → /reset 後の `#research` で新 session (session_id=`feab1448-71ad-4480-9339-7c335d11e557`) で claude 応答
     - **catch-up 経路 (00:19:01)**: `notify forwarded len=117 critical=False` で `#maintenance` topic に system-report 通知が silent default で届いた = `_handle_notify` asyncio.Queue + worker (§5.2) 動作 + `[critical] ` プレフィクス非該当で `disable_notification=True` (silent) 通り
-  - **ledger.jsonl 新 schema 動作確認**: `topic_key="-1003851931893_3"` / `topic_key="-1003851931893_4"` の文字列キーで 3 entries 追記、quota.py の `channel_id` → `topic_key` rename が ledger 経路でも整合 (modelUsage `claude-haiku-4-5-20251001` + `claude-sonnet-4-6` 両方記録、total_cost_usd 集計動作)
+  - **ledger.jsonl 新 schema 動作確認**: `topic_key="<NOTIFY_CHAT_ID>_3"` / `topic_key="<NOTIFY_CHAT_ID>_4"` の文字列キーで 3 entries 追記、quota.py の `channel_id` → `topic_key` rename が ledger 経路でも整合 (modelUsage `claude-haiku-4-5-20251001` + `claude-sonnet-4-6` 両方記録、total_cost_usd 集計動作)
   - **rollback path (cold cut 当日に確保 → 2026-06-09 に撤去)**: `venv-discord-backup/` (PTB 不要、Discord 版 venv) + `.env.discord-backup` (旧 OWNER_ID + DISCORD_TOKEN 含む) を cold cut 当日に退避。2026-06-09 に OWNER 削除承認で両方 rm 済 (Telegram cold cut +12 日安定稼働を確認、A-2 → Done)。`sessions/channels/` (Discord 時代の session 群) は git 追跡外 + 空のため保全対象ゼロ = 移動不要と確定 (A-1)
   - **未実施項目** (別タスク、本 entry に含めない):
     - `sessions/channels/` の `.archive/channels-pre-telegram/` への rename (cold cut +1 週間 = 2026-06-04)
@@ -426,7 +426,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
       - 新規 sessions テスト 12 件: 全 pass (General topic suffix / numeric 0 衝突回避 / round-trip)
       - 新規 bot.py 関連テスト 5 件 (chunk_telegram / _normalize_play_url / _fmt_duration / cmd_reset / _authorized): SkipTest (PTB 未導入)
     - PTB v22 実機 import 検証: auto mode classifier で `/tmp` venv への pip install が拒否されたため未実施。`ast` で import 文を機械抽出し、PTB v22 公式 import パス (`telegram.{BotCommand, BotCommandScopeChat, ReplyParameters, Update, User, Chat, Message}` / `telegram.constants.ChatType` / `telegram.ext.{AIORateLimiter, Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters}`) との整合は静的確認済。venv swap 時に `bot.service` 起動で post_init の `bot.get_me()` / `set_my_commands` が正常呼び出されるかは smoke test で最終確認
-  - **commit までで停止 (次タスクは orc 外で user 側実施)**: `telegram-setup.md` §6.2 step 1〜7 (Discord bot 停止 / venv swap / .env 追記 / daemon-reload / start / smoke test)。`.env` の `TELEGRAM_BOT_TOKEN` 追記 + `NOTIFY_CHAT_ID=-1003851931893` / `BOT_THREAD_ID_CHAT=3` / `BOT_THREAD_ID_RESEARCH=4` / `BOT_THREAD_ID_MAINTENANCE=5` 追記は user 操作
+  - **commit までで停止 (次タスクは orc 外で user 側実施)**: `telegram-setup.md` §6.2 step 1〜7 (Discord bot 停止 / venv swap / .env 追記 / daemon-reload / start / smoke test)。`.env` の `TELEGRAM_BOT_TOKEN` 追記 + `NOTIFY_CHAT_ID=<NOTIFY_CHAT_ID>` / `BOT_THREAD_ID_CHAT=3` / `BOT_THREAD_ID_RESEARCH=4` / `BOT_THREAD_ID_MAINTENANCE=5` 追記は user 操作
 - 2026-05-23 claude CLI 2.1.145 → 2.1.149 軽量再検証 + `~/.claude/CLAUDE.md` の Fast モード記述更新 (`~/companion/CLAUDE.md`「claude CLI バージョン up 時の再検証」運用ルール準拠、M-7 と同方針)
   - **経緯**: ユーザー手元 UI に update 通知。`claude update` は up-to-date 応答（ローカル既に 2.1.149、`npm view @anthropic-ai/claude-code dist-tags` で latest/next=2.1.149, stable=2.1.142 を確認）。前回検証 (M-7, 2.1.145, 2026-05-20) 後の 4 日で自動更新が走った後の通知だった可能性
   - **検証方針**: 軽量再検証 (S3 + `--help` / `--bare` 文言差分) で完了。フル S1/S2/S4/S5 は前回 2.1.145 で全 pass + 今回 `--help` 文言に bot.py 経路 (`--session-id` / `--resume <uuid>` 固定ルート) を脅かす差分なしと判定し、credit 抑制 (Max 5x プラン前提)
