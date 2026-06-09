@@ -23,7 +23,15 @@
 
 ## TODO
 
-(active TODO なし — `/vault_push` 実装は下記「Done」セクションに転記済)
+Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態反映 (2026-06-09 棚卸し)。移行本体・各コマンド (`/vault_push` `/tweet` 自発発話) は Done に転記済で稼働中。残りは下記のみ:
+
+- **A-2 (保留・要 OWNER 判断)**: `venv-discord-backup/` (Discord 時代 venv、rollback 路) の削除。K-T7「1 週間運用後 rm」の期限 (≈6/4) は経過、移行は 12 日安定稼働中だが**不可逆操作のため独断削除しない**。OWNER が rollback 不要と確定したら rm。
+- **A-1 (確定・作業不要)**: `sessions/channels/` の `.archive/` への退避 (旧 L163「切替 1 週間後 rename」) は **不要と確定**。`sessions/` は `.gitignore` 対象 = git 追跡外、かつ channels/ は**空**。保全対象ゼロのため移動しない (2026-06-09 棚卸しで判定、再検討不要)。
+- **B-1 (前提待ち)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。prompt-cache hit 率データが揃った段階で着手。
+- **B-2 (調査)**: `web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ確認 (B4-5、rotation 不在設計の破綻有無)。
+- **B-3 (期限 2026-06-11)**: cold cut +14 日の Telegram 観察締め。K-T13〜K-T16 + axis-5 K-1〜K-19 の実観測再点検 (条件 #2 は門から外れたが観察自体は継続)。
+
+(`/vault_push` 実装は下記「Done」セクションに転記済)
 
 ---
 
