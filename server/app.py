@@ -201,6 +201,11 @@ def api_todo_list(handler):
     return 200, tickets.active()
 
 
+def api_todo_history(handler):
+    """GET /api/todo/history — done のみを updated 降順で返す(閲覧専用)。Bearer 必須。"""
+    return 200, tickets.history()
+
+
 def api_todo_add(handler):
     """POST /api/todo {text} — 起票。UI 経由は常に by=user。Bearer 必須。"""
     data, err = _read_json(handler)
@@ -307,6 +312,7 @@ ROUTES = {
     ("GET", "/api/video/state"): (api_video_state, True),
     # 共用 TODO/inbox(F-todo、v1-α 系列 = bot.py 非依存)。全て Bearer 必須。
     ("GET", "/api/todo"): (api_todo_list, True),
+    ("GET", "/api/todo/history"): (api_todo_history, True),
     ("POST", "/api/todo"): (api_todo_add, True),
     ("POST", "/api/todo/status"): (api_todo_status, True),
     # F-vault(出先からの read-only ノート閲覧)。全て GET / Bearer 必須。書き込み endpoint なし。

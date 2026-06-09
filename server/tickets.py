@@ -152,6 +152,16 @@ def all_tickets():
     return data["tickets"]
 
 
+def history():
+    """done のみを updated 降順(新しい完了が先頭)で返す。PWA の完了履歴閲覧用。"""
+    with _locked():
+        data = _load()
+    items = [t for t in data["tickets"]
+             if isinstance(t, dict) and t.get("status") == "done"]
+    items.sort(key=lambda t: t.get("updated", 0), reverse=True)
+    return {"tickets": items}
+
+
 # --- CLI ---
 _BY_MARK = {"user": "🙋", "ai": "🤖"}
 _ST_MARK = {"todo": "未着手", "doing": "着手中", "done": "完了"}

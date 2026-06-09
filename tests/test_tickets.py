@@ -113,6 +113,37 @@ class TestQueries(TicketsTestBase):
         tickets.set_status(1, "done")
         self.assertEqual(len(tickets.all_tickets()), 1)
 
+    def test_history_only_done(self):
+        tickets.add("a")            # 1 todo
+        tickets.add("b")            # 2 todo
+        tickets.add("c")            # 3 todo
+        tickets.set_status(2, "doing")
+        tickets.set_status(3, "done")
+        res = tickets.history()
+        ids = [t["id"] for t in res["tickets"]]
+        self.assertEqual(ids, [3])              # done のみ(todo/doing は除外)
+
+    def test_history_sorted_by_updated_desc(self):
+        tickets.add("a")            # 1
+        tickets.add("b")            # 2
+        tickets.add("c")            # 3
+        # updated を明示制御(秒粒度の同着を避けるため直接書き換え)。
+        tickets.set_status(1, "done")
+        tickets.set_status(2, "done")
+        tickets.set_status(3, "done")
+        with tickets._locked():
+            data = tickets._load()
+            for t in data["tickets"]:
+                t["updated"] = {1: 100, 2: 300, 3: 200}[t["id"]]
+            tickets._save(data)
+        ids = [t["id"] for t in tickets.history()["tickets"]]
+        self.assertEqual(ids, [2, 3, 1])        # updated 降順(新しい完了が先頭)
+
+    def test_history_empty_when_no_done(self):
+        tickets.add("a")
+        tickets.set_status(1, "doing")
+        self.assertEqual(tickets.history(), {"tickets": []})
+
 
 class TestConcurrency(TicketsTestBase):
     def test_parallel_add_no_collision(self):

@@ -47,7 +47,7 @@ function showScreen(id) {
 function openScreen(id) {
   showScreen(id);
   // 詳細を開いた瞬間に最新を取りに行く(畳んでいた間の取りこぼし回収)。
-  if (id === "todo") refreshTodo();
+  if (id === "todo") { refreshTodo(); if (!$("todo-history-list").hidden) refreshHistory(); }
   if (id === "os") refreshGlance();
   if (id === "vault") openVault();
 }
@@ -626,8 +626,83 @@ async function doneTodo(id) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, status: "done" }),
     });
-    if (r.ok || r.status === 404) await refreshTodo();  // 404=既に消えている→再取得で整合
+    if (r.ok || r.status === 404) {
+      await refreshTodo();        // 404=既に消えている→再取得で整合
+      // 完了したものは履歴に回るので、開いていれば履歴も更新(取りこぼし防止)。
+      if (!$("todo-history-list").hidden) refreshHistory();
+    }
   } catch (e) { /* unauthorized は api() が処理 */ }
+}
+
+// epoch 秒 → ローカル "YYYY-MM-DD HH:MM"(完了日時表示用)。0/未定義は空文字。
+function fmtDateTime(epochSec) {
+  if (!epochSec) return "";
+  const d = new Date(epochSec * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+    + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+// 完了履歴の描画(閲覧専用 = 完了ボタンも復活機能も出さない)。createElement のみ。
+function renderHistory(tickets) {
+  const list = $("todo-history-list");
+  list.textContent = "";
+  if (!tickets.length) {
+    const li = document.createElement("li");
+    li.className = "todo-empty";
+    li.textContent = "(完了履歴なし)";
+    list.appendChild(li);
+    return;
+  }
+  tickets.forEach((t) => {
+    const li = document.createElement("li");
+    li.className = "todo-item todo-history-item";
+
+    const id = document.createElement("span");
+    id.className = "todo-id";
+    id.textContent = "#" + t.id;
+
+    const by = document.createElement("span");
+    by.className = "todo-by";
+    by.textContent = TODO_BY_MARK[t.by] || "";
+    by.title = t.by === "ai" ? "AI 起票" : "あなたの依頼";
+
+    const text = document.createElement("span");
+    text.className = "todo-text";
+    text.textContent = t.text;
+
+    const when = document.createElement("span");
+    when.className = "todo-history-when";
+    when.textContent = fmtDateTime(t.updated);
+
+    li.appendChild(id);
+    li.appendChild(by);
+    li.appendChild(text);
+    li.appendChild(when);
+    list.appendChild(li);
+  });
+}
+
+// 完了履歴の取得(active 一覧の 15s ポーリングには乗せない。開いた時 / todo 画面表示時のみ)。
+async function refreshHistory() {
+  if (!getToken()) return;
+  try {
+    const r = await api("/api/todo/history");
+    if (!r.ok) return;
+    const data = await r.json();
+    renderHistory(data.tickets || []);
+  } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
+}
+
+// 折りたたみトグル。開く瞬間に最新を取りに行く(畳んでいた間の取りこぼし回収)。
+function toggleHistory() {
+  const list = $("todo-history-list");
+  const btn = $("todo-history-toggle");
+  const open = list.hidden;
+  list.hidden = !open;
+  btn.setAttribute("aria-expanded", String(open));
+  $("todo-history-caret").textContent = open ? "▾" : "▸";
+  if (open) refreshHistory();
 }
 
 function initTodo() {
@@ -635,6 +710,7 @@ function initTodo() {
   $("todo-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); addTodo(); }
   });
+  $("todo-history-toggle").addEventListener("click", toggleHistory);
 }
 
 // ===== ノート閲覧（F-vault、read-only） =====
