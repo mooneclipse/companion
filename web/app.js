@@ -52,6 +52,10 @@ function openScreen(id) {
   if (id === "vault") openVault();
 }
 function goHome() { showScreen("home"); }
+function navOpenScreen(id) {
+  history.pushState({ screen: id }, "");
+  openScreen(id);
+}
 
 // ホーム masthead の版表示。デプロイ中の git short hash + コミット日(/api/version, 要トークン)。
 // 「今スマホに乗っているのが最新か」を一目で確認するためのもの。
@@ -461,7 +465,11 @@ function initVideo() {
   $("video-stop").addEventListener("click", () => {
     if (confirm("再生を停止しますか？（TV の再生が止まります）")) videoStop();
   });
-  $("video-close").addEventListener("click", () => { vCollapsed = true; renderVideo(); goHome(); });
+  $("video-close").addEventListener("click", () => {
+    vCollapsed = true; renderVideo();
+    // ホームへは履歴を1つ戻して整合(端末の戻るキーと同じ経路)。video state にいる時のみ。
+    if ((history.state && history.state.screen) === "video") history.back(); else goHome();
+  });
   $("video-reopen").addEventListener("click", () => { vCollapsed = false; renderVideo(); });
   $("video-toggle").addEventListener("click", videoToggle);
   const seek = $("video-seek");
@@ -838,6 +846,7 @@ function vaultRenderMarkdown(body) {
 // 一覧ビュー / 本文ビューの切替（戻るボタンの挙動も連動）。
 function vaultShowList() {
   vaultViewingDoc = false;
+  vaultRevokeImageUrls();
   $("vault-list-view").hidden = false;
   $("vault-doc-view").hidden = true;
   $("vault-back").removeAttribute("data-vault-to-list");
@@ -847,6 +856,7 @@ function vaultShowDoc() {
   $("vault-list-view").hidden = true;
   $("vault-doc-view").hidden = false;
   $("vault-back").setAttribute("data-vault-to-list", "1");
+  history.pushState({ screen: "vault", vaultView: "doc" }, "");
   window.scrollTo(0, 0);
 }
 
@@ -986,10 +996,7 @@ function openVault() {
 }
 
 function initVault() {
-  // 戻る: 本文ビュー中は一覧へ、一覧ビューではホームへ（data-home 既定挙動）。
-  $("vault-back").addEventListener("click", (e) => {
-    if (vaultViewingDoc) { e.stopImmediatePropagation(); vaultShowList(); }
-  }, true);
+  // 戻る操作は端末の戻るキー(popstate)に集約。本文→一覧→ホームは history.back() で段階的に戻る。
   const search = $("vault-search");
   search.addEventListener("input", () => {
     clearTimeout(vaultSearchTimer);
@@ -1002,19 +1009,31 @@ function initVault() {
 // タイル(data-open) → 詳細画面、戻る(data-back/data-home) → ホーム。
 // 委譲ではなく要素列挙で結線(タイル枚数は少数、将来追加も局所で済む)。
 function initNav() {
+  history.replaceState({ screen: "home" }, "");
+
   document.querySelectorAll("[data-open]").forEach((el) => {
-    el.addEventListener("click", () => openScreen(el.getAttribute("data-open")));
+    el.addEventListener("click", () => navOpenScreen(el.getAttribute("data-open")));
   });
-  document.querySelectorAll("[data-home]").forEach((el) => {
-    el.addEventListener("click", goHome);
+  // 戻るボタン(.back)は history.back() に一本化。popstate で画面を復元する。
+  document.querySelectorAll(".back").forEach((el) => {
+    el.addEventListener("click", () => history.back());
   });
   // ホームの再生中バー: タップで動画詳細へ。
-  $("nowbar").addEventListener("click", () => openScreen("video"));
+  $("nowbar").addEventListener("click", () => navOpenScreen("video"));
   // glance(接続/health 要約): タップで OS状態詳細へ。
   const glance = $("glance");
-  glance.addEventListener("click", () => openScreen("os"));
+  glance.addEventListener("click", () => navOpenScreen("os"));
   glance.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openScreen("os"); }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navOpenScreen("os"); }
+  });
+
+  window.addEventListener("popstate", (e) => {
+    const state = e.state || {};
+    if (state.vaultView === "doc") { vaultShowList(); return; }
+    const s = state.screen || "home";
+    showScreen(s);
+    if (s === "os") refreshGlance();
+    if (s === "todo") { refreshTodo(); if (!$("todo-history-list").hidden) refreshHistory(); }
   });
 }
 
