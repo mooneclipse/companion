@@ -234,7 +234,7 @@
     <!-- 一覧(フォルダ別)→ タップで本文。本文中は同ビューア内ナビ(戻る/wikilink ジャンプ)。 -->
     <section id="vault" class="screen">
       <div class="dhead">
-        <!-- 本文表示中は一覧へ、一覧ではホームへ戻る(JS が data-vault-back を出し分け) -->
+        <!-- 戻るは history.back() に一本化(initNav の .back 結線)。doc→一覧→ホームと段階的に戻る -->
         <button class="back" type="button" id="vault-back" data-home>‹ 戻る</button>
         <span class="dtitle">06 / Notes</span>
       </div>

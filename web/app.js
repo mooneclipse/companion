@@ -727,7 +727,6 @@ function initTodo() {
 // 由来だが、レンダラ素通しの XSS を防ぐため必ず DOMPurify を通してから innerHTML する
 // （app.js は本来 innerHTML を使わない規律。本文描画はその唯一の例外。下記コメント参照）。
 let vaultLoaded = false;        // 一覧を一度取得したか（再入で再フェッチしない）
-let vaultViewingDoc = false;    // 本文ビュー表示中（戻るボタンの出し分け）
 let vaultSearchTimer = null;    // 検索 debounce
 
 // 属性値内の特殊文字を実体化（marked は raw HTML を素通しするため自前でエスケープ）。
@@ -843,20 +842,16 @@ function vaultRenderMarkdown(body) {
   vaultLoadImages(doc);  // ローカル画像（![[...]]）を Bearer fetch → blob で表示
 }
 
-// 一覧ビュー / 本文ビューの切替（戻るボタンの挙動も連動）。
+// 一覧ビュー / 本文ビューのサブビュー切替（描画のみ。履歴 push は vaultNavDoc が担い、
+// popstate からはこの2関数を直接呼んで復元する＝二重 push を避ける）。
 function vaultShowList() {
-  vaultViewingDoc = false;
   vaultRevokeImageUrls();
   $("vault-list-view").hidden = false;
   $("vault-doc-view").hidden = true;
-  $("vault-back").removeAttribute("data-vault-to-list");
 }
 function vaultShowDoc() {
-  vaultViewingDoc = true;
   $("vault-list-view").hidden = true;
   $("vault-doc-view").hidden = false;
-  $("vault-back").setAttribute("data-vault-to-list", "1");
-  history.pushState({ screen: "vault", vaultView: "doc" }, "");
   window.scrollTo(0, 0);
 }
 
@@ -880,7 +875,7 @@ function vaultRenderList(data) {
       item.type = "button";
       item.className = "vault-item";
       item.textContent = n.name;
-      item.addEventListener("click", () => vaultOpenDoc(n.path));
+      item.addEventListener("click", () => vaultNavDoc(n.path));
       root.appendChild(item);
     });
   });
@@ -911,7 +906,7 @@ function vaultRenderSearch(data) {
       sn.textContent = r.snippet;
       item.appendChild(sn);
     }
-    item.addEventListener("click", () => vaultOpenDoc(r.path));
+    item.addEventListener("click", () => vaultNavDoc(r.path));
     root.appendChild(item);
   });
 }
@@ -939,6 +934,13 @@ async function vaultSearch(q) {
     if (!r.ok) return;
     vaultRenderSearch(await r.json());
   } catch (e) { /* unauthorized は api() が処理 */ }
+}
+
+// 本文を開く（履歴を1つ積む）。一覧/検索/wikilink からの遷移はすべてここを通す。
+// popstate からの復元は履歴を積まず vaultOpenDoc を直接呼ぶ（二重 push を避ける）。
+function vaultNavDoc(path) {
+  history.pushState({ screen: "vault", vaultView: "doc", path }, "");
+  vaultOpenDoc(path);
 }
 
 async function vaultOpenDoc(path) {
@@ -985,7 +987,7 @@ async function vaultJumpTo(target) {
   await vaultEnsureIndex();
   const key = target.toLowerCase().replace(/\.md$/, "");
   const path = vaultIndex && (vaultIndex[key] || vaultIndex[key + ".md"]);
-  if (path) { vaultOpenDoc(path); }
+  if (path) { vaultNavDoc(path); }
   else { $("vault-doc-msg").textContent = "リンク先のノートが見つかりません: " + target; }
 }
 
@@ -1009,6 +1011,9 @@ function initVault() {
 // タイル(data-open) → 詳細画面、戻る(data-back/data-home) → ホーム。
 // 委譲ではなく要素列挙で結線(タイル枚数は少数、将来追加も局所で済む)。
 function initNav() {
+  // SPA なので scroll 復元はブラウザに任せず自前で行う（さもないと戻る時に
+  // 動的描画後の旧 scroll 位置＝本文末尾などへ飛ぶ）。showScreen/vaultShowDoc が 0 に戻す。
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
   history.replaceState({ screen: "home" }, "");
 
   document.querySelectorAll("[data-open]").forEach((el) => {
@@ -1029,11 +1034,18 @@ function initNav() {
 
   window.addEventListener("popstate", (e) => {
     const state = e.state || {};
-    if (state.vaultView === "doc") { vaultShowList(); return; }
     const s = state.screen || "home";
     showScreen(s);
-    if (s === "os") refreshGlance();
-    if (s === "todo") { refreshTodo(); if (!$("todo-history-list").hidden) refreshHistory(); }
+    if (s === "vault") {
+      // vault は list/doc の2サブビュー。doc state は path を持つので本文を再描画、無ければ一覧。
+      if (state.vaultView === "doc" && state.path) vaultOpenDoc(state.path);
+      else vaultShowList();
+    } else if (s === "os") {
+      refreshGlance();
+    } else if (s === "todo") {
+      refreshTodo();
+      if (!$("todo-history-list").hidden) refreshHistory();
+    }
   });
 }
 
