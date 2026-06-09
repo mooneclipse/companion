@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-08 (Telegram `/tweet <url>` に本文 t.co 展開を追加 = `entities.urls` の t.co → 実 URL 置換 + `entities.media` t.co 除去 + frontmatter `url:` を正規形に組み立て [OWNER 依頼]。既存 amarunavr ノートを新形式で取り直し notes/→clips/ 移動。commit までで停止、bot restart / push は user 操作)
+最終更新: 2026-06-09 (OWNER 削除承認を受け Discord rollback 残骸 `venv-discord-backup/` + `.env.discord-backup` を rm = Telegram cold cut +12 日安定稼働を確認、Discord rollback path 完全撤去。A-2 を Done へ転記。STATUS.md 変更のみ 1 commit、push は user 操作)
 
 ## 設計メモ
 
@@ -12,7 +12,7 @@
   - `companion-bot.service` … systemd user unit (`~/.config/systemd/user/` から symlink で配置 + `enable --now` 済)
   - `.env` … `TELEGRAM_BOT_TOKEN` / `OWNER_ID` (Telegram user.id) / `NOTIFY_CHAT_ID` (supergroup chat_id、負値) / `BOT_THREAD_ID_*` (各 topic の数値 ID) / `CLAUDE_BIN` / `CLAUDE_CWD` / `CLAUDE_TIMEOUT` / `BOT_BUDGET_GUARD` / `BOT_MONTHLY_CREDIT_USD` (chmod 600)
   - `requirements.txt` … `python-telegram-bot[rate-limiter,job-queue]>=22.7,<23` + `python-dotenv>=1.0,<2.0`
-  - `venv/` … Python 3.10 で 2026-05-28 cold cut 時に再構築 (旧 venv は `venv-discord-backup/` で 2026-06-04 まで保持、rollback path)
+  - `venv/` … Python 3.10 で 2026-05-28 cold cut 時に再構築 (旧 Discord 版 venv は rollback path として `venv-discord-backup/` に退避していたが、2026-06-09 に OWNER 削除承認で rm 済 = rollback path 撤去)
 - 通知投入口: `$XDG_RUNTIME_DIR/companion-bot.sock` (permission 0600)。1 接続 1 メッセージ (UTF-8、EOF で確定)、本文は `.env` の `NOTIFY_CHAT_ID` + `BOT_THREAD_ID_MAINTENANCE` (空なら maintenance fallback) で指定した Telegram supergroup の #maintenance topic へ転送。`[critical] ` プレフィクス完全一致 (半角込み) で `disable_notification` 反転 (silent default、critical のみ音 ON)。例: `printf '%s' "..." | nc -U $XDG_RUNTIME_DIR/companion-bot.sock`
 - 実行 CWD: `claude -p` は `~/companion/workspace` を CWD として起動
 - ログ: `~/companion/logs/bot.log` (RotatingFileHandler, 5MB×3)
@@ -25,7 +25,6 @@
 
 Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態反映 (2026-06-09 棚卸し)。移行本体・各コマンド (`/vault_push` `/tweet` 自発発話) は Done に転記済で稼働中。残りは下記のみ:
 
-- **A-2 (保留・要 OWNER 判断)**: `venv-discord-backup/` (Discord 時代 venv、rollback 路) の削除。K-T7「1 週間運用後 rm」の期限 (≈6/4) は経過、移行は 12 日安定稼働中だが**不可逆操作のため独断削除しない**。OWNER が rollback 不要と確定したら rm。
 - **A-1 (確定・作業不要)**: `sessions/channels/` の `.archive/` への退避 (旧 L163「切替 1 週間後 rename」) は **不要と確定**。`sessions/` は `.gitignore` 対象 = git 追跡外、かつ channels/ は**空**。保全対象ゼロのため移動しない (2026-06-09 棚卸しで判定、再検討不要)。
 - **B-1 (前提待ち)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。prompt-cache hit 率データが揃った段階で着手。
 - **B-2 (調査)**: `web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ確認 (B4-5、rotation 不在設計の破綻有無)。
@@ -181,6 +180,20 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### Discord rollback 残骸の削除 (A-2 完了、2026-06-09、OWNER 削除承認)
+
+**目的**: Telegram cold cut (2026-05-28) 当日に rollback path として残した Discord 時代の残骸 2 件を、移行安定を確認のうえ撤去する (K-T7「1 週間運用後 rm」の最終処理)。
+
+**経緯**: K-T7 / setup.md §7 の「cold cut +1 週間 (≈6/4) で rm」期限は経過していたが、不可逆操作のため独断削除せず A-2 として OWNER 判断待ちにしていた。2026-06-09 に OWNER が rollback 不要と確定 (削除承認)。Telegram 移行は cold cut +12 日安定稼働 (NRestarts=0 / 各 topic session 分離・notify socket・budget guard とも正常) を確認済。
+
+**実施内容**:
+- `venv-discord-backup/` (35MB、Discord 版 venv = PTB 不要) を rm。
+- `.env.discord-backup` (旧 DISCORD_TOKEN + 旧 OWNER_ID = Discord snowflake 含む、mode 600) を rm。
+- 両者とも git 追跡外 (`.gitignore` 対象) のため削除自体に commit は不要、作業ツリーへの影響なし。
+- これで Discord rollback path は完全撤去 (`venv` swap + `.env` OWNER_ID 切替の巻き戻し手段は消滅)。telegram-setup.md の rollback 用 mv/cp 手順は履歴手順として保持 (実態の残骸は撤去済)。
+
+**STATUS.md 反映**: A-2 を TODO から削除しこの Done エントリへ転記。設計メモ L15 (venv 注記) + cold cut 当日 entry の「rollback path 残置」section を削除済の実態に更新。
 
 ### Telegram `/tweet <url>`: 本文 t.co 展開 + frontmatter url 正規化 + 既存ノート取り直し (2026-06-08 実装、commit までで停止、restart は user 操作)
 
@@ -383,7 +396,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
     - `00:30:02 send len=345` → /reset 後の `#research` で新 session (session_id=`feab1448-71ad-4480-9339-7c335d11e557`) で claude 応答
     - **catch-up 経路 (00:19:01)**: `notify forwarded len=117 critical=False` で `#maintenance` topic に system-report 通知が silent default で届いた = `_handle_notify` asyncio.Queue + worker (§5.2) 動作 + `[critical] ` プレフィクス非該当で `disable_notification=True` (silent) 通り
   - **ledger.jsonl 新 schema 動作確認**: `topic_key="-1003851931893_3"` / `topic_key="-1003851931893_4"` の文字列キーで 3 entries 追記、quota.py の `channel_id` → `topic_key` rename が ledger 経路でも整合 (modelUsage `claude-haiku-4-5-20251001` + `claude-sonnet-4-6` 両方記録、total_cost_usd 集計動作)
-  - **rollback path 残置 (2026-06-04 cleanup 予定)**: `venv-discord-backup/` (PTB 不要、Discord 版 venv) + `.env.discord-backup` (旧 OWNER_ID + DISCORD_TOKEN 含む) + `sessions/channels/` (Discord 時代の session 群)。setup.md §7 通り cold cut +1 週間で削除
+  - **rollback path (cold cut 当日に確保 → 2026-06-09 に撤去)**: `venv-discord-backup/` (PTB 不要、Discord 版 venv) + `.env.discord-backup` (旧 OWNER_ID + DISCORD_TOKEN 含む) を cold cut 当日に退避。2026-06-09 に OWNER 削除承認で両方 rm 済 (Telegram cold cut +12 日安定稼働を確認、A-2 → Done)。`sessions/channels/` (Discord 時代の session 群) は git 追跡外 + 空のため保全対象ゼロ = 移動不要と確定 (A-1)
   - **未実施項目** (別タスク、本 entry に含めない):
     - `sessions/channels/` の `.archive/channels-pre-telegram/` への rename (cold cut +1 週間 = 2026-06-04)
     - `claude_runner.py` の `run_discord` → `run_session_prompt` 改名 (telegram-design §8.5 commit 粒度 (4))、本 cold cut では platform 非依存なので無改変、別 commit 化
