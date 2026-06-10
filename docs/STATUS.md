@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 15:37
+最終更新: 2026-06-10 20:10
 
 ## 設計メモ
 
@@ -16,15 +16,13 @@
 
 ## TODO
 
-- machine-audit: マシン全体メンテナンス S1〜S5 (計画 = `machine-audit/PLAN.md`、2026-06-10 全体スキャン済み)。1 セッション 1 タスクで S1 (セキュリティ修正、要 sudo 協働) から消化する
+- machine-audit: マシン全体メンテナンス S1〜S5 (計画 = `machine-audit/PLAN.md`、2026-06-10 全体スキャン済み)。1 セッション 1 タスクで消化、S1/S4 完了済み。次は S2 (未使用サービス・パッケージ整理、要 sudo 協働)
 
 ※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
 
 ## In progress
 
-- machine-audit S1 セキュリティ修正: 1〜4 完了 (2026-06-10、`machine-audit/s1-security.sh` 一括実行)。openssl/libssl3/vim 系 7 件適用、`[::]:5900` は既存 ip6tables DROP でブロック済み確認、navidrome stop+disable (利用実態なし)、openssl 滞留原因 = 公開タイミングで自動経路は健在と確定。**残: 再起動 (kernel 5.15.0-181 反映 + swap リセット) → 復帰点検**。チェックリストは `machine-audit/PLAN.md` S1 末尾、HWE 6.8 は見送り 5.15 維持で確定
-  - 2026-06-10 15:03 再起動前スナップショット取得 (`~/companion/logs/maintenance/machine-audit-s1-pre-reboot-20260610.txt`)。navidrome 4533 の listen 消滅を確認済み。**再起動 (`sudo reboot`) はユーザー側ターミナル実行待ち**、復帰後の続きセッションがチェックリスト + スナップショット突き合わせで点検
-  - 2026-06-10 追記: **再起動には物理操作が必須** (バッテリー取り外し済みのため POST で「Battery not detected」警告に停められ F1 押下が要る)。ユーザー外出中につき **帰宅後に実施**。急ぎの根拠なし (kernel 反映と swap リセットのみ)。BIOS に警告スキップ設定があれば無人再起動が可能になるので、物理操作のついでに確認する (S6-6 にも記載)
+（なし）
 
 ## Review pending
 
@@ -32,6 +30,10 @@
 
 ## Done
 
+- 2026-06-10 machine-audit S1: セキュリティ修正 完了
+  - 1〜4 (2026-06-10 昼、`machine-audit/s1-security.sh` 一括実行): openssl/libssl3/vim 系 7 件適用、`[::]:5900` は既存 ip6tables DROP でブロック済み確認、navidrome stop+disable (利用実態なし)、openssl 滞留原因 = 公開タイミングで自動経路は健在と確定。HWE 6.8 は見送り 5.15 維持で確定
+  - 5 (2026-06-10 夜、ユーザー帰宅後に物理再起動): 復帰点検チェックリスト全項目 pass — kernel 5.15.0-181 反映、reboot-required 消滅、swap 2.0Mi にリセット (pre 1.9Gi)、4533 なし・5900 形状不変、companion 系 4 service + timer 6 本全復帰、failed は casper-md5check のみ (S2 で無効化予定)。詳細 = `machine-audit/PLAN.md` S1 末尾「復帰点検結果」
+  - 残務 1 件: `sudo ip6tables -S INPUT | grep 5900` (boot 後も DROP 残存かの確認、ユーザー側ターミナル)。**POST のバッテリー警告は再起動でも従来どおり出た** = 無人再起動は現状不可のまま、BIOS 警告スキップ設定の確認は S6-6 #7 に持ち越し
 - 2026-06-10 machine-audit S4: claude 設定・スキル・CLAUDE.md 品質レビュー
   - CLAUDE.md 5 枚 / skills 3 / agents 5 / memory 34 エントリ / workspace settings.json を点検。修正 8 ファイル: workspace・companion・bot-workspace の CLAUDE.md (Telegram cold cut 済み実態反映、Repository State、update-config 死参照)、games/CLAUDE.md (実機検証は本番 47825 不使用を明記)、orc SKILL (newgame 棲み分け)、trends-report SKILL (cwd 依存注記 = 2026-06-04 障害の知識をスキル側にも明文化)、game-designer agent (2026-06-03 方向転換反映)、code-reviewer agent (列挙更新)
   - memory は索引・実ファイル一致 + 参照先全現存で削除ゼロ。settings.json は報告のみ (docker/podman 死に allow)。vault/CLAUDE.md は編集禁止のため報告のみ (Windows パス残骸)。詳細 = `machine-audit/PLAN.md` S4
