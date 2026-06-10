@@ -23,7 +23,7 @@
 
 ## In progress
 
-（なし）
+- machine-audit S6-1: RAM 逼迫の解消 — zram 採用 (zstd / PERCENT=50 / prio 100)、sudo 分は `machine-audit/s6-1-zram.sh` 一括実行待ち。物理増設は同スクリプトの dmidecode 観測で判断材料収集、mpv 常駐見直しは見送り (詳細 = `machine-audit/PLAN.md` S6-1)
 
 ## Review pending
 
