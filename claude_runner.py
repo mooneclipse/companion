@@ -78,7 +78,7 @@ class ClaudeResult:
     cache_creation_input_tokens: int | None = None
     cache_read_input_tokens: int | None = None
     model_usage: dict | None = None
-    permission_denials: list[str] = field(default_factory=list)
+    permission_denials: list[dict] = field(default_factory=list)
     terminal_reason: str | None = None
     duration_ms: int | None = None
 
