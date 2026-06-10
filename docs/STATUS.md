@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 20:50
+最終更新: 2026-06-10 21:05
 
 ## 設計メモ
 
@@ -16,7 +16,7 @@
 
 ## TODO
 
-- machine-audit: マシン全体メンテナンス S1〜S5 (計画 = `machine-audit/PLAN.md`、2026-06-10 全体スキャン済み)。1 セッション 1 タスクで消化、S1/S2/S4 完了済み。次は S3 (ディスク・ログ衛生、journald 上限設定のみ要 sudo)
+- machine-audit: マシン全体メンテナンス S1〜S5 (計画 = `machine-audit/PLAN.md`、2026-06-10 全体スキャン済み)。S1〜S4 完了済み。残は S5 (定常化: kept back 検出を system-report に足すか判断 + S6-4 拡張) と S6 の改善提案群 (S6-1 RAM / S6-2 バックアップ / S6-6 延命チューニング)
 
 ※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
 
@@ -30,6 +30,9 @@
 
 ## Done
 
+- 2026-06-10 machine-audit S3: ディスク・ログ衛生 完了
+  - claude 側 (sudo 不要分): npm キャッシュ 2.8G→60K、claude `-tmp-*` 検証残骸 2 件削除。mozilla 1.1G は smart_size 自動管理 (上限 ~1G) で頭打ちと確認し対応不要で確定、transcript は S6-5 の cleanupPeriodDays 確認済みのため手動削除なし
+  - sudo 分は `machine-audit/s3-hygiene.sh` 一括実行 (全ステップ rc=0): journald `SystemMaxUse=200M` (464M→224M、以後上限ローテート)、S2 残務 orphan `libfwupdplugin5` 回収 (autoremove 候補ゼロに)、machine-audit ログ 3 件 chown。事後ルート使用 45G (11%)。詳細 = `machine-audit/PLAN.md` S3
 - 2026-06-10 machine-audit S2: 未使用サービス・パッケージ整理 完了
   - sudo 分は `machine-audit/s2-cleanup.sh` 一括実行 (ユーザー側ターミナル、全ステップ rc=0): サービス 8 unit 無効化 (openvpn / rsync / ModemManager / casper-md5check / cups 一式 — failed units 0 に、631 listen 消滅)、`apt autoremove --purge` 2 件、kept back 3 件適用 (fwupd 2.0.20 系、**apt upgradable 空に**)、navidrome 完全撤去 (手動設置と判明、unit + バイナリ 58M + データ + 専用ユーザー直削除)
   - sudo 不要分は claude 側で実行: discord deb 74M・mintupgrade ログ 3 件 (計 1.3M、code-reviewer が残存 2 件を検出し追加削除)、Trash 550M→64K (`gio trash --empty`、`rm -rf` は deny ルールのため)
