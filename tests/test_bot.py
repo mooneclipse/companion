@@ -975,6 +975,135 @@ class ExpandTweetTextTest(unittest.TestCase):
         self.assertEqual(out, "x https://t.co/AAA")
 
 
+class IncomingPhotoFilenameTest(unittest.TestCase):
+    """chat 画像の保存ファイル名生成 (`<ts>_<file_unique_id>.jpg`、英数 _.- のみ)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _now(self):
+        from datetime import datetime
+        import quota
+        return datetime(2026, 6, 10, 12, 34, 56, tzinfo=quota.JST)
+
+    def test_basic_format(self) -> None:
+        out = self.bot.incoming_photo_filename(self._now(), "AgADBAADr6cxG2hP")
+        self.assertEqual(out, "20260610-123456_AgADBAADr6cxG2hP.jpg")
+
+    def test_unsafe_chars_stripped(self) -> None:
+        out = self.bot.incoming_photo_filename(self._now(), "a/b c$%..d-1_x")
+        self.assertEqual(out, "20260610-123456_abc..d-1_x.jpg")
+
+    def test_empty_id_falls_back(self) -> None:
+        out = self.bot.incoming_photo_filename(self._now(), "")
+        self.assertEqual(out, "20260610-123456_photo.jpg")
+
+    def test_dot_only_id_falls_back(self) -> None:
+        # 安全化後にドットしか残らない退化形は photo に倒す (パストラバーサル防止)。
+        out = self.bot.incoming_photo_filename(self._now(), "../..")
+        self.assertEqual(out, "20260610-123456_photo.jpg")
+
+
+class SelectPruneTargetsTest(unittest.TestCase):
+    """prune 対象選定: timestamp prefix の辞書順 = 時系列、sort 1 回で世代確定。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _names(self, count: int) -> list[str]:
+        # 20260610-000000_a.jpg, 20260610-000001_a.jpg, ... (古い順)
+        return [f"20260610-{i:06d}_a.jpg" for i in range(count)]
+
+    def test_under_keep_returns_empty(self) -> None:
+        self.assertEqual(self.bot.select_prune_targets(self._names(9), keep=10), [])
+
+    def test_at_keep_returns_empty(self) -> None:
+        self.assertEqual(self.bot.select_prune_targets(self._names(10), keep=10), [])
+
+    def test_over_keep_returns_oldest(self) -> None:
+        names = self._names(12)
+        out = self.bot.select_prune_targets(names, keep=10)
+        self.assertEqual(out, names[:2])  # 最古 2 件だけが削除対象
+
+    def test_unordered_input_sorted_first(self) -> None:
+        names = self._names(11)
+        shuffled = list(reversed(names))
+        out = self.bot.select_prune_targets(shuffled, keep=10)
+        self.assertEqual(out, [names[0]])
+
+    def test_empty_returns_empty(self) -> None:
+        self.assertEqual(self.bot.select_prune_targets([], keep=10), [])
+
+
+class PruneIncomingTest(unittest.TestCase):
+    """prune_incoming の実ファイル削除 (tmpdir、最新 keep 件だけ残る)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.topic_dir = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_keeps_newest_files(self) -> None:
+        names = [f"20260610-{i:06d}_a.jpg" for i in range(12)]
+        for n in names:
+            (self.topic_dir / n).write_bytes(b"x")
+        self.bot.prune_incoming(self.topic_dir, keep=10)
+        remaining = sorted(p.name for p in self.topic_dir.glob("*.jpg"))
+        self.assertEqual(remaining, names[2:])
+
+    def test_noop_when_under_keep(self) -> None:
+        for i in range(3):
+            (self.topic_dir / f"20260610-{i:06d}_a.jpg").write_bytes(b"x")
+        self.bot.prune_incoming(self.topic_dir, keep=10)
+        self.assertEqual(len(list(self.topic_dir.glob("*.jpg"))), 3)
+
+    def test_non_jpg_untouched(self) -> None:
+        # 世代管理対象は *.jpg のみ (download 形式固定)。他のファイルは触らない。
+        (self.topic_dir / "note.txt").write_bytes(b"x")
+        for i in range(11):
+            (self.topic_dir / f"20260610-{i:06d}_a.jpg").write_bytes(b"x")
+        self.bot.prune_incoming(self.topic_dir, keep=10)
+        self.assertTrue((self.topic_dir / "note.txt").exists())
+        self.assertEqual(len(list(self.topic_dir.glob("*.jpg"))), 10)
+
+
+class BuildPhotoPromptTest(unittest.TestCase):
+    """画像応答 prompt 組み立て: 保存先パス + Read 指示 + キャプション/デフォルト文。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_caption_used_as_body(self) -> None:
+        prompt = self.bot.build_photo_prompt(
+            "/home/miho/companion/bot-workspace/incoming/k/x.jpg", "これ何の花?"
+        )
+        self.assertIn("/home/miho/companion/bot-workspace/incoming/k/x.jpg", prompt)
+        self.assertIn("Read ツール", prompt)
+        self.assertIn("これ何の花?", prompt)
+        self.assertNotIn(self.bot.PHOTO_DEFAULT_PROMPT, prompt)
+
+    def test_default_body_when_no_caption(self) -> None:
+        prompt = self.bot.build_photo_prompt("/tmp/x.jpg", None)
+        self.assertIn(self.bot.PHOTO_DEFAULT_PROMPT, prompt)
+
+    def test_whitespace_caption_falls_back_to_default(self) -> None:
+        prompt = self.bot.build_photo_prompt("/tmp/x.jpg", "   \n ")
+        self.assertIn(self.bot.PHOTO_DEFAULT_PROMPT, prompt)
+
+    def test_path_object_accepted(self) -> None:
+        prompt = self.bot.build_photo_prompt(Path("/tmp/y.jpg"), "見て")
+        self.assertIn("/tmp/y.jpg", prompt)
+
+
 class CanonicalTweetUrlTest(unittest.TestCase):
 
     @classmethod

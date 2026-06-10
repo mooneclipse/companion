@@ -77,6 +77,16 @@ LOG_FILE = LOG_DIR / "bot.log"
 # 公式上限 4096 char に 96 char マージン (URL preview / link entity 等の future safety)。
 TELEGRAM_MAX = 4000
 
+# chat に投げられた画像 (photo) の一時保存先。vault には書かない (原本は Telegram 上、
+# OWNER 確定 2026-06-10)。同一 session の追い質問で再 Read できるよう即時削除はせず、
+# topic ごとに最新 INCOMING_KEEP_PER_TOPIC 件を超えた古い分を download 時に prune する
+# (1 回で確定する素直な世代管理、bot-improvement-plan.md Step 2-1)。
+# CLAUDE_CWD (bot-workspace/) 配下なので claude セッションの Read に追加 permission 不要。
+INCOMING_DIR = Path(CLAUDE_CWD) / "incoming"
+INCOMING_KEEP_PER_TOPIC = 10
+# キャプションなしで画像だけ投げられたときのデフォルト prompt 本文。
+PHOTO_DEFAULT_PROMPT = "この画像を見て、一言コメントを返して。"
+
 PLAY_ALLOWED_HOSTS = frozenset({
     "youtube.com",
     "www.youtube.com",
@@ -1283,6 +1293,114 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+# ---------------------------------------------------------------------------
+# photo message (画像応答、bot-improvement-plan.md Step 2-1)
+# ---------------------------------------------------------------------------
+
+
+def incoming_photo_filename(now: datetime, file_unique_id: str) -> str:
+    """Return ``<ts>_<file_unique_id>.jpg`` for a downloaded chat photo.
+
+    file_unique_id は `_safe_attachment_name` と同様に英数 ``_.-`` のみに安全化する
+    (パストラバーサル防止)。退化形 (空 / ドットのみ) は ``photo`` に倒す。
+    timestamp prefix (JST) は辞書順 = 時系列になるので prune の世代判定に使える。
+    純関数 → unit-test。
+    """
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "", file_unique_id or "")
+    if not safe.lstrip("."):
+        safe = "photo"
+    return f"{now.strftime('%Y%m%d-%H%M%S')}_{safe}.jpg"
+
+
+def select_prune_targets(
+    filenames: list[str], keep: int = INCOMING_KEEP_PER_TOPIC
+) -> list[str]:
+    """Return the oldest filenames beyond `keep` (deletion candidates).
+
+    `incoming_photo_filename` の timestamp prefix により辞書順 = 時系列なので、
+    sort 1 回で世代が確定する (mtime 非依存・リトライ/分岐なし)。純関数 → unit-test。
+    """
+    ordered = sorted(filenames)
+    excess = len(ordered) - keep
+    if excess <= 0:
+        return []
+    return ordered[:excess]
+
+
+def prune_incoming(topic_dir: Path, keep: int = INCOMING_KEEP_PER_TOPIC) -> None:
+    """Delete old downloaded photos beyond `keep` in one pass (素直な世代管理)。"""
+    names = [p.name for p in topic_dir.glob("*.jpg") if p.is_file()]
+    for name in select_prune_targets(names, keep):
+        (topic_dir / name).unlink(missing_ok=True)
+
+
+def build_photo_prompt(image_path: Path | str, caption: str | None) -> str:
+    """Compose the claude prompt for a chat photo.
+
+    保存済画像の絶対パスを添えて Read ツールでの閲覧を指示する。キャプションが
+    あれば prompt 本文に使い、なければデフォルト文。純関数 → unit-test。
+    """
+    body = (caption or "").strip()
+    return "\n".join([
+        f"添付画像 {image_path} を Read ツールで見て返答して。",
+        body if body else PHOTO_DEFAULT_PROMPT,
+    ])
+
+
+async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """OWNER が画像を投げたら claude に見せて返答する (メンション不要)。
+
+    認可は on_message と同一の `_authorized` 4 段防御。最大サイズの photo を
+    incoming/<topic_key>/ に保存し、保存先パスを prompt に添えて既存の
+    run_claude 経路 (budget guard 込み) に乗せる。
+    """
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    if msg is None or not msg.photo:
+        return
+    thread_id = msg.message_thread_id
+    chat_id = update.effective_chat.id
+
+    photo = msg.photo[-1]  # 最大サイズ
+    topic_dir = INCOMING_DIR / sessions.topic_key(chat_id, thread_id)
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    dest = topic_dir / incoming_photo_filename(
+        datetime.now(quota.JST), photo.file_unique_id
+    )
+    try:
+        tg_file = await photo.get_file()
+        await tg_file.download_to_drive(custom_path=str(dest))
+    except Exception:
+        logger.exception("photo download failed")
+        await send_text(
+            context.bot, chat_id, thread_id,
+            "[photo] 画像の取得に失敗しました — see bot.log",
+            reply_to=msg.message_id,
+        )
+        return
+    prune_incoming(topic_dir)
+    logger.info("photo saved: %s", dest)
+
+    prompt = build_photo_prompt(dest, msg.caption)
+    try:
+        async with _typing_action(context.bot, chat_id, thread_id):
+            output = await run_claude(prompt, chat_id, thread_id)
+    except Exception:
+        logger.exception("claude invocation failed")
+        await send_text(
+            context.bot, chat_id, thread_id,
+            "[internal error — see bot.log]",
+            reply_to=msg.message_id,
+        )
+        return
+
+    logger.info("send len=%d", len(output))
+    await send_text(
+        context.bot, chat_id, thread_id, output, reply_to=msg.message_id,
+    )
+
+
 class _typing_action:
     """Periodic ``sendChatAction(typing)`` for the duration of a `with` block.
 
@@ -1721,6 +1839,13 @@ def build_application() -> Application:
         MessageHandler(
             message_filter & filters.TEXT & ~filters.COMMAND,
             on_message,
+        )
+    )
+    # photo message → on_photo (メンション不要、画像投稿そのものがトリガ。Step 2-1)
+    app.add_handler(
+        MessageHandler(
+            message_filter & filters.PHOTO,
+            on_photo,
         )
     )
     return app
