@@ -99,8 +99,39 @@
 ### S5: 定常化 (このリズムを維持する仕組み)
 
 - S1-3 で見つかった「自動で当たらない更新」の監視を maintenance repo の既存 timer 群に足すか判断 (例: 週次 system-report に「apt 滞留パッケージ数」を含める — 既に companion-notify-system-report があるので拡張で済む可能性大。**新規 timer を増やす前に既存スクリプトを読む**)
+- 改善提案 4 (S6 参照) と同じ方向: daily system-report に「再起動待ちか」「セキュリティ更新の滞留数」「swap 使用率」の 3 行を追加する案をここで一緒に判断
 - 本 audit を四半期ごとに再走する運用にするか判断 (PLAN.md を再利用)
 - 結果を maintenance/docs/STATUS.md に集約
+
+### S6: 改善提案 (修正ではなく「もっと良くする」軸。採否の判断は各セッション内で行う)
+
+2026-06-10 の全体スキャンから出た提案 5 件。1 と 2 は独立セッションの価値あり、3〜5 は既存セッションに相乗りできる。
+
+#### S6-1. RAM 逼迫の解消 (zram + 物理増設) — 独立セッション
+
+- 観測: RAM 3.7G、swapfile (ディスク上 2G) を 1.8G 消費、swappiness=60、zram 未使用。常駐の大物は claude セッション 384M / `mpv --idle` 197M (companion-video-mpv) / variety 58M
+- 選択肢 (組み合わせ可):
+  1. **zram 導入** (圧縮 RAM swap)。低 RAM 機ほど体感が効く。S1 の再起動とセットが効率的
+  2. **物理増設**: Inspiron 3521 は DDR3 世代で 8GB まで増設可のはず。空きスロット・現装着の確認に `sudo dmidecode -t memory` (要 sudo)。中古 DDR3 で費用小・効果最大
+  3. **常駐見直し**: mpv idle を必要時起動 (socket activation 等) にできれば約 200M 回収。companion-video-mpv の設計変更になるので bot/dashboard 側 STATUS と整合を取ってから
+
+#### S6-2. オフディスクバックアップの追加 — 独立セッション
+
+- 観測: timeshift は daily で稼働中だが、保存先 UUID = `50b03ae8...` = **ルートと同じ sda2** (同一ディスク内スナップショット、実測 22G)。ディスク故障では timeshift ごと全損する
+- 守られているもの: vault は GitHub backup あり (git 化 B 階層)。**裸なのは ミュージック 531M・写真・dotfiles・/etc 設定類**
+- 判断事項: 外付け HDD/USB か別マシンか / ツール (restic / borg / 素 rsync) / 頻度。このマシンは vault マスター機なので保険価値は高い
+
+#### S6-3. HWE カーネル 6.8 への乗り換え — S1 の再起動ついでに判断
+
+- 観測: 現行 GA 5.15 系。`linux-generic-hwe-22.04` (6.8.0-124) が候補に出ている
+- 性能・電力管理の改善はあるが、常駐サーバ的運用なので保守的に 5.15 維持も合理的。**急がない。S1 再起動時に一緒に判断**
+
+#### S6-4. daily system-report の拡張 — S5 に統合済み (上記参照)
+
+#### S6-5. claude transcript の自動掃除 — S4 に相乗り
+
+- 観測: `~/.claude/projects` 136M (ほぼ workspace) + file-history 17M
+- 手動削除でなく settings.json の `cleanupPeriodDays` で保持期間を決めて自動化する方向。**設定名と現行デフォルトは S4 で公式ドキュメントを裏取りしてから** 設定する
 
 ---
 
@@ -109,5 +140,7 @@
 - [ ] S1 セキュリティ修正
 - [ ] S2 未使用サービス・パッケージ整理
 - [ ] S3 ディスク・ログ衛生
-- [ ] S4 claude 設定・スキル・CLAUDE.md 品質レビュー
-- [ ] S5 定常化
+- [ ] S4 claude 設定・スキル・CLAUDE.md 品質レビュー (+S6-5 transcript 自動掃除)
+- [ ] S5 定常化 (+S6-4 system-report 拡張)
+- [ ] S6-1 RAM 逼迫解消 (zram / 物理増設 / 常駐見直し)
+- [ ] S6-2 オフディスクバックアップ追加
