@@ -24,6 +24,7 @@
 
 - machine-audit S1 セキュリティ修正: 1〜4 完了 (2026-06-10、`machine-audit/s1-security.sh` 一括実行)。openssl/libssl3/vim 系 7 件適用、`[::]:5900` は既存 ip6tables DROP でブロック済み確認、navidrome stop+disable (利用実態なし)、openssl 滞留原因 = 公開タイミングで自動経路は健在と確定。**残: 再起動 (kernel 5.15.0-181 反映 + swap リセット) → 復帰点検**。チェックリストは `machine-audit/PLAN.md` S1 末尾、HWE 6.8 は見送り 5.15 維持で確定
   - 2026-06-10 15:03 再起動前スナップショット取得 (`~/companion/logs/maintenance/machine-audit-s1-pre-reboot-20260610.txt`)。navidrome 4533 の listen 消滅を確認済み。**再起動 (`sudo reboot`) はユーザー側ターミナル実行待ち**、復帰後の続きセッションがチェックリスト + スナップショット突き合わせで点検
+  - 2026-06-10 追記: **再起動には物理操作が必須** (バッテリー取り外し済みのため POST で「Battery not detected」警告に停められ F1 押下が要る)。ユーザー外出中につき **帰宅後に実施**。急ぎの根拠なし (kernel 反映と swap リセットのみ)。BIOS に警告スキップ設定があれば無人再起動が可能になるので、物理操作のついでに確認する (S6-6 にも記載)
 
 ## Review pending
 
