@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-04 12:45
+最終更新: 2026-06-10 10:10
 
 ## 設計メモ
 
@@ -16,7 +16,7 @@
 
 ## TODO
 
-（なし）
+- machine-audit: マシン全体メンテナンス S1〜S5 (計画 = `machine-audit/PLAN.md`、2026-06-10 全体スキャン済み)。1 セッション 1 タスクで S1 (セキュリティ修正、要 sudo 協働) から消化する
 
 ※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
 

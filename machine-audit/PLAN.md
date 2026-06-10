@@ -1,0 +1,113 @@
+# マシン全体メンテナンス計画 (machine-audit)
+
+作成: 2026-06-10
+スキャン実施: 2026-06-10 10:00 頃 (sudo なし。root 権限が要る確認項目は S1 に「要 sudo」として残してある)
+対象: Linux Mint 21.3 / Dell Inspiron 3521 / RAM 3.7G / SSD 457G (使用 12%)
+
+## 運用ルール
+
+- **1 セッション 1 タスク** (PROJECT.md の運用リズムに合わせる)。「続きお願い」で次のセッションが本ファイルの未完了セッションを上から拾う
+- 各セッション完了時に本ファイルの該当セクションへ「✅ 完了 (日付) + 結果 1〜3 行」を追記する
+- 破壊的操作 (サービス無効化・パッケージ削除・再起動) は **実行前にユーザー確認**。sudo はユーザー側ターミナルで実行してもらう
+- 判断に迷う項目は独断せず 1 行で確認する
+
+---
+
+## スキャン結果サマリ (2026-06-10 観測)
+
+### システム
+- kernel: 実行中 5.15.0-179 / インストール済み **5.15.0-181** → **再起動待ち** (uptime 18 日)
+- `/var/run/reboot-required` 存在 (空ファイル)
+- swap **1.8G / 2.0G 消費** (RAM 3.7G、再起動で解消見込み。常駐: claude セッション 384M、mpv idle 197M ほか)
+- failed unit: `casper-md5check.service` (Live ISO 検証用、実機では不要) 1 件のみ
+- ディスクは余裕 (457G 中 49G 使用)
+
+### セキュリティ
+- **openssl / libssl3 の jammy-security 更新が未適用で滞留** (3.0.2-0ubuntu1.23 → 1.25)。vim 系も同様。unattended-upgrades の許可 origin は Linuxmint 系のみで、Ubuntu jammy-security は mintupdate-automation 任せ。mintupdate automation は毎日 00:18 頃動いていて 6/10 も cups/systemd を更新済みだが openssl が残っている → 滞留原因の特定が要る
+- **navidrome が `*:4533` で全インターフェース listen** (tailscale 外の LAN にも露出)。`--musicfolder ~/ミュージック`、systemd system service として常駐
+- x11vnc が `[::]:5900` (IPv6 wildcard) で listen 中。既知問題 (`-noipv6` が効かない)。`/etc/iptables/rules.v6` は存在し netfilter-persistent も enabled だが、**中身が root 専用で未確認** → ブロックされているか要 sudo 検証
+- tailscale 系 (100.123.48.81 の 443/8443/8444/8445/35122) は tailnet 内のみで問題なし
+- companion 系 python (47824/47825/47831/47832/47833) は 127.0.0.1 bind で問題なし
+- cups 631 は localhost のみ。avahi (5353)・ModemManager・bluetooth は露出小だが利用実態の精査対象
+
+### 未使用候補 (観測根拠つき)
+| 対象 | 観測 | 候補アクション |
+|---|---|---|
+| `openvpn.service` (enabled) | /etc/openvpn に設定ファイルなし | 無効化 |
+| `rsync.service` (enabled) | /etc/rsyncd.conf なし (デーモン未設定) | 無効化 (rsync コマンド自体は残る) |
+| `ModemManager.service` | ノート PC、モデム利用なしの想定 | 要確認 → 無効化 |
+| cups 一式 | プリンタ登録 0 台 | 利用予定の確認のみ (無効化は保留可) |
+| `casper-md5check.service` | failed 常連、Live ISO 用 | 無効化 |
+| apt autoremove 候補 | gcc-10-base:i386, mint-backgrounds-vanessa | autoremove |
+| `~/discord-0.0.16.deb` | インストール済みの deb 残骸 74M | 削除 |
+| `~/mintupgrade-2026-05-05T212939.log` | アップグレード完了済み 1.3M | 削除 |
+| `~/mineroad-analysis/` 132M | 用途不明 (companion 外) | **ユーザーに要否確認** |
+| autostart: variety / x11vnc / xfce-autostart-wm | x11vnc は VNC 用途で現役 | variety (壁紙) の要否のみ確認 |
+
+### ディスク・キャッシュ (緊急性なし、容量は潤沢)
+- `~/.npm` 2.8G (npm キャッシュ) → `npm cache clean` で大半回収可
+- `~/.cache/mozilla` 1.1G / `~/.local/share/Trash` 550M
+- journal 464M → `SystemMaxUse=` で上限設定の余地
+- `~/.cache/ms-playwright` 641M は playtester (games) で現役、**消さない**
+- `~/.claude/projects` 136M (ほぼ workspace の transcript) + file-history 17M。`-tmp-*` の検証残骸 3 件あり
+- nvm は v24.15.0 の 1 本のみ、npm global も claude-code のみで健全
+
+### claude 設定まわり (現状把握)
+- CLAUDE.md は 5 枚 446 行 (workspace 180 / companion 共通 92 / games 71 / vault 61 / bot-workspace 42)
+- skills 3 つ (trends-report / newgame / orc)、agents 5 つ (workspace 配下)
+- user レベル (`~/.claude/`) に skills / agents なし、settings.json 48 行
+- memory 28 エントリ (MEMORY.md 索引)
+
+---
+
+## セッション分割
+
+### S1: セキュリティ修正 (最優先、要 sudo 協働)
+
+ユーザーがターミナルに居るタイミングで実施。
+
+1. `sudo cat /etc/iptables/rules.v6` で x11vnc の `[::]:5900` がブロック済みか確認 (memory: ip6tables で塞ぐ運用のはず)。未ブロックなら ip6tables ルール追加 + netfilter-persistent save
+2. `sudo ufw status` でファイアウォール全体像を確認 (ufw 併用か iptables 直か)
+3. openssl/libssl3 滞留原因の特定: mintupdate の blacklist / レベル設定を確認 → `sudo apt upgrade openssl libssl3` 等で適用。**今後 Ubuntu security 由来が自動で当たる経路があるかを確定させる** (なければ S5 で監視を仕組み化)
+4. navidrome の bind 変更: `ND_ADDRESS` を tailscale IP (100.123.48.81) か 127.0.0.1 + tailscale serve に変更 → スマホからの利用経路を確認してから (要ユーザー確認: navidrome を tailnet 外 (家庭内 LAN) から使っているか?)
+5. 仕上げに再起動 → kernel 5.15.0-181 で起動、swap リセット、`ss -tlnp` 再確認、companion 系 user service が全員自動復帰するか点検
+
+### S2: 未使用サービス・パッケージ整理
+
+上の表の通り。1 つずつ「観測根拠 → 無効化提案 → ユーザー確認 → 実行」。まとめて確認してよい。
+- `systemctl disable --now openvpn rsync casper-md5check` (+ModemManager は確認後)
+- `sudo apt autoremove`
+- home 直下の残骸削除 (discord deb / mintupgrade ログ)、`mineroad-analysis` はユーザー判断
+- Trash 550M の空にする確認
+
+### S3: ディスク・ログ衛生
+
+- `npm cache clean --force` (2.8G 回収)
+- journald に `SystemMaxUse=200M` 設定 (要 sudo、/etc/systemd/journald.conf.d/)
+- `~/.claude/projects/-tmp-*` 残骸削除、file-history / 古い transcript の保持方針を決める (claude 自体の cleanupPeriodDays 設定を確認してから手動削除はしない)
+- mozilla キャッシュは Firefox 側設定で上限確認 (手動削除は一時的効果しかない)
+
+### S4: claude 設定・スキル・CLAUDE.md 品質レビュー
+
+コードレビューと同じ要領で 1 ファイルずつ。観点:
+- **CLAUDE.md**: 上位/下位の重複記述、古くなった記述 (例: workspace CLAUDE.md の「このリポジトリは空」は games 等の実態とずれ)、auto-discovery の階層設計が今も正しいか
+- **skills**: frontmatter (description / when-to-use) が発火条件として機能しているか、newgame と orc の棲み分け記述、trends-report の cwd 依存注意書き
+- **agents**: 5 つの description が proactive 起動の判断材料として十分か、tool 制限が実態と合っているか
+- **settings.json**: workspace の allow/ask/deny 棚卸し。`/fewer-permission-prompts` スキルで transcript 実績ベースの allowlist 提案を出すのが手早い
+- **memory**: 28 エントリの鮮度確認。古い参照 (ファイルパス・設定) が現存するか検証し、死んだものは削除
+
+### S5: 定常化 (このリズムを維持する仕組み)
+
+- S1-3 で見つかった「自動で当たらない更新」の監視を maintenance repo の既存 timer 群に足すか判断 (例: 週次 system-report に「apt 滞留パッケージ数」を含める — 既に companion-notify-system-report があるので拡張で済む可能性大。**新規 timer を増やす前に既存スクリプトを読む**)
+- 本 audit を四半期ごとに再走する運用にするか判断 (PLAN.md を再利用)
+- 結果を maintenance/docs/STATUS.md に集約
+
+---
+
+## 進捗
+
+- [ ] S1 セキュリティ修正
+- [ ] S2 未使用サービス・パッケージ整理
+- [ ] S3 ディスク・ログ衛生
+- [ ] S4 claude 設定・スキル・CLAUDE.md 品質レビュー
+- [ ] S5 定常化
