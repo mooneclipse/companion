@@ -82,9 +82,11 @@ deny 増強 commit + allow 拡張 commit の 2 commit、実弾 3 件 pass、STAT
 
 ---
 
-## Step 2: bot.py 小改変パック #1 — 画像応答 + permission_denials 記録 (B-3 締め 6/11 後)
+## Step 2: bot.py 小改変パック #1 — 画像応答 + permission_denials 記録 (B-3 締め 6/11 後) — ✅ 実装完了 2026-06-10 (restart + 実弾検証は user 操作待ち)
 
-**変更ファイル**: `bot.py` + `tests/test_bot.py`。2 commit、restart は 1 回にまとめる (user 操作)。
+実装記録は `bot/docs/STATUS.md` Done「Step 2 bot.py 小改変パック #1 (C-2)」参照。B-3 観察締めは 13 日分全項目クリーンを根拠に OWNER 承認で 1 日前倒しクローズ (同 Done「Telegram 観察締め (B-3 完了)」)、ゲート解除して同日着手。commits: 0dcd926 (2-1) / a28772a (2-2) / f0b648a (review 反映)。151 tests pass。2-2 は bot.py でなく quota.py `_record_common` (ledger 書き込み単一集約点) に実装。
+
+**変更ファイル**: `bot.py` + `quota.py` + `tests/test_bot.py` + `tests/test_quota.py`。3 commit、restart は 1 回にまとめる (user 操作)。
 
 ### 2-1. chat の画像を見て返答する機能 (OWNER 要望、優先)
 
