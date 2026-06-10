@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 20:20
+最終更新: 2026-06-10 20:50
 
 ## 設計メモ
 
@@ -16,7 +16,7 @@
 
 ## TODO
 
-- machine-audit: マシン全体メンテナンス S1〜S5 (計画 = `machine-audit/PLAN.md`、2026-06-10 全体スキャン済み)。1 セッション 1 タスクで消化、S1/S4 完了済み。次は S2 (未使用サービス・パッケージ整理、要 sudo 協働)
+- machine-audit: マシン全体メンテナンス S1〜S5 (計画 = `machine-audit/PLAN.md`、2026-06-10 全体スキャン済み)。1 セッション 1 タスクで消化、S1/S2/S4 完了済み。次は S3 (ディスク・ログ衛生、journald 上限設定のみ要 sudo)
 
 ※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
 
@@ -30,6 +30,10 @@
 
 ## Done
 
+- 2026-06-10 machine-audit S2: 未使用サービス・パッケージ整理 完了
+  - sudo 分は `machine-audit/s2-cleanup.sh` 一括実行 (ユーザー側ターミナル、全ステップ rc=0): サービス 8 unit 無効化 (openvpn / rsync / ModemManager / casper-md5check / cups 一式 — failed units 0 に、631 listen 消滅)、`apt autoremove --purge` 2 件、kept back 3 件適用 (fwupd 2.0.20 系、**apt upgradable 空に**)、navidrome 完全撤去 (手動設置と判明、unit + バイナリ 58M + データ + 専用ユーザー直削除)
+  - sudo 不要分は claude 側で実行: discord deb 74M・mintupgrade ログ 3 件 (計 1.3M、code-reviewer が残存 2 件を検出し追加削除)、Trash 550M→64K (`gio trash --empty`、`rm -rf` は deny ルールのため)
+  - ユーザー判断で残置: `mineroad-analysis/` 132M (「用途不明」ではなく 6/8 更新の MINE ROAD APK 解析で現役)、variety (壁紙チェンジャー現役)。詳細 = `machine-audit/PLAN.md` S2
 - 2026-06-10 machine-audit S1: セキュリティ修正 完了
   - 1〜4 (2026-06-10 昼、`machine-audit/s1-security.sh` 一括実行): openssl/libssl3/vim 系 7 件適用、`[::]:5900` は既存 ip6tables DROP でブロック済み確認、navidrome stop+disable (利用実態なし)、openssl 滞留原因 = 公開タイミングで自動経路は健在と確定。HWE 6.8 は見送り 5.15 維持で確定
   - 5 (2026-06-10 夜、ユーザー帰宅後に物理再起動): 復帰点検チェックリスト全項目 pass — kernel 5.15.0-181 反映、reboot-required 消滅、swap 2.0Mi にリセット (pre 1.9Gi)、4533 なし・5900 形状不変、companion 系 4 service + timer 6 本全復帰、failed は casper-md5check のみ (S2 で無効化予定)。詳細 = `machine-audit/PLAN.md` S1 末尾「復帰点検結果」
