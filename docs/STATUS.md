@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-10 (B-3 Telegram 観察締めを OWNER 承認の 1 日前倒しでクローズ = 13 日間全項目クリーン、Done 転記。K-14 を B-4 として分離、B-1 着手可能化 [cache hit 90.6%]、C-2 ゲート解除し着手)
+最終更新: 2026-06-10 (B-3 前倒しクローズに続き C-2 Step 2 実装完了 = 画像応答 on_photo + permission_denials 記録、151 tests pass、commit までで停止。restart + 実弾検証は user 操作待ち)
 
 ## 設計メモ
 
@@ -33,7 +33,7 @@ Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態
 bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/workspace/redesign/bot-improvement-plan.md`、ステップ単位で着手・各 Step 完了時に Done 転記):
 
 - ~~**C-1**: Step 1 閲覧自由化~~ → **2026-06-10 完了、Done 転記済み** (実弾検証 3 件 pass、消費観察起点 = 2026-06-10)。
-- **C-2 (着手中 2026-06-10、B-3 前倒し締めでゲート解除)**: Step 2 bot.py 小改変パック #1 — 画像応答 (photo handler + incoming/ 一時キャッシュ、vault 保存しない) + permission_denials の ledger/log 記録。restart 1 回 (user 操作)。
+- ~~**C-2**: Step 2 bot.py 小改変パック #1 — 画像応答 + permission_denials 記録~~ → **2026-06-10 実装 + commit 完了、Done 転記済み** (restart + 実弾検証は user 操作待ち)。
 - **C-3 (消費観察 1〜2 週間後 = 2026-06-17〜24 目処)**: Step 3 予算計器 — ソフト警告 50%/80% + /quota 着地予測 + /status セッション肥大可視化。
 - **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 → 死蔵知識 proactive 拡張の優先順。
 
@@ -187,6 +187,17 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### Step 2 bot.py 小改変パック #1: 画像応答 + permission_denials 記録 (C-2、2026-06-10 実装、commit までで停止、restart + 実弾検証は user 操作)
+
+**目的**: chat に送った画像を見て返答する機能 + permission deny の観察記録 (bot 改良プラン Step 2、center of truth = `~/companion/workspace/redesign/bot-improvement-plan.md`)。B-3 前倒し締め (同日) でゲート解除して着手。
+
+- **2-1 画像応答** (0dcd926): `on_photo` ハンドラ追加 (`message_filter & filters.PHOTO`、`_authorized` 4 段防御は on_message と同一、caption 付き photo の on_message 二重発火なし = on_message は filters.TEXT 限定)。メンション不要、キャプションあれば prompt 本文・なければデフォルト文。`message.photo[-1]` → `download_to_drive()` で `bot-workspace/incoming/<topic_key>/<ts>_<file_unique_id>.jpg` 保存 (英数 `_.-` 安全化 + timestamp prefix、traversal 不可)。prompt に絶対パス + Read 指示で既存 run_claude 経路 (budget guard 込み) に乗せる。topic ごと最新 10 件超を download 時に prune — ファイル名 timestamp prefix の辞書順 sort 1 回で確定 (mtime 非依存、リトライ・文言マッチなし、2 周目ルール整合)。vault 非接触。document/album/動画は v1 スコープ外
+- **2-2 permission_denials 記録** (a28772a): quota.py `_record_common` (ledger 書き込みの単一集約点) で非空時のみ entry に `"permission_denials"` 追加 + `logger.info("permission denied: %s", ...)` で bot.log 記録。空時は key 省略 = 既存 entry schema 非破壊。deny を見て自動 allow する仕組みは作らない (拡張判断は OWNER + 手元セッション)
+- **テスト**: 133 → **151 件全 pass** (`venv/bin/python -m unittest discover -s tests`。純関数 16 件 = ファイル名生成/prune 選定/prune 実削除/prompt 組み立て + quota 2 件)
+- **code-reviewer**: OK (修正必須 0、認可バイパス経路なし・traversal 不可・2 周目ルール整合を確認)。軽微提案 2 件 — (1) download 失敗時の部分ファイル unlink = **採用** (f0b648a、破損 jpg が世代 1 枠を占有し追い Read で当たる経路を防止) (2) claude_runner.py の `permission_denials: list[str]` 型注釈が実体 (dict のリスト) と乖離 = 差分外につき **B-1 (claude_runner.py 改修) で対応に見送り**
+- `bot-workspace/.gitignore` の `incoming/` は登録済み (13c0ac5) で追加 commit 不要
+- **残作業 (user 操作)**: `systemctl --user restart companion-bot.service` → 実弾検証 (#chat へキャプションあり/なし各 1 枚で内容言及の返答確認、11 枚目投入で最古 prune 確認)。bot.py 改変につき restart 後数日の様子見 (NRestarts / ERROR 監視)
 
 ### Telegram 観察締め (B-3 完了、2026-06-10 前倒しクローズ、全項目クリーン)
 
