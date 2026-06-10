@@ -159,6 +159,33 @@ class CreditBudgetGuardTest(TempLedgerCase):
         self.assertAlmostEqual(entries[0]["total_cost_usd"], 0.05, places=4)
         self.assertEqual(entries[0]["topic_key"], "-1001234567890_2")
 
+    def test_record_includes_permission_denials_when_present(self) -> None:
+        # Step 2-2: deny の観察 (記録のみ、自動 allow 拡張はしない)。
+        now = datetime(2026, 5, 20, 12, 0, tzinfo=JST)
+        guard = quota.CreditBudgetGuard(monthly_budget_usd=100.0, ledger_path=self.ledger_path)
+        denials = [{"tool_name": "Read", "tool_input": {"file_path": "/home/miho/.ssh/id_ed25519"}}]
+        result = ClaudeResult(
+            rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
+            cost_usd=0.05, permission_denials=denials, terminal_reason="ok",
+        )
+        with self.assertLogs("companion-bot", level="INFO") as cm:
+            guard.record(now, result, topic_key="-1001234567890_2", session_id="abc")
+        entries = quota.read_ledger(self.ledger_path)
+        self.assertEqual(entries[0]["permission_denials"], denials)
+        # 非空のとき bot.log (companion-bot logger) に INFO で残ること。
+        self.assertTrue(any("permission denied" in m for m in cm.output))
+
+    def test_record_omits_permission_denials_when_empty(self) -> None:
+        now = datetime(2026, 5, 20, 12, 0, tzinfo=JST)
+        guard = quota.CreditBudgetGuard(monthly_budget_usd=100.0, ledger_path=self.ledger_path)
+        result = ClaudeResult(
+            rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
+            cost_usd=0.05, terminal_reason="ok",
+        )
+        guard.record(now, result, topic_key="-1001234567890_2", session_id="abc")
+        entries = quota.read_ledger(self.ledger_path)
+        self.assertNotIn("permission_denials", entries[0])
+
 
 class FormatSummaryTest(TempLedgerCase):
 

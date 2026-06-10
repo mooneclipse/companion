@@ -160,6 +160,12 @@ def _record_common(
         "modelUsage": result.model_usage,
         "terminal_reason": result.terminal_reason,
     }
+    # permission deny の観察 (bot-improvement-plan.md Step 2-2)。記録のみ —
+    # deny ヒットを見て自動で allow を足す仕組みは作らない (拡張判断は OWNER +
+    # 手元セッションの仕事)。空なら ledger entry に key を持たせない。
+    if result.permission_denials:
+        entry["permission_denials"] = result.permission_denials
+        logger.info("permission denied: %s", result.permission_denials)
     append_ledger(entry, ledger_path)
 
 
