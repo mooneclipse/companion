@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 21:05
+最終更新: 2026-06-10 21:20
 
 ## 設計メモ
 
@@ -16,7 +16,8 @@
 
 ## TODO
 
-- machine-audit: マシン全体メンテナンス S1〜S5 (計画 = `machine-audit/PLAN.md`、2026-06-10 全体スキャン済み)。S1〜S4 完了済み。残は S5 (定常化: kept back 検出を system-report に足すか判断 + S6-4 拡張) と S6 の改善提案群 (S6-1 RAM / S6-2 バックアップ / S6-6 延命チューニング)
+- machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 完了済み。残は S6 の改善提案群 (S6-1 RAM / S6-2 バックアップ / S6-6 延命チューニング)
+- machine-audit 四半期再走 (S5 で採用): **次回 2026-09 頃**。全体スキャンからやり直して新 PLAN を作成、現 `machine-audit/PLAN.md` は手順テンプレ + 前回観測との比較基準として参照
 
 ※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
 
@@ -30,6 +31,10 @@
 
 ## Done
 
+- 2026-06-10 machine-audit S5: 定常化 完了 (machine-audit 修正系 S1〜S5 はこれで全完了、残は S6 改善提案群)
+  - `scripts/notify-system-report.sh` 拡張のみで実現、**新規 timer なし** (systemd unit 無変更): daily レポートに「apt 滞留: N 件」(常時表示、kept back 検出 = 同じ件数が何日も続いたら疑う傾向監視、apt update は打たず読むだけ) + 「再起動待ち: あり」(`/var/run/reboot-required` 存在時のみ) を追加。swap は既載のため追加なし
+  - 実弾テスト OK: skip パス / 本文 6 行生成 (滞留 0 件・温度 47°C) / socket 送信 (bot.log `notify forwarded len=128`) / state 再生成。code-reviewer: 修正必須なし、軽微 1 件採用 (apt 失敗時に滞留 0 件へ無音縮退する点 → 「取得失敗」表示で区別。成否判定 1 回・リトライなしで 2 周目ルール非抵触)
+  - 四半期再走を採用 (次回 2026-09 頃、TODO 参照)。詳細 = `machine-audit/PLAN.md` S5
 - 2026-06-10 machine-audit S3: ディスク・ログ衛生 完了
   - claude 側 (sudo 不要分): npm キャッシュ 2.8G→60K、claude `-tmp-*` 検証残骸 2 件削除。mozilla 1.1G は smart_size 自動管理 (上限 ~1G) で頭打ちと確認し対応不要で確定、transcript は S6-5 の cleanupPeriodDays 確認済みのため手動削除なし
   - sudo 分は `machine-audit/s3-hygiene.sh` 一括実行 (全ステップ rc=0): journald `SystemMaxUse=200M` (464M→224M、以後上限ローテート)、S2 残務 orphan `libfwupdplugin5` 回収 (autoremove 候補ゼロに)、machine-audit ログ 3 件 chown。事後ルート使用 45G (11%)。詳細 = `machine-audit/PLAN.md` S3
