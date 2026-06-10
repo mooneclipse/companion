@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 20:10
+最終更新: 2026-06-10 20:20
 
 ## 設計メモ
 
@@ -33,7 +33,7 @@
 - 2026-06-10 machine-audit S1: セキュリティ修正 完了
   - 1〜4 (2026-06-10 昼、`machine-audit/s1-security.sh` 一括実行): openssl/libssl3/vim 系 7 件適用、`[::]:5900` は既存 ip6tables DROP でブロック済み確認、navidrome stop+disable (利用実態なし)、openssl 滞留原因 = 公開タイミングで自動経路は健在と確定。HWE 6.8 は見送り 5.15 維持で確定
   - 5 (2026-06-10 夜、ユーザー帰宅後に物理再起動): 復帰点検チェックリスト全項目 pass — kernel 5.15.0-181 反映、reboot-required 消滅、swap 2.0Mi にリセット (pre 1.9Gi)、4533 なし・5900 形状不変、companion 系 4 service + timer 6 本全復帰、failed は casper-md5check のみ (S2 で無効化予定)。詳細 = `machine-audit/PLAN.md` S1 末尾「復帰点検結果」
-  - 残務 1 件: `sudo ip6tables -S INPUT | grep 5900` (boot 後も DROP 残存かの確認、ユーザー側ターミナル)。**POST のバッテリー警告は再起動でも従来どおり出た** = 無人再起動は現状不可のまま、BIOS 警告スキップ設定の確認は S6-6 #7 に持ち越し
+  - ip6tables もユーザー側確認済み (2026-06-10): `sudo ip6tables -S INPUT | grep 5900` → DROP 残存、netfilter-persistent の boot 後永続化 OK。**S1 残務なしでクローズ**。POST のバッテリー警告は再起動でも従来どおり出た = 無人再起動は現状不可のまま、BIOS 警告スキップ設定の確認は S6-6 #7 に持ち越し
 - 2026-06-10 machine-audit S4: claude 設定・スキル・CLAUDE.md 品質レビュー
   - CLAUDE.md 5 枚 / skills 3 / agents 5 / memory 34 エントリ / workspace settings.json を点検。修正 8 ファイル: workspace・companion・bot-workspace の CLAUDE.md (Telegram cold cut 済み実態反映、Repository State、update-config 死参照)、games/CLAUDE.md (実機検証は本番 47825 不使用を明記)、orc SKILL (newgame 棲み分け)、trends-report SKILL (cwd 依存注記 = 2026-06-04 障害の知識をスキル側にも明文化)、game-designer agent (2026-06-03 方向転換反映)、code-reviewer agent (列挙更新)
   - memory は索引・実ファイル一致 + 参照先全現存で削除ゼロ。settings.json は報告のみ (docker/podman 死に allow)。vault/CLAUDE.md は編集禁止のため報告のみ (Windows パス残骸)。詳細 = `machine-audit/PLAN.md` S4
