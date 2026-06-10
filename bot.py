@@ -1373,6 +1373,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await tg_file.download_to_drive(custom_path=str(dest))
     except Exception:
         logger.exception("photo download failed")
+        dest.unlink(missing_ok=True)
         await send_text(
             context.bot, chat_id, thread_id,
             "[photo] 画像の取得に失敗しました — see bot.log",
