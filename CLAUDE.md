@@ -27,6 +27,14 @@
 
 bot.py 側で OWNER_ID 一致のメッセージのみ subprocess を起動する。本 CWD で動く claude セッションは全て OWNER 発話起点が保証されている前提。詳細は `~/companion/bot/docs/STATUS.md`。
 
+## マシン状態の確認 (Step 1 閲覧自由化、2026-06-10)
+
+`~/companion` 全体の Read と読み系 / 状態系 Bash (`ls` `cat` `df` `du` `free` `ps` `systemctl --user status` 等) が allow 済み。確認時の前提知識:
+
+- **companion 系サービスは全て systemd user unit** (`companion-bot.service`, `companion-proactive.service` 等、`~/.config/systemd/user/`)。`systemctl` / `journalctl` は必ず **`--user` を付ける** — system 版 (`systemctl status ...`) は allow 外で permission 待ちになる
+- 「bot の稼働状況」と言われたら unit 名は `companion-bot.service` (× `bot.service`)
+- 複合コマンド (`A && B`) は全体が allow にマッチしないと止まる。allow 済みコマンドでも 1 呼び出し 1 コマンドで分けて打つ
+
 ## 上位ルール
 
 `~/companion/CLAUDE.md` (共通項) を参照:
