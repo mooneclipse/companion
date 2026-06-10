@@ -32,7 +32,7 @@ Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態
 
 bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/workspace/redesign/bot-improvement-plan.md`、ステップ単位で着手・各 Step 完了時に Done 転記):
 
-- **C-1 (即着手可)**: Step 1 閲覧自由化 — `bot-workspace/.claude/settings.json` のみ (deny 増強 → allow 拡張の順で 2 commit、bot.py 非接触・restart 不要)。
+- **C-1 (着手済み → In progress 参照)**: Step 1 閲覧自由化 — `bot-workspace/.claude/settings.json` のみ (deny 増強 → allow 拡張の順で 2 commit、bot.py 非接触・restart 不要)。
 - **C-2 (B-3 締め 6/11 後)**: Step 2 bot.py 小改変パック #1 — 画像応答 (photo handler + incoming/ 一時キャッシュ、vault 保存しない) + permission_denials の ledger/log 記録。restart 1 回 (user 操作)。
 - **C-3 (C-1 後の消費観察 1〜2 週間を経てから)**: Step 3 予算計器 — ソフト警告 50%/80% + /quota 着地予測 + /status セッション肥大可視化。
 - **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 → 死蔵知識 proactive 拡張の優先順。
@@ -180,7 +180,16 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 
 ## In progress
 
-（なし）
+### C-1: Step 1 閲覧自由化 (2026-06-10 着手、user 適用待ち)
+
+- bot-workspace/ を (C) ローカル git 化 (init + gitleaks pre-commit hook + 初回 commit 13c0ac5)。PROJECT.md / 上位 CLAUDE.md の (C) リストに追記済み
+- Step 1-1 deny 増強: commit 60e13a9 で **適用済み** (ブラウザ profile / keyrings / gnupg / gh / bash_history / companion 配下 .env 絶対パス形の 9 件)
+- Step 1-2 allow 拡張: claude セッションからの settings.json 編集が auto mode classifier に Self-Modification として拒否されたため (Edit / heredoc とも、2 回で打ち止め)、適用待ちステージングファイル `bot-workspace/settings.json.step1-2` を作成。code-reviewer 通過済み (修正必須 1 件 = 編集途中の迷子行残置 → git restore で解消済み)
+- 残作業:
+  1. user 操作: `cp ~/companion/bot-workspace/settings.json.step1-2 ~/companion/bot-workspace/.claude/settings.json` で適用
+  2. claude: 適用後に allow 拡張 commit + **ステージングファイル削除** (残置すると正本との混乱源、code-reviewer 指摘)
+  3. 実弾検証 3 件 (#chat から): bot.py 行数質問 / ディスク残量+bot.service 状況 / `~/.ssh` 閲覧の deny 確認 (negative test)
+  4. Done 転記 + bot-improvement-plan.md Step 1 に完了日追記
 
 ## Review pending
 
