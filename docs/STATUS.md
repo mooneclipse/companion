@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-10 (C-2 Step 2 完了 = 画像応答 on_photo + permission_denials 記録、151 tests pass + restart + 実弾検証 2 件 pass。残りは数日の NRestarts/ERROR 様子見のみ)
+最終更新: 2026-06-10 (B-1 完了 = ClaudeOptions 未使用 7 フィールド + to_sdk_kwargs() を全削除、permission_denials 型注釈修正、151 tests pass)
 
 ## 設計メモ
 
@@ -26,7 +26,7 @@
 Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態反映 (2026-06-09 棚卸し)。移行本体・各コマンド (`/vault_push` `/tweet` 自発発話) は Done に転記済で稼働中。残りは下記のみ:
 
 - **A-1 (確定・作業不要)**: `sessions/channels/` の `.archive/` への退避 (旧 L163「切替 1 週間後 rename」) は **不要と確定**。`sessions/` は `.gitignore` 対象 = git 追跡外、かつ channels/ は**空**。保全対象ゼロのため移動しない (2026-06-09 棚卸しで判定、再検討不要)。
-- **B-1 (着手可能)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。前提データ揃い済み — Telegram 窓 13 日間の cache hit 率 90.6% (B-3 締め実測、2026-06-10)。
+- ~~**B-1 (着手可能)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。前提データ揃い済み — Telegram 窓 13 日間の cache hit 率 90.6% (B-3 締め実測、2026-06-10)。~~ → **2026-06-10 完了 (OWNER 承認で全削除、Done 転記済み)**。
 - ~~**B-3 (期限 2026-06-11)**: cold cut +14 日の Telegram 観察締め~~ → **2026-06-10 前倒しクローズ (OWNER 承認)、Done 転記済み**。全項目クリーン。K-14 (Console vs ledger 差分点検、7/1 前後) のみ別項として継続:
 - **B-4 (7/1 前後)**: K-14 = Anthropic Console 累計使用量 vs ledger.jsonl 累計の差分点検 (6/15 新クレジット制初月の月末締め後)。旧 B-3 から分離した唯一の期日付き残観察。
 
@@ -52,7 +52,7 @@ Phase 2.5「土管の耐久化（再設計）」T-A〜T-E 全完了 (T-D 後半 
 CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR/WARN / `/quota` `[guard: credit_usd]` 表示 / Discord 経由 prompt 計測値を観察。**2026-05-27 lead 単独判断で打ち切り、Phase 2.6 cold cut 前倒し実施**。詳細根拠は PROJECT.md 健全性チェック履歴「2026-05-27 (追): Phase 2.5 観察打ち切り + Phase 2.6 cold cut 前倒し判断」entry 参照。観察結果サマリ (打ち切り時点): NRestarts=0、ERROR/WARN/Traceback 0 件、`/quota` credit_usd 表示稼働、ledger 累計低消費継続、catch-up 経路二重実行で重複なし、vault sync 正常稼働 = 「実害ゼロ拡張ルール」(M-1) 適用条件 (i)(ii)(iii) すべて満たし。
 
 追加観察項目 (2026-05-20 全体レビューで追記):
-- **`claude_runner.ClaudeOptions` 未使用 7 フィールド + `to_sdk_kwargs()` の判定** (B4-1): `add_dir` / `no_session_persistence` / `disable_slash_commands` / `exclude_dynamic_system_prompt_sections` / `setting_sources` / `prompt_prefix` / `prompt_suffix` は SDK 移行耐性 / cache framing 用に T-B で先行設置、現状 bot.py からは `timeout_s` のみ代入。観察期間中に prompt-cache hit 率データ (`/quota` キャッシュ表示) が出揃ったタイミングで「`prompt_prefix` 実装するか、空のまま削るか」を判定。Phase 3 着手者の混乱コストを削るため期間内に決定する
+- **`claude_runner.ClaudeOptions` 未使用 7 フィールド + `to_sdk_kwargs()` の判定** (B4-1): `add_dir` / `no_session_persistence` / `disable_slash_commands` / `exclude_dynamic_system_prompt_sections` / `setting_sources` / `prompt_prefix` / `prompt_suffix` は SDK 移行耐性 / cache framing 用に T-B で先行設置、現状 bot.py からは `timeout_s` のみ代入。観察期間中に prompt-cache hit 率データ (`/quota` キャッシュ表示) が出揃ったタイミングで「`prompt_prefix` 実装するか、空のまま削るか」を判定。Phase 3 着手者の混乱コストを削るため期間内に決定する → **2026-06-10 全削除で完了、Done「ClaudeOptions 未使用フィールド削除 (B-1 完了)」参照**
 - **`web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ** (B4-5): rotation 不在の意図設計 (年間数 MB 想定) の破綻有無チェック → **2026-06-10 実測完了、対応不要でクローズ** (Done「vault-sync.log rotation 不在調査 (B-2 完了)」参照)
 
 軸 5 集約観察項目 (2026-05-20 軸 5 agent team で追加、19 件統合): 詳細は `~/companion/workspace/review-2026-05-20/axis-5-result.md` §4 (K-1〜K-19) 参照。集計タイミング別: 6/2 完了時点 (K-1〜K-12) / 月跨ぎ JST + 月末締め (K-13/K-14) / bot/ 側着手後 (K-15〜K-18) / 本 review 完了後最優先 (K-19 = CLI 2.1.145 再検証)。Round 4 (5/26 以降 or 6/2 完了後) で実観測再点検実施。
@@ -187,6 +187,21 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### ClaudeOptions 未使用フィールド削除 (B-1 完了、2026-06-10 実装、OWNER 承認済み判定 = 全削除)
+
+**目的**: `claude_runner.ClaudeOptions` の未使用 7 フィールド + `to_sdk_kwargs()` を実装するか削るかの判定 (B4-1、2026-05-20 全体レビューで設定)。Phase 3 着手者の混乱コスト削減。
+
+**判定根拠 (OWNER 承認済み: 全削除)**:
+- `prompt_prefix` / `prompt_suffix` (cache framing 用、design.md §4.8): prefix なしの実運用 13 日間で **cache hit 率 90.6%** (baseline 30% を大幅超え、B-3 締め実測) — 実装する動機がデータ上消滅
+- 他 5 フィールド (`add_dir` / `no_session_persistence` / `disable_slash_commands` / `exclude_dynamic_system_prompt_sections` / `setting_sources`) + `to_sdk_kwargs()` (NotImplementedError スタブ): SDK 移行耐性の先行設置だが bot.py からは `timeout_s` 等コアのみ代入で一切未使用。YAGNI、SDK 移行時に必要になったら再追加する
+
+**実装 (2026-06-10)**:
+- **5cddf6e**: 7 フィールド + `to_cli_args()` の対応分岐 + `to_sdk_kwargs()` + クラス docstring の SDK 言及を削除。`_compose_prompt` (prefix/suffix 組み立て専用) も削除し `run_discord` で prompt をそのまま使用
+- **8ae9919**: `ClaudeResult.permission_denials` 型注釈を `list[str]` → `list[dict]` に修正 (実体は CLI JSON の dict リスト、C-2 code-reviewer 軽微提案の持ち越し対応)
+- 削除前に bot.py / tests/ / quota.py / sessions.py を grep し削除対象への参照ゼロを確認 (bot.py は `ClaudeOptions(timeout_s=...)` のみ、tests/ に対象フィールドのテストなし)
+- **テスト**: **151 件全 pass** (`venv/bin/python -m unittest discover -s tests`、件数増減なし)
+- claude_runner.py はメモリ常駐 import 対象のため反映は**次回 restart 時** (純削除で挙動変化なしのため専用 restart は不要、次のデプロイ操作に同乗でよい)
 
 ### Step 2 bot.py 小改変パック #1: 画像応答 + permission_denials 記録 (C-2 完了、2026-06-10 実装 + restart + 実弾検証 2 件 pass)
 
