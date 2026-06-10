@@ -2,11 +2,11 @@
 
 このファイルは手元 claude code (Linux Mint 機の端末から起動する claude CLI、CWD = `~/companion/workspace/`) の auto-discovery で読まれる。**手元セッション固有** の制約のみを書く。応答言語 / vault 書き込み境界 / OWNER 認可 / git 運用方針 / 設計判断・対症療法の上限 など共通項は上位 `~/companion/CLAUDE.md` を参照。
 
-Discord 経由セッション (bot 経由、CWD = `~/companion/bot-workspace/`) は `~/companion/bot-workspace/CLAUDE.md` 側のルールで動く。本ファイルは bot 経路の制約には関与しない。
+Telegram 経由セッション (bot 経由、CWD = `~/companion/bot-workspace/`) は `~/companion/bot-workspace/CLAUDE.md` 側のルールで動く。本ファイルは bot 経路の制約には関与しない。
 
 ## Repository State
 
-このリポジトリは現時点で空（新規プロジェクト用ワークスペース）。ビルド・lint・テストコマンド、アーキテクチャに関する記述は、コードが追加され次第このファイルに追記すること。
+このリポジトリにはコードはなく、設計台帳（`PROJECT.md` / `redesign/` / `review-*/`）と claude 設定（`.claude/settings.json`、skills: `orc` / `newgame`、agents: code-reviewer / implementer / game-designer / game-critic / playtester）を置いている。ビルド・lint・テストコマンド、アーキテクチャに関する記述は、コードが追加され次第このファイルに追記すること。
 
 ## Project Roadmap
 
@@ -30,7 +30,7 @@ workspace 直下は **(C) ローカル git のみ（remote なし、rollback 専
 - **ask**: `git push:*`、`npm publish:*`、`rm -rf:*` — ユーザー側で 1 回承認が要る
 - **allow**: 通常の `git add` / `commit` / `status` / `diff` / `log` / `show` / `branch` / `restore --staged` / `remote` / `config` / `fetch` / `init` — 確認なしで実行可
 
-追加の許可・拒否が必要になった場合は `update-config` スキル経由で更新することを推奨。
+追加の許可・拒否が必要になった場合は `settings.json` を直接編集する。
 
 ## Task Workflow
 
