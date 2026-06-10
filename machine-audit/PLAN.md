@@ -72,6 +72,26 @@
 4. navidrome の bind 変更: `ND_ADDRESS` を tailscale IP (100.123.48.81) か 127.0.0.1 + tailscale serve に変更 → スマホからの利用経路を確認してから (要ユーザー確認: navidrome を tailnet 外 (家庭内 LAN) から使っているか?)
 5. 仕上げに再起動 → kernel 5.15.0-181 で起動、swap リセット、`ss -tlnp` 再確認、companion 系 user service が全員自動復帰するか点検
 
+✅ 1〜4 完了 (2026-06-10、`machine-audit/s1-security.sh` 一括実行、ログ = `~/companion/logs/maintenance/machine-audit-s1-20260610.log`)。**残は 5 (再起動 + 復帰点検) のみ**:
+
+- 1: `[::]:5900` は `rules.v6` の `-A INPUT -p tcp --dport 5900 -j DROP` (5901 も) でブロック済みだった。tailscale0 は ts-input チェーンで先に ACCEPT される構造 = tailnet 内のみ通す意図どおり。追加ルール不要
+- 2: ufw は非アクティブ。本機のファイアウォールは iptables 直 + netfilter-persistent で確定
+- 3: openssl/libssl3 3.0.2-0ubuntu1.25 + vim 系、計 7 件適用済み。**滞留原因 = 公開タイミング**: mintupdate automation (毎晩 00:18, `mintupdate-cli upgrade --refresh-cache --yes`, blacklist 空・レベル制限なし) は Ubuntu origin の security 更新を適用できている (6/10 未明に jammy-updates の systemd/cups/rsync 23 件適用の実績)。openssl はそのラン後にリポジトリへ出たもの → **自動経路は存在する、S5 での新規監視は「kept back 検出」程度で足りる**。fwupd/libjcat1/libxmlb2 は依存追加が要る kept back (mintupdate でも当たらない) → S2 で扱う
+- 4: navidrome は利用実態なし (ユーザー確認済み) のため bind 変更でなく stop + disable。データは `/var/lib/navidrome` 残置、パッケージ削除の要否は S2 で判断
+- HWE 6.8 (S6-3) は **5.15 維持で確定** (ユーザー確認済み、常駐サーバ用途で保守的に)
+
+**再起動後の点検チェックリスト (続きセッションが実施)**:
+
+```
+uname -r                          # 5.15.0-181 になっている
+ls /var/run/reboot-required       # 消えている (ENOENT が正)
+free -h                           # swap 使用が 0 近くにリセット
+ss -tlnp                          # 4533 なし / 5900 は 100.123.48.81 + [::] のまま (IPv6 は ip6tables 遮断)
+systemctl --user list-units --failed   # companion 系 user service が全員復帰
+systemctl list-units --failed          # casper-md5check 以外に failed がない (casper は S2 で無効化)
+sudo ip6tables -S INPUT | grep 5900    # DROP ルールが boot 後も載っている (要 sudo、ユーザー側で)
+```
+
 ### S2: 未使用サービス・パッケージ整理
 
 上の表の通り。1 つずつ「観測根拠 → 無効化提案 → ユーザー確認 → 実行」。まとめて確認してよい。
@@ -86,6 +106,7 @@
 - journald に `SystemMaxUse=200M` 設定 (要 sudo、/etc/systemd/journald.conf.d/)
 - `~/.claude/projects/-tmp-*` 残骸削除、file-history / 古い transcript の保持方針を決める (claude 自体の cleanupPeriodDays 設定を確認してから手動削除はしない)
 - mozilla キャッシュは Firefox 側設定で上限確認 (手動削除は一時的効果しかない)
+- `~/companion/logs/maintenance/machine-audit-s1-*.log` は root 所有 (sudo 実行で生成)。整理するなら `sudo chown miho:miho` が先に要る
 
 ### S4: claude 設定・スキル・CLAUDE.md 品質レビュー
 
@@ -148,7 +169,7 @@
 
 ## 進捗
 
-- [ ] S1 セキュリティ修正
+- [ ] S1 セキュリティ修正 — 1〜4 完了 (2026-06-10)、残は再起動 + 復帰点検のみ (チェックリストは S1 セクション末尾)
 - [ ] S2 未使用サービス・パッケージ整理
 - [ ] S3 ディスク・ログ衛生
 - [ ] S4 claude 設定・スキル・CLAUDE.md 品質レビュー (+S6-5 transcript 自動掃除)

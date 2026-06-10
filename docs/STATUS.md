@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 10:10
+最終更新: 2026-06-10 14:45
 
 ## 設計メモ
 
@@ -22,7 +22,7 @@
 
 ## In progress
 
-（なし）
+- machine-audit S1 セキュリティ修正: 1〜4 完了 (2026-06-10、`machine-audit/s1-security.sh` 一括実行)。openssl/libssl3/vim 系 7 件適用、`[::]:5900` は既存 ip6tables DROP でブロック済み確認、navidrome stop+disable (利用実態なし)、openssl 滞留原因 = 公開タイミングで自動経路は健在と確定。**残: 再起動 (kernel 5.15.0-181 反映 + swap リセット) → 復帰点検**。チェックリストは `machine-audit/PLAN.md` S1 末尾、HWE 6.8 は見送り 5.15 維持で確定
 
 ## Review pending
 
