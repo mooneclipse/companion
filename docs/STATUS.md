@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-09 (OWNER 削除承認を受け Discord rollback 残骸 `venv-discord-backup/` + `.env.discord-backup` を rm = Telegram cold cut +12 日安定稼働を確認、Discord rollback path 完全撤去。A-2 を Done へ転記。STATUS.md 変更のみ 1 commit、push は user 操作)
+最終更新: 2026-06-10 (bot 改良プラン策定 = 閲覧自由化 / 画像応答 / 予算計器、center of truth は `~/companion/workspace/redesign/bot-improvement-plan.md`。TODO に C-1〜C-4 を登録、STATUS.md 変更のみ 1 commit、push は user 操作)
 
 ## 設計メモ
 
@@ -29,6 +29,13 @@ Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態
 - **B-1 (前提待ち)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。prompt-cache hit 率データが揃った段階で着手。
 - **B-2 (調査)**: `web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ確認 (B4-5、rotation 不在設計の破綻有無)。
 - **B-3 (期限 2026-06-11)**: cold cut +14 日の Telegram 観察締め。K-T13〜K-T16 + axis-5 K-1〜K-19 の実観測再点検 (条件 #2 は門から外れたが観察自体は継続)。
+
+bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/workspace/redesign/bot-improvement-plan.md`、ステップ単位で着手・各 Step 完了時に Done 転記):
+
+- **C-1 (即着手可)**: Step 1 閲覧自由化 — `bot-workspace/.claude/settings.json` のみ (deny 増強 → allow 拡張の順で 2 commit、bot.py 非接触・restart 不要)。
+- **C-2 (B-3 締め 6/11 後)**: Step 2 bot.py 小改変パック #1 — 画像応答 (photo handler + incoming/ 一時キャッシュ、vault 保存しない) + permission_denials の ledger/log 記録。restart 1 回 (user 操作)。
+- **C-3 (C-1 後の消費観察 1〜2 週間を経てから)**: Step 3 予算計器 — ソフト警告 50%/80% + /quota 着地予測 + /status セッション肥大可視化。
+- **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 → 死蔵知識 proactive 拡張の優先順。
 
 (`/vault_push` 実装は下記「Done」セクションに転記済)
 
