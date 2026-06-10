@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-10 (bot 改良プラン策定 = 閲覧自由化 / 画像応答 / 予算計器、center of truth は `~/companion/workspace/redesign/bot-improvement-plan.md`。TODO に C-1〜C-4 を登録、STATUS.md 変更のみ 1 commit、push は user 操作)
+最終更新: 2026-06-10 (B-2 vault-sync.log rotation 不在調査を完了 = 実測 101 行 / 6,073 bytes / 22 日間 ≈ 100 KB/年で設計想定内、対応不要でクローズし Done 転記。STATUS.md 変更のみ 1 commit、push は user 操作)
 
 ## 設計メモ
 
@@ -27,7 +27,6 @@ Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態
 
 - **A-1 (確定・作業不要)**: `sessions/channels/` の `.archive/` への退避 (旧 L163「切替 1 週間後 rename」) は **不要と確定**。`sessions/` は `.gitignore` 対象 = git 追跡外、かつ channels/ は**空**。保全対象ゼロのため移動しない (2026-06-09 棚卸しで判定、再検討不要)。
 - **B-1 (前提待ち)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。prompt-cache hit 率データが揃った段階で着手。
-- **B-2 (調査)**: `web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ確認 (B4-5、rotation 不在設計の破綻有無)。
 - **B-3 (期限 2026-06-11)**: cold cut +14 日の Telegram 観察締め。K-T13〜K-T16 + axis-5 K-1〜K-19 の実観測再点検 (条件 #2 は門から外れたが観察自体は継続)。
 
 bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/workspace/redesign/bot-improvement-plan.md`、ステップ単位で着手・各 Step 完了時に Done 転記):
@@ -53,7 +52,7 @@ CreditBudgetGuard 即時前倒し以降の bot.service NRestarts / bot.log ERROR
 
 追加観察項目 (2026-05-20 全体レビューで追記):
 - **`claude_runner.ClaudeOptions` 未使用 7 フィールド + `to_sdk_kwargs()` の判定** (B4-1): `add_dir` / `no_session_persistence` / `disable_slash_commands` / `exclude_dynamic_system_prompt_sections` / `setting_sources` / `prompt_prefix` / `prompt_suffix` は SDK 移行耐性 / cache framing 用に T-B で先行設置、現状 bot.py からは `timeout_s` のみ代入。観察期間中に prompt-cache hit 率データ (`/quota` キャッシュ表示) が出揃ったタイミングで「`prompt_prefix` 実装するか、空のまま削るか」を判定。Phase 3 着手者の混乱コストを削るため期間内に決定する
-- **`web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ** (B4-5): rotation 不在の意図設計 (年間数 MB 想定) が観察期間中の Stop フック発火頻度で破綻していないか、行数 + ファイルサイズを 2026-06-02 集計時にチェック
+- **`web/scripts/vault-sync-from-transcript.sh` の `vault-sync.log` 行数/サイズ** (B4-5): rotation 不在の意図設計 (年間数 MB 想定) の破綻有無チェック → **2026-06-10 実測完了、対応不要でクローズ** (Done「vault-sync.log rotation 不在調査 (B-2 完了)」参照)
 
 軸 5 集約観察項目 (2026-05-20 軸 5 agent team で追加、19 件統合): 詳細は `~/companion/workspace/review-2026-05-20/axis-5-result.md` §4 (K-1〜K-19) 参照。集計タイミング別: 6/2 完了時点 (K-1〜K-12) / 月跨ぎ JST + 月末締め (K-13/K-14) / bot/ 側着手後 (K-15〜K-18) / 本 review 完了後最優先 (K-19 = CLI 2.1.145 再検証)。Round 4 (5/26 以降 or 6/2 完了後) で実観測再点検実施。
 
@@ -187,6 +186,17 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### vault-sync.log rotation 不在調査 (B-2 完了、2026-06-10 実測、対応不要でクローズ)
+
+**目的**: `web/scripts/vault-sync-from-transcript.sh` が書く `~/companion/logs/vault-sync.log` の rotation 不在設計 (年間数 MB 想定、B4-5 観察項目) が実運用で破綻していないか実測で確認する。
+
+**実測 (2026-06-10)**:
+- `vault-sync.log`: **101 行 / 6,073 bytes**。記録期間 2026-05-14T16:50 〜 2026-06-05T11:01 (約 22 日間)
+- 内訳: commit 成功 (`ok: committed`) **15 回**、`error` / `skip` 行 **0 件** (grep で確認、flock 競合・git 失敗の発生なし)
+- 年間換算: 6,073 bytes × (365/22) ≈ **100 KB/年**。設計想定「年間数 MB」の 1/30 以下
+
+**結論**: rotation 不在の意図設計は破綻していない。**対応不要、B-2 クローズ**。ログ出力は commit 発生時のみ (変更なしなら無音 exit) のため、増加は実 commit 数に比例し上限が自然に抑制される構造。
 
 ### Step 1 閲覧自由化 (C-1 完了、2026-06-10 実装 + 実弾検証 3 件 pass)
 
