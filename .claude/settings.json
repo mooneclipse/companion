@@ -44,7 +44,7 @@
     "allow": [
       "WebSearch",
       "WebFetch",
-      "Read(~/companion/vault/**)",
+      "Read(~/companion/**)",
       "Edit(~/companion/vault/notes/**)",
       "Write(~/companion/vault/notes/**)",
       "Bash(git status:*)",
@@ -57,11 +57,26 @@
       "Bash(git commit:*)",
       "Bash(grep:*)",
       "Bash(rg:*)",
-      "Bash(claude --version)"
+      "Bash(claude --version)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(df:*)",
+      "Bash(du:*)",
+      "Bash(free:*)",
+      "Bash(ps:*)",
+      "Bash(uptime)",
+      "Bash(sensors)",
+      "Bash(systemctl --user status:*)",
+      "Bash(systemctl --user list-units:*)",
+      "Bash(systemctl --user list-timers:*)",
+      "Bash(journalctl --user:*)"
     ],
     "additionalDirectories": [
-      "/home/miho/companion/vault",
-      "/home/miho/companion/logs"
+      "/home/miho/companion"
     ]
   },
   "hooks": {
