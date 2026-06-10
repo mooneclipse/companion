@@ -80,7 +80,7 @@
 - 4: navidrome は利用実態なし (ユーザー確認済み) のため bind 変更でなく stop + disable。データは `/var/lib/navidrome` 残置、パッケージ削除の要否は S2 で判断
 - HWE 6.8 (S6-3) は **5.15 維持で確定** (ユーザー確認済み、常駐サーバ用途で保守的に)
 
-**再起動後の点検チェックリスト (続きセッションが実施)**:
+**再起動後の点検チェックリスト (続きセッションが実施)**。再起動前の稼働状態は `~/companion/logs/maintenance/machine-audit-s1-pre-reboot-20260610.txt` にスナップショット済み (user service 一覧 / timer 6 本 / listen ポート / free / failed units)。復帰点検はこれと突き合わせる:
 
 ```
 uname -r                          # 5.15.0-181 になっている
