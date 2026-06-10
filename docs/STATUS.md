@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 21:20
+最終更新: 2026-06-10 22:20
 
 ## 設計メモ
 
@@ -16,14 +16,15 @@
 
 ## TODO
 
-- machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 完了済み。残は S6 の改善提案群 (S6-1 RAM / S6-2 バックアップ / S6-6 延命チューニング)
+- machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 + S6-1 完了済み。残は S6-2 バックアップ / S6-6 延命チューニング
+- RAM 物理増設の購入判断 (S6-1 持ち越し、ユーザー判断): JDIMM2 空き・最大 16GB (8GB/枚)、増設するなら DDR3L-1600 SODIMM。zram の効果 (uptime 蓄積での swap 消費傾向) を見てから決めてよい
 - machine-audit 四半期再走 (S5 で採用): **次回 2026-09 頃**。全体スキャンからやり直して新 PLAN を作成、現 `machine-audit/PLAN.md` は手順テンプレ + 前回観測との比較基準として参照
 
 ※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
 
 ## In progress
 
-- machine-audit S6-1: RAM 逼迫の解消 — zram 採用 (zstd / PERCENT=50 / prio 100)、sudo 分は `machine-audit/s6-1-zram.sh` 一括実行待ち。物理増設は同スクリプトの dmidecode 観測で判断材料収集、mpv 常駐見直しは見送り (詳細 = `machine-audit/PLAN.md` S6-1)
+（なし）
 
 ## Review pending
 
@@ -31,6 +32,10 @@
 
 ## Done
 
+- 2026-06-10 machine-audit S6-1: RAM 逼迫の解消 完了
+  - **zram 採用・稼働確認済み**: zram-tools 0.3.3.1 (実 deb 展開で設定形式裏取り)、zstd / PERCENT=50 (1.9G) / prio 100、swapfile 2G は prio -2 overflow に降格して残置。`s6-1-zram.sh` ユーザー実行 全ステップ rc=0、`comp_algorithm` `[zstd]` 選択・swapon 2 段構成を実ログで確認。swappiness 60 据置 (効果観測前の先回りをしない)
+  - **物理増設は判断材料収集まで**: dmidecode で JDIMM2 空き・最大 16GB (8GB/枚)・現装着 4GB DDR3L-1600 (Hynix) を観測、購入はユーザー持ち越し (TODO 参照)。**mpv 常駐見直しは見送り** (idle RSS 48M で設計変更コストに見合わず)
+  - code-reviewer: 修正必須なし、軽微 1 件採用 (再実行時の `.dist` 原本保護)。詳細 = `machine-audit/PLAN.md` S6-1
 - 2026-06-10 machine-audit S5: 定常化 完了 (machine-audit 修正系 S1〜S5 はこれで全完了、残は S6 改善提案群)
   - `scripts/notify-system-report.sh` 拡張のみで実現、**新規 timer なし** (systemd unit 無変更): daily レポートに「apt 滞留: N 件」(常時表示、kept back 検出 = 同じ件数が何日も続いたら疑う傾向監視、apt update は打たず読むだけ) + 「再起動待ち: あり」(`/var/run/reboot-required` 存在時のみ) を追加。swap は既載のため追加なし
   - 実弾テスト OK: skip パス / 本文 6 行生成 (滞留 0 件・温度 47°C) / socket 送信 (bot.log `notify forwarded len=128`) / state 再生成。code-reviewer: 修正必須なし、軽微 1 件採用 (apt 失敗時に滞留 0 件へ無音縮退する点 → 「取得失敗」表示で区別。成否判定 1 回・リトライなしで 2 周目ルール非抵触)
