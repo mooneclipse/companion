@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 15:27
+最終更新: 2026-06-10 15:37
 
 ## 設計メモ
 
@@ -34,7 +34,9 @@
 
 - 2026-06-10 machine-audit S4: claude 設定・スキル・CLAUDE.md 品質レビュー
   - CLAUDE.md 5 枚 / skills 3 / agents 5 / memory 34 エントリ / workspace settings.json を点検。修正 8 ファイル: workspace・companion・bot-workspace の CLAUDE.md (Telegram cold cut 済み実態反映、Repository State、update-config 死参照)、games/CLAUDE.md (実機検証は本番 47825 不使用を明記)、orc SKILL (newgame 棲み分け)、trends-report SKILL (cwd 依存注記 = 2026-06-04 障害の知識をスキル側にも明文化)、game-designer agent (2026-06-03 方向転換反映)、code-reviewer agent (列挙更新)
-  - memory は索引・実ファイル一致 + 参照先全現存で削除ゼロ。settings.json は報告のみ (docker/podman 死に allow)。vault/CLAUDE.md は編集禁止のため報告のみ (Windows パス残骸)。詳細 = `machine-audit/PLAN.md` S4。S6-5 (cleanupPeriodDays) はオーケストレータ側で別途扱う
+  - memory は索引・実ファイル一致 + 参照先全現存で削除ゼロ。settings.json は報告のみ (docker/podman 死に allow)。vault/CLAUDE.md は編集禁止のため報告のみ (Windows パス残骸)。詳細 = `machine-audit/PLAN.md` S4
+  - code-reviewer: 修正必須なし、軽微 2 件反映 (git 化 (C) リストへの games/ 追記 = companion/CLAUDE.md + workspace/PROJECT.md、trends-report SKILL のスクリプトパス補記)
+  - S6-5 (transcript 自動掃除) も同日完了: 公式 docs (code.claude.com/docs/en/settings.md) 裏取りで `cleanupPeriodDays` デフォルト 30 日掃除が既に有効と確認 → **明示設定不要で確定** (詳細 = PLAN.md S6-5)
 - 2026-06-04 fix: systemd 経由で skill `/trends-report` が解決されない問題
   - 症状: `systemctl --user start companion-trends.service` で fetch は成功するが claude -p が `{"result":"Unknown command: /trends-report","num_turns":0}` を返し `abort: report.md が空または未生成` で exit 1。手元の `bash` 直接実行 (cwd=maintenance) では成功していた
   - 原因: claude の project skill (`/trends-report` = `maintenance/.claude/skills/trends-report/SKILL.md`) は cwd 依存で解決される。systemd user service は `WorkingDirectory` 未指定で cwd=$HOME になり `$HOME/.claude/skills/` に skill が無く Unknown command になっていた。起動 cwd という state を固定していなかったのが根本
