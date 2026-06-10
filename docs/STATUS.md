@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-10 (B-2 vault-sync.log rotation 不在調査を完了 = 実測 101 行 / 6,073 bytes / 22 日間 ≈ 100 KB/年で設計想定内、対応不要でクローズし Done 転記。STATUS.md 変更のみ 1 commit、push は user 操作)
+最終更新: 2026-06-10 (B-3 Telegram 観察締めを OWNER 承認の 1 日前倒しでクローズ = 13 日間全項目クリーン、Done 転記。K-14 を B-4 として分離、B-1 着手可能化 [cache hit 90.6%]、C-2 ゲート解除し着手)
 
 ## 設計メモ
 
@@ -26,13 +26,14 @@
 Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態反映 (2026-06-09 棚卸し)。移行本体・各コマンド (`/vault_push` `/tweet` 自発発話) は Done に転記済で稼働中。残りは下記のみ:
 
 - **A-1 (確定・作業不要)**: `sessions/channels/` の `.archive/` への退避 (旧 L163「切替 1 週間後 rename」) は **不要と確定**。`sessions/` は `.gitignore` 対象 = git 追跡外、かつ channels/ は**空**。保全対象ゼロのため移動しない (2026-06-09 棚卸しで判定、再検討不要)。
-- **B-1 (前提待ち)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。prompt-cache hit 率データが揃った段階で着手。
-- **B-3 (期限 2026-06-11)**: cold cut +14 日の Telegram 観察締め。K-T13〜K-T16 + axis-5 K-1〜K-19 の実観測再点検 (条件 #2 は門から外れたが観察自体は継続)。
+- **B-1 (着手可能)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。前提データ揃い済み — Telegram 窓 13 日間の cache hit 率 90.6% (B-3 締め実測、2026-06-10)。
+- ~~**B-3 (期限 2026-06-11)**: cold cut +14 日の Telegram 観察締め~~ → **2026-06-10 前倒しクローズ (OWNER 承認)、Done 転記済み**。全項目クリーン。K-14 (Console vs ledger 差分点検、7/1 前後) のみ別項として継続:
+- **B-4 (7/1 前後)**: K-14 = Anthropic Console 累計使用量 vs ledger.jsonl 累計の差分点検 (6/15 新クレジット制初月の月末締め後)。旧 B-3 から分離した唯一の期日付き残観察。
 
 bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/workspace/redesign/bot-improvement-plan.md`、ステップ単位で着手・各 Step 完了時に Done 転記):
 
 - ~~**C-1**: Step 1 閲覧自由化~~ → **2026-06-10 完了、Done 転記済み** (実弾検証 3 件 pass、消費観察起点 = 2026-06-10)。
-- **C-2 (B-3 締め 6/11 後)**: Step 2 bot.py 小改変パック #1 — 画像応答 (photo handler + incoming/ 一時キャッシュ、vault 保存しない) + permission_denials の ledger/log 記録。restart 1 回 (user 操作)。
+- **C-2 (着手中 2026-06-10、B-3 前倒し締めでゲート解除)**: Step 2 bot.py 小改変パック #1 — 画像応答 (photo handler + incoming/ 一時キャッシュ、vault 保存しない) + permission_denials の ledger/log 記録。restart 1 回 (user 操作)。
 - **C-3 (消費観察 1〜2 週間後 = 2026-06-17〜24 目処)**: Step 3 予算計器 — ソフト警告 50%/80% + /quota 着地予測 + /status セッション肥大可視化。
 - **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 → 死蔵知識 proactive 拡張の優先順。
 
@@ -186,6 +187,29 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### Telegram 観察締め (B-3 完了、2026-06-10 前倒しクローズ、全項目クリーン)
+
+**目的**: cold cut (2026-05-28) +14 日の Telegram 観察締め (期限 2026-06-11)。K-T13〜K-T16 + axis-5 K-1〜K-19 の実観測再点検。
+
+**前倒し根拠**: 期限 1 日前 (13 日分データ) で全項目クリーン、最終日 1 日の追加情報価値がほぼゼロのため OWNER に前倒しを提案し承認 (2026-06-10、AskUserQuestion)。Phase 2.5 観察打ち切り (14→8 日) と同型だが今回は lead 単独でなく OWNER 承認済み。C-2 (Step 2 画像応答、OWNER 早期要望) のゲート解除が動機。
+
+**実測 (2026-05-28 〜 2026-06-10、13 日間)**:
+- **NRestarts=0** (異常再起動ゼロ)。journalctl 上の全 restart は user デプロイ操作 5 回 (5/28×2 / 5/30 / 6/1 / 6/8×3 のうち稼働反映分)、停止はいずれも数秒
+- **bot.log ERROR/Traceback 0 件**。WARN 7 件 = 全件 `stall_check_job: get_me() failed (consecutive 1)` の一過性ネットワーク失敗、stall 未発展・自然回復
+- **K-T14 (24h 超停止)**: 発生 0 回
+- **K-T15 (再起動直後の旧 Update 大量処理)**: 全 restart で flood なし (例: 6/8 14:09 再起動後の次イベントは 6/9 05:30 proactive 通知)
+- **ledger 79 呼び出し全件 `terminal_reason=completed`** (timeout 0 = K-10 クリア)、窓内消費 $4.40
+- **cache hit 率 90.6%** (cache_read 4.69M / total input 5.18M tokens) — K-4 基準 (baseline 30% 以上) を大幅超え。**B-1 の判定材料が揃った** (副産物、TODO B-1 を着手可能に更新)
+- **K-5 (JSON parse 失敗) / K-9 (`_STDERR_PATTERNS` 該当)**: bot.log 該当 0 件 (NO_PRIOR_SESSION / SESSION_ALREADY_IN_USE / parse failed とも grep 0)
+- **K-T2 (stale-thread 観察)**: 0 件 (`bot/.state/stale-thread-observations.jsonl` 未作成 = 発生なし)
+- **K-13 (月跨ぎ JST 境界)**: 実運用で確認 — ledger 月別集計が分離 (5 月 $3.15 / 6 月 $2.58)、CreditBudgetGuard 月次リセット正常
+- **K-T13 (Bot API up 時 allowlist 再点検) / K-T16 (PTB リリース間隔)**: 観察期間中トリガ未発火。運用ルール常設項目として継続 (K-T16 の次チェックは 2026-09 以降)
+
+**継続項目 (B-3 クローズ後も残る、消滅しない)**:
+- **K-14**: Anthropic Console vs ledger 差分点検 → TODO **B-4** として分離 (7/1 前後実施)
+- **K-15〜K-18** (voice 系): bot/ 側 voice 着手後 (Phase 4 移送済み、`voice/docs/STATUS.md` 側)
+- **K-T1〜K-T12**: 期間観察でなく常設運用ルール (本台帳「実装着手後の運用ルール」section、変更なし)
 
 ### vault-sync.log rotation 不在調査 (B-2 完了、2026-06-10 実測、対応不要でクローズ)
 
