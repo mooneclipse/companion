@@ -37,28 +37,14 @@ class ErrorKind(Enum):
 
 @dataclass
 class ClaudeOptions:
-    """Bundle of CLI arguments for one ``claude -p`` invocation.
-
-    ``to_sdk_kwargs()`` is reserved for the eventual SDK migration so the call
-    site can switch transports without changing its inputs.
-    """
+    """Bundle of CLI arguments for one ``claude -p`` invocation."""
 
     session_id: str | None = None       # for first prompt of a channel
     resume_session: str | None = None   # for subsequent prompts
     output_format: str = "json"
     permission_mode: str = "default"
     model: str = "claude-sonnet-4-6"    # UQ-10: bot fixed to Sonnet 4.6
-    add_dir: list[str] = field(default_factory=list)
-    no_session_persistence: bool = False
-    disable_slash_commands: bool = False
-    exclude_dynamic_system_prompt_sections: bool = False
-    setting_sources: str | None = None
     timeout_s: float = 300.0
-    # Cache-friendly prompt framing (design.md §4.8 method 2). Both are empty
-    # at T-B; downstream tasks may populate them while keeping the prefix
-    # byte-stable across turns for prompt-cache hits.
-    prompt_prefix: str = ""
-    prompt_suffix: str = ""
 
     def to_cli_args(self) -> list[str]:
         if self.session_id and self.resume_session:
@@ -74,20 +60,7 @@ class ClaudeOptions:
             args += ["--permission-mode", self.permission_mode]
         if self.model:
             args += ["--model", self.model]
-        if self.add_dir:
-            args += ["--add-dir", *self.add_dir]
-        if self.no_session_persistence:
-            args.append("--no-session-persistence")
-        if self.disable_slash_commands:
-            args.append("--disable-slash-commands")
-        if self.exclude_dynamic_system_prompt_sections:
-            args.append("--exclude-dynamic-system-prompt-sections")
-        if self.setting_sources is not None:
-            args += ["--setting-sources", self.setting_sources]
         return args
-
-    def to_sdk_kwargs(self) -> dict:
-        raise NotImplementedError("SDK kwargs wiring is deferred to migration time")
 
 
 @dataclass
@@ -165,11 +138,7 @@ class ClaudeRunner:
         self.cwd = str(cwd)
         self.claude_lock = asyncio.Lock()
 
-    def _compose_prompt(self, body: str, options: ClaudeOptions) -> str:
-        return f"{options.prompt_prefix}{body}{options.prompt_suffix}"
-
     async def run_discord(self, prompt: str, options: ClaudeOptions) -> ClaudeResult:
-        full_prompt = self._compose_prompt(prompt, options)
         args = options.to_cli_args()
         async with self.claude_lock:
             try:
@@ -192,7 +161,7 @@ class ClaudeRunner:
                 )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(input=full_prompt.encode("utf-8")),
+                    proc.communicate(input=prompt.encode("utf-8")),
                     timeout=options.timeout_s,
                 )
             except asyncio.TimeoutError:
