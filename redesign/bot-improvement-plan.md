@@ -29,7 +29,9 @@
 
 ---
 
-## Step 1: 閲覧の自由化 (settings.json のみ、restart 不要、即着手可)
+## Step 1: 閲覧の自由化 (settings.json のみ、restart 不要、即着手可) — ✅ 完了 2026-06-10
+
+実装記録は `bot/docs/STATUS.md` Done「Step 1 閲覧自由化 (C-1 完了)」参照。実弾 3 件 pass、消費観察起点 = 2026-06-10。補足 2 点: (1) settings.json の allow 編集は classifier に拒否されるためステージングファイル + user cp 経由で適用した (Step 2 以降は bot.py 編集なので非該当)。(2) negative test で Bash `ls ~/.ssh/` も拒否を確認 — Read deny は Bash の読みにもある程度効く実測 (上記受容リスクは想定より限定的)。
 
 **変更ファイル**: `bot-workspace/.claude/settings.json` のみ。bot.py 非接触なので B-3 観察を阻害しない。settings.json は次回 `claude -p` 起動から効く (bot restart 不要)。
 
