@@ -102,6 +102,7 @@ remote-design §2 のネットワーク層(127.0.0.1 bind + tailscale serve + to
 - 拒否: userinfo 詐称(`https://evil@youtube.com/...` / `youtube.com@evil.com` / `evil@nicovideo.jp`) / 空白・制御文字 / `file://`・`ftp://` 等 http(s) 以外の scheme / `169.254.169.254` 等 SSRF 起点 / suffix 偽装(`youtube.com.evil.com` / `nicovideo.jp.evil.com` / `nico.ms.evil.com`) / 非 allowlist host(`notyoutube.com`) / 非 allowlist サブドメイン(`embed.nicovideo.jp`)
 - 受理: `www.youtube.com/watch` / `youtu.be/<id>` / `music.youtube.com` / `m.youtube.com` / **`www.youtube.com/live/<id>`** / `www.nicovideo.jp/watch/<id>` / `sp.nicovideo.jp/watch/<id>` / `nicovideo.jp/watch/<id>` / `nico.ms/<id>`(hostname 照合のみ、path で分岐しない=攻撃面を増やさない)
 - ニコニコ 4 host は 2026-06-11 追加(user 依頼)。`embed.nicovideo.jp` はユーザーが貼る共有 URL でないため除外(攻撃面を増やさない)。`live.nicovideo.jp`(ニコ生)はスコープ外(将来候補、remote STATUS.md 参照)。normalize ロジック本体は無改変(frozenset への host 追加のみ)。
+- **`nico.ms` はリダイレクタ**: リダイレクト先は yt-dlp 内部で解決され allowlist の再検査を受けない。nico.ms はドワンゴ管理のクローズド短縮(任意外部 URL へ飛ばせない)であることが受理の前提。この前提が崩れたら allowlist から外す(code-reviewer 指摘 2026-06-11)。
 
 ### 4.2 yt-dlp env 隔離
 mpv unit の `Environment=`(PROXY 系を入れない、user shell env 非継承)で達成。yt-dlp は ytdl_hook 経由で mpv の子 = mpv env を継承。`--no-config` + `--ytdl-raw-options=ignore-config=,no-playlist=` + ytdl_path 固定 + TLS 維持。**自動更新(`-U`)禁止**(§8)。lead 実証: 最小 env rc=0。
