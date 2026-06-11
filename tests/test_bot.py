@@ -518,6 +518,45 @@ class ProactiveGuardNotBypassedTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rec["reason"], "snoozed")
 
 
+class RunClaudePersonaWiringTest(unittest.IsolatedAsyncioTestCase):
+    """run_claude が組む ClaudeOptions に persona system prompt が常に乗ること。
+
+    口調 (軸 1「対等な相方」) は全 claude 呼び出し共通の配線。runner.run_discord を
+    spy に差し替えて options.append_system_prompt を捕捉する。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    async def test_options_carry_persona_system_prompt(self) -> None:
+        from unittest import mock
+
+        from claude_runner import ClaudeResult, ErrorKind
+
+        captured = {}
+
+        async def _fake_run_discord(prompt, options):
+            captured["options"] = options
+            return ClaudeResult(
+                rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
+                result_text="ok", session_id="dummy",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(self.bot.sessions, "_SESSIONS_DIR", Path(tmp) / "topics"), \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "record"), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord):
+            out = await self.bot.run_claude("hi", -1001234567890, 5)
+
+        self.assertEqual(out, "ok")
+        self.assertEqual(
+            captured["options"].append_system_prompt,
+            self.bot.PERSONA_SYSTEM_PROMPT,
+        )
+
+
 class SyndicationTokenTest(unittest.TestCase):
     """`_syndication_token` の固定値検証 (react-tweet 互換、実機検証済の 2 ID)。"""
 

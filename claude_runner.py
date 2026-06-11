@@ -45,6 +45,8 @@ class ClaudeOptions:
     permission_mode: str = "default"
     model: str = "claude-sonnet-4-6"    # UQ-10: bot fixed to Sonnet 4.6
     timeout_s: float = 300.0
+    # ペルソナ等の常駐指示を default system prompt に追記する (--append-system-prompt)。
+    append_system_prompt: str | None = None
 
     def to_cli_args(self) -> list[str]:
         if self.session_id and self.resume_session:
@@ -60,6 +62,8 @@ class ClaudeOptions:
             args += ["--permission-mode", self.permission_mode]
         if self.model:
             args += ["--model", self.model]
+        if self.append_system_prompt:
+            args += ["--append-system-prompt", self.append_system_prompt]
         return args
 
 

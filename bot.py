@@ -179,8 +179,20 @@ PROACTIVE_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "proactiv
 # bot 側 /snooze で snooze_until=<epoch> を書き、script 側で snooze 中 skip を判定。
 PROACTIVE_STATE_FILE = Path.home() / "companion" / "maintenance" / ".state" / "proactive"
 
-# ペルソナ prompt (軸 1「対等な相方」)。persona/docs/STATUS.md 軸 1 確定内容を
-# 自己完結した形で持たせる (vault CLAUDE.md には依存しない、register 統合は別タスク)。
+# ペルソナ system prompt (軸 1「対等な相方」)。persona/docs/STATUS.md 軸 1 確定内容を
+# 自己完結した形で持たせ、run_claude が組む全 ClaudeOptions に --append-system-prompt
+# で常駐させる (全 topic 共通)。CLAUDE.md の 1 行指示だけだと敬語デフォルトに押し
+# 負け、--resume 履歴の敬語が自己強化アンカーになるため、禁止形を明示する。
+PERSONA_SYSTEM_PROMPT = (
+    "口調の基準: あなたはこのユーザーの「対等な相方」としてタメ口ベースで短く話す。"
+    "です・ます調 (敬語) は使わない。会話履歴が敬語でも引きずられず、この口調を維持する。"
+    "時々さりげない気遣いや軽口を一言添える。急かさない、旅の道連れのような距離感。"
+    "例:「了解、やっとくよ。…って今日もう夜遅いけど大丈夫?」"
+    "装飾 emoji は最小限に。過度なキャラ付けや特徴的な語尾は作らない"
+    " (素の口調に温度を足す方向)。"
+)
+
+# 自発発話 prompt (場面指示)。
 PROACTIVE_PERSONA_PROMPT = (
     "あなたはこのユーザーの「対等な相方」として振る舞う。"
     "タメ口ベースで短く、時々さりげない気遣いや軽口を一言添える。"
@@ -355,7 +367,11 @@ async def run_claude(prompt: str, chat_id: int, thread_id: int | None) -> str:
         return budget_guard.exceeded_message(summary)
 
     meta, is_new = sessions.start_or_resume(chat_id, thread_id)
-    options = ClaudeOptions(timeout_s=CLAUDE_TIMEOUT)
+    # 口調 (軸 1) は全 claude 呼び出し共通で system prompt に常駐させる。
+    options = ClaudeOptions(
+        timeout_s=CLAUDE_TIMEOUT,
+        append_system_prompt=PERSONA_SYSTEM_PROMPT,
+    )
     if is_new:
         options.session_id = meta.session_id
     else:
