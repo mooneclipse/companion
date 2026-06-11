@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 import auth
+import dlqueue
 import status as os_status
 import tickets
 import urlguard
@@ -196,6 +197,68 @@ def api_video_state(handler):
     return 200, s
 
 
+def api_video_play_local(handler):
+    """POST /api/video/play_local {id} — DL 済み項目をローカル path で再生。Bearer 必須。
+
+    HTTP から path は一切受けない (int id のみ)。id → path の解決と downloads/ 境界
+    判定は dlqueue.local_path が realpath/commonpath で 1 回確定 (dlqueue-design §3.2)。
+    ローカル絶対 path の loadfile は ytdl_hook 非経由 = RV-9 cookie 問題を構造ごと迂回。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    tid = data.get("id")
+    if isinstance(tid, bool) or not isinstance(tid, int):
+        return 400, {"error": "id must be an integer"}
+    path = dlqueue.local_path(tid)
+    if path is None:
+        return 404, {"error": "not found"}
+    return _video_result(video.play(path))
+
+
+def api_dl_add(handler):
+    """POST /api/dl {url} — 事前 DL キューへ投入。Bearer 必須。
+
+    url は urlguard.normalize (§4.1 allowlist = F-video play と同一の門) を通った
+    ものだけが queue に入る。容量上限 (20 GiB) は 507 に写像 (dlqueue-design §3.3)。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    url = urlguard.normalize(data.get("url"))
+    if url is None:
+        return 400, {"error": "url rejected"}
+    try:
+        return 200, dlqueue.enqueue(url)
+    except dlqueue.QuotaExceeded:
+        return 507, {"error": "storage limit reached"}
+
+
+def api_dl_list(handler):
+    """GET /api/dl — 全項目 (created 降順) + 使用量/上限。Bearer 必須。"""
+    return 200, dlqueue.list_items()
+
+
+def api_dl_delete(handler):
+    """POST /api/dl/delete {id} — 項目 + 実ファイル削除。Bearer 必須。
+
+    切り分けは state を引いた構造で確定 (文言マッチなし): id 不正=400 /
+    該当なし=404 / downloading=409 (v1 はキャンセル機構を持たない)。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    tid = data.get("id")
+    if isinstance(tid, bool) or not isinstance(tid, int):
+        return 400, {"error": "id must be an integer"}
+    try:
+        return 200, dlqueue.delete(tid)
+    except dlqueue.DlBusyError:
+        return 409, {"error": "downloading"}
+    except dlqueue.DlQueueError:
+        return 404, {"error": "no such item"}
+
+
 def api_todo_list(handler):
     """GET /api/todo — done を除いた一覧 + counts(todo/doing 件数)。Bearer 必須。"""
     return 200, tickets.active()
@@ -310,6 +373,11 @@ ROUTES = {
     ("POST", "/api/video/seek"): (api_video_seek, True),
     ("POST", "/api/video/volume"): (api_video_volume, True),
     ("GET", "/api/video/state"): (api_video_state, True),
+    ("POST", "/api/video/play_local"): (api_video_play_local, True),
+    # F-dl 事前ダウンロードキュー (RV-10)。全て Bearer 必須。
+    ("POST", "/api/dl"): (api_dl_add, True),
+    ("GET", "/api/dl"): (api_dl_list, True),
+    ("POST", "/api/dl/delete"): (api_dl_delete, True),
     # 共用 TODO/inbox(F-todo、v1-α 系列 = bot.py 非依存)。全て Bearer 必須。
     ("GET", "/api/todo"): (api_todo_list, True),
     ("GET", "/api/todo/history"): (api_todo_history, True),
@@ -442,6 +510,11 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
+    # 順序契約 (dlqueue-design §1.2): bind 成功 (= 単一インスタンス保証) → recovery →
+    # worker 開始。bind 前に recovery すると 2 つ目のプロセス (デバッグ起動) が稼働中の
+    # DL を failed 化してから bind 失敗で死ぬ不整合経路が開く。
+    dlqueue.recover()
+    dlqueue.start_worker()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

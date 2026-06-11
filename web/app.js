@@ -50,6 +50,7 @@ function openScreen(id) {
   if (id === "todo") { refreshTodo(); if (!$("todo-history-list").hidden) refreshHistory(); }
   if (id === "os") refreshGlance();
   if (id === "vault") openVault();
+  if (id === "video" && dlOpen()) refreshDl();
 }
 function goHome() { showScreen("home"); }
 function navOpenScreen(id) {
@@ -183,6 +184,7 @@ let vTimer = null;          // 2s 状態ポーリング
 let vTick = null;           // 1s resolve 経過秒の更新
 let vAttemptActive = false; // 自分が押した再生が in-flight か（playing 到達 / 停止で false）
 let vFailedLoad = false;    // 投入直後の読み込み失敗（resolving→idle、playing 未到達）
+let vLocalTitle = null;     // play_local 中の表示 title（mpv media-title はファイル名になるため）
 
 const vSetResolveAt = (ms) => localStorage.setItem(V_RESOLVE_KEY, String(ms));
 const vClearResolveAt = () => localStorage.removeItem(V_RESOLVE_KEY);
@@ -259,7 +261,9 @@ function renderResolving() {
 
 function renderTransport() {
   const s = vState;
-  $("video-title").textContent = s.title || "(タイトル取得中)";
+  // ローカル再生 (play_local) 中は mpv の media-title がファイル名 (dl-7.mp4) になる
+  // ため、queue の title (vLocalTitle) で表示を上書きする (dlqueue-design §6)。
+  $("video-title").textContent = vLocalTitle || s.title || "(タイトル取得中)";
   $("video-toggle").textContent = s.pause ? "再開" : "一時停止";
   // LIVE: シーク無効 + ●LIVE 表示（§5.1）。VOD: duration が分かればシークバー。
   const live = !!s.is_live;
@@ -291,7 +295,7 @@ function renderNow() {
     time.textContent = "";
   } else {
     icon.textContent = s.is_live ? "●" : (s.pause ? "⏸" : "▶");
-    title.textContent = s.title || "(タイトル取得中)";
+    title.textContent = vLocalTitle || s.title || "(タイトル取得中)";
     if (s.is_live) {
       time.textContent = "LIVE";
     } else if (typeof s.duration === "number" && s.duration > 0) {
@@ -324,7 +328,7 @@ async function pollVideo() {
     }
     vState = ns;
     if (ns.phase !== "resolving") vClearResolveAt();
-    if (ns.phase === "idle") vCollapsed = false;  // 終了したら畳み状態を解除
+    if (ns.phase === "idle") { vCollapsed = false; vLocalTitle = null; }  // 終了したら畳み状態とローカル title を解除
     renderVideo();
     renderNow();
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
@@ -340,6 +344,7 @@ async function playVideo() {
   vCollapsed = false;
   vFailedLoad = false;
   vAttemptActive = true;
+  vLocalTitle = null;  // URL 再生開始 = ローカル再生の表示 title を引き継がない
   err.textContent = "";
   vState = { phase: "resolving", title: null, is_live: false };
   renderVideo();
@@ -380,6 +385,7 @@ async function videoStop() {
   vClearResolveAt();
   vAttemptActive = false;
   vFailedLoad = false;
+  vLocalTitle = null;
   try { await api("/api/video/stop", { method: "POST" }); } catch (e) { /* noop */ }
   vState = { phase: "idle" };
   vCollapsed = false;
@@ -484,6 +490,202 @@ function initVideo() {
   $("video-volume").addEventListener("change", videoVolume);
   startVideoPoll();
   pollVideo();  // 初回: 既存セッション復元（§5.2）
+}
+
+// ===== 事前DL（RV-10、F-dl） =====
+// 外出先から URL をキュー投入 → 自宅機の yt-dlp がローカル保存 → 帰宅後に play_local で
+// 即再生（yt-dlp 解決 40〜70s が消える）。状態の真実はサーバの .state/dlqueue.json。
+// 取得はセクションを開いた時 + 開いている間のみ 15s ポーリング（todo と同周期、§6）。
+const DL_ST_MARK = { queued: "待機中", downloading: "DL中", done: "済", failed: "失敗" };
+
+function fmtBytes(n) {
+  if (typeof n !== "number" || n < 0) return "";
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(1) + " GB";
+  if (n >= 1024 ** 2) return Math.round(n / 1024 ** 2) + " MB";
+  return Math.round(n / 1024) + " KB";
+}
+
+function dlOpen() { return !$("dl-body").hidden; }
+
+function toggleDl() {
+  const body = $("dl-body");
+  const open = body.hidden;
+  body.hidden = !open;
+  $("dl-toggle").setAttribute("aria-expanded", String(open));
+  $("dl-caret").textContent = open ? "▾" : "▸";
+  if (open) refreshDl();
+}
+
+function renderDl(data) {
+  const list = $("dl-list");
+  list.textContent = "";
+  const items = data.items || [];
+  if (!items.length) {
+    const li = document.createElement("li");
+    li.className = "todo-empty";
+    li.textContent = "(DL なし)";
+    list.appendChild(li);
+  }
+  items.forEach((t) => {
+    const li = document.createElement("li");
+    li.className = "todo-item dl-item dl-" + t.status;
+
+    const st = document.createElement("span");
+    st.className = "dl-status";
+    st.textContent = DL_ST_MARK[t.status] || t.status;
+
+    const text = document.createElement("span");
+    text.className = "todo-text";
+    text.textContent = t.title || t.url;
+    if (t.status === "failed" && t.error) text.title = t.error;
+    if (typeof t.size === "number") {
+      const sz = document.createElement("span");
+      sz.className = "dl-size";
+      sz.textContent = " " + fmtBytes(t.size);
+      text.appendChild(sz);
+    }
+
+    li.appendChild(st);
+    li.appendChild(text);
+
+    if (t.status === "done") {
+      const play = document.createElement("button");
+      play.className = "todo-done";
+      play.type = "button";
+      play.textContent = "再生";
+      play.addEventListener("click", () => playLocal(t.id, t.title));
+      li.appendChild(play);
+    } else if (t.status === "failed") {
+      // 再試行 = 同 URL の新規 enqueue（dlqueue-design §1.2。専用 endpoint は持たない）。
+      const retry = document.createElement("button");
+      retry.className = "todo-done";
+      retry.type = "button";
+      retry.textContent = "再試行";
+      retry.addEventListener("click", () => addDlUrl(t.url));
+      li.appendChild(retry);
+    }
+    if (t.status !== "downloading") {
+      const del = document.createElement("button");
+      del.className = "todo-done dl-del";
+      del.type = "button";
+      del.textContent = "削除";
+      del.addEventListener("click", () => deleteDl(t));
+      li.appendChild(del);
+    }
+    list.appendChild(li);
+  });
+  if (typeof data.usage_bytes === "number" && typeof data.limit_bytes === "number") {
+    $("dl-usage").textContent =
+      "保存容量 " + fmtBytes(data.usage_bytes) + " / " + fmtBytes(data.limit_bytes);
+  }
+}
+
+async function refreshDl() {
+  if (!getToken()) return;
+  try {
+    const r = await api("/api/dl");
+    if (!r.ok) return;
+    renderDl(await r.json());
+  } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
+}
+
+async function addDlUrl(url) {
+  const out = $("dl-result");
+  try {
+    const r = await api("/api/dl", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (r.ok) {
+      const t = await r.json();
+      out.textContent = "キューに追加しました（完了は Telegram に通知）";
+      $("dl-url").value = "";
+      await refreshDl();
+      return t;
+    }
+    if (r.status === 400) out.textContent = "受け付けない URL です（YouTube / ニコニコのみ対応）";
+    else if (r.status === 507) out.textContent = "保存容量が上限です。済みの動画を削除してください";
+    else out.textContent = "追加に失敗しました";
+  } catch (e) {
+    if (e.message !== "unauthorized") out.textContent = "送信エラー";
+  }
+  return null;
+}
+
+async function addDl() {
+  const url = $("dl-url").value.trim();
+  if (!url) { $("dl-result").textContent = "URL を入力してください"; return; }
+  const btn = $("dl-add");
+  btn.disabled = true;
+  try { await addDlUrl(url); } finally { btn.disabled = false; }
+}
+
+async function deleteDl(t) {
+  const label = t.title || t.url;
+  if (t.status === "done" && !confirm("「" + label + "」を削除しますか？（ファイルも消えます）")) return;
+  try {
+    const r = await api("/api/dl/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id }),
+    });
+    if (r.ok || r.status === 404) await refreshDl();  // 404=既に消えている→再取得で整合
+    else if (r.status === 409) $("dl-result").textContent = "DL 中の項目は削除できません";
+  } catch (e) { /* unauthorized は api() が処理 */ }
+}
+
+// DL 済み項目のローカル再生。状態機械は URL 再生と同じ（resolving はほぼ一瞬で playing）。
+async function playLocal(id, title) {
+  const err = $("dl-result");
+  vSetResolveAt(Date.now());
+  vCollapsed = false;
+  vFailedLoad = false;
+  vAttemptActive = true;
+  vLocalTitle = title || null;
+  err.textContent = "";
+  vState = { phase: "resolving", title: null, is_live: false };
+  renderVideo();
+  renderNow();
+  startVideoPoll();
+  try {
+    const r = await api("/api/video/play_local", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (!r.ok) {
+      vClearResolveAt();
+      vAttemptActive = false;
+      vLocalTitle = null;
+      vState = { phase: "idle" };
+      if (r.status === 404) err.textContent = "ファイルが見つかりません（一覧を更新します）";
+      else if (r.status === 503) err.textContent = "動画プレイヤーに接続できません";
+      else err.textContent = "再生開始に失敗しました";
+      renderVideo();
+      renderNow();
+      if (r.status === 404) refreshDl();
+    }
+  } catch (e) {
+    if (e.message !== "unauthorized") {
+      vClearResolveAt();
+      vAttemptActive = false;
+      vLocalTitle = null;
+      vState = { phase: "idle" };
+      err.textContent = "送信エラー";
+      renderVideo();
+      renderNow();
+    }
+  }
+}
+
+function initDl() {
+  $("dl-toggle").addEventListener("click", toggleDl);
+  $("dl-add").addEventListener("click", addDl);
+  // video 画面表示中かつセクションが開いている時のみ更新（無駄ポーリングを増やさない）。
+  setInterval(() => {
+    if ($("video").classList.contains("active") && dlOpen()) refreshDl();
+  }, 15000);
 }
 
 // ===== ゲーム一覧 =====
@@ -1065,6 +1267,7 @@ function init() {
   $("status-refresh").addEventListener("click", refreshGlance);
   initNav();
   initVideo();
+  initDl();
   initGames();
   initTodo();
   initVault();

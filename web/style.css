@@ -184,6 +184,15 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--acc)
 .todo-history-when{flex:none;font-size:10px;font-weight:700;color:var(--grey-6);
   font-variant-numeric:tabular-nums;letter-spacing:.02em;white-space:nowrap;}
 
+/* --- 事前DL(RV-10)。リストは todo-item を流用し、状態ラベルだけ専用色。 --- */
+#dl-list{list-style:none;margin:12px 0 0;padding:0;}
+.dl-status{flex:none;font-size:9px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+  border:1px solid var(--hair);color:var(--grey-4);padding:2px 5px;white-space:nowrap;}
+.dl-downloading .dl-status{border-color:var(--acc);color:var(--acc);}
+.dl-failed .dl-status{border-color:var(--grey-6);color:var(--grey-6);}
+.dl-failed .todo-text{color:var(--grey-4);}
+.dl-size{font-size:10px;color:var(--grey-6);font-variant-numeric:tabular-nums;white-space:nowrap;}
+
 /* --- ゲーム一覧 --- */
 #games-list{display:block;}
 .game-link{display:flex;align-items:center;justify-content:space-between;text-decoration:none;color:var(--ink);

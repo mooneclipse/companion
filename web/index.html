@@ -159,6 +159,23 @@
             <button id="video-stop" type="button" class="btn danger">停止</button>
           </div>
         </div>
+
+        <!-- 事前DL(RV-10): 外出先で投入 → 帰宅後ローカル即再生。主要動線(即時再生)の従なので
+             todo の完了履歴と同型の折りたたみ同居(別タイルにしない)。idle/transport と独立に表示 -->
+        <div class="card">
+          <button id="dl-toggle" type="button" class="todo-history-toggle" aria-expanded="false" aria-controls="dl-body">
+            <span class="ctitle">事前DL</span>
+            <span id="dl-caret" class="todo-history-caret" aria-hidden="true">▸</span>
+          </button>
+          <div id="dl-body" hidden>
+            <label class="fld" for="dl-url">URL</label>
+            <textarea id="dl-url" rows="2" maxlength="2000" placeholder="あとで観る動画の URL"></textarea>
+            <button id="dl-add" type="button" class="btn mt">DLに追加</button>
+            <p id="dl-result" class="result" role="status"></p>
+            <ul id="dl-list"></ul>
+            <p id="dl-usage" class="note"></p>
+          </div>
+        </div>
       </div>
     </section>
 
