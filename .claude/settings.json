@@ -72,6 +72,7 @@
       "Bash(sensors)",
       "Bash(apt-mark showhold)",
       "Bash(apt list --upgradable)",
+      "Bash(python3 /home/miho/companion/remote/server/tickets.py *)",
       "Bash(systemctl --user status:*)",
       "Bash(systemctl --user list-units:*)",
       "Bash(systemctl --user list-timers:*)",

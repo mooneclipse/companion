@@ -35,6 +35,23 @@ bot.py 側で OWNER_ID 一致のメッセージのみ subprocess を起動する
 - 「bot の稼働状況」と言われたら unit 名は `companion-bot.service` (× `bot.service`)
 - 複合コマンド (`A && B`) は全体が allow にマッチしないと止まる。allow 済みコマンドでも 1 呼び出し 1 コマンドで分けて打つ
 
+## 共用 TODO (チケット) の操作
+
+OWNER と AI が共用する TODO/inbox。実体は `~/companion/remote/server/tickets.py` (CLI) + `remote/.state/tickets.json` (flock 排他、PWA と同居)。「todo に入れて」「#N 終わった」等の依頼はこの CLI で操作する:
+
+```
+python3 /home/miho/companion/remote/server/tickets.py add "本文" --by user   # 起票 (OWNER の依頼分)
+python3 /home/miho/companion/remote/server/tickets.py add "本文" --by ai     # AI 自身の思いつき
+python3 /home/miho/companion/remote/server/tickets.py list                   # 一覧 (done 除外)
+python3 /home/miho/companion/remote/server/tickets.py show <id>              # 詳細
+python3 /home/miho/companion/remote/server/tickets.py start <id>             # 着手中に
+python3 /home/miho/companion/remote/server/tickets.py done <id>              # 完了
+```
+
+- OWNER の発話起点で入れるチケットは `--by user`、自分発案は `--by ai`
+- done は一覧から消えるだけで履歴は残る。誤 done は `start <id>` で着手中に戻せる (todo へ直接戻すコマンドはない)。どれを done にするか曖昧なら実行前に番号を確認する
+- tickets.json を直接編集しない (採番・排他は CLI 側が管理)
+
 ## 上位ルール
 
 `~/companion/CLAUDE.md` (共通項) を参照:
@@ -46,5 +63,5 @@ CLAUDE.md auto-discovery は CWD 近いほど後勝ち（design.md §1.2 / resea
 
 ---
 
-**最終更新**: 2026-06-10 (machine-audit S4: Telegram cold cut 済みの実態反映 — Discord 記述 / sessions パスを更新)
+**最終更新**: 2026-06-11 (共用 TODO の tickets.py 操作セクションを追加 — Telegram から起票/done できるように、OWNER 依頼)
 **根拠**: `~/companion/workspace/redesign/design.md` §1.2 (v0.2.3, 2026-05-14) + `~/companion/workspace/redesign/telegram-design.md` (Phase 2.6 設計確定版)
