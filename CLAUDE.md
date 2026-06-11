@@ -2,7 +2,7 @@
 
 このファイルは CWD=`~/companion/games/` で claude CLI を起動したときに auto-discovery で読まれる、companion-games 固有の制約。**共通項は上位 `~/companion/CLAUDE.md` を参照**（応答言語 / 口調 / vault 書き込み境界 / OWNER 認可 / git 運用方針）。**対症療法 2 周目ルールも上位 `~/companion/CLAUDE.md`「設計判断・対症療法の上限」を参照**。
 
-開発ワークフローは `~/companion/workspace/.claude/skills/newgame/SKILL.md`（新規ゲーム制作の固定工程）が正本。本ファイルは「どの工程でも踏み外してはいけない games 固有の暗黙知」を明文化する。台帳の正本は `~/companion/games/docs/STATUS.md`。
+開発ワークフローは `~/companion/workspace/.claude/skills/newgame/SKILL.md`（新規ゲーム制作の固定工程）が正本。**例外: Mine Road リメイクは `/newgame` 不使用の仕様駆動**（発散・critic 工程が忠実再現を歪めるため。根拠と工程は `docs/STATUS.md`「Mine Road リメイク」セクション）。本ファイルは「どの工程でも踏み外してはいけない games 固有の暗黙知」を明文化する。台帳の正本は `~/companion/games/docs/STATUS.md`。
 
 ## 配信境界（厳守）
 
