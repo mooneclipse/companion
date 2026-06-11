@@ -93,6 +93,12 @@ PLAY_ALLOWED_HOSTS = frozenset({
     "m.youtube.com",
     "music.youtube.com",
     "youtu.be",
+    # ニコニコ動画 (2026-06-11 追加、remote/server/urlguard.py とミラー同期)。
+    # embed.nicovideo.jp はユーザーが貼る共有 URL でないため除外(攻撃面を増やさない)。
+    "nicovideo.jp",
+    "www.nicovideo.jp",
+    "sp.nicovideo.jp",
+    "nico.ms",
 })
 PLAY_TIMEOUT_S = 10.0
 
@@ -593,7 +599,8 @@ async def cmd_play(url: str) -> str:
     if valid_url is None:
         return (
             "[play] 受け付けない URL です。"
-            "youtube.com / music.youtube.com / youtu.be の https/http のみ対応。"
+            "youtube.com / music.youtube.com / youtu.be / nicovideo.jp / nico.ms"
+            " の https/http のみ対応。"
         )
     env = dict(os.environ)
     env.setdefault("DISPLAY", ":0")

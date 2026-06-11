@@ -111,11 +111,33 @@ class NormalizePlayUrlTest(unittest.TestCase):
         url = "https://music.youtube.com/watch?v=abc"
         self.assertEqual(self.bot._normalize_play_url(url), url)
 
+    def test_nicovideo_accepted(self) -> None:
+        # ニコニコ動画 (2026-06-11 追加、video-design §4.1 canonical mirror)
+        for url in (
+            "https://www.nicovideo.jp/watch/sm9",
+            "https://nico.ms/sm9",
+            "https://sp.nicovideo.jp/watch/sm9",
+            "https://nicovideo.jp/watch/sm9",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(self.bot._normalize_play_url(url), url)
+
     def test_unknown_host_rejected(self) -> None:
         self.assertIsNone(self.bot._normalize_play_url("https://evil.com/abc"))
 
     def test_userinfo_spoof_rejected(self) -> None:
         self.assertIsNone(self.bot._normalize_play_url("https://evil@youtube.com/abc"))
+
+    def test_nicovideo_spoof_rejected(self) -> None:
+        # ニコニコ版 canonical 拒否ベクタ (video-design §4.1 mirror)
+        for url in (
+            "https://evil@nicovideo.jp/watch/sm9",      # userinfo 詐称
+            "https://nicovideo.jp.evil.com/watch/sm9",  # suffix 偽装
+            "https://nico.ms.evil.com/sm9",             # suffix 偽装(nico.ms 版)
+            "https://embed.nicovideo.jp/watch/sm9",     # 非 allowlist サブドメイン
+        ):
+            with self.subTest(url=url):
+                self.assertIsNone(self.bot._normalize_play_url(url))
 
     def test_non_http_scheme_rejected(self) -> None:
         self.assertIsNone(self.bot._normalize_play_url("javascript:alert(1)"))
