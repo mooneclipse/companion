@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-10 (B-1 完了 = ClaudeOptions 未使用 7 フィールド + to_sdk_kwargs() を全削除、permission_denials 型注釈修正、151 tests pass)
+最終更新: 2026-06-11 (bot-workspace allow に apt 照会 2 件を完全一致で追加、ワイルドカード意図的回避)
 
 ## 設計メモ
 
@@ -187,6 +187,15 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### bot-workspace allow に apt 照会 2 件追加 (2026-06-11 実装、OWNER 明示依頼)
+
+**経緯**: OWNER が日次システムレポートの「apt 滞留」を bot に質問した際、bot セッションが `apt-mark showhold` / `dpkg --get-selections | grep hold` を実行できず permission denied (bot.log 2026-06-11 12:37、C-2 の permission_denials 記録が初仕事)。手元セッションで評価のうえ OWNER 依頼で追加。
+
+- **追加 (bot-workspace/.claude/settings.json)**: `Bash(apt-mark showhold)` / `Bash(apt list --upgradable)` の **完全一致 2 件のみ**。read-only 照会で sudo 不要、bot は sudo 系 allow を持たないため二重に状態変更不可
+- **ワイルドカード意図的回避**: `apt-mark:*` は `apt-mark hold` (状態変更)、`apt:*` は `apt install` を含むため採用しない。最小権限優先
+- **完全一致ゆえの denied は仕様**: bot が `apt list --upgradable 2>/dev/null` や `| wc -l` 等の変形を打つと再び denied になるが、これは意図した挙動。再発しても対症療法 2 周目と誤認してワイルドカード化に流れないこと (拡張判断は OWNER + 手元セッション、C-2 の方針どおり)
+- **code-reviewer**: OK (修正必須 0)。軽微提案 2 件 (denied は仕様の明文化 / STATUS.md への経緯記録) = 本エントリで両方反映
 
 ### ClaudeOptions 未使用フィールド削除 (B-1 完了、2026-06-10 実装、OWNER 承認済み判定 = 全削除)
 
