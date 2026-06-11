@@ -13,11 +13,13 @@ companion/bot/bot.py `_normalize_play_url` / `PLAY_ALLOWED_HOSTS`
 ロジック・allowlist を変えたら両 repo の test(canonical ベクタ)を必ず再走させること。
 
 canonical 攻撃ベクタ(video-design §4.1):
-- 拒否: userinfo 詐称(evil@youtube.com / youtube.com@evil.com) / 空白・制御文字 /
-        file://・ftp:// 等 http(s) 以外 / 169.254.169.254 等 SSRF 起点 /
-        suffix 偽装(youtube.com.evil.com) / 非 allowlist host(notyoutube.com)
+- 拒否: userinfo 詐称(evil@youtube.com / youtube.com@evil.com / evil@nicovideo.jp) /
+        空白・制御文字 / file://・ftp:// 等 http(s) 以外 / 169.254.169.254 等 SSRF 起点 /
+        suffix 偽装(youtube.com.evil.com / nicovideo.jp.evil.com / nico.ms.evil.com) /
+        非 allowlist host(notyoutube.com) / 非 allowlist サブドメイン(embed.nicovideo.jp)
 - 受理: www.youtube.com/watch / youtu.be/<id> / music.youtube.com / m.youtube.com /
-        www.youtube.com/live/<id>  ← hostname 照合のみ、path で分岐しない(攻撃面を増やさない)
+        www.youtube.com/live/<id> / (www|sp).nicovideo.jp/watch / nicovideo.jp/watch /
+        nico.ms/<id>  ← hostname 照合のみ、path で分岐しない(攻撃面を増やさない)
 """
 from urllib.parse import urlparse
 
@@ -27,6 +29,12 @@ ALLOWED_HOSTS = frozenset({
     "m.youtube.com",
     "music.youtube.com",
     "youtu.be",
+    # ニコニコ動画 (2026-06-11 追加。yt-dlp 2026.03.17 NiconicoIE 実弾検証済)。
+    # embed.nicovideo.jp はユーザーが貼る共有 URL でないため除外(攻撃面を増やさない)。
+    "nicovideo.jp",
+    "www.nicovideo.jp",
+    "sp.nicovideo.jp",
+    "nico.ms",
 })
 
 

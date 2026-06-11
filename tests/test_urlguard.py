@@ -25,6 +25,10 @@ class TestUrlguard(unittest.TestCase):
         "https://www.youtube.com/live/abc123",   # live も watch も同じ門
         "https://youtube.com/watch?v=abc123",
         "http://www.youtube.com/watch?v=abc123",  # http も受理(bot.py と同じ)
+        "https://www.nicovideo.jp/watch/sm9",     # ニコニコ動画(2026-06-11 追加)
+        "https://nico.ms/sm9",                    # ニコニコ短縮 URL
+        "https://sp.nicovideo.jp/watch/sm9",      # ニコニコ SP 版
+        "https://nicovideo.jp/watch/sm9",         # ニコニコ www なし
     ]
     # video-design §4.1 拒否ベクタ
     REJECT = [
@@ -37,6 +41,10 @@ class TestUrlguard(unittest.TestCase):
         "http://169.254.169.254/latest/meta-data",  # SSRF 起点(非 allowlist)
         "https://youtube.com.evil.com/watch?v=x",   # suffix 偽装
         "https://notyoutube.com/watch?v=x",         # 非 allowlist host
+        "https://evil@nicovideo.jp/watch/sm9",      # userinfo 詐称(ニコニコ版)
+        "https://nicovideo.jp.evil.com/watch/sm9",  # suffix 偽装(ニコニコ版)
+        "https://nico.ms.evil.com/sm9",             # suffix 偽装(nico.ms 版)
+        "https://embed.nicovideo.jp/watch/sm9",     # 非 allowlist サブドメイン
         "",                                          # 空
         "not a url",                                 # 空白含む非 URL
     ]
