@@ -481,7 +481,18 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 - 復旧: user 端末で `SSH_AUTH_SOCK=/run/user/1000/keyring/ssh ssh-add ~/.ssh/id_ed25519` → bot 同等条件で GitHub 認証成功を確認。なお ssh-add は SSH_AUTH_SOCK 明示が必要 (`feedback_ssh_agent_lock` メモどおり)
 - **判断 (2 周目ルール参照)**: タイムアウト文言への「鍵未ロードの可能性」追記は stderr 分岐の積み増しではなく表面化文言の改善であり許容範囲だが、発生頻度が低い (agent 再起動時のみ) ため当面は本 entry の記録のみで様子見。再発したら文言改善を bot 改良プラン (`workspace/redesign/bot-improvement-plan.md`) の C 系列に積む
 
-(iii) のステータス: 本番で観測されたのは **agent 再起動による鍵消失経路** であり、元の検証手順 (`ssh-add -D` で鍵を外す → 即 fail 確認) とは別経路。`ssh-add -D` 経路の即 fail は未確認のままだが、ロック系の実挙動 (即 fail せずプロンプト待ちハング) が判明したため (iii) は本 entry をもって消化扱いとする。(ii) reject 経路の実機検証は引き続き未実施。
+(iii) のステータス: 本番で観測されたのは **agent 再起動による鍵消失経路** であり、元の検証手順 (`ssh-add -D` で鍵を外す → 即 fail 確認) とは別経路。`ssh-add -D` 経路の即 fail は未確認のままだが、ロック系の実挙動 (即 fail せずプロンプト待ちハング) が判明したため (iii) は本 entry をもって消化扱いとする。
+
+**2026-06-11 (ii) reject 経路 実機検証 PASS**: 同日中に続けて実施。手順と結果:
+
+- 発散状態の作成: ローカル `develop` にテストノート commit (`0c6bd83`、ahead 1、未 push) + GitHub web UI で `README.md` を直接編集し origin/develop を ahead に (`bd643f6`)
+- Telegram `/vault_push` → **期待どおりの reject 文言** (「reject: メイン機 / Obsidian が先に push 済 … 自動 rebase / 自動 pull はしません」、bot.log 23:06:26 `send len=124`)。stderr 分類漏れの汎用文言には落ちなかった
+- **副作用なし確認 PASS**: HEAD は `0c6bd83` のまま不変、reflog に pull/merge/rebase の痕跡なし、`MERGE_HEAD` / `rebase-merge` / `rebase-apply` 不在、working tree clean — 「止めて報告、自動回復しない」の設計どおり
+- 後始末: `git pull --no-rebase origin develop` (merge `60a39b6`) → テストノート削除 commit (`a14b5cc`)。origin との一致復帰は user の `/vault_push` 実行待ち (本 entry 記録時点で ahead 3)
+
+なお (i) bot 経由実 push は 2026-05-30 に消化済み (bot.log 12:00:05 `send len=58` = push 完了 + 12:01:23 `send len=35` = 既に同期済の両文言を確認)。本日 22:55:51 の成功 push (clips 2 commits、`send len=58`) でも再確認。
+
+これで実機検証 3 経路 (i)(ii)(iii) すべて消化。`/vault_push` の残検証なし。
 
 **`git push` は claude 側で未実施** (bot/ repo・vault repo とも)。bot/ repo の commit までで停止。
 
