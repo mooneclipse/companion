@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-10 22:20
+最終更新: 2026-06-11
 
 ## 設計メモ
 
@@ -17,7 +17,7 @@
 ## TODO
 
 - machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 + S6-1 完了済み。残は S6-2 バックアップ / S6-6 延命チューニング
-- RAM 物理増設の購入判断 (S6-1 持ち越し、ユーザー判断): JDIMM2 空き・最大 16GB (8GB/枚)、増設するなら DDR3L-1600 SODIMM。zram の効果 (uptime 蓄積での swap 消費傾向) を見てから決めてよい
+- RAM 物理増設: **当面見送り (2026-06-11 ユーザー判断)**。古い PC の活用という位置付けで、定常使用 1.3G 程度なら zram で足りる見込み。再考トリガ = (a) daily system-report の swap が zram 導入後も膨らみ続ける、(b) ブラウザ操作等の重いワークロードをこの機に足すと決めたとき。増設する場合の情報は観測済み: JDIMM2 空き・最大 16GB (8GB/枚)・DDR3L-1600 SODIMM (詳細 = `machine-audit/PLAN.md` S6-1)
 - machine-audit 四半期再走 (S5 で採用): **次回 2026-09 頃**。全体スキャンからやり直して新 PLAN を作成、現 `machine-audit/PLAN.md` は手順テンプレ + 前回観測との比較基準として参照
 
 ※ Obsidian vault 同期は **PROJECT.md Phase 3 に移管**（Web 検索 → md 蓄積と接続するため）。本 repo の管轄になるかは Phase 3 着手時に判断。
