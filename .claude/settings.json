@@ -70,6 +70,8 @@
       "Bash(ps:*)",
       "Bash(uptime)",
       "Bash(sensors)",
+      "Bash(apt-mark showhold)",
+      "Bash(apt list --upgradable)",
       "Bash(systemctl --user status:*)",
       "Bash(systemctl --user list-units:*)",
       "Bash(systemctl --user list-timers:*)",
