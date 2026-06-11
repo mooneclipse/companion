@@ -380,11 +380,18 @@ class BuildProactivePromptTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.bot = _import_bot_with_stub_env()
 
-    def test_persona_always_present(self) -> None:
+    def test_scene_instructions_always_present(self) -> None:
         prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
-        self.assertIn("対等な相方", prompt)
+        # 直近の会話を蒸し返さない指示 (完結扱い) が prompt に乗ること
+        self.assertIn("完結したもの", prompt)
         # 中身のない問いかけ / 引き止めを禁じる指示が prompt に乗ること
         self.assertIn("情緒で引き止める", prompt)
+
+    def test_tone_definition_not_duplicated(self) -> None:
+        # 口調定義は PERSONA_SYSTEM_PROMPT (system prompt 側) に常駐するため、
+        # proactive prompt 側に二重定義を残さない
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("タメ口", prompt)
 
     def test_vault_hint_included_when_present(self) -> None:
         prompt = self.bot.build_proactive_prompt(
@@ -395,6 +402,24 @@ class BuildProactivePromptTest(unittest.TestCase):
     def test_no_vault_hint_when_absent(self) -> None:
         prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
         self.assertNotIn("ノート名", prompt)
+
+    def test_silence_hours_included_when_int(self) -> None:
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation", "silence_hours": 7}
+        )
+        self.assertIn("約 7 時間", prompt)
+
+    def test_silence_hours_omitted_when_absent(self) -> None:
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("時間経っている", prompt)
+
+    def test_silence_hours_omitted_when_not_numeric(self) -> None:
+        # 文字列 / bool / 負値は展開しない (注入防止境界: 数値検証済み int のみ)
+        for bad in ("7", "7時間だよ", True, -1, 6.5, None):
+            prompt = self.bot.build_proactive_prompt(
+                {"seed_kind": "recent_conversation", "silence_hours": bad}
+            )
+            self.assertNotIn("時間経っている", prompt, msg=f"silence_hours={bad!r}")
 
 
 class SnoozeTest(unittest.TestCase):

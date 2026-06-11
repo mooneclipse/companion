@@ -192,16 +192,17 @@ PERSONA_SYSTEM_PROMPT = (
     " (素の口調に温度を足す方向)。"
 )
 
-# 自発発話 prompt (場面指示)。
-PROACTIVE_PERSONA_PROMPT = (
-    "あなたはこのユーザーの「対等な相方」として振る舞う。"
-    "タメ口ベースで短く、時々さりげない気遣いや軽口を一言添える。"
-    "急かさない、旅の道連れのような距離感。"
+# 自発発話 prompt (場面指示のみ)。口調・性格は PERSONA_SYSTEM_PROMPT が system
+# prompt 側に常駐するため、ここでは重複定義しない (矛盾する二重定義を残さない)。
+# 自発発話は沈黙 6h+ で発火する設計なので、直近の会話は既に完結したものとして
+# 扱わせる (「流れにつながる一言を」と指示すると終わった会話を蒸し返す)。
+PROACTIVE_SCENE_PROMPT = (
     "今はユーザーから話しかけられたのではなく、しばらく会話が途切れていたので"
     "あなたの方からふらっと一言声をかける場面。"
+    "直近のやり取りは既に完結したものとして扱う。その続き・確認・蒸し返しはしない。"
     "「元気?」「何してる?」のような中身のない問いかけや、"
     "「寂しい」「行かないで」のような情緒で引き止める言い回しは絶対に使わない。"
-    "直近の会話の流れに自然につながる一言を、1〜2 文の短さで送る。"
+    "時間帯や今日の話題ヒントに合う、新しい角度の軽い一言を 1〜2 文の短さで送る。"
     "前置きや自己説明はせず、本文だけを返す。"
 )
 
@@ -435,11 +436,16 @@ def build_proactive_prompt(payload: dict) -> str:
     Pure function → unit-testable. payload は parse_proactive_payload の戻り。
 
     注入防止: prompt に展開してよいのは bounded/サニタイズ済みフィールドのみ
-    (現状 vault_hint = script 側で basename 化したノート名)。socket payload の
-    任意文字列フィールド (seed_kind 等) は prompt に流さない (ledger 記録専用)。
-    将来フィールドを足すときもこの境界を守る。
+    (現状 vault_hint = script 側で basename 化したノート名、silence_hours =
+    数値検証済みの非負 int)。socket payload の任意文字列フィールド (seed_kind 等)
+    は prompt に流さない (ledger 記録専用)。将来フィールドを足すときもこの境界を守る。
     """
-    parts = [PROACTIVE_PERSONA_PROMPT]
+    parts = [PROACTIVE_SCENE_PROMPT]
+    # silence_hours は非負 int のときだけ展開する (bool は int の subclass なので除外)。
+    # 数値でない / 欠落時は黙って省略 (展開しないだけ、フォールバック分岐は作らない)。
+    silence_hours = payload.get("silence_hours")
+    if isinstance(silence_hours, int) and not isinstance(silence_hours, bool) and silence_hours >= 0:
+        parts.append(f"最後の会話から約 {silence_hours} 時間経っている。")
     vault_hint = payload.get("vault_hint")
     if vault_hint:
         parts.append(
