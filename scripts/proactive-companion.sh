@@ -110,6 +110,11 @@ if (( max_last_prompt_epoch > silence_threshold_epoch )); then
     exit 0
 fi
 
+# 沈黙時間 (整数時間)。bot 側 build_proactive_prompt が数値検証して prompt に展開する
+# (「最後の会話から約 N 時間経っている」)。閾値判定はあくまで上記 1 回で確定済み、
+# この値は prompt の文脈足し専用。
+silence_hours=$(( (now_epoch - max_last_prompt_epoch) / 3600 ))
+
 # --- 5. 1 日 1 回上限 (JST 日付単位) ----------------------------------------------
 last_proactive_date=$(state_get last_proactive_date)
 if [[ "$last_proactive_date" == "$today_jst" ]]; then
@@ -158,12 +163,13 @@ fi
 # 触れない)。JSON は seed ヒントを bot 側 prompt に足すための材料。
 payload=$(python3 -c '
 import json, sys
-seed_kind, vault_hint = sys.argv[1], sys.argv[2]
-obj = {"kind": "proactive", "version": 1, "seed_kind": seed_kind}
+seed_kind, vault_hint, silence_hours = sys.argv[1], sys.argv[2], sys.argv[3]
+obj = {"kind": "proactive", "version": 1, "seed_kind": seed_kind,
+       "silence_hours": int(silence_hours)}
 if vault_hint:
     obj["vault_hint"] = vault_hint
 print(json.dumps(obj, ensure_ascii=False))
-' "$seed_kind" "$vault_hint")
+' "$seed_kind" "$vault_hint" "$silence_hours")
 
 message=$(printf '[[proactive-v1]]\n%s' "$payload")
 
@@ -177,7 +183,7 @@ if printf '%s' "$message" | nc -U -N "$SOCK"; then
     [[ -n "$snooze_until" ]] && printf 'snooze_until=%s\n' "$snooze_until" >> "$tmp"
     printf 'last_proactive_date=%s\n' "$today_jst" >> "$tmp"
     mv "$tmp" "$STATE_FILE"
-    log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', roll=$roll)"
+    log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', silence_hours=$silence_hours, roll=$roll)"
 else
     log "send failed"
     exit 1
