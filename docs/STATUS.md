@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-11 (bot-workspace allow に apt 照会 2 件を完全一致で追加、ワイルドカード意図的回避)
+最終更新: 2026-06-11 (persona 口調を system prompt 配線 + 自発発話の蒸し返し抑止 + silence_hours 展開、restart は user 操作待ち)
 
 ## 設計メモ
 
@@ -187,6 +187,17 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### persona 口調の system prompt 配線 + 自発発話の蒸し返し抑止 + silence_hours 展開 (2026-06-11 実装、commit までで停止、restart は user 操作)
+
+**目的**: (1) 口調がすぐ敬語に戻る — persona 軸 1「対等な相方」が通常会話に未配線で、CLAUDE.md の 1 行指示は敬語デフォルトに押し負け、`--resume` 履歴の敬語が自己強化アンカーになる。(2) 自発発話が終わった会話を蒸し返す — 旧 PROACTIVE_PERSONA_PROMPT の「直近の会話の流れに自然につながる一言を」が沈黙 6h+ 発火の設計と自己矛盾。OWNER 承認済みプラン (2026-06-11)。
+
+- **6965cf1 口調配線**: `claude_runner.ClaudeOptions` に `append_system_prompt` フィールド追加 (`to_cli_args()` で `--append-system-prompt` 出力、フラグは `claude -p --help` で実機確認済み)。bot.py に `PERSONA_SYSTEM_PROMPT` (軸 1 確定内容 + **禁止形「です・ます調 (敬語) は使わない」を明示**、装飾 emoji 最小、過度なキャラ付けなし) を追加し、`run_claude` が組む全 ClaudeOptions に常時渡す (全 topic 共通)
+- **daef093 proactive 改良**: `PROACTIVE_PERSONA_PROMPT` → `PROACTIVE_SCENE_PROMPT` (場面指示のみ) に痩せさせ、口調定義は system prompt 側に一本化 (二重定義なし)。「流れにつながる一言」を反転 = 直近のやり取りは完結したものとして扱い続き・確認・蒸し返しをしない。`build_proactive_prompt` で payload の `silence_hours` を**非負 int のときだけ**展開 (「最後の会話から約 N 時間経っている。」、bool 除外、欠落/非数値は黙って省略 = フォールバック分岐なし、docstring の注入防止境界に silence_hours 追記)
+- **maintenance fe31d49**: `proactive-companion.sh` §4 の `max_last_prompt_epoch` から沈黙時間 (整数時間) を算出し payload に `"silence_hours": <int>` を追加、送信 log にも記録
+- **persona/docs/STATUS.md**: 「配線は複数軸揃ってから一括」方針の前倒し変更 (軸 1 のみ、OWNER 承認、声以降は従来方針) を記録
+- **テスト**: 151 → **159 件全 pass** (`venv/bin/python -m unittest discover -s tests`)。追加 = `to_cli_args()` の `--append-system-prompt` 出力 3 件 (tests/test_claude_runner.py 新規) + `run_claude` の persona 配線 spy 1 件 + silence_hours 展開 (int あり / 欠落 / 非数値・bool・負値) + 場面指示・口調二重定義なしの検証。結合確認 = script 出力形式 payload → `parse_proactive_payload` → `build_proactive_prompt` を実 venv で 1 回通し、sh は `bash -n` + payload スニペット単体実行で検証
+- **restart は user 操作待ち**。反映後、数日 NRestarts / ERROR の様子見 (bot.py 改変時の運用どおり)。proactive の蒸し返し有無・口調維持は次回発火 / 実会話で観察
 
 ### bot-workspace allow に apt 照会 2 件追加 (2026-06-11 実装、OWNER 明示依頼)
 
