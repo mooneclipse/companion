@@ -473,6 +473,16 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 3. **(ii) reject 経路**: メイン機 / Obsidian 側で先に origin/develop を ahead にした状態で `/vault_push` → 「reject: pull してから再実行、自動 rebase しない」メッセージが返り、**実際に rebase / pull が走らない** こと (`git -C ~/companion/vault log` で HEAD が動いていないこと)。
 4. **(iii) keyring ロック時**: 鍵を agent から外す (`ssh-add -D`) か keyring ロック状態で `/vault_push` → 「SSH 認証に失敗、`ssh-add` 後再実行」が即返ること (hang しないこと)。検証後 `ssh-add ~/.ssh/id_ed25519` で復旧。
 
+**2026-06-11 実機観測 (チケット #11「vaultpushがうごかない」)**: (iii) が本番で発生し、**想定と異なる経路でハング**した。観測事実:
+
+- gnome-keyring の SSH socket は 2 段構成: `%t/keyring/ssh` (proxy、bot が参照) と `%t/keyring/.ssh` (実体 `ssh-agent -D`)。実体 agent が同日 14:42 に再起動され identities が消失 (proxy 側 `ssh-add -l` には公開鍵ファイル由来で鍵が**見え続ける**ため、リスト確認では検出できない)
+- この状態で署名要求が来ると gnome-keyring proxy は **GUI パスフレーズプロンプトを出して応答を待つ**。`BatchMode=yes` / `GIT_TERMINAL_PROMPT=0` は agent 側プロンプトには効かず、「agent refused operation → SSH 認証エラー即報告」の想定経路 (上記 2026-05-30 entry の「ロック時は即 fail」前提) には乗らない
+- 結果、`VAULT_PUSH_TIMEOUT_S=60` の wait_for 保険が効いてタイムアウト文言で報告された (bot.log 2026-06-11 18:52 `send len=61`)。**hang が無限に続かない点は設計どおり**だが、文言「ネットワーク / SSH 接続を確認」は実原因 (鍵未ロード) とずれる
+- 復旧: user 端末で `SSH_AUTH_SOCK=/run/user/1000/keyring/ssh ssh-add ~/.ssh/id_ed25519` → bot 同等条件で GitHub 認証成功を確認。なお ssh-add は SSH_AUTH_SOCK 明示が必要 (`feedback_ssh_agent_lock` メモどおり)
+- **判断 (2 周目ルール参照)**: タイムアウト文言への「鍵未ロードの可能性」追記は stderr 分岐の積み増しではなく表面化文言の改善であり許容範囲だが、発生頻度が低い (agent 再起動時のみ) ため当面は本 entry の記録のみで様子見。再発したら文言改善を bot 改良プラン (`workspace/redesign/bot-improvement-plan.md`) の C 系列に積む
+
+(iii) のステータス: 本番で観測されたのは **agent 再起動による鍵消失経路** であり、元の検証手順 (`ssh-add -D` で鍵を外す → 即 fail 確認) とは別経路。`ssh-add -D` 経路の即 fail は未確認のままだが、ロック系の実挙動 (即 fail せずプロンプト待ちハング) が判明したため (iii) は本 entry をもって消化扱いとする。(ii) reject 経路の実機検証は引き続き未実施。
+
 **`git push` は claude 側で未実施** (bot/ repo・vault repo とも)。bot/ repo の commit までで停止。
 
 **関連**: design.md §5.2 / `web/scripts/vault-sync-from-transcript.sh` / PROJECT.md「vault push reject 観察ルール」+ 2026-05-30 健全性履歴 entry / `feedback_ssh_agent_lock` メモ。
@@ -834,7 +844,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 
 ## 既知の問題
 
-（なし）
+- `/vault_push`: gnome-keyring 実体 agent 再起動後の鍵未ロード状態では proxy が GUI プロンプト待ちでハング → 60s タイムアウトとなり、文言「ネットワーク / SSH 接続を確認」が実原因 (鍵未ロード) とずれる。対応は様子見 (再発したら文言改善を bot 改良プラン C 系列に積む)。詳細: Done「Telegram `/vault_push`」配下の 2026-06-11 実機観測 entry (チケット #11)
 
 ## 運用注記
 
