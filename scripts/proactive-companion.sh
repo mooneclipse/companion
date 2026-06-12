@@ -190,6 +190,8 @@ if printf '%s' "$message" | nc -U -N "$SOCK"; then
     # 場合も script からは再試行しない (場当たりリトライ禁止、2 周目ルール)。
     # bot 側の成否は bot 側 ledger / log に残る。
     # snooze_until は保持する (依頼が通っても snooze 設定は消さない)。
+    # 注意: ここはキー明示列挙で書き戻す (bot 側 write_snooze_until の総なめ保持と
+    # 非対称)。state に新キーを足すときは、この書き戻しにも必ず足すこと。
     tmp=$(mktemp "${STATE_FILE}.XXXXXX")
     [[ -n "$snooze_until" ]] && printf 'snooze_until=%s\n' "$snooze_until" >> "$tmp"
     printf 'last_proactive_date=%s\n' "$today_jst" >> "$tmp"
