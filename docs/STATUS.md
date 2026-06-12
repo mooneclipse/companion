@@ -36,6 +36,7 @@ bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/wo
 - ~~**C-2**: Step 2 bot.py 小改変パック #1 — 画像応答 + permission_denials 記録~~ → **2026-06-10 完了、Done 転記済み** (restart + 実弾検証 2 件 pass、数日の様子見のみ継続)。
 - **C-3 (消費観察 1〜2 週間後 = 2026-06-17〜24 目処)**: Step 3 予算計器 — 課金窓アンカー集計 (3-0 新設、`BOT_CREDIT_ANCHOR_DAY`、正確な課金更新日は OWNER 確認待ち) + ソフト警告 50%/80% + /quota 窓終端着地予測 + /status セッション肥大可視化 + /quota に `claude -p "/usage"` 公式利用率併記 (headless $0 実機確認済み 2026-06-12)。暦月→課金窓への引き直しと 6/15 制度開始後の再検証項目は ticket #16 議論 (2026-06-12) でプラン改訂済み。
 - **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 の優先順。死蔵知識 proactive 拡張は persona 軸 4 実装 (2) として 2026-06-12 に前倒し完了 (チケット #20、Done 転記済み)。
+- **C-5 (次回 bot.py 改修時に同梱)**: `build_proactive_prompt` の `vault_hint` 展開に `isinstance(str)` ガードを足して `dormant_hint` (#20 で追加、ガード付き) と対称にする。docstring の注入防止境界の主張と実装の非対称解消 (code-reviewer 指摘 2026-06-12)。単独では restart コストに見合わないため次の bot.py 変更に相乗りさせる。
 
 (`/vault_push` 実装は下記「Done」セクションに転記済)
 
