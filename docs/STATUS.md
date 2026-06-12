@@ -189,6 +189,15 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 
 ## Done
 
+### テストログの本番 bot.log 混入を修正 (2026-06-12、logger 冪等化 + テスト handler 除去。bot.py 変更は挙動不変、次回 restart で乗る)
+
+**発見経緯**: voice bot 統合の restart 後点検で bot.log に「proactive skip」同一行 16 連発 (18:14 / 21:29、各 32 行) を観測。切り分けで (a) 実イベントではなくユニットテスト実行由来 (b) proactive_ledger は tmp patch 済みで汚染なし (c) 21:19 の dormant_knowledge 送信はチケット #20 の正規初実弾、を確認。
+
+- **原因 2 段**: (1) `unittest discover -s tests` は各テストファイルを top-level import し `tests/__init__.py` を実行しない (実測)。(2) test_bot.py の `_import_bot_with_stub_env` が `del sys.modules["bot"]` → 再 import するたび、同一の `companion-bot` logger (getLogger は同一インスタンス) に本番 bot.log 向き RotatingFileHandler が積み増され、Proactive 系テスト実行時点で 16 個 = 1 ログ 16 行に増幅して本番ログへ
+- **修正**: bot.py の addHandler を `if not logger.handlers:` で冪等化 (本番挙動不変) + `_import_bot_with_stub_env` で import 直後に handler 除去。`logging.disable` のプロセスグローバル抑制は test_quota の `assertLogs("companion-bot")` を壊すため不採用 (1 度試して fail で検出、handler 除去ならレコードは生きるので assertLogs 無傷)
+- **検証**: 179 tests 全 pass + discover 2 連走で bot.log 行数不変。混入済みの過去行は放置 (rotation で消える)
+- tests/__init__.py に「discover では実行されない、共通セットアップを置かない」注意書きを残置
+
 ### voice bot 統合 (2026-06-12 実装 = Phase 4 残実装系、persona 軸 2 gate 開通。commit までで停止、restart / speaker 切替 / 実弾検証は user 操作)
 
 **目的**: voice-design.md v2.0 §1.8 の bot/ 側統合 (2026-06-01 に Phase 3-2 から Phase 4 移送、persona 軸 2「玄野武宏」確定 = gate 開通で着手可)。Telegram `/say` で TV 発話 + `/status` に voice 集計 + voice_ledger.jsonl。**bot.py 大改変につき restart 後にこの変更への様子見観察を適用** (PROJECT.md 条件 #2 再定義、2 週間固定でなく変更規模相応)。

@@ -289,9 +289,13 @@ for _existing in [LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*"), _LEDGER_PATH, _
         pass
 logger = logging.getLogger("companion-bot")
 logger.setLevel(logging.INFO)
-_handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
-_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-logger.addHandler(_handler)
+# 再 import (テストの del sys.modules["bot"] → import) でも handler を積み増さない。
+# getLogger は同一インスタンスを返すため、無ガードだと import 回数分ログが多重化する
+# (2026-06-12 に本番 bot.log へ同一行 16 連発として観測)。
+if not logger.handlers:
+    _handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(_handler)
 logger.propagate = False
 
 # AIORateLimiter の retry/RetryAfter イベントを沈黙させない (K-T4 / V-8 回避、

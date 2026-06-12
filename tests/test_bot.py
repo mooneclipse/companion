@@ -12,6 +12,7 @@ _fmt_duration, cmd_reset against a tmp sessions dir).
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import sys
 import tempfile
@@ -34,9 +35,21 @@ def _import_bot_with_stub_env():
     try:
         if "bot" in sys.modules:
             del sys.modules["bot"]
-        return importlib.import_module("bot")
+        mod = importlib.import_module("bot")
     except ModuleNotFoundError as e:
         raise unittest.SkipTest(f"bot module deps not installed: {e}")
+    # import 時に付く本番 bot.log 向き RotatingFileHandler を外す。テスト中の
+    # logger 出力が本番ログに混入するのを防ぐ (2026-06-12 に同一行 16 連発として
+    # 観測)。logging.disable はプロセスグローバルで assertLogs 系テストを壊すため
+    # 使わない。レコード自体は生きるので assertLogs はそのまま動く。
+    for h in list(mod.logger.handlers):
+        mod.logger.removeHandler(h)
+        h.close()
+    # NullHandler を残す: 再 import 時に bot.py 側の `if not logger.handlers`
+    # ガードが効いて本番 bot.log 向き handler の再生成 (file open) 自体を抑止し、
+    # WARNING+ が lastResort 経由で stderr に漏れるノイズも消す。
+    mod.logger.addHandler(logging.NullHandler())
+    return mod
 
 
 class ChunkTelegramTest(unittest.TestCase):
