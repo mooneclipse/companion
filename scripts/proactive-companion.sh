@@ -169,8 +169,9 @@ else
 fi
 
 if (( dormant_due )) && [[ -d "$VAULT_NOTES_DIR" ]]; then
-    # 候補 = notes 直下の *.md で mtime が MIN_AGE_DAYS 日より古いもの。前回掘り
-    # 起こした basename (dormant_last) は除外し、残りからランダム 1 件。
+    # 候補 = notes 直下の *.md で mtime が MIN_AGE_DAYS 日超 (find -mtime +N の
+    # 切り捨て仕様により実質 N+1 日以上) 古いもの。前回掘り起こした basename
+    # (dormant_last) は除外し、残りからランダム 1 件。
     dormant_candidates=""
     while IFS= read -r note; do
         base=$(basename "$note" .md)
