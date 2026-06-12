@@ -242,7 +242,7 @@ Phase 1 で開通した Discord 土管を Telegram supergroup (topic = 1 session
 キャラクター性の付与。4 軸を **orc で 1 軸ずつ決め打ち** で確定する（順番: 口調・性格 → 声 → 立ち絵・表象 → 存在感の調整、user 確定）。
 
 - 立ち絵・表象（人型 or 記号 ◯■）— ✅ 確定 (2026-06-12) = **小箱**（dashboard 既存小箱キャラを ren の正式表象に昇格、新規デザインなし。他面展開は同モチーフ流用のみ・人型化しない。詳細は `persona/docs/STATUS.md` 軸 3 / チケット #5）
-- 声の確定（VOICEVOX のどのキャラ or 自作音声モデル、voice/ 技術基盤と接続 = voice bot 統合の gate）— ✅ 確定 (2026-06-12) = **玄野武宏**（speaker_id=11 ノーマル + スタイル 3 種。発話レイテンシは「生成と再生の分離」で吸収と同時確定。詳細は `persona/docs/STATUS.md` 軸 2 / チケット #4）。**voice bot 統合 = 実装済み (2026-06-12 同日)**: Telegram `/say` + `/status` voice 集計 + voice_ledger + maintenance 12:00 警告 trigger + say.sh 追記化。restart・`VOICE_DEFAULT_SPEAKER` 2→11 切替・V-S1/V-S2 実弾は user 操作待ち、完了後にこの bot.py 大改変への様子見観察 (条件 #2 再定義) を開始。詳細は `bot/docs/STATUS.md` 同日 Done
+- 声の確定（VOICEVOX のどのキャラ or 自作音声モデル、voice/ 技術基盤と接続 = voice bot 統合の gate）— ✅ 確定 (2026-06-12) = **玄野武宏**（speaker_id=11 ノーマル + スタイル 3 種。発話レイテンシは「生成と再生の分離」で吸収と同時確定。詳細は `persona/docs/STATUS.md` 軸 2 / チケット #4）。**voice bot 統合 = 完了 (2026-06-12 同日)**: Telegram `/say` + `/status` voice 集計 + voice_ledger + maintenance 12:00 警告 trigger + say.sh 追記化。restart・speaker 11 切替 (.env は user 新規作成)・**V-S1/V-S2 実弾 pass** 済み。以後この bot.py 大改変への様子見観察 (条件 #2 再定義) 中。詳細は `bot/docs/STATUS.md` 同日 Done
 - 口調・性格コンセプト — ✅ 確定 (2026-06-01) = **対等な相方**（タメ口ベースで短く、時々さりげない気遣いや軽口を一言添える。素の bot 口調に温度を足す方向）
 - 「相棒」としての存在感の調整 — ✅ 確定 (2026-06-12) = **同じ部屋にいる相方**（返事を期待しない一方通行の声かけ、ほぼ毎日 1 回・たまに 2 回。返事の催促・情緒的引き止めはしない。詳細・実装タスクは `persona/docs/STATUS.md` 軸 4 / チケット #19・#20）
 
