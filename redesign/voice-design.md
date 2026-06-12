@@ -76,7 +76,9 @@ EXIT CODE (1 回で確定、リトライ自動化禁止):
   5  AUDIO_PLAYBACK_FAILED  (paplay rc != 0)
 
 副作用 (常時実行、exit code 問わず):
-  - voice/.state/last-result-YYYY-MM-DD に「OK | FAIL <reason> @ <ts>」atomic write (0600)
+  - voice/.state/last-result-YYYY-MM-DD に「OK | FAIL <reason> @ <ts>」を 1 invoke 1 行で追記
+    (O_APPEND、初回 0600 作成。v2.0.3 訂正: 旧「atomic write (上書き)」は §1.5 (3)(4) の
+    24h 件数集計と矛盾 = 日毎最終結果しか残らず FAIL ≥ 3 が構造的に発火不能だった)
   - padding 失敗時は last-result に「padding skipped: <ffmpeg stderr 1 行>」追記 (exit 0 のまま、padding は物理現象吸収の保険のため fail-open)
   - exit != 0 時: notify socket ($XDG_RUNTIME_DIR/companion-bot.sock) へ「[voice] FAIL <reason> (exit N)」送信 (CLI 直接呼び出し / 手動デバッグ時の保険として残置、bot 経由は bot.py が exit code を直接受けて followup で返すため運用頻度低下)
     socket 失敗時は last-result に「socket unreachable」追記
@@ -519,6 +521,10 @@ ux Round 2 自己反省 3 件 + lead orchestration ミス 1 件:
     - §8.2 v2.0 議論経緯 append (Round 1〜3 lead 集約)
     - §8.3 workspace/CLAUDE.md 補強候補追加
 - 2026-05-19 v2.0.1 §8.3 status 更新: workspace/CLAUDE.md「落とし穴 B-2」として反映済 (Phase 3-2 完了タイミングを待たず前倒し、独立作業として bot/voice 触らず処理)
+- **2026-06-12 v2.0.3** voice bot 統合実装 (Phase 4、persona 軸 2 gate 開通) に伴う実装反映 3 点:
+  - §1.4 last-result を「atomic write (上書き)」→「1 invoke 1 行追記」に訂正。code-reviewer が §1.5 (3)(4) の 24h 件数集計との内部矛盾 (上書きでは日毎最終結果しか残らず FAIL ≥ 3 / padding skipped ≥ 5 が発火不能) を検出、say.sh を追記化 (案 A)。案 B (bot ledger のみ集計) は CLI invoke + padding skipped が漏れ failure mode (3) を実質無効化するため不採用
+  - §1.8 の Discord 前提コード (defer / ephemeral / followup) は Telegram 読み替えで実装 (typing chat action / 通常 reply)。engine on-demand start/stop (§1.3) は say.sh でなく bot/voice_command.py 側に配置 (検証済み say.sh の合成責務を変えない)。これに伴い「asyncio.Lock 追加不要」(§1.8 実装制約) は条件が崩れ (stop が say.sh 内 flock の外に出た)、bot 層で cmd_say を asyncio.Lock 直列化
+  - voice_ledger.jsonl は §1.6 図の bot/ 直下でなく bot/sessions/ 配下 (gitignore 済み、quota ledger 同居 = 「quota.py パターン継承」優先)
 - **2026-05-19 v2.0.2** §5.3 スケジュール書き換え: voice/ 側 (bot.py を触らない部分: say.sh / bin/ / systemd/companion-voice-engine.service / voice/ git init) を 2026-05 中下旬から前倒し着手、bot/ 側 (voice_command.py / voice_status.py / voice_ledger.jsonl / bot.py への slash registration) のみ Phase 2.5 T-D 後半完了後 = 2026-06 中下旬を維持
   - 経緯: 2026-05-19 user 提案「6 月の変更 (=CreditBudgetGuard) 以外を前倒しできないか」→ A 案 (voice/ 側全部前倒し) 採用
   - 根拠: devil T-D-1(d) 構造原則 (bot.py 同時 2 方向回避 + Phase 2.5 健全性 2 週間観察) は voice/ 側単独実装と独立。voice/ は bot.py / bot.service を一切触らないため両根拠と無関係
