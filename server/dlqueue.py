@@ -331,6 +331,11 @@ def _process(item):
     os.makedirs(DOWNLOADS_DIR, mode=0o700, exist_ok=True)
     argv = [
         YTDLP, "--ignore-config", "--no-playlist", "--no-progress",
+        # -4 (IPv4 強制): この網は IPv6 が 100% loss (RV-8 実測) なのに CDN
+        # (delivery.domand.nicovideo.jp 等) が AAAA を返すため、fragment ごとの
+        # IPv6 connect timeout (~40s) → IPv4 fallback で実測 2.5KB/s に落ちていた。
+        # -4 で 3.35MiB/s (約 90 倍、2026-06-12 実測)。新規オプション 1 つ = 1 周目。
+        "-4",
         "-f", FORMAT,
         "-o", os.path.join(DOWNLOADS_DIR, "dl-%d.%%(ext)s" % tid),
         # stdout は title 取得専用 (filepath は FS glob で確定する、§2.2)。

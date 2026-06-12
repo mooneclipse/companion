@@ -26,7 +26,17 @@ ExecStartPre=-/bin/rm -f %t/companion-video-mpv.sock
 #                       index の脆さを回避(V-A1 確定 2026-05-20: index 0 は LVDS-1=ノート本体
 #                       を掴むため出力名 HDMI-1 で一意指定。xrandr: HDMI-1 1920x1080 820x460mm)
 #  --no-config             : ~/.config/mpv を読まない(SG-3 ハードニング)
-#  --ytdl-raw-options      : yt-dlp に --ignore-config / --no-playlist を強制
+#  --ytdl=no + --scripts   : 組み込み 0.34.1 ytdl_hook を無効化し、vendored v0.37.0 hook
+#       (remote/vendor/ytdl_hook.lua、upstream 無改変 sha256=4f2e2a2a...) を外部 script と
+#       して読む。0.34.1 hook は yt-dlp の per-format cookies フィールド未対応でニコニコ
+#       domand HLS が 403 (RV-9)。v0.37 hook は cookies 対応済みで、0.34.1 core 上での
+#       動作はニコニコ sm9 8s playing + YouTube VOD 回帰なしを実機検証済 (2026-06-12)。
+#       設計判断 (video-design §8 手続き) は video-design.md 改版履歴 2026-06-12 参照。
+#       ファイル名は ytdl_hook.lua 必須 (script-opts の prefix がファイル名由来のため、
+#       リネームすると ytdl_hook-* オプションが届かなくなる)
+#  --ytdl-raw-options      : yt-dlp に --ignore-config / --no-playlist / --force-ipv4 を強制。
+#       force-ipv4 はこの網の IPv6 100% loss (RV-8 実測) × CDN の AAAA 応答で接続 timeout を
+#       踏む問題の回避 (DL 経路 dlqueue.py の -4 と同根拠、2026-06-12 実測 90 倍)
 #  ytdl_hook-ytdl_path     : yt-dlp 実体を固定パスで解決(PATH 依存にしない)
 #  ytdl_hook-try_ytdl_first: 最初から yt-dlp を呼ぶ(既定 no は youtube を ffmpeg 直開き→
 #       必ず失敗→on_load_fail フォールバックする。実 vo 環境では解決の遅いアーカイブで
@@ -45,8 +55,9 @@ ExecStart=/usr/bin/mpv \
     --fullscreen \
     --fs-screen-name=HDMI-1 \
     --no-config \
-    --ytdl=yes \
-    --ytdl-raw-options=ignore-config=,no-playlist= \
+    --ytdl=no \
+    --scripts=%h/companion/remote/vendor/ytdl_hook.lua \
+    --ytdl-raw-options=ignore-config=,no-playlist=,force-ipv4= \
     --script-opts=ytdl_hook-ytdl_path=/home/miho/bin/yt-dlp,ytdl_hook-try_ytdl_first=yes \
     --ytdl-format=bestvideo[height<=?720]+bestaudio/best[height<=?720]/best \
     --hwdec=vaapi \
