@@ -46,7 +46,9 @@ Exit codes:
   5  AUDIO_PLAYBACK_FAILED
 
 副作用 (常時、exit code 問わず):
-  voice/.state/last-result-YYYY-MM-DD に「OK | FAIL ...」を 0600 で atomic write
+  voice/.state/last-result-YYYY-MM-DD に「OK | FAIL ...」を 1 invoke 1 行で追記
+  (日次ファイル、初回作成は 0600 atomic。24h 件数集計の元: bot /status +
+   maintenance 12:00 trigger、voice-design.md v2.0 §1.5 (3)(4))
   exit != 0 時 $SOCK へ「[voice] FAIL <reason> (exit N)」送信
   (socket 不在 / 送信失敗は last-result に追記して握りつぶす)
 EOF
@@ -66,22 +68,11 @@ LAST_RESULT="$STATE_DIR/last-result-$TODAY"
 # 1 行 parse できるように `%:z` (`+09:00`) を使う (B3-1)。
 ts() { date '+%Y-%m-%dT%H:%M:%S%:z'; }
 
-write_last_result() {
-    local body="$1"
-    local tmp
-    tmp="$(mktemp "$STATE_DIR/.last-result.XXXXXX")" || return 1
-    chmod 600 "$tmp"
-    printf '%s\n' "$body" > "$tmp"
-    mv -f "$tmp" "$LAST_RESULT"
-}
-
 append_last_result() {
     local body="$1"
-    if [ -f "$LAST_RESULT" ]; then
-        printf '%s\n' "$body" >> "$LAST_RESULT"
-    else
-        write_last_result "$body"
-    fi
+    # O_APPEND 直書き (1 行 ≤ PIPE_BUF なので並行 invoke でも行が混ざらない)。
+    # 不在時は umask 077 で 0600 作成、truncate しない。
+    ( umask 077; printf '%s\n' "$body" >> "$LAST_RESULT" )
 }
 
 notify_socket() {
@@ -97,7 +88,7 @@ notify_socket() {
 
 fail() {
     local code="$1" reason="$2"
-    write_last_result "FAIL $reason (exit $code) @ $(ts)"
+    append_last_result "FAIL $reason (exit $code) @ $(ts)"
     notify_socket "[voice] FAIL $reason (exit $code)"
     exit "$code"
 }
@@ -174,7 +165,7 @@ if ! paplay "$PLAY_WAV"; then
     fail 5 "AUDIO_PLAYBACK_FAILED: paplay rc=$?"
 fi
 
-write_last_result "OK @ $(ts)"
+append_last_result "OK @ $(ts)"
 if [ -n "$PADDING_SKIPPED" ]; then
     append_last_result "padding skipped: $PADDING_SKIPPED"
 fi
