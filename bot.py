@@ -463,9 +463,10 @@ def build_proactive_prompt(payload: dict) -> str:
     Pure function → unit-testable. payload は parse_proactive_payload の戻り。
 
     注入防止: prompt に展開してよいのは bounded/サニタイズ済みフィールドのみ
-    (現状 vault_hint = script 側で basename 化したノート名、silence_hours =
-    数値検証済みの非負 int)。socket payload の任意文字列フィールド (seed_kind 等)
-    は prompt に流さない (ledger 記録専用)。将来フィールドを足すときもこの境界を守る。
+    (現状 vault_hint / dormant_hint = script 側で basename 化したノート名、
+    silence_hours = 数値検証済みの非負 int)。socket payload の任意文字列フィールド
+    (seed_kind 等) は prompt に流さない (ledger 記録専用)。将来フィールドを足す
+    ときもこの境界を守る。
     """
     parts = [PROACTIVE_SCENE_PROMPT]
     # silence_hours は非負 int のときだけ展開する (bool は int の subclass なので除外)。
@@ -478,6 +479,16 @@ def build_proactive_prompt(payload: dict) -> str:
         parts.append(
             f"今日ユーザーが触れていた話題のヒント (ノート名): {vault_hint}。"
             "無理に全部に触れず、自然な一言だけにする。"
+        )
+    # 死蔵知識との再会 (persona 軸 4 実装 (2)): script 側で basename 化された
+    # str のみ展開する (非文字列は展開しないだけ、フォールバック分岐は作らない)。
+    # script 設計上 vault_hint とは同時に来ないが、両方来たら両方展開してよい。
+    dormant_hint = payload.get("dormant_hint")
+    if isinstance(dormant_hint, str) and dormant_hint:
+        parts.append(
+            f"今日触れていた話題ではなく、昔ユーザーが書いたノートの話題ヒント"
+            f" (ノート名): {dormant_hint}。"
+            "「昔これ気にしてたね」くらいの軽い再会のさせ方で一言。無理に深掘りしない。"
         )
     parts.append("では、相方として軽く一言、話しかけて。")
     return "\n".join(parts)
@@ -1644,6 +1655,7 @@ async def _run_proactive(app: Application, payload: dict) -> None:
         "timestamp": now.isoformat(),
         "seed_kind": seed_kind,
         "vault_hint": payload.get("vault_hint"),
+        "dormant_hint": payload.get("dormant_hint"),
     }
 
     # bot 側グローバル off / snooze の二重防御 (script 側でも見るが state すれ違い

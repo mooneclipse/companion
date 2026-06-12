@@ -395,6 +395,11 @@ class ParseProactivePayloadTest(unittest.TestCase):
         out = self.bot.parse_proactive_payload(text)
         self.assertEqual(out["vault_hint"], "2026-06-01_x")
 
+    def test_dormant_hint_passed_through(self) -> None:
+        text = '[[proactive-v1]]\n{"kind": "proactive", "seed_kind": "dormant_knowledge", "dormant_hint": "2026-04-01_old-topic"}'
+        out = self.bot.parse_proactive_payload(text)
+        self.assertEqual(out["dormant_hint"], "2026-04-01_old-topic")
+
 
 class BuildProactivePromptTest(unittest.TestCase):
 
@@ -442,6 +447,39 @@ class BuildProactivePromptTest(unittest.TestCase):
                 {"seed_kind": "recent_conversation", "silence_hours": bad}
             )
             self.assertNotIn("時間経っている", prompt, msg=f"silence_hours={bad!r}")
+
+    def test_dormant_hint_included_when_present(self) -> None:
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "dormant_knowledge", "dormant_hint": "2026-04-01_old-topic"}
+        )
+        self.assertIn("2026-04-01_old-topic", prompt)
+        # vault_hint (今日触れていた話題) とは別文脈であることが prompt から読めること
+        self.assertIn("昔これ気にしてたね", prompt)
+        self.assertNotIn("今日ユーザーが触れていた話題", prompt)
+
+    def test_no_dormant_hint_when_absent(self) -> None:
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("昔これ気にしてたね", prompt)
+
+    def test_dormant_hint_omitted_when_not_string(self) -> None:
+        # 注入防止境界: script 側で basename 化された str のみ展開する
+        for bad in (123, True, 6.5, ["2026-04-01_x"], {"a": 1}):
+            prompt = self.bot.build_proactive_prompt(
+                {"seed_kind": "dormant_knowledge", "dormant_hint": bad}
+            )
+            self.assertNotIn("昔これ気にしてたね", prompt, msg=f"dormant_hint={bad!r}")
+
+    def test_dormant_and_vault_hint_both_expanded(self) -> None:
+        # script 側は同時に出さない設計だが、両方来ても分岐で握りつぶさず両方展開する
+        prompt = self.bot.build_proactive_prompt(
+            {
+                "seed_kind": "dormant_knowledge",
+                "vault_hint": "2026-06-12_today",
+                "dormant_hint": "2026-04-01_old-topic",
+            }
+        )
+        self.assertIn("2026-06-12_today", prompt)
+        self.assertIn("2026-04-01_old-topic", prompt)
 
 
 class SnoozeTest(unittest.TestCase):

@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち) / 2026-06-11 (persona 口調を system prompt 配線 + 自発発話の蒸し返し抑止 + silence_hours 展開、restart は user 操作待ち)
+最終更新: 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
 
 ## 設計メモ
 
@@ -35,7 +35,7 @@ bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/wo
 - ~~**C-1**: Step 1 閲覧自由化~~ → **2026-06-10 完了、Done 転記済み** (実弾検証 3 件 pass、消費観察起点 = 2026-06-10)。
 - ~~**C-2**: Step 2 bot.py 小改変パック #1 — 画像応答 + permission_denials 記録~~ → **2026-06-10 完了、Done 転記済み** (restart + 実弾検証 2 件 pass、数日の様子見のみ継続)。
 - **C-3 (消費観察 1〜2 週間後 = 2026-06-17〜24 目処)**: Step 3 予算計器 — 課金窓アンカー集計 (3-0 新設、`BOT_CREDIT_ANCHOR_DAY`、正確な課金更新日は OWNER 確認待ち) + ソフト警告 50%/80% + /quota 窓終端着地予測 + /status セッション肥大可視化 + /quota に `claude -p "/usage"` 公式利用率併記 (headless $0 実機確認済み 2026-06-12)。暦月→課金窓への引き直しと 6/15 制度開始後の再検証項目は ticket #16 議論 (2026-06-12) でプラン改訂済み。
-- **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 → 死蔵知識 proactive 拡張の優先順。
+- **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 の優先順。死蔵知識 proactive 拡張は persona 軸 4 実装 (2) として 2026-06-12 に前倒し完了 (チケット #20、Done 転記済み)。
 
 (`/vault_push` 実装は下記「Done」セクションに転記済)
 
@@ -187,6 +187,15 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### 自発発話の種「死蔵知識との再会」追加 (2026-06-12 実装 = チケット #20、persona 軸 4 実装 (2)、bot.py は小規模追加改変)
+
+**目的**: persona 軸 4「同じ部屋にいる相方」(2026-06-12 OWNER 確定) の種 2 要素目。vault の読み返されない過去ノートを週 1 程度掘り起こし「昔これ気にしてたね」と軽く再会させる低頻度種。返信不要の一方通行声かけと整合 (読み流すだけで価値が出る)。
+
+- **maintenance 側 (`proactive-companion.sh`)**: 判定順 1〜7 (発火条件) は不変、変えたのは §6「種を集める」のみ — 発火確定回の種の中身を週 1 で死蔵知識に切り替え。state の `last_dormant_date` 1 回引きで判定 (差が `PROACTIVE_DORMANT_INTERVAL_DAYS` (デフォルト 7) 以上で due)。候補 = notes 直下 *.md で mtime が `PROACTIVE_DORMANT_MIN_AGE_DAYS` (デフォルト 30) 日より古いもの、前回分 (`dormant_last`) 除外、ランダム 1 件。死蔵回は `seed_kind="dormant_knowledge"` + payload に `dormant_hint` (basename)、**当日 vault_hint は付けない** (1 メッセージ 1 話題)。候補ゼロは従来種で続行 + `last_dormant_date` 非更新 (次回再挑戦、リトライ loop なし)。state 書き戻し (キー明示列挙) に dormant 2 キーを追加、非死蔵回も既存値を保持
+- **bot.py**: `build_proactive_prompt` に `dormant_hint` 展開を追加 — str のみ展開 (注入防止境界、docstring の bounded 列挙に追記)、文言は「今日触れていた話題ではなく、昔ユーザーが書いたノートの話題ヒント…『昔これ気にしてたね』くらいの軽い再会のさせ方で一言」(vault_hint の「今日」と文脈区別)。vault_hint と両方来ても両方展開 (分岐で握りつぶさない、script 側は同時に出さない設計)。proactive ledger の base に `dormant_hint` を追加 (vault_hint と対称の観測用)。`seed_kind` は従来どおり prompt に流さない (ledger 専用)
+- **テスト**: 161 → **166 件全 pass** (`venv/bin/python -m unittest discover -s tests`)。追加 = parse 透過 1 件 + prompt 展開 4 件 (あり / なし / 非文字列の防御 / vault_hint 併存)。script は sandbox (HOME/XDG_RUNTIME_DIR 隔離 + 偽 sessions/vault + `nc -lU` ダミー socket + PROBABILITY=1) で 8 ケース全パス: (a) state なし + 古ノートあり → dormant 発火 + state 2 キー書込 (b) 昨日使用済み → 従来種 + キー保持 (c) 候補が dormant_last のみ → 従来種 + 非更新 (d) 古ノートゼロ → 従来種 (e) INTERVAL=1 / MIN_AGE=5 override + デフォルト 30 の境界 (f) 5 キー全保持 + count increment。結合確認 = script 実 payload → `parse_proactive_payload` → `build_proactive_prompt` を実 venv で 1 回通し
+- bot.py の改変は `build_proactive_prompt` + ledger base の数行 = 小規模追加改変 (大改変の様子見観察の発火対象ではない)。maintenance repo 側 commit と対で適用 (timer unit / 判定順は無変更)
 
 ### /play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え (2026-06-12 実装 = ticket #17、commit までで停止、restart は user 操作)
 
