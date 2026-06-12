@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-12 (voice bot 統合 = Phase 4、/say + /status voice 集計 + voice_ledger。bot.py 大改変につき restart 後に様子見観察、restart / `VOICE_DEFAULT_SPEAKER` 切替 / V-S1・V-S2 実弾は user 操作待ち) / 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
+最終更新: 2026-06-12 (voice bot 統合 **完了** = Phase 4、/say + /status voice 集計 + voice_ledger。restart + speaker 11 + V-S1/V-S2 実弾 pass 済み、以後この bot.py 大改変への様子見観察) / 2026-06-12 (テストログの本番 bot.log 混入を修正 = logger 冪等化、bot.py 変更は挙動不変で次回 restart 反映) / 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
 
 ## 設計メモ
 
@@ -211,7 +211,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 - **say.sh 追記化 (voice repo 側、code-reviewer 修正必須)**: last-result が atomic write (上書き = 日毎最終結果のみ) で 24h 件数集計が構造的に発火不能だったため 1 invoke 1 行追記に変更。設計書自体の内部矛盾 (§1.4 vs §1.5 (3)(4)) の解消。詳細・案 B 不採用根拠は `voice/docs/STATUS.md` 同日 Done
 - **テスト**: 166 → **179 件全 pass**。追加 13 = `_format_say_result` 各 rc / `append_ledger` schema / `cmd_say` orchestration (fake systemctl + fake say.sh で start→say→stop 順序、rc passthrough、timeout kill、spawn 失敗でも finally stop) / `format_voice_summary` 6 ケース (空 / OK+FAIL+padding / 24h 境界 / socket 行除外 / ledger last say)
 - **code-reviewer**: 修正必須 1 件 (上記 say.sh 追記化) 反映 + 再レビュー OK。軽微採用 2 件 (last-result 書き込みの O_APPEND 1 関数化 / 台帳の atomic write 残置訂正)、軽微見送り 1 件 (`proc.kill()` の SIGTERM 二段化 — 頻度極小 + /tmp 残置は無害、シンプル維持)
-- **未実施 (user 操作)**: (1) `voice/.env` の `VOICE_DEFAULT_SPEAKER` 2→11 (玄野武宏) 切替 — `.env` は claude セッション deny 対象のためコマンド提示 (2) `systemctl --user restart companion-bot.service` (3) V-S1 (`/say` 実弾発話) / V-S2 (`/status` voice 表示) 実弾検証
+- **user 操作 3 点とも完了 (同日)**: (1) `voice/.env` は**未作成だったと判明** (say.sh 内デフォルト 2 で動作していた drift) → user が `VOICE_DEFAULT_SPEAKER=11` で新規作成 (2) restart 済み (21:55、起動ログ正常・/say 登録確認) (3) **V-S1 / V-S2 実弾 pass** (22:13 JST、rc=0 / duration_ms=19726、ledger + last-result + bot.log 全系統一致。`voice/docs/STATUS.md` V-S1/V-S2 entry 参照)。**ここから bot.py 大改変の様子見観察開始**
 - **自発発話への声載せはスコープ外**: 「生成と再生の分離」(2026-06-12 確定、voice/docs/STATUS.md) に従う将来タスク。本統合は `/say` 対話経路 + 集計土管まで
 
 ### 自発発話の種「死蔵知識との再会」追加 (2026-06-12 実装 = チケット #20、persona 軸 4 実装 (2)、bot.py は小規模追加改変)
