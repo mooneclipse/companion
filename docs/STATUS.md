@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-11
+最終更新: 2026-06-12
 
 ## 設計メモ
 
@@ -16,7 +16,8 @@
 
 ## TODO
 
-- machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 + S6-1 完了済み。残は S6-2 バックアップ / S6-6 延命チューニング
+- machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 + S6-1 + S6-2 完了済み。残は S6-6 延命チューニング
+- usb-backup 運用: USB を挿したら `sudo ~/companion/maintenance/scripts/usb-backup.sh` を手動 1 発、**月 1 目安**。挿し忘れ検出 (前回バックアップからの経過日数) を daily system-report に載せるかは運用してみてから判断
 - RAM 物理増設: **当面見送り (2026-06-11 ユーザー判断)**。古い PC の活用という位置付けで、定常使用 1.3G 程度なら zram で足りる見込み。再考トリガ = (a) daily system-report の swap が zram 導入後も膨らみ続ける、(b) ブラウザ操作等の重いワークロードをこの機に足すと決めたとき。増設する場合の情報は観測済み: JDIMM2 空き・最大 16GB (8GB/枚)・DDR3L-1600 SODIMM (詳細 = `machine-audit/PLAN.md` S6-1)
 - machine-audit 四半期再走 (S5 で採用): **次回 2026-09 頃**。全体スキャンからやり直して新 PLAN を作成、現 `machine-audit/PLAN.md` は手順テンプレ + 前回観測との比較基準として参照
 
@@ -32,6 +33,10 @@
 
 ## Done
 
+- 2026-06-12 machine-audit S6-2: オフディスクバックアップ 完了
+  - **KIOXIA USB 64GB + restic 0.12.1 (apt) + 手動 1 発** (`scripts/usb-backup.sh`、root 実行、FAT32 のまま)。初回実行成功: snapshot `8834995f`、2737 files / 624 MiB、`restic check` エラーなし、`.bashrc` の restore→diff 一致まで実機検証済み
+  - パスワードは `~/.config/restic/usb-password` (0600) + ユーザーのオフマシン控え。判断記録の詳細 = `machine-audit/PLAN.md` S6-2
+  - code-reviewer: 修正必須なし、軽微 3 件採用 (`forget --group-by host` / ログ miho 所有化 / デバイス名固定表示の除去)
 - 2026-06-10 machine-audit S6-1: RAM 逼迫の解消 完了
   - **zram 採用・稼働確認済み**: zram-tools 0.3.3.1 (実 deb 展開で設定形式裏取り)、zstd / PERCENT=50 (1.9G) / prio 100、swapfile 2G は prio -2 overflow に降格して残置。`s6-1-zram.sh` ユーザー実行 全ステップ rc=0、`comp_algorithm` `[zstd]` 選択・swapon 2 段構成を実ログで確認。swappiness 60 据置 (効果観測前の先回りをしない)
   - **物理増設は判断材料収集まで**: dmidecode で JDIMM2 空き・最大 16GB (8GB/枚)・現装着 4GB DDR3L-1600 (Hynix) を観測、購入はユーザー持ち越し (TODO 参照)。**mpv 常駐見直しは見送り** (idle RSS 48M で設計変更コストに見合わず)
