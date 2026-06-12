@@ -55,4 +55,16 @@ body=$(printf 'システムレポート %s\n%s\n%s' "$now" "$disk_line" "$mem_li
 body=$(printf '%s\n%s' "$body" "$apt_line")
 [[ -n "$reboot_line" ]] && body=$(printf '%s\n%s' "$body" "$reboot_line")
 
+# voice 異常の可視化 (voice-design.md v2.0 §1.5 (3))。集計元は say.sh が書く
+# voice/.state/last-result-YYYY-MM-DD (今日 + 昨日 ≈ 直近 24h、ファイル不在 = 0 件)。
+# padding skipped は exit 0 で bot /say 応答に乗らないためここが唯一の表面化経路。
+voice_state="${HOME}/companion/voice/.state"
+voice_files=("$voice_state/last-result-$today" "$voice_state/last-result-$(date -d yesterday '+%Y-%m-%d')")
+voice_fails=$(cat "${voice_files[@]}" 2>/dev/null | grep -c '^FAIL' || true)
+voice_pad=$(cat "${voice_files[@]}" 2>/dev/null | grep -c '^padding skipped' || true)
+voice_warn=""
+[[ "$voice_fails" -ge 3 ]] && voice_warn="voice FAIL: ${voice_fails} 件/24h"
+[[ "$voice_pad" -ge 5 ]] && voice_warn="${voice_warn:+$voice_warn / }voice padding skipped: ${voice_pad} 件/24h"
+[[ -n "$voice_warn" ]] && body=$(printf '%s\n%s' "$body" "$voice_warn")
+
 notify_send "$body" "$today"
