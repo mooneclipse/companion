@@ -33,6 +33,7 @@ import os
 import random
 import re
 import socket
+import sys
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -161,21 +162,28 @@ def news_items():
 # Cloudflare がブラウザ以外の UA を 403 で弾く（default urllib UA = 403 を実測。
 # memory: reference_mintupgrade_cloudflare と同系）ため、ブラウザ UA を明示する。
 #
-# 「製品・モデル発表のみ」要件 → カテゴリ Product だけ通す。資金調達/採用 (Announcements)・
-# オフィス開設・ポリシー等は弾く。launch が Product 以外のカテゴリで出た場合は拾えないので、
-# その時は ANTHROPIC_CATEGORIES を広げる（経緯は docs/STATUS.md に記録）。
+# 「製品・モデル発表のみ」要件 → カテゴリ Product は無条件で通す。さらに 2026-06 実測で
+# モデル発表 (claude-fable-5-mythos-5) が Announcements カテゴリで出る運用に変わった
+# (直近 10 件中 Product は 1 件のみ) ため、Announcements は slug に "claude" を含む
+# 記事だけ通す。Announcements 全通しは提携/資金調達/オフィス開設のノイズで要件を崩す
+# (経緯と判断根拠は docs/STATUS.md 2026-06-12)。
 ANTHROPIC_NEWS_URL = "https://www.anthropic.com/news"
 ANTHROPIC_ARTICLE_BASE = "https://www.anthropic.com/news/"
 # Cloudflare 回避用のブラウザ UA（companion-dashboard UA だと 403）。
 ANTHROPIC_UA = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
-ANTHROPIC_CATEGORIES = {"Product"}  # 通すカテゴリ。広げる時はここに追加（STATUS 参照）。
+ANTHROPIC_CATEGORIES = {"Product"}  # 無条件で通すカテゴリ。
+ANTHROPIC_ANNOUNCEMENTS_SLUG_KEY = "claude"  # Announcements はこの語を slug に含む時のみ通す。
 # index ブロックから拾う既知カテゴリ語（タイトルとカテゴリを区別するための語彙）。
 ANTHROPIC_KNOWN_CATEGORIES = {
     "Product", "Announcements", "Policy", "Societal Impacts",
     "Interpretability", "Research", "Company", "Alignment", "Education",
 }
 ANTHROPIC_MAX_TITLES = 3       # 1 朝に出す上限（通常 0〜1 件。多発時のフラッド防止）。
-ANTHROPIC_FETCH_TIMEOUT = 3.0  # index / 記事 1 本あたり。/quotes 全体の予算は notify 側参照。
+# index / 記事 1 本あたり。urllib の timeout は socket 1 op ごとの stall 検出で総 wall
+# 上限ではない。当初 3.0 は実測なしの値で、index (~390KB) の wall 実測 3.4〜13.0s の
+# この回線では read timeout が頻発し 2026-06-11/12 朝に無音失敗した。per-op 10.0 で確定
+# (2 周目合理化の判断根拠は docs/STATUS.md 2026-06-12)。/quotes 全体の予算は notify 側参照。
+ANTHROPIC_FETCH_TIMEOUT = 10.0
 ANTHROPIC_SEEN_CAP = 100       # state に保持する既出 slug 数（index 表示は ~11 件なので十分）。
 ANTHROPIC_STATE_FILE = os.path.join(DASH_DIR, ".state", "anthropic-news-state.json")
 
@@ -194,7 +202,10 @@ def _anthropic_index():
     """
     try:
         page = _anthropic_fetch_html(ANTHROPIC_NEWS_URL)
-    except (OSError, ValueError):
+    except (OSError, ValueError) as e:
+        # 表面化のみ (挙動分岐・retry はしない)。2026-06-11/12 に 2 朝連続で無音失敗し
+        # 事後診断不能だったため、失敗モードを journal に残す。
+        print(f"anthropic-news: index fetch failed: {e!r}", file=sys.stderr, flush=True)
         return []
     out = []
     seen = set()
@@ -211,6 +222,10 @@ def _anthropic_index():
                 category = t
                 break
         out.append((slug, category))
+    if not out:
+        # fetch は成功したのに記事リンクが 1 件も取れない = HTML 構造変化 or
+        # Cloudflare challenge ページの可能性。表面化のみ。
+        print("anthropic-news: index parse found 0 article links", file=sys.stderr, flush=True)
     return out
 
 
@@ -225,6 +240,15 @@ def _anthropic_title(slug):
         return None
     title = html.unescape(m.group(1)).strip()
     return title or None
+
+
+def _anthropic_passes(slug, category):
+    """「製品・モデル発表のみ」フィルタ。Product は無条件、Announcements は slug に
+    "claude" を含む記事のみ (モデル発表が Announcements で出る 2026-06 以降の運用に対応、
+    提携/資金調達等のノイズは弾く)。それ以外のカテゴリ / 不明 (None) は通さない。"""
+    if category in ANTHROPIC_CATEGORIES:
+        return True
+    return category == "Announcements" and ANTHROPIC_ANNOUNCEMENTS_SLUG_KEY in slug
 
 
 def _load_anthropic_state():
@@ -256,7 +280,8 @@ def _anthropic_new_titles(today_ymd):
       - 初回（seen 未保有）は現状の全 slug を seen に取り込むだけで何も出さない
         （初回デプロイ時に過去記事を一斉通知しないため）。
       - index fetch 失敗時は state を進めず [] を返す（次回起動で再試行。retry ループは作らない）。
-    new 判定は slug 差分（日付パース・TZ に依存しない）。新着のうち Product のみ og:title を引く。
+    new 判定は slug 差分（日付パース・TZ に依存しない）。新着のうち _anthropic_passes を
+    満たすもの（Product / Claude 系 Announcements）のみ og:title を引く。
     """
     state = _load_anthropic_state()
     if state.get("date") == today_ymd and isinstance(state.get("shown"), list):
@@ -270,7 +295,7 @@ def _anthropic_new_titles(today_ymd):
     titles = []
     if not first_run:
         for slug, category in index:
-            if slug in seen_set or category not in ANTHROPIC_CATEGORIES:
+            if slug in seen_set or not _anthropic_passes(slug, category):
                 continue
             t = _anthropic_title(slug)
             if t:

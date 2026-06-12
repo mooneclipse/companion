@@ -48,10 +48,16 @@ LAST_NOTIFY_FILE = os.path.join(STATE_DIR, "last-notify-date")
 # helper /quotes の fetch timeout（helper は in-memory cache なので 2 回目以降は即返。
 # 初回 build 時に Open-Meteo + NHK RSS + Anthropic news を直列 fetch するため、helper 側の
 # 最悪 timeout 合算を見て余裕を取る:
-#   weather 4.0 + news 3.0 + Anthropic index 3.0 (+ 新着があれば記事 og:title 3.0)
-#   = 通常 10.0 / 新着時 13.0 秒 + socket overhead。15.0 秒で吸収する。
-# （Anthropic fetch 追加に伴う 10.0→15.0 の初回サイズ調整。閾値の場当たり増やしではない）
-QUOTES_TIMEOUT = 15.0
+#   urllib の timeout は socket 1 op ごとの stall 検出で、fetch 総時間の上限ではない
+#   (この回線では index ~390KB の wall time 実測 3.4〜13.0s)。そこで式は timeout 合算
+#   でなく観測 wall worst で組む:
+#   weather 4 + news 3 + Anthropic index 13 + 記事 og:title 13 × 最大 3 件 ≒ worst 59 秒。
+#   余裕を含め 90.0 秒で吸収する (本 script は dashboard-start.sh から detach 起動の
+#   fire-and-forget で、遅延に依存する後続処理はない)。
+# （ANTHROPIC_FETCH_TIMEOUT 3.0→10.0 の実測ベース再確定に連動した再計算。今回は旧式が
+#   想定していなかった「新着 3 件」worst も式に含めた。2 度目の数値変更にあたるため、
+#   2 周目合理化の判断根拠を dashboard/docs/STATUS.md 2026-06-12 に記録済み）
+QUOTES_TIMEOUT = 90.0
 
 BOT_SOCK = os.path.join(
     os.environ.get("XDG_RUNTIME_DIR") or ("/run/user/%d" % os.getuid()),
