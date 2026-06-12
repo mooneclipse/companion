@@ -2,7 +2,7 @@
 """companion-remote RV-10 事前ダウンロードキュー (F-dl) — データ層 + DL worker。
 
 外出先から URL をキュー投入 → 自宅機で yt-dlp が 720p 上限でローカル保存 →
-PWA の DL 済みリストから loadfile でローカル即再生 (yt-dlp 解決 40〜70s が消える)。
+PWA の DL 済みリストから loadfile でローカル即再生 (yt-dlp 解決待ちと再生中のネットワーク依存が消える)。
 設計: ~/companion/workspace/redesign/dlqueue-design.md v1.1。
 
 設計契約 (破ると壊れる一線):

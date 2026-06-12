@@ -128,7 +128,7 @@ def _derive(v):
 
     - idle-active=True → idle(ファイル無し)
     - time-pos が数値 → 再生開始済 → pause で playing/paused 分岐
-    - どちらでもない(loadfile 後 time-pos=None)→ resolving(yt-dlp 解決中, 40〜70s)
+    - どちらでもない(loadfile 後 time-pos=None)→ resolving(yt-dlp 解決中, 通常10s前後)
     is_live: 再生中に **seek 不可** なら live。当初の duration=None 前提(§7 LIVE-1)は
     V-A3 実測(2026-05-20)で外れた — YouTube live は DVR バッファ長を有限 duration で返す
     (46→104s と伸びる)。実測では live=seekable False / partially-seekable False、

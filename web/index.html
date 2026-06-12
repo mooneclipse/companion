@@ -69,7 +69,7 @@
            未実装の vault閲覧 / done履歴 は「押せないものは出さない」方針で今は出さない。 -->
       <div class="grid" id="tile-grid">
         <button class="tile" type="button" data-open="video">
-          <span class="t-mark">▶ 01</span><span class="t-name">動画</span><span class="t-sub">再生・シーク・音量</span>
+          <span class="t-mark">▶ 01</span><span class="t-name">動画</span><span class="t-sub">URL再生・事前DL</span>
         </button>
         <button class="tile" type="button" data-open="speak">
           <span class="t-mark">~ 02</span><span class="t-name">発話</span><span class="t-sub">テキストを喋らせる</span>
@@ -100,7 +100,9 @@
         <div class="kicker">Video Player</div>
         <h1 class="h1">動画</h1>
 
-        <!-- idle: URL 投入。close≠stop ゆえ再生中でも「閉じる」でこの view に戻れる(TV 継続) -->
+        <!-- idle: URL 投入。close≠stop ゆえ再生中でも「閉じる」でこの view に戻れる(TV 継続)。
+             URL 欄は 1 本で「再生」(今すぐ TV) と「あとでDL」(事前DLキュー投入) に分岐。
+             仕様: remote/docs/video-ui.md -->
         <div id="video-idle">
           <!-- 「閉じる」で transport を畳んだが TV 再生継続中のとき、操作へ戻る導線 -->
           <button id="video-reopen" type="button" class="btn secondary" hidden>操作に戻る</button>
@@ -108,21 +110,22 @@
           <div class="card">
             <div class="ctitle">動画を再生</div>
             <label class="fld" for="video-url">URL</label>
-            <textarea id="video-url" rows="2" maxlength="2000" placeholder="YouTube の URL"></textarea>
+            <textarea id="video-url" rows="2" maxlength="2000" placeholder="YouTube / ニコニコ / TVer の URL"></textarea>
             <div class="row mt">
               <button id="video-play" type="button" class="btn">再生</button>
+              <button id="dl-add" type="button" class="btn secondary">あとでDL</button>
               <button id="video-clear" type="button" class="btn secondary">クリア</button>
             </div>
-            <p id="video-play-err" class="result" role="status"></p>
+            <p id="video-msg" class="result" role="status"></p>
           </div>
         </div>
 
-        <!-- resolving: yt-dlp 解決中(40〜70秒)。経過秒 + 目安 + キャンセル -->
+        <!-- resolving: yt-dlp 解決中(通常10秒前後、2026-06-12 実測)。経過秒 + 目安 + キャンセル -->
         <div id="video-resolving" hidden>
           <div class="card">
             <p class="resolving"><span class="spinner" aria-hidden="true"></span>
               <span id="video-resolve-text">読み込み中…</span></p>
-            <p class="note" id="video-resolve-note">読み込みに最大1分ほどかかります</p>
+            <p class="note" id="video-resolve-note">読み込みには10秒ほどかかります</p>
             <button id="video-cancel" type="button" class="btn secondary mt">キャンセル</button>
           </div>
         </div>
@@ -160,17 +163,15 @@
           </div>
         </div>
 
-        <!-- 事前DL(RV-10): 外出先で投入 → 帰宅後ローカル即再生。主要動線(即時再生)の従なので
-             todo の完了履歴と同型の折りたたみ同居(別タイルにしない)。idle/transport と独立に表示 -->
+        <!-- 事前DLリスト(RV-10): 投入は上の URL 欄「あとでDL」に一本化、ここは一覧と再生/削除のみ。
+             主要動線(即時再生)の従なので todo の完了履歴と同型の折りたたみ同居(別タイルにしない)。
+             idle/transport と独立に表示 -->
         <div class="card">
           <button id="dl-toggle" type="button" class="todo-history-toggle" aria-expanded="false" aria-controls="dl-body">
-            <span class="ctitle">事前DL</span>
+            <span class="ctitle">事前DLリスト</span>
             <span id="dl-caret" class="todo-history-caret" aria-hidden="true">▸</span>
           </button>
           <div id="dl-body" hidden>
-            <label class="fld" for="dl-url">URL</label>
-            <textarea id="dl-url" rows="2" maxlength="2000" placeholder="あとで観る動画の URL"></textarea>
-            <button id="dl-add" type="button" class="btn mt">DLに追加</button>
             <p id="dl-result" class="result" role="status"></p>
             <ul id="dl-list"></ul>
             <p id="dl-usage" class="note"></p>

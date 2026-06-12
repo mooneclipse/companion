@@ -135,7 +135,7 @@ def api_video_play(handler):
     """POST /api/video/play {url} — urlguard で normalize → loadfile replace。Bearer 必須。
 
     url は §4.1 allowlist(唯一の外向き境界)を通ったものだけが mpv へ届く。即 200 で返し、
-    yt-dlp 解決(40〜70s)は mpv 内で非同期進行(PWA は GET /api/video/state でポーリング)。
+    yt-dlp 解決(通常10s前後)は mpv 内で非同期進行(PWA は GET /api/video/state でポーリング)。
     """
     data, err = _read_json(handler)
     if err:
@@ -219,13 +219,14 @@ def api_video_play_local(handler):
 def api_dl_add(handler):
     """POST /api/dl {url} — 事前 DL キューへ投入。Bearer 必須。
 
-    url は urlguard.normalize (§4.1 allowlist = F-video play と同一の門) を通った
-    ものだけが queue に入る。容量上限 (20 GiB) は 507 に写像 (dlqueue-design §3.3)。
+    url は urlguard.normalize_dl (§4.1 allowlist から streaming 専用 host = TVer を
+    除外した DL の門) を通ったものだけが queue に入る。容量上限 (20 GiB) は 507 に
+    写像 (dlqueue-design §3.3)。
     """
     data, err = _read_json(handler)
     if err:
         return err
-    url = urlguard.normalize(data.get("url"))
+    url = urlguard.normalize_dl(data.get("url"))
     if url is None:
         return 400, {"error": "url rejected"}
     try:

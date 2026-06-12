@@ -168,7 +168,7 @@ async function sendSay() {
 }
 
 // ===== F-video（動画プレイヤー） =====
-// 状態機械: IDLE → RESOLVING(40〜70s) → PLAYING ⇄ PAUSED / ERROR。
+// 状態機械: IDLE → RESOLVING(通常10s前後、vendored hook + force-ipv4 後の実測) → PLAYING ⇄ PAUSED / ERROR。
 // transport の真実は mpv（GET /api/video/state ポーリング）、PWA はその写像。
 // サーバ stateless ゆえ resolve 開始時刻と直前 URL は localStorage の表示ヒントで持つ
 // （token とは分離、§5.4）。close ≠ stop: 「閉じる」は可逆(TV 継続)、「停止」は不可逆。
@@ -256,7 +256,7 @@ function renderResolving() {
   $("video-resolve-note").textContent =
     el != null && el > 90
       ? "通常より時間がかかっています。少し待つかキャンセルしてください"
-      : "読み込みに最大1分ほどかかります";
+      : "読み込みには10秒ほどかかります";
 }
 
 function renderTransport() {
@@ -336,7 +336,7 @@ async function pollVideo() {
 
 async function playVideo() {
   const url = $("video-url").value.trim();
-  const err = $("video-play-err");
+  const err = $("video-msg");
   if (!url) { err.textContent = "URL を入力してください"; return; }
   // 楽観的遷移: タップ即 RESOLVING（§5.2）。新規投入なので失敗フラグをリセットし attempt 開始。
   localStorage.setItem(V_LASTURL_KEY, url);
@@ -357,11 +357,11 @@ async function playVideo() {
       body: JSON.stringify({ url }),
     });
     if (!r.ok) {
-      // 投入そのものが弾かれた（attempt は離陸せず）。失敗文言は #video-play-err 側で出す。
+      // 投入そのものが弾かれた（attempt は離陸せず）。失敗文言は #video-msg 側で出す。
       vClearResolveAt();
       vAttemptActive = false;
       vState = { phase: "idle" };
-      if (r.status === 400) err.textContent = "受け付けない URL です（YouTube のみ対応）";
+      if (r.status === 400) err.textContent = "受け付けない URL です（YouTube / ニコニコ / TVer に対応）";
       else if (r.status === 503) err.textContent = "動画プレイヤーに接続できません";
       else err.textContent = "再生開始に失敗しました";
       renderVideo();
@@ -459,7 +459,7 @@ function videoClear() {
   const ended = $("video-ended");
   ended.hidden = true;
   ended.textContent = "";
-  $("video-play-err").textContent = "";
+  $("video-msg").textContent = "";
   vFailedLoad = false;
   localStorage.removeItem(V_LASTURL_KEY);
 }
@@ -494,7 +494,9 @@ function initVideo() {
 
 // ===== 事前DL（RV-10、F-dl） =====
 // 外出先から URL をキュー投入 → 自宅機の yt-dlp がローカル保存 → 帰宅後に play_local で
-// 即再生（yt-dlp 解決 40〜70s が消える）。状態の真実はサーバの .state/dlqueue.json。
+// 即再生（yt-dlp 解決待ちと再生中のネットワーク依存が消える）。TVer は期限付き見逃し
+// 配信のため DL 対象外（サーバ側 normalize_dl が 400 で弾く、RV-11 判断）。
+// 状態の真実はサーバの .state/dlqueue.json。
 // 取得はセクションを開いた時 + 開いている間のみ 15s ポーリング（todo と同周期、§6）。
 const DL_ST_MARK = { queued: "待機中", downloading: "DL中", done: "済", failed: "失敗" };
 
@@ -589,8 +591,10 @@ async function refreshDl() {
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
 }
 
-async function addDlUrl(url) {
-  const out = $("dl-result");
+// out = 結果文言の出力先。idle カードの「あとでDL」は #video-msg、リスト内「再試行」は #dl-result
+// （押した場所の近くに出す。折りたたみが閉じていても見える）。
+async function addDlUrl(url, out) {
+  out = out || $("dl-result");
   try {
     const r = await api("/api/dl", {
       method: "POST",
@@ -599,12 +603,11 @@ async function addDlUrl(url) {
     });
     if (r.ok) {
       const t = await r.json();
-      out.textContent = "キューに追加しました（完了は Telegram に通知）";
-      $("dl-url").value = "";
+      out.textContent = "DLキューに追加しました（完了は Telegram に通知）";
       await refreshDl();
       return t;
     }
-    if (r.status === 400) out.textContent = "受け付けない URL です（YouTube / ニコニコのみ対応）";
+    if (r.status === 400) out.textContent = "受け付けない URL です（事前DLは YouTube / ニコニコのみ。TVer は不可）";
     else if (r.status === 507) out.textContent = "保存容量が上限です。済みの動画を削除してください";
     else out.textContent = "追加に失敗しました";
   } catch (e) {
@@ -613,12 +616,21 @@ async function addDlUrl(url) {
   return null;
 }
 
+// 「あとでDL」: URL 欄(再生と共用)からキュー投入。成功したら欄を空にしリストを開いて見せる。
 async function addDl() {
-  const url = $("dl-url").value.trim();
-  if (!url) { $("dl-result").textContent = "URL を入力してください"; return; }
+  const out = $("video-msg");
+  const url = $("video-url").value.trim();
+  if (!url) { out.textContent = "URL を入力してください"; return; }
   const btn = $("dl-add");
   btn.disabled = true;
-  try { await addDlUrl(url); } finally { btn.disabled = false; }
+  try {
+    const t = await addDlUrl(url, out);
+    if (t) {
+      $("video-url").value = "";
+      localStorage.removeItem(V_LASTURL_KEY);
+      if (!dlOpen()) toggleDl();
+    }
+  } finally { btn.disabled = false; }
 }
 
 async function deleteDl(t) {

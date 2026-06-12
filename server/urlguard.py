@@ -13,13 +13,18 @@ companion/bot/bot.py `_normalize_play_url` / `PLAY_ALLOWED_HOSTS`
 ロジック・allowlist を変えたら両 repo の test(canonical ベクタ)を必ず再走させること。
 
 canonical 攻撃ベクタ(video-design §4.1):
-- 拒否: userinfo 詐称(evil@youtube.com / youtube.com@evil.com / evil@nicovideo.jp) /
-        空白・制御文字 / file://・ftp:// 等 http(s) 以外 / 169.254.169.254 等 SSRF 起点 /
-        suffix 偽装(youtube.com.evil.com / nicovideo.jp.evil.com / nico.ms.evil.com) /
+- 拒否: userinfo 詐称(evil@youtube.com / youtube.com@evil.com / evil@nicovideo.jp /
+        evil@tver.jp) / 空白・制御文字 / file://・ftp:// 等 http(s) 以外 /
+        169.254.169.254 等 SSRF 起点 / suffix 偽装(youtube.com.evil.com /
+        nicovideo.jp.evil.com / nico.ms.evil.com / tver.jp.evil.com) /
         非 allowlist host(notyoutube.com) / 非 allowlist サブドメイン(embed.nicovideo.jp)
 - 受理: www.youtube.com/watch / youtu.be/<id> / music.youtube.com / m.youtube.com /
         www.youtube.com/live/<id> / (www|sp).nicovideo.jp/watch / nicovideo.jp/watch /
-        nico.ms/<id>  ← hostname 照合のみ、path で分岐しない(攻撃面を増やさない)
+        nico.ms/<id> / tver.jp/episodes/<id> / www.tver.jp/episodes/<id>
+        ← hostname 照合のみ、path で分岐しない(攻撃面を増やさない)
+- DL の門(normalize_dl): 再生 allowlist のうち STREAM_ONLY_HOSTS(TVer)を除外。
+  TVer は期限付き見逃し配信でローカル保存は期限・権利の両面を迂回するため、
+  事前 DL(RV-10)には流さない(RV-11 判断 2026-06-12)。
 """
 from urllib.parse import urlparse
 
@@ -35,6 +40,17 @@ ALLOWED_HOSTS = frozenset({
     "www.nicovideo.jp",
     "sp.nicovideo.jp",
     "nico.ms",
+    # TVer (2026-06-12 追加 = RV-11。yt-dlp 2026.03.17 TVerIE で実エピソード 3 本
+    # [3 系列局] を -J 解決検証済: DRM 0 / HLS m3u8_native / 無ログイン)。
+    "tver.jp",
+    "www.tver.jp",
+})
+
+# 再生(ストリーミング)のみ許可し事前 DL(/api/dl)には流さない host。
+# TVer は期限付き見逃し配信のためローカル保存しない(RV-11 判断 2026-06-12)。
+STREAM_ONLY_HOSTS = frozenset({
+    "tver.jp",
+    "www.tver.jp",
 })
 
 
@@ -59,3 +75,13 @@ def normalize(url):
     if host not in ALLOWED_HOSTS:
         return None
     return parsed.geturl()
+
+
+def normalize_dl(url):
+    """事前 DL(/api/dl)の門。再生 allowlist から STREAM_ONLY_HOSTS を除外して判定。"""
+    ok = normalize(url)
+    if ok is None:
+        return None
+    if (urlparse(ok).hostname or "").lower() in STREAM_ONLY_HOSTS:
+        return None
+    return ok

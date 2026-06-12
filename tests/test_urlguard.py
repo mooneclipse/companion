@@ -29,6 +29,8 @@ class TestUrlguard(unittest.TestCase):
         "https://nico.ms/sm9",                    # ニコニコ短縮 URL
         "https://sp.nicovideo.jp/watch/sm9",      # ニコニコ SP 版
         "https://nicovideo.jp/watch/sm9",         # ニコニコ www なし
+        "https://tver.jp/episodes/epi38mzxdc",    # TVer (2026-06-12 追加 = RV-11)
+        "https://www.tver.jp/episodes/epi38mzxdc",  # TVer www あり
     ]
     # video-design §4.1 拒否ベクタ
     REJECT = [
@@ -45,6 +47,8 @@ class TestUrlguard(unittest.TestCase):
         "https://nicovideo.jp.evil.com/watch/sm9",  # suffix 偽装(ニコニコ版)
         "https://nico.ms.evil.com/sm9",             # suffix 偽装(nico.ms 版)
         "https://embed.nicovideo.jp/watch/sm9",     # 非 allowlist サブドメイン
+        "https://evil@tver.jp/episodes/x",          # userinfo 詐称(TVer 版)
+        "https://tver.jp.evil.com/episodes/x",      # suffix 偽装(TVer 版)
         "",                                          # 空
         "not a url",                                 # 空白含む非 URL
     ]
@@ -62,6 +66,17 @@ class TestUrlguard(unittest.TestCase):
     def test_non_string(self):
         self.assertIsNone(urlguard.normalize(None))
         self.assertIsNone(urlguard.normalize(123))
+
+    def test_dl_rejects_stream_only(self):
+        # 事前 DL の門: TVer は再生 OK でも DL は不可(RV-11 判断、期限付き見逃し配信)。
+        self.assertIsNone(urlguard.normalize_dl("https://tver.jp/episodes/epi38mzxdc"))
+        self.assertIsNone(urlguard.normalize_dl("https://www.tver.jp/episodes/epi38mzxdc"))
+
+    def test_dl_accepts_downloadable(self):
+        # YouTube / ニコニコは従来どおり DL 可。非 allowlist は normalize と同様に拒否。
+        self.assertIsNotNone(urlguard.normalize_dl("https://www.youtube.com/watch?v=abc123"))
+        self.assertIsNotNone(urlguard.normalize_dl("https://www.nicovideo.jp/watch/sm9"))
+        self.assertIsNone(urlguard.normalize_dl("https://notyoutube.com/watch?v=x"))
 
 
 class TestVideoDerive(unittest.TestCase):
