@@ -15,7 +15,8 @@
 #   2. 現在時刻が発火時間帯 (PROACTIVE_HOUR_START〜END JST) 内か
 #   3. snooze 中でないか (state file の snooze_until)
 #   4. 全 topic session の max(last_prompt_at) から沈黙閾値 (PROACTIVE_SILENCE_HOURS) 超か
-#   5. 同 JST 日に既発でないか (state file の last_proactive_date、1 日 1 回上限)
+#   5. 同 JST 日の発火回数が上限未満か (state file の last_proactive_date +
+#      proactive_count、1 日 PROACTIVE_DAILY_MAX 回上限)
 #   6. 種があるか (直近 topic session の存在 + 任意で当日 vault 追記)。種ゼロなら発火しない
 #   7. 確率パス (PROACTIVE_PROBABILITY) を通ったか
 
@@ -32,8 +33,9 @@ VAULT_NOTES_DIR="${HOME}/companion/vault/notes"
 PROACTIVE_ENABLED="${PROACTIVE_ENABLED:-1}"
 PROACTIVE_HOUR_START="${PROACTIVE_HOUR_START:-9}"     # JST、この時刻以上で発火可
 PROACTIVE_HOUR_END="${PROACTIVE_HOUR_END:-22}"        # JST、この時刻未満で発火可 (22:00 ちょうどは除外)
-PROACTIVE_SILENCE_HOURS="${PROACTIVE_SILENCE_HOURS:-6}"
-PROACTIVE_PROBABILITY="${PROACTIVE_PROBABILITY:-0.4}" # 0.0〜1.0、種ありかつ条件成立時に発火する確率
+PROACTIVE_SILENCE_HOURS="${PROACTIVE_SILENCE_HOURS:-4}"
+PROACTIVE_PROBABILITY="${PROACTIVE_PROBABILITY:-0.7}" # 0.0〜1.0、種ありかつ条件成立時に発火する確率
+PROACTIVE_DAILY_MAX="${PROACTIVE_DAILY_MAX:-2}"       # 同 JST 日の発火回数上限
 
 mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$OUR_LOG")"
 
@@ -41,7 +43,8 @@ log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$OUR_LOG"
 }
 
-# state file は単純な key=value 行 (snooze_until=<epoch> / last_proactive_date=<YYYY-MM-DD>)。
+# state file は単純な key=value 行 (snooze_until=<epoch> /
+# last_proactive_date=<YYYY-MM-DD> / proactive_count=<その日の発火回数>)。
 # 無ければ空扱い。
 state_get() {
     local key="$1"
@@ -115,10 +118,17 @@ fi
 # この値は prompt の文脈足し専用。
 silence_hours=$(( (now_epoch - max_last_prompt_epoch) / 3600 ))
 
-# --- 5. 1 日 1 回上限 (JST 日付単位) ----------------------------------------------
+# --- 5. 1 日上限 (JST 日付単位、PROACTIVE_DAILY_MAX 回) ----------------------------
 last_proactive_date=$(state_get last_proactive_date)
+proactive_count=$(state_get proactive_count)
+today_count=0
 if [[ "$last_proactive_date" == "$today_jst" ]]; then
-    log "skip: already fired today ($today_jst)"
+    # 後方互換: 旧形式 state (proactive_count なし) は「本日 1 回発火済み」の
+    # 意味だったので count=1 とみなす (安全側)。
+    today_count="${proactive_count:-1}"
+fi
+if (( today_count >= PROACTIVE_DAILY_MAX )); then
+    log "skip: already fired ${today_count}x today ($today_jst, max=$PROACTIVE_DAILY_MAX)"
     exit 0
 fi
 
@@ -174,14 +184,16 @@ print(json.dumps(obj, ensure_ascii=False))
 message=$(printf '[[proactive-v1]]\n%s' "$payload")
 
 if printf '%s' "$message" | nc -U -N "$SOCK"; then
-    # last_proactive_date を today に更新 = 「本日 1 回依頼を出した」を state で確定。
-    # 依頼の handoff 成功 (socket 書き込み成功) を以て 1 日分を消費する。bot 側で
-    # guard 拒否 / claude 失敗だった場合も script からは再試行しない (場当たり
-    # リトライ禁止、2 周目ルール)。bot 側の成否は bot 側 ledger / log に残る。
+    # last_proactive_date=today + proactive_count を +1 = 「本日の 1 回分を消費」を
+    # state で確定 (日付が変わっていれば count=1 から数え直し)。依頼の handoff 成功
+    # (socket 書き込み成功) を以て消費する。bot 側で guard 拒否 / claude 失敗だった
+    # 場合も script からは再試行しない (場当たりリトライ禁止、2 周目ルール)。
+    # bot 側の成否は bot 側 ledger / log に残る。
     # snooze_until は保持する (依頼が通っても snooze 設定は消さない)。
     tmp=$(mktemp "${STATE_FILE}.XXXXXX")
     [[ -n "$snooze_until" ]] && printf 'snooze_until=%s\n' "$snooze_until" >> "$tmp"
     printf 'last_proactive_date=%s\n' "$today_jst" >> "$tmp"
+    printf 'proactive_count=%s\n' "$(( today_count + 1 ))" >> "$tmp"
     mv "$tmp" "$STATE_FILE"
     log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', silence_hours=$silence_hours, roll=$roll)"
 else
