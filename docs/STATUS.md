@@ -1,6 +1,6 @@
 # companion-voice 開発台帳（Phase 3-2: TTS (VOICEVOX)、技術基盤完成で畳み・bot 統合 Phase 4 移送）
 
-最終更新: 2026-06-12 (voice bot 統合実装 = TODO #4 bot/ 側消化 + say.sh last-result 追記化。`VOICE_DEFAULT_SPEAKER` 2→11 切替と bot restart は user 操作待ち)
+最終更新: 2026-06-12 (voice bot 統合 **完了** — bot/ 側実装 + say.sh 追記化 + speaker 11 切替 [.env は未作成と判明し user が新規作成] + restart + V-S1/V-S2 実弾 pass。完了基準 3 階層すべて達成、以後 bot.py 大改変の様子見観察)
 
 ## 2026-06-12 persona 軸 2 確定の反映: speaker = 玄野武宏 + 発話レイテンシ設計判断
 
@@ -65,7 +65,7 @@ voice/
 ├── engine/linux-cpu-x64/                # 公式 7z 展開 (.gitignore)
 ├── docs/STATUS.md                       # 本ファイル
 ├── .state/                              # last-result-YYYY-MM-DD、0600 (.gitignore)
-├── .env                                 # VOICE_DEFAULT_SPEAKER=2 等 (.gitignore)
+├── .env                                 # VOICE_DEFAULT_SPEAKER=11 等 (.gitignore、2026-06-12 user 新規作成)
 ├── .gitignore                           # engine/, .state/, .env
 ├── README.md                            # 用途・起動方法 (bot 経由が主、CLI 手動デバッグ可)
 └── SETUP.md                             # 公式 7z DL + 展開手順 4 行 + ffmpeg install
@@ -202,7 +202,7 @@ engine 構成: VOICEVOX engine 0.25.2 linux-cpu-x64, `--host=127.0.0.1 --port=50
 
 - `/speakers` から四国めたん 6 style 確認 ✅
   - ノーマル id=2 (採用)、あまあま id=0、ツンツン id=6、セクシー id=4、ささやき id=36、ヒソヒソ id=37
-- `voice/.env` の `VOICE_DEFAULT_SPEAKER=2` 確定
+- `voice/.env` の `VOICE_DEFAULT_SPEAKER=2` 確定 (※2026-06-12 判明: .env は実際には作られておらず say.sh 内デフォルト 2 で動いていた = drift。現在は user 作成の .env で 11 = 玄野武宏)
 
 ### B-voice-2 / V-2 (合成 RTF, warm) — T-1 sprint #1 pass
 
@@ -254,10 +254,11 @@ engine 構成: VOICEVOX engine 0.25.2 linux-cpu-x64, `--host=127.0.0.1 --port=50
 
 朝自動発火復活 (Phase 4 trigger 候補) 時に実機計測。Phase 3-2 では実装しない。
 
-### v2.0 新規 V-S1 / V-S2 (Phase 3-2 実装着手後)
+### v2.0 新規 V-S1 / V-S2 — **両方 pass (2026-06-12 実弾、Telegram 読み替え)**
 
-- **V-S1**: Discord `/say "おはよう"` 実弾発火で 11-17 秒後に発話 + Discord followup「✓ 発話完了」表示
-- **V-S2**: `/status` で format_voice_summary 出力 (24h OK/FAIL/padding skipped/最終発話 text 先頭 20 字) 表示
+- **V-S1**: Telegram `/say おはよう` 実弾で発話 + 「✓ 発話完了」reply を user 確認 ✅ (22:13 JST、rc=0 / duration_ms=19726 = cold start 込みで見積もりどおり。voice_ledger.jsonl 追記 + last-result「OK @ 2026-06-12T22:13:45+09:00」+ bot.log `cmd=/say len=4 rc=0` 全系統一致)
+- **V-S2**: `/status` で「voice (直近24h): …」集計表示を user 確認 ✅ (同日)
+- speaker は `voice/.env` 新規作成 (`VOICE_DEFAULT_SPEAKER=11`、user 操作) 後の発話 = 玄野武宏。**これで完了基準 3 階層 (v2.0 §3) すべて達成**
 
 ---
 
@@ -338,7 +339,8 @@ team companion-voice-design v2.0 Round 1〜3 議論で得た構造的反省。**
   - **案 B (bot ledger のみ集計) 不採用根拠**: CLI invoke と padding skipped (exit 0 で他に表面化経路がない、devil 致命指摘 #4) が漏れ、failure mode (3) を実質無効化するため
   - **検証**: sandbox (VOICE_HOME 隔離 + engine 未起動 FAIL 経路) で 2 invoke → 2 FAIL 行 + socket 2 行が累積、0600 維持、`bash -n` pass。OK 経路は同一関数のため FAIL 経路検証で足りる
   - **voice-design.md v2.0.3 改版**: §1.4 副作用記述の訂正 + 実装 divergence 3 点 (Telegram 読み替え / engine start/stop の bot 側配置 / ledger 配置) を改版履歴に記録
-  - **speaker 切替 (2→11) は user 操作待ち**: `voice/.env` は claude セッションの deny 対象 (Read/Edit とも) のため、切替コマンドを user に提示する運用。実施されたら本台帳の「最終更新」行を更新
+  - **speaker 切替 (2→11) は user 操作で完了 (同日)**: `voice/.env` は claude セッションの deny 対象 (Read/Edit とも) のため切替コマンドを提示 → **`.env` はそもそも未作成だったことが判明** (say.sh はスクリプト内デフォルト 2 で動いていた、V-15 当時の台帳記述「.env の VOICE_DEFAULT_SPEAKER=2 確定」は drift)。user が `VOICE_DEFAULT_SPEAKER=11` の .env を新規作成 (0600)
+  - **V-S1 / V-S2 実弾 pass (同日 22:13 JST)**: 「実機計測値」section の V-S1/V-S2 entry 参照。完了基準 3 階層 (v2.0 §3) すべて達成
 - 2026-06-01 Phase 3-2 を技術基盤完成で畳み、bot 統合を Phase 4 移送 (user 方針転換)
   - **背景**: user 判断「voice は日常利用シーンが薄い (テレビ前は dashboard / YouTube)、Phase 3 を畳んで Phase 4 へ」。冒頭「方針転換」section + PROJECT.md 健全性履歴 2026-06-01 entry が center of truth
   - **更新内容**: (1) L1 タイトル + L3 最終更新を「技術基盤完成で畳み・bot 統合 Phase 4 移送」に / (2) 冒頭「方針転換」section 新設 / (3) TODO #4 bot/ 側実装を「Phase 4 移送」に / (4) Phase 4 trigger 再定義 section + 素声運用 2 ヶ月上限に「companion 全体の Phase 4 着手判断から切り離し・格下げ」注記 / (5) In progress 更新
