@@ -50,7 +50,7 @@ FAIL 時 user 介入経路 (T-1 sprint で pass 済のため将来 engine versio
 | 音量制御 | dashboard 並行時のみ mpv IPC ducking 検討 (Phase 4 で再評価、Phase 3-2 では実装しない) |
 | engine 起動 | **on-demand 都度起動** (say.sh が `systemctl --user start companion-voice-engine.service` を蹴る + `/version` polling、合成完了後 stop)、常駐化は Phase 4 trigger (§4) |
 | 第一声まで | **cold start 11-17 秒** (T-1 sprint #2 V-1 実測、drift 6 件目、推定 33-65 秒の 1/3 以下) |
-| cold start UX | **案 W-silent**: `defer(thinking=True)` のみ、ephemeral 中間メッセージ追加なし。Discord「考え中…」インジケータで 11-17 秒吸収、60s `wait_for` timeout で「壊れた状態」回避 |
+| cold start UX | **案 W-silent**: `defer(thinking=True)` のみ、ephemeral 中間メッセージ追加なし。Discord「考え中…」インジケータで 11-17 秒吸収、90s `wait_for` timeout (M-8 修正済 §1.4) で「壊れた状態」回避 |
 | 朝自動発火 | **Phase 3-2 punt** (Phase 4 trigger: TV 状態取得手段の代替が決まったとき、persona/ 着手と一体評価) |
 
 ### 1.4 consumer API (say.sh CLI)
@@ -140,7 +140,7 @@ bot/
 ├── bot.py                    # cmd_status に format_voice_summary() append、voice_command import + slash registration (1 行 + 1 ブロックのみ)
 ├── voice_command.py          # 新規 (devil 致命指摘 #3 採用、Phase 2.5 T-B/T-D 責務分解パターン継承)
 │                             # async def cmd_say(text: str) -> tuple[int, str]:
-│                             #     asyncio.create_subprocess_exec(SAY_SH, text) + wait_for(60s) + zombie 回収
+│                             #     asyncio.create_subprocess_exec(SAY_SH, text) + wait_for(90s、M-8 修正済 §1.4) + zombie 回収
 │                             #     /play cmd_play パターン継承、claude_lock 外で交錯なし
 ├── voice_status.py           # 新規 (Phase 4 punt 撤回、failure mode (4))
 │                             # def format_voice_summary() -> str:
@@ -216,10 +216,11 @@ async def cmd_say(text: str) -> tuple[int, str]:
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60.0)
+        # 2026-05-20 軸 5 M-8 で 60s → 90s に修正済 (§1.4 参照)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90.0)
     except asyncio.TimeoutError:
         proc.kill(); await proc.wait()
-        return 99, "[voice] TIMEOUT (60s)"
+        return 99, "[voice] TIMEOUT (90s)"
     return proc.returncode, _format_say_result(proc.returncode, stderr)
 
 def _format_say_result(rc: int, stderr: bytes) -> str:
@@ -234,13 +235,13 @@ def _format_say_result(rc: int, stderr: bytes) -> str:
 import voice_command  # ← 1 行追加
 
 @client.tree.command(name="say")
-@app_commands.describe(text="読み上げるテキスト (最大 200 字、超過時は ephemeral 警告)")
+@app_commands.describe(text="読み上げるテキスト (最大 100 字、超過時は ephemeral 警告)")  # 2026-05-20 軸 5 M-8 で 200 → 100 字に修正済 (§1.4 参照)
 async def slash_say(interaction: discord.Interaction, text: str):
     if interaction.user.id != OWNER_ID:
         await interaction.response.send_message("not authorized", ephemeral=True); return
-    if len(text) > 200:
+    if len(text) > 100:
         await interaction.response.send_message(
-            f"text 長すぎ ({len(text)}/200 字)、200 字以内にしてください", ephemeral=True
+            f"text 長すぎ ({len(text)}/100 字)、100 字以内にしてください", ephemeral=True
         ); return
     await interaction.response.defer(thinking=True)  # 案 W-silent、ephemeral 追加なし
     rc, msg = await voice_command.cmd_say(text)
