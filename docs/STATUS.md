@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち) / 2026-06-11 (persona 口調を system prompt 配線 + 自発発話の蒸し返し抑止 + silence_hours 展開、restart は user 操作待ち)
+最終更新: 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち) / 2026-06-11 (persona 口調を system prompt 配線 + 自発発話の蒸し返し抑止 + silence_hours 展開、restart は user 操作待ち)
 
 ## 設計メモ
 
@@ -34,7 +34,7 @@ bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/wo
 
 - ~~**C-1**: Step 1 閲覧自由化~~ → **2026-06-10 完了、Done 転記済み** (実弾検証 3 件 pass、消費観察起点 = 2026-06-10)。
 - ~~**C-2**: Step 2 bot.py 小改変パック #1 — 画像応答 + permission_denials 記録~~ → **2026-06-10 完了、Done 転記済み** (restart + 実弾検証 2 件 pass、数日の様子見のみ継続)。
-- **C-3 (消費観察 1〜2 週間後 = 2026-06-17〜24 目処)**: Step 3 予算計器 — ソフト警告 50%/80% + /quota 着地予測 + /status セッション肥大可視化。
+- **C-3 (消費観察 1〜2 週間後 = 2026-06-17〜24 目処)**: Step 3 予算計器 — 課金窓アンカー集計 (3-0 新設、`BOT_CREDIT_ANCHOR_DAY`、正確な課金更新日は OWNER 確認待ち) + ソフト警告 50%/80% + /quota 窓終端着地予測 + /status セッション肥大可視化 + /quota に `claude -p "/usage"` 公式利用率併記 (headless $0 実機確認済み 2026-06-12)。暦月→課金窓への引き直しと 6/15 制度開始後の再検証項目は ticket #16 議論 (2026-06-12) でプラン改訂済み。
 - **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 → 死蔵知識 proactive 拡張の優先順。
 
 (`/vault_push` 実装は下記「Done」セクションに転記済)
