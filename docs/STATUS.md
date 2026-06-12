@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-12 (voice bot 統合 **完了** = Phase 4、/say + /status voice 集計 + voice_ledger。restart + speaker 11 + V-S1/V-S2 実弾 pass 済み、以後この bot.py 大改変への様子見観察) / 2026-06-12 (テストログの本番 bot.log 混入を修正 = logger 冪等化、bot.py 変更は挙動不変で次回 restart 反映) / 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
+最終更新: 2026-06-12 (PLAY_ALLOWED_HOSTS に TVer 2 host 追加 = remote RV-11 のミラー同期。tver.jp / www.tver.jp + canonical ベクタ受理 2・拒否 2、47 tests pass。bot.py 変更はリスト追加のみで次回 restart 反映、急がない) / 2026-06-12 (voice bot 統合 **完了** = Phase 4、/say + /status voice 集計 + voice_ledger。restart + speaker 11 + V-S1/V-S2 実弾 pass 済み、以後この bot.py 大改変への様子見観察) / 2026-06-12 (テストログの本番 bot.log 混入を修正 = logger 冪等化、bot.py 変更は挙動不変で次回 restart 反映) / 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
 
 ## 設計メモ
 
@@ -188,6 +188,10 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### PLAY_ALLOWED_HOSTS に TVer 追加 (2026-06-12、remote RV-11 ミラー同期)
+
+remote 側 RV-11 (TVer 再生対応、実エピソード 3 本 `-J` 検証済 = DRM 0 / HLS / 無ログイン) に伴う `remote/server/urlguard.py` とのミラー同期。`tver.jp` / `www.tver.jp` を PLAY_ALLOWED_HOSTS に追加 + test_bot.py に canonical ベクタ (受理 2 / 拒否 2 = userinfo 詐称・suffix 偽装) を追加、47 tests pass。remote 側の事前 DL (/api/dl) は TVer を別の門 `normalize_dl` で弾くが、bot に DL 経路はないため再生 allowlist のみが同期対象 (bot.py コメントに明記)。検証・裁定の詳細は `remote/docs/STATUS.md` 2026-06-12 RV-11 エントリと video-design §4.1。restart 不急 (リスト追加のみ、次回 restart で乗る)。
 
 ### テストログの本番 bot.log 混入を修正 (2026-06-12、logger 冪等化 + テスト handler 除去。bot.py 変更は挙動不変、次回 restart で乗る)
 

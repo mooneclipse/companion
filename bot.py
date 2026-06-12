@@ -101,6 +101,11 @@ PLAY_ALLOWED_HOSTS = frozenset({
     "www.nicovideo.jp",
     "sp.nicovideo.jp",
     "nico.ms",
+    # TVer (2026-06-12 追加 = remote RV-11、remote/server/urlguard.py とミラー同期)。
+    # 再生のみ対応。remote 側の事前 DL (/api/dl) は TVer を別の門 (normalize_dl) で
+    # 弾くが、bot に DL 経路はないためここは再生 allowlist のみでよい。
+    "tver.jp",
+    "www.tver.jp",
 })
 # /play の再生先 = companion-remote の常駐 mpv (TV 全画面、ticket #17 2026-06-12)。
 # remote/server/video.py (mpv IPC クライアント、verb whitelist 固定テンプレート) を

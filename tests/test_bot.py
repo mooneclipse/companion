@@ -135,6 +135,15 @@ class NormalizePlayUrlTest(unittest.TestCase):
             with self.subTest(url=url):
                 self.assertEqual(self.bot._normalize_play_url(url), url)
 
+    def test_tver_accepted(self) -> None:
+        # TVer (2026-06-12 追加、video-design §4.1 canonical mirror)
+        for url in (
+            "https://tver.jp/episodes/epi38mzxdc",
+            "https://www.tver.jp/episodes/epi38mzxdc",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(self.bot._normalize_play_url(url), url)
+
     def test_unknown_host_rejected(self) -> None:
         self.assertIsNone(self.bot._normalize_play_url("https://evil.com/abc"))
 
@@ -148,6 +157,15 @@ class NormalizePlayUrlTest(unittest.TestCase):
             "https://nicovideo.jp.evil.com/watch/sm9",  # suffix 偽装
             "https://nico.ms.evil.com/sm9",             # suffix 偽装(nico.ms 版)
             "https://embed.nicovideo.jp/watch/sm9",     # 非 allowlist サブドメイン
+        ):
+            with self.subTest(url=url):
+                self.assertIsNone(self.bot._normalize_play_url(url))
+
+    def test_tver_spoof_rejected(self) -> None:
+        # TVer 版 canonical 拒否ベクタ (video-design §4.1 mirror)
+        for url in (
+            "https://evil@tver.jp/episodes/x",      # userinfo 詐称
+            "https://tver.jp.evil.com/episodes/x",  # suffix 偽装
         ):
             with self.subTest(url=url):
                 self.assertIsNone(self.bot._normalize_play_url(url))
