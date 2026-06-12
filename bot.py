@@ -100,7 +100,28 @@ PLAY_ALLOWED_HOSTS = frozenset({
     "sp.nicovideo.jp",
     "nico.ms",
 })
-PLAY_TIMEOUT_S = 10.0
+# /play の再生先 = companion-remote の常駐 mpv (TV 全画面、ticket #17 2026-06-12)。
+# remote/server/video.py (mpv IPC クライアント、verb whitelist 固定テンプレート) を
+# importlib で流用する。HTTP API 経由でなく mpv socket 直 (同一 uid 0o600) なので
+# remote の Bearer token を bot に持ち込まない。remote 未配置/読込失敗でも bot 起動は
+# 止めず、/play 時に「連携不可」を返す (成否は呼び出し時に 1 回確定)。
+_REMOTE_VIDEO_PY = Path.home() / "companion" / "remote" / "server" / "video.py"
+
+
+def _load_remote_video():
+    import importlib.util
+    try:
+        spec = importlib.util.spec_from_file_location("remote_video", _REMOTE_VIDEO_PY)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        # 不在だけでなく SyntaxError 等も握るため、切り分け用に 1 行だけ残す
+        logging.getLogger(__name__).warning("remote video.py load failed", exc_info=True)
+        return None
+
+
+remote_video = _load_remote_video()
 
 # `/vault-push`: vault (`~/companion/vault`, branch develop) の commit 済変更を
 # GitHub に push する。コマンド送信そのものが push の人手承認の置き換え
@@ -595,6 +616,12 @@ def _normalize_play_url(url: str) -> str | None:
 
 
 async def cmd_play(url: str) -> str:
+    """TV の常駐 mpv (companion-video-mpv) で再生する (旧 xdg-open ブラウザ起動を置換)。
+
+    再生 state は mpv が所有し、操作 (一時停止/シーク/停止) はリモコン PWA 側。
+    video.play は blocking socket (connect 2s + IO 5s 上限) なので to_thread で逃がす。
+    成否は mpv IPC の構造化応答 1 回で確定 (リトライ・stderr 分岐なし)。
+    """
     valid_url = _normalize_play_url(url)
     if valid_url is None:
         return (
@@ -602,29 +629,16 @@ async def cmd_play(url: str) -> str:
             "youtube.com / music.youtube.com / youtu.be / nicovideo.jp / nico.ms"
             " の https/http のみ対応。"
         )
-    env = dict(os.environ)
-    env.setdefault("DISPLAY", ":0")
-    env.setdefault("XAUTHORITY", str(Path.home() / ".Xauthority"))
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "xdg-open", valid_url,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-    except FileNotFoundError:
-        return "[play] xdg-open が見つかりません。"
-    try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=PLAY_TIMEOUT_S)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return f"[play] xdg-open が {int(PLAY_TIMEOUT_S)}s で応答せず。browser 起動中の可能性: {valid_url}"
-    if proc.returncode == 0:
-        return f"[play] ブラウザで開きました: {valid_url}"
+    if remote_video is None:
+        return "[play] remote 連携 (video.py) が読み込めていません。~/companion/remote の配置を確認。"
+    resp = await asyncio.to_thread(remote_video.play, valid_url)
+    if resp is None:
+        return "[play] 動画プレイヤーに接続できません (companion-video-mpv 停止中?)。"
+    if resp.get("error") != "success":
+        return "[play] 再生開始に失敗しました (mpv がコマンドを受け付けず)。"
     return (
-        f"[play] xdg-open rc={proc.returncode}\n"
-        f"{stderr.decode('utf-8', errors='replace')[:500]}"
+        f"[play] TV で再生を開始します (読み込みに最大1分ほど): {valid_url}\n"
+        "一時停止・停止はリモコン PWA の動画画面から。"
     )
 
 

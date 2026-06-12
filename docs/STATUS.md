@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-11 (persona 口調を system prompt 配線 + 自発発話の蒸し返し抑止 + silence_hours 展開、restart は user 操作待ち)
+最終更新: 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち) / 2026-06-11 (persona 口調を system prompt 配線 + 自発発話の蒸し返し抑止 + silence_hours 展開、restart は user 操作待ち)
 
 ## 設計メモ
 
@@ -187,6 +187,17 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### /play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え (2026-06-12 実装 = ticket #17、commit までで停止、restart は user 操作)
+
+**目的**: `/play` が旧経路 (xdg-open → ブラウザ起動 = 再生後操作不能) のままで、F-video (remote 常駐 mpv + リモコン PWA 操作) と二系統併存していた。user 起票チケット #17 で remote 経路への一本化が確定 (2026-05-20 の据え置き判断は「F-video が実運用に乗るまで」の条件付きで、build 検証完了 + RV-10/RV-9 まで進んだ現在は条件を満たす)。
+
+- **実装**: `cmd_play` の xdg-open subprocess を `remote/server/video.py` (mpv IPC クライアント、verb whitelist 固定テンプレート) の `play()` 呼び出しに置換。video.py は importlib (`_load_remote_video`、`spec_from_file_location`) で読み込み — **HTTP API 経由でなく mpv socket 直 (同一 uid 0o600) なので remote の Bearer token を bot に持ち込まない**。読込失敗 (remote 未配置等) でも bot 起動は止めず、/play 時に連携不可を返す + 起動時 warning log 1 行 (code-reviewer 軽微反映)。blocking socket (connect 2s + IO 5s) は `asyncio.to_thread` で event loop から逃がす
+- **認可・allowlist は不変**: OWNER_ID gate + `_normalize_play_url` (PLAY_ALLOWED_HOSTS、remote urlguard とミラー同期済み) を従来どおり通過した URL のみが固定テンプレート `play()` に渡る。mpv socket 直叩きは fs パーミッションが gate する設計 (video-design §3.2) どおりで認可退行なし (code-reviewer セキュリティ OK)
+- **設計上限ルール整合**: 旧コードの stderr 文言返し (xdg-open rc/stderr) と timeout 分岐が消え、mpv IPC 構造化応答の 1 回確定に置き換わった。`PLAY_TIMEOUT_S` 削除 (cmd_play のみで使用)
+- **応答文言**: 成功 = 「TV で再生を開始します (読み込みに最大1分ほど)」+ PWA への誘導 / mpv unit 停止 = 接続不可 / IPC エラー = 受け付けず。リモコン PWA の Now Playing バーは既存の `GET /api/video/state` ポーリングが mpv state を写像するため bot 側の追加配線なしで連動する
+- **テスト**: 34 件 (skip 27) 全 pass。実弾 = bot.py と同じ importlib 経路で本番 mpv に loadfile → playing 到達 → stop を確認 (YouTube 短尺)
+- **restart は user 操作待ち** (bot.py はメモリ常駐、反映には bot.service restart)。反映後、数日 NRestarts / ERROR の様子見 (bot.py 改変時の運用どおり)。改変規模は cmd_play 差し替え + import 数行 = 小改変 (大改変の様子見観察の発火対象ではない判断)
 
 ### persona 口調の system prompt 配線 + 自発発話の蒸し返し抑止 + silence_hours 展開 (2026-06-11 実装、commit までで停止、restart は user 操作)
 
