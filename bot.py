@@ -54,6 +54,8 @@ from telegram.ext import (
 
 import quota
 import sessions
+import voice_command
+import voice_status
 from claude_runner import ClaudeOptions, ClaudeRunner, ErrorKind
 
 load_dotenv()
@@ -1266,6 +1268,12 @@ def cmd_status(
         )
     else:
         lines.append("current session: なし (次の prompt で新規発番)")
+    # voice 集計 (voice-design v2.0 §1.5 (4)、失敗しても /status 本体は出す)
+    try:
+        lines.append(voice_status.format_voice_summary(now))
+    except Exception:
+        logger.exception("voice summary failed")
+        lines.append("voice: 集計失敗 — see bot.log")
     return "\n".join(lines)
 
 
@@ -1553,6 +1561,47 @@ async def slash_play(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def slash_say(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    # `/say おはよう 今日もよろしく` → args を空白 join で 1 文に戻す
+    text = " ".join(context.args or []).strip()
+    if not text:
+        await send_text(
+            context.bot, chat_id, thread_id,
+            "[say] 読み上げるテキストを指定してください。例: /say おはよう",
+            reply_to=msg.message_id if msg else None,
+        )
+        return
+    if len(text) > voice_command.MAX_SAY_TEXT:
+        # silent truncate しない (M-8、沈黙でなく報告原則)
+        await send_text(
+            context.bot, chat_id, thread_id,
+            f"[say] テキストが長すぎます ({len(text)}/{voice_command.MAX_SAY_TEXT} 字)。"
+            f"{voice_command.MAX_SAY_TEXT} 字以内にしてください。",
+            reply_to=msg.message_id if msg else None,
+        )
+        return
+    # cold start 11-17s + 合成を typing indicator で吸収 (案 W-silent の
+    # Telegram 読み替え、中間メッセージは追加しない)
+    started = time.monotonic()
+    async with _typing_action(context.bot, chat_id, thread_id):
+        rc, output = await voice_command.cmd_say(text)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    try:
+        voice_command.append_ledger(text, rc, duration_ms)
+    except OSError:
+        logger.exception("voice ledger append failed")
+    logger.info("cmd=/say len=%d rc=%d duration_ms=%d", len(text), rc, duration_ms)
+    await send_text(
+        context.bot, chat_id, thread_id, output,
+        reply_to=msg.message_id if msg else None,
+    )
+
+
 async def slash_tweet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
@@ -1800,6 +1849,7 @@ async def post_init(application: Application) -> None:
         BotCommand("quota", "bot 経由 prompt の予算 / 集計を表示"),
         BotCommand("status", "bot 稼働状況 / current session を表示"),
         BotCommand("play", "YouTube URL をこの PC のブラウザで開く"),
+        BotCommand("say", "テキストを TV で読み上げ (VOICEVOX、最大 100 字)"),
         BotCommand("tweet", "ツイート/ポストを vault に保存"),
         BotCommand("vault_push", "vault の commit 済変更を GitHub に push"),
         BotCommand("snooze", "自発発話を指定日数止める (例: /snooze 3、解除は /snooze 0)"),
@@ -1887,6 +1937,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("quota", slash_quota, filters=message_filter))
     app.add_handler(CommandHandler("status", slash_status, filters=message_filter))
     app.add_handler(CommandHandler("play", slash_play, filters=message_filter))
+    app.add_handler(CommandHandler("say", slash_say, filters=message_filter))
     app.add_handler(CommandHandler("tweet", slash_tweet, filters=message_filter))
     app.add_handler(CommandHandler("vault_push", slash_vault_push, filters=message_filter))
     app.add_handler(CommandHandler("snooze", slash_snooze, filters=message_filter))

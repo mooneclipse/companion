@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
+最終更新: 2026-06-12 (voice bot 統合 = Phase 4、/say + /status voice 集計 + voice_ledger。bot.py 大改変につき restart 後に様子見観察、restart / `VOICE_DEFAULT_SPEAKER` 切替 / V-S1・V-S2 実弾は user 操作待ち) / 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
 
 ## 設計メモ
 
@@ -188,6 +188,22 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### voice bot 統合 (2026-06-12 実装 = Phase 4 残実装系、persona 軸 2 gate 開通。commit までで停止、restart / speaker 切替 / 実弾検証は user 操作)
+
+**目的**: voice-design.md v2.0 §1.8 の bot/ 側統合 (2026-06-01 に Phase 3-2 から Phase 4 移送、persona 軸 2「玄野武宏」確定 = gate 開通で着手可)。Telegram `/say` で TV 発話 + `/status` に voice 集計 + voice_ledger.jsonl。**bot.py 大改変につき restart 後にこの変更への様子見観察を適用** (PROJECT.md 条件 #2 再定義、2 週間固定でなく変更規模相応)。
+
+- **voice_command.py (新規)**: `cmd_say(text) -> (rc, msg)`。engine **on-demand 都度起動** (§1.3) を bot 側に配置 — `systemctl --user start companion-voice-engine.service` → `voice-engine-ready.sh` (30s benign give-up) → `say.sh` (`wait_for 90s`、M-8) → finally で `stop`。start/ready は best-effort (失敗は warning ログのみ)、**成否判定は say.sh の rc 1 回で確定** (リトライ・stderr 分岐なし)。rc 98 = say.sh spawn 不可 / 99 = TIMEOUT は表面化専用。`append_ledger` は `quota.append_ledger` 流用で `sessions/voice_ledger.jsonl` (gitignore 済) に 1 invoke 1 行 (`ts` / `text_prefix` 20 字 / `rc` / `duration_ms`)
+  - **設計からの divergence 3 点** (voice-design.md v2.0.3 改版履歴にも記録): (1) engine start/stop は設計では say.sh 内想定だったが bot 側に配置 (検証済み say.sh の合成責務を変えない)。これに伴い設計が否決した asyncio.Lock を追加 — stop が say.sh 内 flock の外に出たため「先行の finally stop が後発の合成中 engine を落とす」競合を直列化で消す (否決時の前提が崩れた、2 周目対症療法ではなく前提変化への追従) (2) voice_ledger.jsonl は設計図の bot/ 直下でなく sessions/ 配下 (quota ledger 慣習優先) (3) Discord 前提 (defer / ephemeral / followup) を Telegram に読み替え (typing chat action = 案 W-silent 相当 / 通常 reply)
+  - **engine 常駐 (enable) はしない**: 常駐化 trigger (1 日 5 回超 × 1 週間、voice_ledger 集計) 未達。on-demand の RAM 解放を優先 (3.7Gi 機)
+- **voice_status.py (新規)**: `format_voice_summary(now)` — `voice/.state/last-result-{今日,昨日}` (ts 行は 24h フィルタ、padding skipped 行は ts なしのためファイル単位カウント) + voice_ledger から「voice (直近24h): OK n / FAIL n (内訳) / padding skipped n」+ 最終 /say を生成。集計は表面化専用 (判定・分岐に使わない)
+- **bot.py**: import 2 行 + `slash_say` (空引数 / 100 字超は警告 reply = silent truncate しない、`_typing_action` で cold start 11-17s 吸収、ledger 追記) + `cmd_status` 末尾に voice 集計 append (try/except で /status 本体保護) + `CommandHandler("say")` + `BotCommand` 追加
+- **maintenance 側 (`notify-system-report.sh`)**: 12:00 レポートに voice FAIL ≥ 3 件/24h または padding skipped ≥ 5 件/24h で警告行 (§1.5 (3)。今日+昨日ファイル合算 ≈ 24h、ファイル不在 = 0 件で素通り)。set -euo pipefail 下の 0 件 / 不在 / 閾値発火を単体検証済み
+- **say.sh 追記化 (voice repo 側、code-reviewer 修正必須)**: last-result が atomic write (上書き = 日毎最終結果のみ) で 24h 件数集計が構造的に発火不能だったため 1 invoke 1 行追記に変更。設計書自体の内部矛盾 (§1.4 vs §1.5 (3)(4)) の解消。詳細・案 B 不採用根拠は `voice/docs/STATUS.md` 同日 Done
+- **テスト**: 166 → **179 件全 pass**。追加 13 = `_format_say_result` 各 rc / `append_ledger` schema / `cmd_say` orchestration (fake systemctl + fake say.sh で start→say→stop 順序、rc passthrough、timeout kill、spawn 失敗でも finally stop) / `format_voice_summary` 6 ケース (空 / OK+FAIL+padding / 24h 境界 / socket 行除外 / ledger last say)
+- **code-reviewer**: 修正必須 1 件 (上記 say.sh 追記化) 反映 + 再レビュー OK。軽微採用 2 件 (last-result 書き込みの O_APPEND 1 関数化 / 台帳の atomic write 残置訂正)、軽微見送り 1 件 (`proc.kill()` の SIGTERM 二段化 — 頻度極小 + /tmp 残置は無害、シンプル維持)
+- **未実施 (user 操作)**: (1) `voice/.env` の `VOICE_DEFAULT_SPEAKER` 2→11 (玄野武宏) 切替 — `.env` は claude セッション deny 対象のためコマンド提示 (2) `systemctl --user restart companion-bot.service` (3) V-S1 (`/say` 実弾発話) / V-S2 (`/status` voice 表示) 実弾検証
+- **自発発話への声載せはスコープ外**: 「生成と再生の分離」(2026-06-12 確定、voice/docs/STATUS.md) に従う将来タスク。本統合は `/say` 対話経路 + 集計土管まで
 
 ### 自発発話の種「死蔵知識との再会」追加 (2026-06-12 実装 = チケット #20、persona 軸 4 実装 (2)、bot.py は小規模追加改変)
 
