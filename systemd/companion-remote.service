@@ -6,11 +6,10 @@ Documentation=file://%h/companion/workspace/redesign/remote-design.md
 [Service]
 Type=simple
 WorkingDirectory=%h/companion/remote
-# .env は任意(- 付きで不在でも起動)。REMOTE_PORT / REMOTE_SAY_SH を渡す。
+# .env は任意(- 付きで不在でも起動)。REMOTE_PORT を渡す。
 EnvironmentFile=-%h/companion/remote/.env
-# say.sh(F-2)の paplay 経路向け。PULSE は XDG_RUNTIME_DIR/pulse 経由で届く想定だが、
-# DISPLAY は dashboard.service と同じく明示しておく(audio env 充足は §9 で serve 実機検証)。
-Environment=DISPLAY=:0
+# (F-2 発話撤去[2026-06-14]に伴い Environment=DISPLAY=:0 を削除。remote プロセスは
+#  描画も audio も持たず DISPLAY 不要 = say.sh paplay 経路専用だったため。STATUS.md Done 参照)
 ExecStart=%h/companion/remote/server/app.py
 # 常駐 HTTP サーバなのでクラッシュ時は再起動(stateless、回復に state 引きは不要)。
 Restart=on-failure

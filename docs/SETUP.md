@@ -6,7 +6,7 @@
 
 - Tailscale 導入済(`miho-inspiron-3521` / `m-gamepc` / `pixel-6` が同一 tailnet)。
 - 本機は auto-login(systemd user service が起動時に立つ)。
-- 依存は Python 3 標準ライブラリのみ(venv 不要)。F-2 voice は兄弟 `~/companion/voice/` の `say.sh` を叩く。
+- 依存は Python 3 標準ライブラリのみ(venv 不要)。
 
 ## 1. .env 作成
 
@@ -51,7 +51,8 @@ tailscale serve status
 - (d-1) ルート `/` がマウントされ index/app.js/manifest/sw.js/icons が配信されるか(SW scope `/` 前提)。
 - (d-2) HTTP edge で identity header(`Tailscale-User-Login`)が付与されるか。付くなら将来の認可二段化(H-1 緩和)に使える。付かなければ Bearer + ACL で運用(design §6)。
 - (d-3) サーバは IPv4 単独 bind(127.0.0.1)。serve 前段が loopback を `localhost`→`::1` 解決して到達不能なら、`server/app.py` の `HOST` に `::1` bind 追加を検討。
-- (d-4) F-2 発話が service 環境で鳴るか(say.sh の paplay/ffmpeg/curl が DISPLAY/PULSE/PATH 充足で動くか)。鳴らなければ service の `Environment=` に PULSE_SERVER 等を追加。
+  <!-- (d-4) F-2 発話の audio 検証はあった。2026-06-14 に F-2 発話を撤去したため該当なし(STATUS.md Done 参照)。 -->
+- 写真リモコン導線: PWA ホームの「写真」タイルは別ポートの独立フォト PWA(`tailscale serve :8446` → 127.0.0.1:47826、`~/companion/photos`)を別タブで開くランチャ。remote サーバ自身は写真を配信しない。
 
 ## 4. トークン発行(out-of-band, paste)
 

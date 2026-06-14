@@ -1,6 +1,6 @@
 "use strict";
 // companion-remote PWA。ホーム型タイルランチャー + 各機能詳細画面。
-// 機能: F-video 動画 / F-2 発話 / F-3 OS status / F-todo やること / ゲーム + トークン paste。
+// 機能: F-video 動画 / 写真(別ポート PWA ランチャ) / F-3 OS status / F-todo やること / ゲーム + トークン paste。
 // XSS 面を絞るため innerHTML は使わず textContent / createElement のみで DOM 構築する。
 const TOKEN_KEY = "remote_token";
 const $ = (id) => document.getElementById(id);
@@ -35,7 +35,7 @@ function showApp() {
 
 // ===== 画面ナビゲーション(section.active 切替。mock の show/open_/home 方式) =====
 // ホーム(タイルランチャー)⇄ 各機能詳細。詳細は左上「‹ 戻る」でホームへ。
-const SCREENS = ["home", "video", "speak", "todo", "games", "os", "vault"];
+const SCREENS = ["home", "video", "todo", "games", "os", "vault"];
 
 function showScreen(id) {
   for (const s of SCREENS) {
@@ -137,35 +137,6 @@ function renderStatus(s) {
   if (Array.isArray(s.load)) add("load", s.load.map((x) => Number(x).toFixed(2)).join("  "));
 }
 
-async function sendSay() {
-  const btn = $("say-send"), out = $("say-result");
-  const text = $("say-text").value.trim();
-  if (!text) { out.textContent = "テキストを入力してください"; return; }
-  const body = { text };
-  const sp = $("say-speaker").value.trim();
-  if (sp !== "") body.speaker = parseInt(sp, 10);
-  btn.disabled = true;
-  out.textContent = "送信中…";
-  try {
-    const r = await api("/api/say", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (r.ok) out.textContent = "発話しました";
-    else if (r.status === 409) out.textContent = "発話中です。少し待って再試行してください";
-    else if (r.status === 429) out.textContent = "連続送信です。少し待ってください";
-    else if (r.status === 503) out.textContent = "音声エンジンに接続できません";
-    else {
-      const j = await r.json().catch(() => ({}));
-      out.textContent = "失敗: " + (j.error || r.status);
-    }
-  } catch (e) {
-    if (e.message !== "unauthorized") out.textContent = "送信エラー";
-  } finally {
-    btn.disabled = false;
-  }
-}
 
 // ===== F-video（動画プレイヤー） =====
 // 状態機械: IDLE → RESOLVING(通常10s前後、vendored hook + force-ipv4 後の実測) → PLAYING ⇄ PAUSED / ERROR。
@@ -1233,6 +1204,11 @@ function initNav() {
   document.querySelectorAll("[data-open]").forEach((el) => {
     el.addEventListener("click", () => navOpenScreen(el.getAttribute("data-open")));
   });
+  // data-href タイル(写真など別オリジン PWA): 画面遷移せず外部 URL を別タブで開く。
+  // user gesture 内なので window.open は許可される。opener は渡さない。
+  document.querySelectorAll("[data-href]").forEach((el) => {
+    el.addEventListener("click", () => window.open(el.getAttribute("data-href"), "_blank", "noopener"));
+  });
   // 戻るボタン(.back)は history.back() に一本化。popstate で画面を復元する。
   document.querySelectorAll(".back").forEach((el) => {
     el.addEventListener("click", () => history.back());
@@ -1275,7 +1251,6 @@ function init() {
     refreshGlance();
     refreshTodo();
   });
-  $("say-send").addEventListener("click", sendSay);
   $("status-refresh").addEventListener("click", refreshGlance);
   initNav();
   initVideo();

@@ -71,8 +71,12 @@
         <button class="tile" type="button" data-open="video">
           <span class="t-mark">▶ 01</span><span class="t-name">動画</span><span class="t-sub">URL再生・事前DL</span>
         </button>
-        <button class="tile" type="button" data-open="speak">
-          <span class="t-mark">~ 02</span><span class="t-name">発話</span><span class="t-sub">テキストを喋らせる</span>
+        <!-- 写真は別ポート(:8446)の独立フォト PWA を開くランチャ。data-href のタイルは
+             SPA 画面遷移せず外部 URL を開く。games の単純リンク集と動機は同じ(別オリジン導線)
+             だが、games は a@href の同タブ遷移なのに対し写真は別タブ(window.open _blank)で
+             戻りやすくする点が異なる。単一行先なので 1 タップ直行。tailscale 境界で保護。 -->
+        <button class="tile" type="button" data-href="https://miho-inspiron-3521.tail5e989b.ts.net:8446/">
+          <span class="t-mark">▦ 02</span><span class="t-name">写真</span><span class="t-sub">Google フォト閲覧</span>
         </button>
         <button class="tile" type="button" data-open="todo">
           <span class="badge" id="tile-todo-badge" hidden></span>
@@ -176,23 +180,6 @@
             <ul id="dl-list"></ul>
             <p id="dl-usage" class="note"></p>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============ SPEAK ============ -->
-    <section id="speak" class="screen">
-      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">02 / Speak</span></div>
-      <div class="body">
-        <div class="kicker">Text to Speech</div>
-        <h1 class="h1">発話</h1>
-        <div class="card">
-          <label class="fld" for="say-text">読み上げる文章</label>
-          <textarea id="say-text" rows="3" maxlength="2000" placeholder="しゃべらせるテキスト"></textarea>
-          <label class="fld mt" for="say-speaker">Speaker No.</label>
-          <input type="number" id="say-speaker" min="0" inputmode="numeric" placeholder="speaker(任意)">
-          <button id="say-send" type="button" class="btn mt">発話する</button>
-          <p id="say-result" class="result" role="status"></p>
         </div>
       </div>
     </section>

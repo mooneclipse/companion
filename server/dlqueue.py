@@ -313,7 +313,7 @@ def _claim_next():
 
 
 def _env():
-    """yt-dlp 用の固定最小 env (voice.py 同型)。PROXY 系・user shell env 非継承 (§2.1)。"""
+    """yt-dlp 用の固定最小 env (voice/scripts/say.sh と同じ env 隔離方針)。PROXY 系・user shell env 非継承 (§2.1)。"""
     env = {k: os.environ[k] for k in ("HOME", "PATH") if k in os.environ}
     env.setdefault("PATH", "/home/miho/bin:/usr/bin:/bin")
     return env
