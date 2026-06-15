@@ -114,10 +114,16 @@ else
     # cd しても読み書きは壊れない。
     prompt="/trends-report new-items.json は ${new_items} にあります。ISO 週ラベルは ${isoweek}、出力先は ${report} です。指定の書式で日本語の週次トレンドノートを ${report} に Write してください。"
     log "invoking claude -p (/trends-report) in cwd=${REPO}"
+    # --model は明示固定する。未指定だと既定モデルの変動を丸ごと受け、要約タスクに
+    # 不相応な高単価モデル (例: fable-5 $10/$50) を引いて --max-budget-usd を超える
+    # (2026-06-13 W24 が fable-5 で $1.08 = 上限超過で失敗)。trends-report は RSS の
+    # クラスタリング+要約+整形で sonnet-4-6 ($3/$15) で十分。budget は state を持つ
+    # 側 (= --model) を 1 回引いて確定する (CLAUDE.md 対症療法 2 周目ルール)。
     if ! ( cd "$REPO" && timeout 600 "$CLAUDE_BIN" -p "$prompt" \
             --output-format json \
             --permission-mode acceptEdits \
             --allowedTools "Read Write Edit" \
+            --model claude-sonnet-4-6 \
             --max-budget-usd 1.0 \
             < /dev/null ) >> "$OUR_LOG" 2>&1; then
         log "abort: claude -p 失敗 (state 未更新)"
