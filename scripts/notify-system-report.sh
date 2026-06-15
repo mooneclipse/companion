@@ -67,4 +67,26 @@ voice_warn=""
 [[ "$voice_pad" -ge 5 ]] && voice_warn="${voice_warn:+$voice_warn / }voice padding skipped: ${voice_pad} 件/24h"
 [[ -n "$voice_warn" ]] && body=$(printf '%s\n%s' "$body" "$voice_warn")
 
+# バックアップ滞留 nudge (backup-reminder)。普段 USB は外しておき、間隔を超えたらここで促す。
+# - Linux機 = USB restic。usb-backup.sh が成功時に .state/last-usb-backup へ日付を書く。月1目安 (30日超)。
+# - Googleフォト = Takeout。photos/raw/Takeout の mtime = 最後に Takeout を展開した日。年1目安 (365日超)。
+now_epoch=$(date '+%s')
+
+usb_state="${HOME}/companion/maintenance/.state/last-usb-backup"
+# 空 / 空白のみだと date -d が現在時刻 (=0日) を返し nudge が永久に出ない。
+# state は date '+%Y-%m-%d' で書くので必ず数字を含む。数字を含む時だけ日付として扱う。
+usb_raw=$(cat "$usb_state" 2>/dev/null || true)
+if [[ "$usb_raw" == *[0-9]* ]] && usb_epoch=$(date -d "$usb_raw" '+%s' 2>/dev/null); then
+    usb_days=$(( (now_epoch - usb_epoch) / 86400 ))
+    [[ "$usb_days" -ge 30 ]] && body=$(printf '%s\nバックアップ滞留: USB前回から %s日 — USBを挿して sudo ~/companion/maintenance/scripts/usb-backup.sh' "$body" "$usb_days")
+else
+    body=$(printf '%s\nバックアップ滞留: USB記録なし — USBを挿して sudo ~/companion/maintenance/scripts/usb-backup.sh' "$body")
+fi
+
+takeout_dir="${HOME}/companion/photos/raw/Takeout"
+if [[ -d "$takeout_dir" ]]; then
+    photo_days=$(( (now_epoch - $(stat -c '%Y' "$takeout_dir")) / 86400 ))
+    [[ "$photo_days" -ge 365 ]] && body=$(printf '%s\nGoogleフォト: 前回Takeoutから %s日 — 年1の書き出し+取り込みを' "$body" "$photo_days")
+fi
+
 notify_send "$body" "$today"

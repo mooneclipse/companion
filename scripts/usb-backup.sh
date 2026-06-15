@@ -15,6 +15,9 @@ REPO="${MOUNT_POINT}/restic-repo"
 PASSWORD_FILE="${OWNER_HOME}/.config/restic/usb-password"
 LOG_DIR="${OWNER_HOME}/companion/logs/maintenance"
 LOG_FILE="${LOG_DIR}/usb-backup-$(date '+%Y%m%d').log"
+# 成功完了マーカー。daily system-report の滞留 nudge が「前回バックアップからの
+# 経過日数」をここから計算する (ログは mount チェック前に生成されるため成否判定に使えない)。
+STATE_FILE="${OWNER_HOME}/companion/maintenance/.state/last-usb-backup"
 KEEP_LAST=12
 
 BACKUP_PATHS=(
@@ -78,5 +81,11 @@ restic check
 
 log "snapshots (現在の世代一覧)"
 restic snapshots
+
+# 成功完了マーカーを更新 (ここまで到達 = set -e 下で全工程成功)。
+mkdir -p "$(dirname "$STATE_FILE")"
+date '+%Y-%m-%d' > "$STATE_FILE"
+chown miho:miho "$STATE_FILE"
+log "state 更新: ${STATE_FILE}"
 
 log "=== 完了。抜く前にファイラの取り出し (アンマウント) を忘れずに ==="

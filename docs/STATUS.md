@@ -17,7 +17,7 @@
 ## TODO
 
 - machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 + S6-1 + S6-2 完了済み。残は S6-6 延命チューニング
-- usb-backup 運用: USB を挿したら `sudo ~/companion/maintenance/scripts/usb-backup.sh` を手動 1 発、**月 1 目安**。挿し忘れ検出 (前回バックアップからの経過日数) を daily system-report に載せるかは運用してみてから判断
+- usb-backup 運用: USB を挿したら `sudo ~/companion/maintenance/scripts/usb-backup.sh` を手動 1 発、**月 1 目安**。**普段 USB は外しておき、daily system-report の滞留 nudge (30 日超) が来たら挿して実行する運用に確定** (2026-06-15、下記 Done 参照)。挿し忘れ検出は実装済み
 - RAM 物理増設: **当面見送り (2026-06-11 ユーザー判断)**。古い PC の活用という位置付けで、定常使用 1.3G 程度なら zram で足りる見込み。再考トリガ = (a) daily system-report の swap が zram 導入後も膨らみ続ける、(b) ブラウザ操作等の重いワークロードをこの機に足すと決めたとき。増設する場合の情報は観測済み: JDIMM2 空き・最大 16GB (8GB/枚)・DDR3L-1600 SODIMM (詳細 = `machine-audit/PLAN.md` S6-1)
 - machine-audit 四半期再走 (S5 で採用): **次回 2026-09 頃**。全体スキャンからやり直して新 PLAN を作成、現 `machine-audit/PLAN.md` は手順テンプレ + 前回観測との比較基準として参照
 
@@ -33,6 +33,13 @@
 
 ## Done
 
+- 2026-06-15 backup-reminder: バックアップ滞留 nudge を daily system-report に追加 (USB 常時挿し運用の廃止)
+  - **背景**: ユーザー判断で「USB は普段外す。ある程度の感覚でバックアップを促してほしい。Linux 機 (USB restic) とフォトをそれぞれ、フォトは年 1 でいい」。S6-2 の TODO だった「挿し忘れ検出を daily report に載せるか」を実装で確定
+  - **方式**: CronCreate はセッション限定 + 7 日 expire で月 1 / 年 1 に不適 → 既存の durable な `companion-notify-system-report` (systemd timer、毎日 Telegram) に相乗り。`notify-system-report.sh` の `notify_send` 直前に滞留 nudge ブロックを追加
+    - Linux 機 = USB restic。`usb-backup.sh` が成功完了時に `.state/last-usb-backup` へ日付を書く (ログは mount チェック前に生成され成否判定に使えないため専用 state)。**30 日超**で nudge。state は 2026-06-12 (S6-2 初回 snapshot) でシード済み → 次回発火は 2026-07-12
+    - Googleフォト = Takeout。`photos/raw/Takeout` の mtime (= 最後に Takeout を展開した日) を信号源に流用 (マーカー手動更新不要、再 Takeout で自動リセット)。**365 日超**で nudge。現 mtime 2026-06-13 → 発火は ~2027-06-13
+  - **対称設計の注意**: state 空 / 空白のみだと `date -d` が現在時刻 (=0 日) を返し nudge が永久に出ない (バックアップ催促として最悪の過小報告)。`[[ "$usb_raw" == *[0-9]* ]]` で数字を含む時だけ日付扱い。空 / 空白 / garbage は「記録なし」= nudge 発火側へ倒す。全エッジを実機テストで確認
+  - code-reviewer: 修正必須なし、軽微 1 件 (空 state 誤判定) を採用し空白のみまで拡張対応
 - 2026-06-15 trends-weekly: claude -p のモデルを sonnet-4-6 に明示固定 (W24 budget 超過の恒久対策)
   - **事象**: 2026-06-13(土) の W24 定期実行が失敗、bot のトレンド通知が届かなかった。timer は正常発火・RSS 収集も成功 (total_new=65) したが、`claude -p` が `--model` 未指定で既定モデル **fable-5 ($10/$50 per 1M)** を引き、`--max-budget-usd 1.0` を **$1.08 で超過** (`error_max_budget_usd`)。設計どおり note 未生成・state 未更新・通知未送信で abort。通知だけ落ちたのではなくジョブ失敗の正しい帰結
   - **真因**: 閾値ではなく「`--model` 未指定で既定モデルの変動を丸ごと受ける構造」。`scripts/trends-weekly.sh:121` 付近に `--model claude-sonnet-4-6` を明示追加し、state を持つ側を 1 回引いて確定 (CLAUDE.md 対症療法 2 周目ルール)。budget $1 は据え置き。commit a87e981
