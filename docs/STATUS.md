@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-12
+最終更新: 2026-06-15
 
 ## 設計メモ
 
@@ -33,6 +33,11 @@
 
 ## Done
 
+- 2026-06-15 trends-weekly: claude -p のモデルを sonnet-4-6 に明示固定 (W24 budget 超過の恒久対策)
+  - **事象**: 2026-06-13(土) の W24 定期実行が失敗、bot のトレンド通知が届かなかった。timer は正常発火・RSS 収集も成功 (total_new=65) したが、`claude -p` が `--model` 未指定で既定モデル **fable-5 ($10/$50 per 1M)** を引き、`--max-budget-usd 1.0` を **$1.08 で超過** (`error_max_budget_usd`)。設計どおり note 未生成・state 未更新・通知未送信で abort。通知だけ落ちたのではなくジョブ失敗の正しい帰結
+  - **真因**: 閾値ではなく「`--model` 未指定で既定モデルの変動を丸ごと受ける構造」。`scripts/trends-weekly.sh:121` 付近に `--model claude-sonnet-4-6` を明示追加し、state を持つ側を 1 回引いて確定 (CLAUDE.md 対症療法 2 周目ルール)。budget $1 は据え置き。commit a87e981
+  - **実測 (2026-06-15 手動実走で裏取り)**: sonnet-4-6 固定で成功、`total_cost_usd=$0.3519` (sonnet $0.3512 + 内部 haiku $0.0007)。budget $1 の約 35% で余裕あり (code-reviewer 宿題クリア)。所要 ~3.4分、通知送信済み
+  - **注意**: trends-weekly.sh は `date +%G-%V` で「現在の ISO 週」のノートを作る。6/15 実行のため生成物は **W25** (`2026-W25 AIトレンド.md`)、**W24 ラベルは欠番のまま**。ただし fetch は seen-urls (W23 で停止) 以降の未取得記事を冪等に拾うため W24 分の記事も W25 に合流済み、内容の取りこぼしはなし
 - 2026-06-12 machine-audit S6-2: オフディスクバックアップ 完了
   - **KIOXIA USB 64GB + restic 0.12.1 (apt) + 手動 1 発** (`scripts/usb-backup.sh`、root 実行、FAT32 のまま)。初回実行成功: snapshot `8834995f`、2737 files / 624 MiB、`restic check` エラーなし、`.bashrc` の restore→diff 一致まで実機検証済み
   - パスワードは `~/.config/restic/usb-password` (0600) + ユーザーのオフマシン控え。判断記録の詳細 = `machine-audit/PLAN.md` S6-2
