@@ -94,6 +94,16 @@ STATIC = {
     "/saguri/manifest.json": ("saguri/web/manifest.json", "application/manifest+json"),
     "/saguri/icons/icon-192.png": ("saguri/web/icons/icon-192.png", "image/png"),
     "/saguri/icons/icon-512.png": ("saguri/web/icons/icon-512.png", "image/png"),
+    # 第 7 作「マインロード」(/mineroad/ prefix)。Mine Road 忠実リメイクの縦切り(v0.1.0)。
+    # 自由掘削サイドビュー探索 × スタミナ→体力の二段ゲージ × 地上全回復の撤退 × 女の子救出。
+    "/mineroad/": ("mineroad/web/index.html", "text/html; charset=utf-8"),
+    "/mineroad/index.html": ("mineroad/web/index.html", "text/html; charset=utf-8"),
+    "/mineroad/app.js": ("mineroad/web/app.js", "application/javascript; charset=utf-8"),
+    "/mineroad/tiles.js": ("mineroad/web/tiles.js", "application/javascript; charset=utf-8"),
+    "/mineroad/style.css": ("mineroad/web/style.css", "text/css; charset=utf-8"),
+    "/mineroad/manifest.json": ("mineroad/web/manifest.json", "application/manifest+json"),
+    "/mineroad/icons/icon-192.png": ("mineroad/web/icons/icon-192.png", "image/png"),
+    "/mineroad/icons/icon-512.png": ("mineroad/web/icons/icon-512.png", "image/png"),
 }
 
 

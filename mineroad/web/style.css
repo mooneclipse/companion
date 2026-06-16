@@ -1,0 +1,421 @@
+/* マインロード — 自由掘削サイドビュー探索 × 二段ゲージ × 地上全回復の撤退 × 女の子救出。
+   文字・数値・ゲージ・ボタンは全て DOM(canvas に文字を焼かない)。emoji 不可。
+   全 DOM の bounding rect が 412×915 内・はみ出し 0 を満たす設計(短可視高でも操作系が
+   innerHeight 内・top 基準・タップ可)。さぐりの svh/dvh+safe-area+ツールバー切れ対策を踏襲。 */
+:root {
+  --ink: #f4eee2;
+  --mincho: "Zen Old Mincho", "Shippori Mincho", "Hiragino Mincho ProN",
+    "Yu Mincho", "Noto Serif JP", serif;
+  --c-stamina: #e6b25a;
+  --c-hp: #d8392a;
+  --c-girl: #ffb86a;
+  /* 白文字 + 黒縁(4 方向 text-shadow)。fog の黒でも明地でも数値が読める。 */
+  --txt-edge: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
+    0 2px 3px rgba(0, 0, 0, 0.8);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  /* はみ出しを構造的に封じる(画面外スクロール禁止)。 */
+  overflow: hidden;
+  background: #10131f;
+  color: var(--ink);
+  font-family: var(--mincho);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#scene {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  touch-action: none;
+}
+
+/* ===== HUD: canvas の上の不透明レイヤー。上基準で配置(モバイル Chrome のツールバー裏に
+   押し出されないよう svh + top:0)。pointer は素通しし、操作系だけ拾う。 ===== */
+.hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100svh;
+  z-index: 2;
+  padding: calc(env(safe-area-inset-top) + 0.4rem) 0.6rem
+    calc(env(safe-area-inset-bottom) + 0.5rem);
+  pointer-events: none;
+}
+.hud[hidden] {
+  display: none !important;
+}
+
+/* ---- 上部: 深度 + 救出 + 探索率 ---- */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.depth-val {
+  font-size: clamp(0.8rem, 3.8vw, 1rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.counts {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  font-size: clamp(0.74rem, 3.4vw, 0.94rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  white-space: nowrap;
+}
+.count-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: 0.35em;
+  font-size: 0.82em;
+  background: rgba(0, 0, 0, 0.5);
+}
+.count.rescue .count-ico {
+  color: var(--c-girl);
+}
+.count.explore .count-ico {
+  color: var(--c-stamina);
+}
+
+/* ---- 二段ゲージ(スタミナ → 体力)。上バーの下に重ねて配置。横バー 2 段で視認。 ---- */
+.gauge {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 2.5rem);
+  left: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+}
+.gauge-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.gauge-cap {
+  font-size: clamp(0.64rem, 2.9vw, 0.78rem);
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  width: 3.4em;
+  text-align: right;
+}
+.gauge-bar {
+  flex: 1 1 auto;
+  height: 0.78rem;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 0.45rem;
+  overflow: hidden;
+  position: relative;
+  min-width: 0;
+}
+.gauge-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 0.45rem;
+  transition: width 0.18s linear, background 0.4s ease;
+}
+.stamina-fill {
+  background: linear-gradient(90deg, #7a5a2a, var(--c-stamina), #fff0c8);
+}
+.hp-fill {
+  background: linear-gradient(90deg, #5a1c18, var(--c-hp), #ff8a6a);
+}
+.gauge-val {
+  font-size: clamp(0.7rem, 3.1vw, 0.86rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  min-width: 1.8em;
+  text-align: right;
+}
+/* スタミナ切れ(体力ゾーン)= ゲージ全体を朱で警告。 */
+.gauge.hp-zone .hp-bar {
+  box-shadow: 0 0 0 2px rgba(255, 90, 60, 0.7), 0 0 8px rgba(255, 90, 60, 0.5);
+}
+.gauge.hp-zone .gauge-cap {
+  color: #ff8a6a;
+}
+
+/* ---- 下部ヒント(発見・スタミナ切れ・硬岩 cue) ---- */
+.hud-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 9.4rem);
+  text-align: center;
+  font-size: clamp(0.8rem, 3.8vw, 1rem);
+  letter-spacing: 0.06em;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 0.6rem;
+}
+.hud-hint[hidden] {
+  display: none !important;
+}
+.hud-hint.warn {
+  color: #ff8a6a;
+}
+
+/* ---- 十字キー(canvas 外 DOM、タップ掘りと併用) ---- */
+.controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.dpad {
+  position: relative;
+  width: 8.4rem;
+  height: 8.4rem;
+  pointer-events: auto;
+}
+.dpad-btn {
+  position: absolute;
+  width: 2.7rem;
+  height: 2.7rem;
+  font-family: var(--mincho);
+  font-size: 1.1rem;
+  color: var(--ink);
+  background: rgba(230, 178, 90, 0.18);
+  border: 1.5px solid rgba(230, 178, 90, 0.7);
+  border-radius: 0.7rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.dpad-btn:active {
+  background: rgba(230, 178, 90, 0.45);
+}
+.dpad-btn.up {
+  top: 0;
+  left: 2.85rem;
+}
+.dpad-btn.down {
+  bottom: 0;
+  left: 2.85rem;
+}
+.dpad-btn.left {
+  top: 2.85rem;
+  left: 0;
+}
+.dpad-btn.right {
+  top: 2.85rem;
+  right: 0;
+}
+.dpad-btn.center {
+  top: 2.85rem;
+  left: 2.85rem;
+  background: rgba(205, 214, 232, 0.18);
+  border-color: rgba(205, 214, 232, 0.6);
+  color: #fff;
+  font-size: 0.92rem;
+}
+.dpad-btn.center:active {
+  background: rgba(205, 214, 232, 0.42);
+}
+
+/* 数値ポップ(掘った打点・発見・硬岩)。背後に半透明プレート。 */
+.popup {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  font-size: clamp(0.92rem, 4.6vw, 1.3rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  background: rgba(0, 0, 0, 0.42);
+  padding: 0.05em 0.4em;
+  border-radius: 0.4em;
+  pointer-events: none;
+  z-index: 5;
+  animation: popup-rise 0.7s ease-out forwards;
+  white-space: nowrap;
+  max-width: 90vw;
+}
+.popup.cue {
+  color: var(--c-girl);
+}
+.popup.warn {
+  color: #ff8a6a;
+}
+@keyframes popup-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -130%);
+  }
+}
+
+/* ===== オーバーレイ(title / howto / fail / clear) ===== */
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100svh;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.4rem calc(2rem + env(safe-area-inset-bottom));
+  background: rgba(16, 19, 31, 0.84);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.overlay.visible {
+  opacity: 1;
+}
+.overlay[hidden] {
+  display: none !important;
+}
+.overlay:not(.visible) {
+  pointer-events: none;
+}
+.panel {
+  max-width: 30rem;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  /* 内容が増えても画面外へはみ出さない保険。 */
+  max-height: 100%;
+  overflow-y: auto;
+}
+.ov-howto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  width: 100%;
+  text-align: left;
+}
+.ov-howto[hidden] {
+  display: none !important;
+}
+.howto-line {
+  font-size: clamp(0.8rem, 3.6vw, 0.98rem);
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.ov-title {
+  font-weight: 500;
+  font-size: clamp(2.2rem, 12vw, 3.6rem);
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  color: var(--ink);
+  text-shadow: 0 0 24px rgba(230, 178, 90, 0.5);
+}
+.ov-title.small-title {
+  font-size: clamp(1.5rem, 7vw, 2.2rem);
+  letter-spacing: 0.14em;
+  text-indent: 0.14em;
+  text-shadow: 0 0 16px rgba(230, 178, 90, 0.35);
+}
+.ov-sub {
+  font-size: clamp(0.9rem, 4.2vw, 1.08rem);
+  letter-spacing: 0.08em;
+  color: rgba(244, 238, 226, 0.85);
+}
+.ov-action {
+  font-family: var(--mincho);
+  font-size: clamp(0.9rem, 4.4vw, 1.1rem);
+  letter-spacing: 0.16em;
+  color: var(--ink);
+  background: rgba(230, 178, 90, 0.18);
+  border: 1px solid rgba(230, 178, 90, 0.65);
+  border-radius: 0.7rem;
+  padding: 0.6rem 2rem;
+  cursor: pointer;
+  animation: breathe 3.2s ease-in-out infinite;
+}
+.ov-action2 {
+  background: rgba(244, 238, 226, 0.08);
+  border-color: rgba(244, 238, 226, 0.3);
+  animation: none;
+}
+.ov-action[hidden],
+.ov-action2[hidden],
+.ov-title[hidden],
+.ov-sub[hidden],
+.ov-version[hidden] {
+  display: none !important;
+}
+.ov-version {
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  opacity: 0.4;
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-action,
+  .overlay {
+    animation: none;
+  }
+}

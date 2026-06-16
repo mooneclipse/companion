@@ -1,0 +1,152 @@
+"use strict";
+// Mine Road リメイク — タイル種 + 決定論地形生成 + PALETTE — verbatim 静的データ。
+// 原作 jp.windbellrrr.app.minerroad の dungeon.csv ID0(裏庭)のブロック分布を忠実再現する
+// 「数値設計のみ」の流用。原作のコード・画像・テキストは転用していない(メカニクス再現)。
+//
+// ランタイム乱数(Math.random / Date.now)は一切使わない。地形は tileType(col,row,seed) の
+// 決定論ハッシュ関数で都度算出し、マップ配列は持たない(掘削差分だけ Set("col,row") で記録)。
+// これにより力尽き → 同 BASE_SEED 再挑戦で同じ盤面が再現される("気を抜くとすぐ負ける")。
+//
+// タイル種(TILE):
+//   NONE     空間(元から空 or 掘り抜いた跡)。通れる。重力が作用する穴。
+//   SOIL     土。1 手で掘れる(DIG_SOIL)。
+//   HARD     硬土。2 手で掘れる(DIG_HARD)。
+//   ROCK     硬岩。掘れない(v1.1+ でツルハシ)。
+//   GIRL     女の子(救出対象)。掘って到達 = 発見、追従。暖色自発光。
+//   SURFACE  地表(最上部 1 行)。安全・スタミナ/体力 全回復・帰還地点。
+
+const TILE = {
+  NONE: 0,
+  SOIL: 1,
+  HARD: 2,
+  ROCK: 3,
+  GIRL: 4,
+  SURFACE: 5,
+};
+
+// タイル種ごとの掘削手数キー(CONST.DIG_TAPS を単一真実源にするためのマップ)。
+// 女の子は土と同じ手数で掘れる(掘ると発見が起きるだけ)。
+const TILE_DIG_KEY = {
+  [TILE.SOIL]: "SOIL",
+  [TILE.HARD]: "HARD",
+  [TILE.GIRL]: "SOIL",
+};
+
+// ---- 整数ハッシュ(決定論・乱数非使用) --------------------------------
+// 32bit 整数ハッシュ。col,row,seed から再現可能な疑似乱数 [0,1) を得る。
+// マップ配列を持たず、同じ (col,row,seed) は常に同じ結果を返す。
+function hash3(a, b, c) {
+  let h = (a | 0) * 374761393 + (b | 0) * 668265263 + (c | 0) * 2147483647;
+  h = (h ^ (h >>> 13)) >>> 0;
+  h = (h * 1274126177) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296; // [0,1)
+}
+
+// ---- 裏庭(dungeon ID0)のブロック分布 ---------------------------------
+// dungeon.csv ID0 を忠実再現(合計100、floor帯別)。乱数禁止 = この累積確率を
+// 決定論ハッシュ値と比較して分布を再現する(同じ col/row/seed は常に同じタイル)。
+//   floor 1〜10 : 土 83 / 空間 5 / 硬土 10 / 硬岩 2
+//   floor 11〜15: 土 81 / 空間 5 / 硬土 10 / 硬岩 2 / 水 2
+//     → v0.1 は SWIM 未実装のため水 2 を土に丸める(floor11-15 も土 83 扱い)。
+// 累積しきい値(0..1)。r < cum.none → 空間、< cum.hard → 硬土、< cum.rock → 硬岩、以降 土。
+function blockThresholds(row) {
+  // v0.1: floor 帯によらず統一(水を土に丸めた結果、両帯とも 土83/空間5/硬土10/硬岩2)。
+  void row;
+  const none = 0.05; // 空間 5%
+  const hard = none + 0.1; // 硬土 10%
+  const rock = hard + 0.02; // 硬岩 2%(残り 83% が土)
+  return { none, hard, rock };
+}
+
+// ---- 女の子の決定論配置 ------------------------------------------------
+// 縦切り = 1 人。深部(row 10〜13 の到達可能な土中)に決定論で埋める。
+// 救出体験を濃くするため敵スポーン抽選には混ぜず専用ロジック(仕様 §12 所見の通り)。
+// 返り値: [{col, row}, ...]
+function girlPositions(seed) {
+  const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
+  const cols = C.GRID_COLS;
+  const lo = 10;
+  const hi = 13;
+  const span = hi - lo; // 10..13
+  const row = lo + Math.floor(hash3(seed, 7001, 7) * (span + 1));
+  const col = Math.floor(hash3(seed, 7001, 99) * cols);
+  return [{ col, row }];
+}
+
+// ある (col,row) が このダイブの女の子配置に一致するか。
+function isGirlAt(col, row, seed) {
+  if (row <= 0) return false;
+  for (const g of girlPositions(seed)) {
+    if (g.col === col && g.row === row) return true;
+  }
+  return false;
+}
+
+// ---- 決定論地形 --------------------------------------------------------
+// tileType(col, row, seed) → TILE 値。
+// row 0 = 地表(SURFACE、安全な帰還地点)。row < 0 / 範囲外は ROCK(掘れない壁)。
+// それ以外は女の子・空間/硬土/硬岩/土を決定論で配置する。
+function tileType(col, row, seed) {
+  const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
+  if (row <= 0) return TILE.SURFACE; // 地表は安全な帰還地点。
+  if (col < 0 || col >= C.GRID_COLS) return TILE.ROCK; // 横の壁。
+  if (row > C.DEPTH_ROWS) return TILE.ROCK; // 最下層の底(掘れない岩盤)。
+
+  // 女の子(専用配置)。最優先で返す(救出対象が硬岩等に潰されないよう)。
+  if (isGirlAt(col, row, seed)) return TILE.GIRL;
+
+  const r = hash3(col, row, seed); // このマスの基準乱数 [0,1)。
+  const th = blockThresholds(row);
+  if (r < th.none) return TILE.NONE;
+  if (r < th.hard) return TILE.HARD;
+  if (r < th.rock) return TILE.ROCK;
+  return TILE.SOIL;
+}
+
+// app.js 未読込でも tiles.js 単体で node --check が通るフォールバック定数。
+const TILES_FALLBACK_CONST = {
+  GRID_COLS: 15,
+  DEPTH_ROWS: 15,
+};
+
+// ---- PALETTE(深度軸 + 掘った道) --------------------------------------
+// 地表 = 明色(安全)。下へ深度で暗くなる質量。掘った空間は道として相対的に明るい。
+// 女の子 = 暖色自発光。自機 = 常時最明。fog の黒に埋もれないよう前景は別系統で描く。
+const PALETTE = {
+  // 地表 = 夜明けの藍白(安全・全回復・帰還地点)。
+  surface: "#cdd6e8",
+  // 土(未掘削の質量): 浅 → 深 で暗くなる琥珀〜土褐。
+  soilShallow: "#7a5836",
+  soilDeep: "#3a2c1e",
+  // 硬土 = 土より青灰寄りで硬さを示す。
+  hard: "#5a5240",
+  // 硬岩 = 掘れない灰青(明るめの質量で「壁」と分かる)。
+  rock: "#7e8290",
+  // 掘った空間(道) = 深部の闇よりわずかに明るい藍。地表に近いほど明るい。
+  caveShallow: "#2a2f3e",
+  caveDeep: "#14161f",
+  // fog(未可視) = ほぼ黒。
+  fog: "#070809",
+  // 女の子 = 暖色自発光(朱寄りの暖橙)。
+  girl: "#ffb86a",
+  // 自機 = 暖白(常時最明)。
+  miner: "#fff3d0",
+  // 体力バー = 朱(危険ゾーン)。
+  hp: "#d8392a",
+  // スタミナバー = 暖橙。
+  stamina: "#e6b25a",
+  // 暁の光(救出 → 地表の勝利演出)。
+  dawn: "#e7b98a",
+};
+
+if (typeof window !== "undefined") {
+  window.TILE = TILE;
+  window.TILE_DIG_KEY = TILE_DIG_KEY;
+  window.tileType = tileType;
+  window.blockThresholds = blockThresholds;
+  window.girlPositions = girlPositions;
+  window.isGirlAt = isGirlAt;
+  window.tilesHash3 = hash3;
+  window.PALETTE = PALETTE;
+}
