@@ -350,7 +350,7 @@ Phase 4 着手発火条件 #2「直近 2 週間、Phase 1〜3 のいずれかで
   - voice-design v2.0 議論で得た cross-review 精度向上 4 項目を `workspace/CLAUDE.md` L101-110 §「運用上の落とし穴と回避策」B-2 として 2026-05-19 反映済 (実コンテンツ反映は本セッション前から、本セッションは台帳 drift 整備)
   - subordinate CLAUDE.md (workspace / bot-workspace) の「設計判断・対症療法の上限」上位参照行確認、追加変更不要
   - 詳細: voice/docs/STATUS.md 2026-05-19 「workspace/CLAUDE.md §B-2 反映済 drift 解消」Done エントリ参照
-- **Phase 2.5 T-D 後半 (CreditBudgetGuard) 即時前倒し完了** (本日、空白期間 (b) 消化、bot/ commit `5d64ec2`):
+- **Phase 2.5 T-D 後半 (CreditBudgetGuard) 即時前倒し完了** (本日、空白期間 (b) 消化、bot/ commit `5d64ec2`) — ※**2026-06-16 撤回**: 6/15 予定の `claude -p` / Agent SDK クレジット枠分離が公式に pause されたため、CreditBudgetGuard を撤去し `requests_count` + subscription 消費前提に戻した (git 履歴に実装は残る、制度確定時に再実装)。詳細は `~/companion/bot/docs/STATUS.md` 2026-06-16 エントリ:
   - 元案では 2026-06 上旬実施予定だったが、ledger.jsonl 検証 (5/14〜5/19 累計 $0.7961 = $100 の 0.8%) + user 認識訂正 (companion-bot は `claude -p` のみ、API キー API は無関係、6/15 はカウント方式変更) + Anthropic Max 5x プラン公式メール ($100/月確定) で即時前倒し方針が user 確定
   - 実装: `bot/quota.py` に CreditBudgetGuard + `_aggregate` / `_record_common` helper + `exceeded_message()` ABC method、`bot/bot.py` の超過通知を guard 側責務に移譲、`bot/.env.example` を `BOT_BUDGET_GUARD=credit_usd` default に切替、`MONTHLY_BUDGET_ACTIVE_FROM` プレースホルダ (α) 撤廃
   - 単体テスト 9 テスト全 pass (CreditBudgetGuard.allow 境界、月初リセット、format_summary 常時表示、make_budget_guard env 切替、RequestsCountGuard 回帰)

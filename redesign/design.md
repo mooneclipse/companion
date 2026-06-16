@@ -302,6 +302,8 @@ class ClaudeResult:
 
 ## 4. 予算管理と /quota (D5 + C 自衛 framing)
 
+> **2026-06-16 撤回ヘッダ**: 2026-06-15 に予定されていた `claude -p` / Agent SDK の月次クレジット枠分離 (UQ-5) は、6/15 当日に Anthropic が公式に **pause** した (support.claude.com「Use the Claude Agent SDK with your Claude plan」: "We're pausing the changes... For now, nothing has changed: Claude Agent SDK, `claude -p`, and third-party app usage still draw from your subscription's usage limits.")。これを受け 2026-06-16 に CreditBudgetGuard を撤去し、**`requests_count` (1h 回数上限) + subscription 消費前提**に戻した。ledger の金額記録・/quota の金額表示も撤去。本 §4 以下のクレジット枠 ($100/月) 前提の記述は、Anthropic が制度を確定したときの再実装の参考として歴史的に残す (実装は git 履歴に存在)。
+
 ### 4.1 目的の明示 (用語「自衛」一本に統一、devil C 採用)
 
 bot 内予算管理は **「bot 経由 (Discord メッセージ起点) の暴走で自爆クレジット枯渇を起こさない自衛策」**。
