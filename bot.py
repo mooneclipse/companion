@@ -291,7 +291,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # (rotation 後の新規 active log や sessions/quota state file にも適用)。
 os.umask(0o077)
 # 過去 0o644 で作られた既存ファイルがあれば 0o600 へ寄せる。ledger.jsonl は
-# CreditBudgetGuard の cost データを含むので明示的に追加 (T-D 後半 2026-05-19)。
+# bot 経由 prompt の topic_key / session_id / token 量を含むので明示的に追加。
 _LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "ledger.jsonl"
 _PROACTIVE_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "proactive_ledger.jsonl"
 for _existing in [LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*"), _LEDGER_PATH, _PROACTIVE_LEDGER_PATH]:
@@ -399,17 +399,11 @@ async def run_claude(prompt: str, chat_id: int, thread_id: int | None) -> str:
     now = datetime.now(quota.JST)
     if not budget_guard.allow(now):
         summary = budget_guard.summary(now)
-        if summary.guard_kind == "requests_count":
-            logger.warning(
-                "budget exceeded topic_key=%s kind=requests_count count_1h=%d/%d",
-                topic_key, summary.count_last_1h, summary.limit_per_hour,
-            )
-        else:
-            logger.warning(
-                "budget exceeded topic_key=%s kind=%s cost_month=%.4f/%.2f",
-                topic_key, summary.guard_kind,
-                summary.cost_month, summary.monthly_budget_usd,
-            )
+        logger.warning(
+            "budget exceeded topic_key=%s kind=%s count_1h=%s/%s",
+            topic_key, summary.guard_kind,
+            summary.count_last_1h, summary.limit_per_hour,
+        )
         return budget_guard.exceeded_message(summary)
 
     meta, is_new = sessions.start_or_resume(chat_id, thread_id)

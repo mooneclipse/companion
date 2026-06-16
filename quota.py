@@ -1,12 +1,20 @@
 """Budget guard and `/quota` formatting for companion-bot.
 
+bot 経由の `claude -p` 消費は Anthropic subscription の usage limit から引かれる
+(2026-06-15 に予定された `claude -p` / Agent SDK の月次クレジット枠への分離は
+公式に pause された。当面 subscription 消費前提)。ここでの guard は「bot 経由
+暴走で usage limit を食い潰さない自衛」として 1h スライディング window の呼び出し
+回数を見る。
+
+金額 (total_cost_usd) は subscription 消費では実課金と一致しない API 換算の理論値に
+なるため、ledger に記録せず /quota にも表示しない。観測は呼び出し回数と token 量
+(input / output / cache) のみ。将来 Anthropic がクレジット枠方式を確定したら、その
+時点の仕様に合わせて改めて実装する (git 履歴に旧 CreditBudgetGuard 実装が残る)。
+
 Design references:
-- design.md §4.1: framing = "自衛" (bot-routed credit/quota burn protection)
-- design.md §4.2: BudgetGuard ABC + RequestsCountGuard + CreditBudgetGuard
-  (CreditBudgetGuard は 2026-05-19 即時前倒し有効化、6/15 制度移行を待たず
-  ledger 集計で完結する設計のため; ENV master 切替で実機影響は enable 時のみ)
-- design.md §4.6: /quota display schema (R 案 z, monthly-credit 行は常時表示
-  に簡素化、2026-06-15 表示プレースホルダは撤廃)
+- design.md §4.1: framing = "自衛" (bot-routed usage-limit burn protection)
+- design.md §4.2: BudgetGuard ABC + RequestsCountGuard (ENV master switch)
+- design.md §4.6: /quota display schema (回数 + token 観測、金額は非表示)
 - design.md §4.8: prompt-cache metrics (cache_creation / cache_read tokens)
   are aggregated here, never displayed as a Max-plan quota proxy
 """
@@ -77,21 +85,23 @@ def _entries_since(entries: Iterable[dict], threshold: datetime) -> list[dict]:
 
 
 def _month_start(now: datetime) -> datetime:
-    """First instant of the current month in the same tz as ``now``."""
+    """First instant of the current month in the same tz as ``now``.
+
+    金額集計はなくなったが、/quota の token 内訳は「本月累計」として出すため
+    月初境界は引き続き使う。"""
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
 @dataclass
 class BudgetSummary:
-    """Common schema returned by ``BudgetGuard.summary()`` (design.md §4.6)."""
+    """Common schema returned by ``BudgetGuard.summary()`` (design.md §4.6).
+
+    金額フィールドは持たない (subscription 消費前提、§4.6 で金額非表示)。"""
 
     guard_kind: str
     limit_per_hour: int | None
     count_last_1h: int
     count_last_5h: int
-    cost_last_5h: float
-    cost_month: float
-    monthly_budget_usd: float
     cache_creation_tokens_total: int
     cache_read_tokens_total: int
     input_tokens_total: int
@@ -109,8 +119,6 @@ def _aggregate(ledger_path: Path, now: datetime) -> dict:
     recent_5h = _entries_since(entries, now - timedelta(hours=5))
     month_entries = _entries_since(entries, _month_start(now))
 
-    cost_5h = sum(float(e.get("total_cost_usd") or 0.0) for e in recent_5h)
-    cost_month = sum(float(e.get("total_cost_usd") or 0.0) for e in month_entries)
     cache_creation = sum(
         int((e.get("usage") or {}).get("cache_creation_input_tokens") or 0)
         for e in month_entries
@@ -129,8 +137,6 @@ def _aggregate(ledger_path: Path, now: datetime) -> dict:
     return {
         "count_1h": len(recent_1h),
         "count_5h": len(recent_5h),
-        "cost_5h": cost_5h,
-        "cost_month": cost_month,
         "cache_creation": cache_creation,
         "cache_read": cache_read,
         "input_tokens": input_tokens,
@@ -146,18 +152,19 @@ def _record_common(
     topic_key: str | None,
     session_id: str | None,
 ) -> None:
+    # 金額 (total_cost_usd) / modelUsage (costUSD を内包) は記録しない
+    # (subscription 消費前提、§4.6)。回数 guard は ledger の行数、/quota の
+    # 集計は usage tokens のみを使う。
     entry = {
         "timestamp": now.astimezone(JST).isoformat(),
         "topic_key": topic_key,
         "session_id": session_id,
-        "total_cost_usd": result.cost_usd,
         "usage": {
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
             "cache_creation_input_tokens": result.cache_creation_input_tokens,
             "cache_read_input_tokens": result.cache_read_input_tokens,
         },
-        "modelUsage": result.model_usage,
         "terminal_reason": result.terminal_reason,
     }
     # permission deny の観察 (bot-improvement-plan.md Step 2-2)。記録のみ —
@@ -191,22 +198,20 @@ class BudgetGuard(ABC):
 
 
 class RequestsCountGuard(BudgetGuard):
-    """1h sliding-window request-count guard (Phase 2.5 暫定 / requests_count).
+    """1h sliding-window request-count guard (requests_count).
 
     The 1h window decides ``allow()``; ``summary()`` aggregates the wider
-    windows (5h / month) required by §4.6 R 案 z and is unaffected by the
-    guard kind.
+    windows (5h / month token totals) required by §4.6 and is unaffected by
+    the guard kind.
     """
 
     def __init__(
         self,
         limit_per_hour: int = 20,
         ledger_path: Path = DEFAULT_LEDGER_PATH,
-        monthly_budget_usd: float = 100.0,
     ):
         self.limit_per_hour = limit_per_hour
         self.ledger_path = ledger_path
-        self.monthly_budget_usd = monthly_budget_usd
 
     def allow(self, now: datetime) -> bool:
         window_start = now - timedelta(hours=1)
@@ -231,9 +236,6 @@ class RequestsCountGuard(BudgetGuard):
             limit_per_hour=self.limit_per_hour,
             count_last_1h=agg["count_1h"],
             count_last_5h=agg["count_5h"],
-            cost_last_5h=agg["cost_5h"],
-            cost_month=agg["cost_month"],
-            monthly_budget_usd=self.monthly_budget_usd,
             cache_creation_tokens_total=agg["cache_creation"],
             cache_read_tokens_total=agg["cache_read"],
             input_tokens_total=agg["input_tokens"],
@@ -249,83 +251,12 @@ class RequestsCountGuard(BudgetGuard):
         )
 
 
-class CreditBudgetGuard(BudgetGuard):
-    """Monthly credit guard (T-D 後半 / credit_usd、2026-05-19 即時前倒し有効化).
-
-    Anthropic Max 5x プランは 2026-06-15 から ``claude -p`` / Claude Agent SDK
-    経由の消費に月次 $100 クレジット枠を設ける (公式メール、design.md §4.1
-    UQ-5)。bot 経由暴走で枠を食い潰さない自衛として、ledger.jsonl の
-    ``total_cost_usd`` を月初 (00:00 +09:00) から累計し、limit と比較する。
-
-    切替は ``BOT_BUDGET_GUARD=credit_usd`` (env master、§4.2)。実機影響は
-    enable 時のみ、デフォルトは ``requests_count`` のまま。
-    """
-
-    def __init__(
-        self,
-        monthly_budget_usd: float = 100.0,
-        ledger_path: Path = DEFAULT_LEDGER_PATH,
-    ):
-        self.monthly_budget_usd = monthly_budget_usd
-        self.ledger_path = ledger_path
-
-    def allow(self, now: datetime) -> bool:
-        month_start = _month_start(now.astimezone(JST))
-        entries = _entries_since(read_ledger(self.ledger_path), month_start)
-        cost_month = sum(float(e.get("total_cost_usd") or 0.0) for e in entries)
-        # `<` 採用 = 月次予算到達ぴったり ($100.00) で拒否する仕様。float 累計の
-        # 丸め誤差 (例: $100.0000001) は 1 セント未満で実質影響なし、Decimal 化
-        # までは過剰 (B2-1)。
-        return cost_month < self.monthly_budget_usd
-
-    def record(
-        self,
-        now: datetime,
-        result: ClaudeResult,
-        *,
-        topic_key: str | None = None,
-        session_id: str | None = None,
-    ) -> None:
-        _record_common(self.ledger_path, now, result, topic_key, session_id)
-
-    def summary(self, now: datetime | None = None) -> BudgetSummary:
-        now = now or datetime.now(JST)
-        agg = _aggregate(self.ledger_path, now)
-        return BudgetSummary(
-            guard_kind="credit_usd",
-            limit_per_hour=None,
-            count_last_1h=agg["count_1h"],
-            count_last_5h=agg["count_5h"],
-            cost_last_5h=agg["cost_5h"],
-            cost_month=agg["cost_month"],
-            monthly_budget_usd=self.monthly_budget_usd,
-            cache_creation_tokens_total=agg["cache_creation"],
-            cache_read_tokens_total=agg["cache_read"],
-            input_tokens_total=agg["input_tokens"],
-            output_tokens_total=agg["output_tokens"],
-            last_call_at=agg["last_call_at"],
-        )
-
-    def exceeded_message(self, summary: BudgetSummary) -> str:
-        return (
-            f"[budget guard] 月次予算 ${summary.cost_month:.2f} / "
-            f"${summary.monthly_budget_usd:.2f} に到達しました。"
-            "月初までクールダウンしてください。"
-        )
-
-
 def format_summary(s: BudgetSummary) -> str:
-    """Render BudgetSummary as the Discord-facing /quota message (R 案 z)."""
+    """Render BudgetSummary as the Telegram-facing /quota message (§4.6).
+
+    金額は出さない (subscription 消費前提)。回数と token 量のみを観測値として表示。"""
     lines = ["[bot 経由 prompt の集計]"]
-    lines.append(
-        f"直近 5h: {s.count_last_5h} 回呼び出し / 累計 cost: ${s.cost_last_5h:.4f}"
-    )
-    remaining = max(s.monthly_budget_usd - s.cost_month, 0.0)
-    pct = (s.cost_month / s.monthly_budget_usd * 100.0) if s.monthly_budget_usd else 0.0
-    lines.append(
-        f"本月累計: ${s.cost_month:.2f} / ${s.monthly_budget_usd:.2f} "
-        f"(使用 {pct:.1f}%, 残り ${remaining:.2f})"
-    )
+    lines.append(f"直近 5h: {s.count_last_5h} 回呼び出し")
 
     total_input = (
         s.input_tokens_total
@@ -342,21 +273,18 @@ def format_summary(s: BudgetSummary) -> str:
     else:
         lines.append("prompt キャッシュ ヒット率: 集計データなし")
     lines.append(
-        f"token 内訳: input total {s.input_tokens_total}, "
+        f"token 内訳 (本月): input total {s.input_tokens_total}, "
         f"output total {s.output_tokens_total}"
     )
     lines.append("")
     lines.append(
         "(これは bot 経由 prompt の集計値です。"
-        "手元 claude code セッション分は含みません)"
+        "subscription の usage limit に対する公式利用率ではありません。"
+        "手元 claude code セッション分も含みません)"
     )
     if s.guard_kind == "requests_count" and s.limit_per_hour is not None:
         lines.append(
             f"[guard: requests_count / 直近 1h {s.count_last_1h}/{s.limit_per_hour}]"
-        )
-    elif s.guard_kind == "credit_usd":
-        lines.append(
-            f"[guard: credit_usd / 本月 ${s.cost_month:.2f}/${s.monthly_budget_usd:.2f}]"
         )
     return "\n".join(lines)
 
@@ -364,9 +292,9 @@ def format_summary(s: BudgetSummary) -> str:
 def make_budget_guard() -> BudgetGuard:
     """Construct the BudgetGuard configured via env (design.md §4.2).
 
-    `BOT_REQUESTS_PER_HOUR` / `BOT_MONTHLY_CREDIT_USD` は整数 / 正の float の
-    early validation を行う。誤設定 (負値・非数値) で bot が黙って全 deny に
-    倒れたり、ValueError を遅延発火 (allow() 呼び出し時) するのを防ぐ (B2-4)。
+    `BOT_REQUESTS_PER_HOUR` は正の整数の early validation を行う。誤設定
+    (負値・非数値) で bot が黙って全 deny に倒れたり、ValueError を遅延発火
+    (allow() 呼び出し時) するのを防ぐ (B2-4)。
     """
     kind = os.environ.get("BOT_BUDGET_GUARD", "requests_count").strip()
     if kind == "requests_count":
@@ -382,17 +310,4 @@ def make_budget_guard() -> BudgetGuard:
                 f"BOT_REQUESTS_PER_HOUR must be > 0, got: {limit}"
             )
         return RequestsCountGuard(limit_per_hour=limit)
-    if kind == "credit_usd":
-        budget_raw = os.environ.get("BOT_MONTHLY_CREDIT_USD", "100")
-        try:
-            budget = float(budget_raw)
-        except ValueError as e:
-            raise ValueError(
-                f"BOT_MONTHLY_CREDIT_USD must be a positive number, got: {budget_raw!r}"
-            ) from e
-        if budget <= 0:
-            raise ValueError(
-                f"BOT_MONTHLY_CREDIT_USD must be > 0, got: {budget}"
-            )
-        return CreditBudgetGuard(monthly_budget_usd=budget)
     raise ValueError(f"unknown BOT_BUDGET_GUARD: {kind!r}")

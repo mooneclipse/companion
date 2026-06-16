@@ -10,7 +10,7 @@
 - 主要パス:
   - `bot.py` … 本体 (1 ファイル構成、PTB v22.7 Application + Unix socket listener、`chunk_telegram` / `send_text` / `_typing_action` 含む)
   - `companion-bot.service` … systemd user unit (`~/.config/systemd/user/` から symlink で配置 + `enable --now` 済)
-  - `.env` … `TELEGRAM_BOT_TOKEN` / `OWNER_ID` (Telegram user.id) / `NOTIFY_CHAT_ID` (supergroup chat_id、負値) / `BOT_THREAD_ID_*` (各 topic の数値 ID) / `CLAUDE_BIN` / `CLAUDE_CWD` / `CLAUDE_TIMEOUT` / `BOT_BUDGET_GUARD` / `BOT_MONTHLY_CREDIT_USD` (chmod 600)
+  - `.env` … `TELEGRAM_BOT_TOKEN` / `OWNER_ID` (Telegram user.id) / `NOTIFY_CHAT_ID` (supergroup chat_id、負値) / `BOT_THREAD_ID_*` (各 topic の数値 ID) / `CLAUDE_BIN` / `CLAUDE_CWD` / `CLAUDE_TIMEOUT` / `BOT_BUDGET_GUARD` / `BOT_REQUESTS_PER_HOUR` (chmod 600)
   - `requirements.txt` … `python-telegram-bot[rate-limiter,job-queue]>=22.7,<23` + `python-dotenv>=1.0,<2.0`
   - `venv/` … Python 3.10 で 2026-05-28 cold cut 時に再構築 (旧 Discord 版 venv は rollback path として `venv-discord-backup/` に退避していたが、2026-06-09 に OWNER 削除承認で rm 済 = rollback path 撤去)
 - 通知投入口: `$XDG_RUNTIME_DIR/companion-bot.sock` (permission 0600)。1 接続 1 メッセージ (UTF-8、EOF で確定)、本文は `.env` の `NOTIFY_CHAT_ID` + `BOT_THREAD_ID_MAINTENANCE` (空なら maintenance fallback) で指定した Telegram supergroup の #maintenance topic へ転送。`[critical] ` プレフィクス完全一致 (半角込み) で `disable_notification` 反転 (silent default、critical のみ音 ON)。例: `printf '%s' "..." | nc -U $XDG_RUNTIME_DIR/companion-bot.sock`
@@ -28,13 +28,13 @@ Telegram cold cut (2026-05-28) 後の **cleanup / 観察の残項目** を実態
 - **A-1 (確定・作業不要)**: `sessions/channels/` の `.archive/` への退避 (旧 L163「切替 1 週間後 rename」) は **不要と確定**。`sessions/` は `.gitignore` 対象 = git 追跡外、かつ channels/ は**空**。保全対象ゼロのため移動しない (2026-06-09 棚卸しで判定、再検討不要)。
 - ~~**B-1 (着手可能)**: `claude_runner.ClaudeOptions` 未使用 7 フィールド (`prompt_prefix` 等、B4-1) を実装するか削るかの判定。前提データ揃い済み — Telegram 窓 13 日間の cache hit 率 90.6% (B-3 締め実測、2026-06-10)。~~ → **2026-06-10 完了 (OWNER 承認で全削除、Done 転記済み)**。
 - ~~**B-3 (期限 2026-06-11)**: cold cut +14 日の Telegram 観察締め~~ → **2026-06-10 前倒しクローズ (OWNER 承認)、Done 転記済み**。全項目クリーン。K-14 (Console vs ledger 差分点検、7/1 前後) のみ別項として継続:
-- **B-4 (7/1 前後)**: K-14 = Anthropic Console 累計使用量 vs ledger.jsonl 累計の差分点検 (6/15 新クレジット制初月の月末締め後)。旧 B-3 から分離した唯一の期日付き残観察。
+- ~~**B-4 (7/1 前後)**: K-14 = Anthropic Console 累計使用量 vs ledger.jsonl 累計の差分点検~~ → **2026-06-16 凍結**: 6/15 新クレジット制は公式 pause で前提消失 (制度未開始 + ledger の金額記録も撤去済、subscription usage 消費前提に戻した)。Anthropic が制度を確定したら再設定する。
 
 bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/workspace/redesign/bot-improvement-plan.md`、ステップ単位で着手・各 Step 完了時に Done 転記):
 
 - ~~**C-1**: Step 1 閲覧自由化~~ → **2026-06-10 完了、Done 転記済み** (実弾検証 3 件 pass、消費観察起点 = 2026-06-10)。
 - ~~**C-2**: Step 2 bot.py 小改変パック #1 — 画像応答 + permission_denials 記録~~ → **2026-06-10 完了、Done 転記済み** (restart + 実弾検証 2 件 pass、数日の様子見のみ継続)。
-- **C-3 (消費観察 1〜2 週間後 = 2026-06-17〜24 目処)**: Step 3 予算計器 — 課金窓アンカー集計 (3-0 新設、`BOT_CREDIT_ANCHOR_DAY`、正確な課金更新日は OWNER 確認待ち) + ソフト警告 50%/80% + /quota 窓終端着地予測 + /status セッション肥大可視化 + /quota に `claude -p "/usage"` 公式利用率併記 (headless $0 実機確認済み 2026-06-12)。暦月→課金窓への引き直しと 6/15 制度開始後の再検証項目は ticket #16 議論 (2026-06-12) でプラン改訂済み。
+- **C-3 (一部凍結)**: Step 3 予算計器 — 課金窓アンカー集計 (`BOT_CREDIT_ANCHOR_DAY`) / ソフト警告 50%/80% / /quota 窓終端着地予測 は **2026-06-15 のクレジット枠分離が公式 pause されたため凍結** (金額・課金窓を前提とするため。Anthropic が制度を確定したら再設計)。クレジット枠と独立な項目 = /status セッション肥大可視化 + /quota に `claude -p "/usage"` 公式利用率併記 (headless 実機確認済み 2026-06-12) は subscription 消費前提でも有効なため継続検討。**2026-06-16**: budget guard は `requests_count` (1h 回数上限) に戻し、ledger の金額記録・/quota の金額表示は撤去済 (詳細は下記 Done「2026-06-16 credit guard 撤去」)。
 - **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 の優先順。死蔵知識 proactive 拡張は persona 軸 4 実装 (2) として 2026-06-12 に前倒し完了 (チケット #20、Done 転記済み)。
 - **C-5 (次回 bot.py 改修時に同梱)**: `build_proactive_prompt` の `vault_hint` 展開に `isinstance(str)` ガードを足して `dormant_hint` (#20 で追加、ガード付き) と対称にする。docstring の注入防止境界の主張と実装の非対称解消 (code-reviewer 指摘 2026-06-12)。単独では restart コストに見合わないため次の bot.py 変更に相乗りさせる。
 
@@ -188,6 +188,19 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### 2026-06-16 credit guard 撤去 — 6/15 クレジット枠 pause を受け subscription 消費前提へ戻す
+
+- **背景**: 2026-06-15 に予定されていた `claude -p` / Agent SDK の月次クレジット枠 ($100/月 for Max 5x) 分離が、6/15 当日に Anthropic 公式で **pause** された (support.claude.com「Use the Claude Agent SDK with your Claude plan」原文: "We're pausing the changes... For now, nothing has changed: Claude Agent SDK, `claude -p`, and third-party app usage still draw from your subscription's usage limits.")。手元 claude code セッションで一次情報を直接取得して確認 (二次情報の Zenn 記事 / vault W25 トレンドノートは「6/15 施行」と誤報のまま)。
+- **判断**: 制度が発動しない以上、月次 $100 クレジット枠前提の CreditBudgetGuard は実態とずれる (ledger の `total_cost_usd` は subscription 消費では実課金と一致しない API 換算の理論値)。OWNER 指示「サブスク消費前提に書き換え、credit 枠は跡形なく消す (また方法が決まったら改修)」を受け、コード/設定からは撤去し git 履歴に残す方針。
+- **変更**:
+  - `quota.py`: `CreditBudgetGuard` 削除、`make_budget_guard()` default を `requests_count` に、`_record_common` から `total_cost_usd` / `modelUsage` 記録を撤去、`_aggregate` から金額集計を撤去、`BudgetSummary` から金額フィールド (`cost_last_5h` / `cost_month` / `monthly_budget_usd`) を削除、`format_summary` から金額行を撤去 (回数 + token 観測のみ)。
+  - `bot.py`: budget guard 超過ログの cost 分岐を回数のみに簡素化、ledger の 0o600 コメントを金額非依存に修正。
+  - `.env`: `BOT_BUDGET_GUARD=requests_count` / `BOT_REQUESTS_PER_HOUR=20`、`BOT_MONTHLY_CREDIT_USD` 削除。`.env.example` も同様にサブスク前提へ。
+  - `tests/test_quota.py`: CreditBudgetGuard 系テストを撤去、ledger に金額が記録されないこと / `/quota` に `$` が出ないことの assert を追加。
+- **検証**: `venv/bin/python -m unittest discover -s tests` で **180 件全 pass** (quota 15 件含む)、`py_compile` OK。
+- **ledger 既存行**: 過去の `total_cost_usd` 入り行は実データとして残置 (回数 guard は行数のみ参照、改竄しない)。
+- **未了**: restart で本番反映 (requests_count guard へ切替) は OWNER 承認後。
 
 ### 自発発話への声載せ (2026-06-16、todo#22、commit `612cec4`。restart + push 済み、実機発火観察待ち)
 
@@ -919,7 +932,7 @@ remote 側 RV-11 (TVer 再生対応、実エピソード 3 本 `-J` 検証済 = 
 
 ## 運用注記
 
-- **CreditBudgetGuard 月末枠到達時の手動引き上げ**: `BOT_BUDGET_GUARD=credit_usd` 経路で月内 cost 累計が `BOT_MONTHLY_CREDIT_USD` (default $100) に到達すると `allow()` が False を返し続け、月初までクールダウンメッセージを返却する。緊急で枠を引き上げたい場合は `bot/.env` の `BOT_MONTHLY_CREDIT_USD` を一時的に大きい値 (例 200) に上書き → `systemctl --user restart companion-bot.service` で反映。元に戻すときも同手順。Anthropic Max 5x プラン側の "extra usage" は別物 (Anthropic Console で manual enable、companion-bot は ledger 集計しか見ない)
+- **budget guard は requests_count (1h 回数上限)**: bot 経由の claude -p 消費は subscription の usage limit から引かれる (2026-06-15 予定の月次クレジット枠分離は公式に pause)。`BOT_BUDGET_GUARD=requests_count` / `BOT_REQUESTS_PER_HOUR` (default 20) で 1h あたり呼び出し回数を上限化し、bot 経由暴走で usage limit を食い潰さない自衛とする。超過時は「古い記録が window から外れるまで待つ」メッセージ。1h 上限を緊急で上げたい場合は `bot/.env` の `BOT_REQUESTS_PER_HOUR` を上書き → `systemctl --user restart companion-bot.service`。クレジット枠前提の CreditBudgetGuard は 6/15 pause を受けて **2026-06-16 に撤去** (git 履歴に実装は残る、制度確定時に再実装)
 
 ## 運用ルール
 
