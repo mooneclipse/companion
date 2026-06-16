@@ -1,6 +1,6 @@
 # companion-bot 開発台帳
 
-最終更新: 2026-06-12 (PLAY_ALLOWED_HOSTS に TVer 2 host 追加 = remote RV-11 のミラー同期。tver.jp / www.tver.jp + canonical ベクタ受理 2・拒否 2、47 tests pass。bot.py 変更はリスト追加のみで次回 restart 反映、急がない) / 2026-06-12 (voice bot 統合 **完了** = Phase 4、/say + /status voice 集計 + voice_ledger。restart + speaker 11 + V-S1/V-S2 実弾 pass 済み、以後この bot.py 大改変への様子見観察) / 2026-06-12 (テストログの本番 bot.log 混入を修正 = logger 冪等化、bot.py 変更は挙動不変で次回 restart 反映) / 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
+最終更新: 2026-06-16 (自発発話への声載せ = todo#22、proactive の Telegram 送信時に TV からも一言発話 (「生成と再生の分離」= fire-and-forget)。commit `612cec4`、184 tests pass。restart + 実機発火観察待ち) / 2026-06-12 (PLAY_ALLOWED_HOSTS に TVer 2 host 追加 = remote RV-11 のミラー同期。tver.jp / www.tver.jp + canonical ベクタ受理 2・拒否 2、47 tests pass。bot.py 変更はリスト追加のみで次回 restart 反映、急がない) / 2026-06-12 (voice bot 統合 **完了** = Phase 4、/say + /status voice 集計 + voice_ledger。restart + speaker 11 + V-S1/V-S2 実弾 pass 済み、以後この bot.py 大改変への様子見観察) / 2026-06-12 (テストログの本番 bot.log 混入を修正 = logger 冪等化、bot.py 変更は挙動不変で次回 restart 反映) / 2026-06-12 (自発発話の種「死蔵知識との再会」追加 = チケット #20、persona 軸 4 実装 (2)) / 2026-06-12 (C-3 改訂 = ticket #16: 課金窓アンカー集計 + /quota 公式 /usage 併記をプランに追加、実装は C-3 着手時) / 2026-06-12 (/play を xdg-open から remote 常駐 mpv (TV) 再生に切り替え = ticket #17、restart は user 操作待ち)
 
 ## 設計メモ
 
@@ -188,6 +188,16 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### 自発発話への声載せ (2026-06-16、todo#22、commit `612cec4`。restart + 実機発火観察待ち)
+
+proactive companion messaging が #chat に一言送った直後、同じ一言を TV (VOICEVOX engine) からも声で流す (persona 軸 4「同じ部屋にいる相方」の声版)。設計起点は `voice/docs/STATUS.md` 2026-06-12 entry + persona 軸 4。
+
+- **「生成と再生の分離」= 同期待ちしない呼び出し**: 自発発話は返事を期待しない一方通行で合成を待つ主体がいないため、`_run_proactive` の `send_text` 直後に `_dispatch_proactive_voice` → `asyncio.create_task(_proactive_voice_worker)` で detach。Telegram 送信はブロックせず裏で合成→再生 (warm 46s/cold +17s のレイテンシを UX 要件から外す)。土管は /say と同じ `voice_command.cmd_say` (engine 都度起動→合成→stop、`_say_lock` で /say と直列化済み) を流用。
+- **在宅検知は持たない**: proactive の発火窓 9-22 JST (proactive-companion.sh 側ガード) を在宅前提の代用とする。追加ゲートなし。
+- **設計判断**: env `PROACTIVE_VOICE_ENABLED` (既定 on、`PROACTIVE_ENABLED` と同パターン) / 長さ MAX_SAY_TEXT(100) 超は音声のみ skip = silent truncate しない (M-8)、Telegram 本文は残す。判定は長さ 1 回・成否は cmd_say の rc 1 回で確定 / fire-and-forget task は `bot_data["proactive_voice_tasks"]` (set) に保持し done callback で discard (GC 対策)、post_shutdown で他 background task と対称回収 (合成中再起動の engine 残留防止、code-reviewer 提案)。
+- **ledger 分離**: proactive_ledger に `voice` フィールド (disabled/too_long/dispatched) を記録、**voice_ledger には書かない**。voice_ledger は /say = ユーザー実需 (Phase 4 常駐化 trigger) の集計元であり、自動の自発発話を混ぜると実需を水増しするため (集計の置き場所を分離)。声の rc は logger に出す。
+- **検証**: 184 tests pass (`DispatchProactiveVoiceTest` 3 ケース追加 = disabled/too_long/dispatched)。**restart + 実機の自発発話発火による声載せ観察は未消化** (発火窓 9-22 で確率発火のため自然待ち)。
 
 ### PLAY_ALLOWED_HOSTS に TVer 追加 (2026-06-12、remote RV-11 ミラー同期)
 
