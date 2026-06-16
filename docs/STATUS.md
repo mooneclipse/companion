@@ -1,8 +1,8 @@
-# companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」 / 第 3 作「なごり」 / 第 4 作「あかり」 / 第 5 作「ともる」 / 第 6 作「さぐり」）
+# companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」 / 第 3 作「なごり」 / 第 4 作「あかり」 / 第 5 作「ともる」 / 第 6 作「さぐり」 / 第 7 作「マインロード」(Mine Road リメイク縦切り)）
 
-最終更新: 2026-06-11 (Mine Road リメイク技術選定確定 = Web PWA 継続・仕様駆動・**未着手**)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に全 6 本)。次の制作は Mine Road リメイク (着手待ち)。
+最終更新: 2026-06-17 (第7作「マインロード」縦切り v0.1.0 実装・検証 ALL PASS・本番配信)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は縦切り v0.1.0 を本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。ただし remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
 
-## Mine Road リメイク（技術選定確定、2026-06-11 / `/newgame` 不使用の仕様駆動リメイク、未着手）
+## Mine Road リメイク（第 7 作「マインロード」/ `/newgame` 不使用の仕様駆動リメイク、縦切り v0.1.0 実装・配信済み 2026-06-17）
 
 - **経緯**: 原作 `jp.windbellrrr.app.minerroad` v1.2.7 は **targetSdk=14**（APK マニフェスト実パースで確認）のため Android 14+ のインストールブロック対象＝今のスマホで遊べない。同じゲーム性で遊ぶための個人リメイク。**一般公開予定なし**（tailnet 配信境界内で完結）。
 - **設計正本**: `~/mineroad-analysis/MINE_ROAD_仕様まとめ.md` + `~/mineroad-analysis/assets/*.csv`（dungeon / dungeon_info / item / monster / craft / shop / tutorial / tutorial_index、抽出済み）。git 管理外のため消失時は手元 APK の再解析（jadx）で復元可。**忠実再現が目的**。コード・画像・テキストの転用はしない（メカニクス・数値設計のみ参照、資料冒頭の注記どおり）。
@@ -10,6 +10,15 @@
 - **技術選定（user 確定 2026-06-11）**: **Web PWA 継続**（vanilla JS + canvas、既存 games インフラ）。理由: ①Sonnet 改修容易性が候補中最良（最大コーパス・ビルド不要・API バージョン罠なし）②playtester（Playwright + 画面座標ヒットテスト）の自走検証を作り直しゼロで流用 ③Windows は Chrome/Edge「アプリとしてインストール」、スマホは tailnet PWA、で 1 実装両対応。比較した代替: Godot 4（Windows exe + Android APK が要る場合の次点。playtester 作り直し + Android SDK セットアップが追加コスト、Sonnet は Godot 3/4 API 混同癖あり）、Unity（エディタ GUI 中心で AI 自走ループ不成立、開発が Windows 機に移り既存パイプラインを失う、不採用確定）。
 - **着手方針**: **縦切りスライス先行**。裏庭の洞窟（15×15）+ スタミナ→体力の二段ゲージ + 掘削 + 帰還全回復 + 女の子 1 人救出のみで「撤退判断の手触り」を実機確認してから、全コンテンツ（9 ダンジョン / 45 アイテム / 20 モンスター / クラフト / 商人 / 仲間）へ進む判定ゲートとする。手触りが再現できなければ拡張しない。
 - **並行（案 1）**: 原作は Windows 機 + Android エミュレータ（BlueStacks / LDPlayer 等の Android 13 以下イメージ。インストールブロックは Android 14 から）で手元 APK を直入れしてプレイ可。APK は native lib なしの純 dex で x86 エミュレータ互換。リメイクの忠実度を測る基準としても先に動かす価値あり。
+
+### 縦切り実装・検証・配信（v0.1.0、2026-06-17 / 仕様駆動、ALL PASS）
+
+- **実装**: `mineroad/web/` 一式（`index.html`/`app.js`/`tiles.js`/`style.css`/`manifest.json`/`icons` 192・512）。VERSION=`v0.1.0`、SW なし。CONST 単一ブロック、決定論 `tileType`/`girlPositions`（ランタイム乱数禁止）、掘削差分 `Set`、女の子 BFS 追従＋重力、**スタミナ→体力の二段ゲージ**（着手方針どおり。※第6作さぐりの「v1.0 1本集約」とは別物。リメイクは原作忠実で最初から二段）、光の道、DOM-HUD+十字キー。既存 saguri/tomoru のスケルトン踏襲。前セッションで実装バグ2件修正（女の子発見の同マス早期 return・救出 costPaid 二重消費回避）。
+- **検証**: `tests/debug-mineroad.mjs`（Playwright 画面座標ヒットテスト）**ALL PASS 13/13**。A〜I ゲート（A遷移/B二段ゲージ・地上全回復撤退/C発見→追従→救出/D重力・探索率/E十字キー+短高 viewport/F既存6作回帰 URL不変/G画面操作 e2e overlay 非飛び越え/H fail overlay+retry/I determinism 静的検査）。全 viewport(412×915/680/730) はみ出し0・pageerror0。本セッションで独立再現確認（消失していた検証結果 `~/companion/logs/mr_result.txt` を再生成）。`tests/fun-mineroad.mjs`=方策ベース面白さ代理（最適行動で確実救出・無策は未達、固定seed 1人救出のため決定論評価）。
+- **レビュー**: code-reviewer 点検 = push 可能水準・コード修正必須なし。
+- **配信**: `server/app.py` に `/mineroad/` STATIC ルート（既存 saguri と同形）。本番 `systemctl --user restart companion-games` 反映済み。47825 直 200・8444 tailnet プロキシ経由 200。**実機URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`**。**ランチャー（`remote/web/app.js` GAMES 配列）未掲載＝直URLのみ**（縦切り段階、実機手触り確認後にタイル掲載判断）。
+- **commit**: `feat(games) 1b5393c`（実装一式 + server route + tests）。本 docs 反映は別 commit。
+- **次判定ゲート**: 縦切りで「撤退判断の手触り」が再現できているか実機確認 → OK なら全コンテンツ（9 ダンジョン/45 アイテム/20 モンスター/クラフト/商人/仲間、水流ハザード、二段ゲージの拡張要素）へ進む。再現不足なら拡張しない。
 
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
 
