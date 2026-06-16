@@ -11,6 +11,7 @@ _fmt_duration, cmd_reset against a tmp sessions dir).
 """
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import os
@@ -632,6 +633,67 @@ class ProactiveGuardNotBypassedTest(unittest.IsolatedAsyncioTestCase):
         rec = _json.loads(lines[-1])
         self.assertFalse(rec["sent"])
         self.assertEqual(rec["reason"], "snoozed")
+
+
+class DispatchProactiveVoiceTest(unittest.IsolatedAsyncioTestCase):
+    """_dispatch_proactive_voice の判定 (disabled / too_long / dispatched)。
+
+    「生成と再生の分離」(todo#22): 声は別 task に投げて proactive worker を
+    ブロックしない。ここでは判定戻り値と cmd_say 呼び出し有無を検証する。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    async def test_disabled_returns_disabled_without_task(self) -> None:
+        from unittest import mock
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "PROACTIVE_VOICE_ENABLED", False), \
+             mock.patch.object(self.bot.voice_command, "cmd_say") as say:
+            state = self.bot._dispatch_proactive_voice(app, "やあ")
+
+        self.assertEqual(state, "disabled")
+        say.assert_not_called()
+        self.assertNotIn("proactive_voice_tasks", app.bot_data)
+
+    async def test_too_long_returns_too_long_without_task(self) -> None:
+        from unittest import mock
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        long_text = "あ" * (self.bot.voice_command.MAX_SAY_TEXT + 1)
+        with mock.patch.object(self.bot, "PROACTIVE_VOICE_ENABLED", True), \
+             mock.patch.object(self.bot.voice_command, "cmd_say") as say:
+            state = self.bot._dispatch_proactive_voice(app, long_text)
+
+        self.assertEqual(state, "too_long")
+        say.assert_not_called()
+
+    async def test_dispatched_invokes_cmd_say_in_background(self) -> None:
+        from unittest import mock
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+
+        async def _fake_say(text):
+            return 0, "[say] ✓ 発話完了"
+
+        with mock.patch.object(self.bot, "PROACTIVE_VOICE_ENABLED", True), \
+             mock.patch.object(self.bot.voice_command, "cmd_say",
+                               side_effect=_fake_say) as say:
+            state = self.bot._dispatch_proactive_voice(app, "ちょっと一息どう")
+            # detach した task を待ってから cmd_say の呼び出しを確認する。
+            tasks = list(app.bot_data["proactive_voice_tasks"])
+            self.assertEqual(len(tasks), 1)
+            await asyncio.gather(*tasks)
+
+        self.assertEqual(state, "dispatched")
+        say.assert_awaited_once_with("ちょっと一息どう")
+        # 完了した task は done callback で集合から除かれる。
+        self.assertEqual(len(app.bot_data["proactive_voice_tasks"]), 0)
 
 
 class RunClaudePersonaWiringTest(unittest.IsolatedAsyncioTestCase):

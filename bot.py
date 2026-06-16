@@ -73,6 +73,13 @@ CLAUDE_TIMEOUT = float(os.environ.get("CLAUDE_TIMEOUT", "300"))
 PROACTIVE_ENABLED_RAW = os.environ.get("PROACTIVE_ENABLED", "1").strip().lower()
 PROACTIVE_ENABLED = PROACTIVE_ENABLED_RAW in ("1", "true", "yes", "on")
 
+# 自発発話を TV からの声でも流すか (todo#22)。proactive が #chat に送る一言を
+# voice_command.cmd_say で「生成と再生の分離」(同期待ちしない呼び出し) で再生する。
+# 在宅検知は持たず、proactive と同じ発火窓 9-22 JST を在宅前提の代用とする。
+# 出典: voice/docs/STATUS.md 2026-06-12 entry + persona 軸 4。
+PROACTIVE_VOICE_ENABLED_RAW = os.environ.get("PROACTIVE_VOICE_ENABLED", "1").strip().lower()
+PROACTIVE_VOICE_ENABLED = PROACTIVE_VOICE_ENABLED_RAW in ("1", "true", "yes", "on")
+
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
 
@@ -1753,11 +1760,60 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
     # 自発発話で送信した以上 last_prompt_at は run_claude 内 record_usage で更新済
     # (連投防止 = 沈黙判定がこの時刻基準で再カウントされる)。
-    logger.info("proactive sent len=%d seed_kind=%s", len(output), seed_kind)
+    # 送信済みの一言を TV からも声で流す (todo#22、同期待ちしない fire-and-forget)。
+    voice_state = _dispatch_proactive_voice(app, output)
+    logger.info(
+        "proactive sent len=%d seed_kind=%s voice=%s", len(output), seed_kind, voice_state
+    )
     _append_proactive_ledger({
         **base, "sent": True, "reason": "ok", "output_len": len(output),
+        "voice": voice_state,
         "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
     })
+
+
+def _dispatch_proactive_voice(app: Application, text: str) -> str:
+    """自発発話の一言を TV から声で流す (fire-and-forget)。戻り値は ledger 用の判定。
+
+    「生成と再生の分離」(persona 軸 4 / voice STATUS 2026-06-12): 自発発話は返事を
+    期待しない一方通行なので、合成・再生を await せず別 task に投げて proactive
+    worker をブロックしない。土管は /say と同じ voice_command.cmd_say (engine 都度
+    起動 → 合成 → stop、_say_lock で /say と直列化済み)。
+    """
+    if not PROACTIVE_VOICE_ENABLED:
+        return "disabled"
+    # cmd_say は長さチェックを持たない (MAX_SAY_TEXT は /say ハンドラ側の責務)。
+    # 自発発話は 1〜2 文 = 通常 ≤ 100 字だが保証はないので、超過時は音声だけ落とす
+    # (silent truncate しない = M-8。Telegram 本文はそのまま残る)。判定は長さ 1 回で確定。
+    if len(text) > voice_command.MAX_SAY_TEXT:
+        logger.info(
+            "proactive voice skip: too long (%d/%d)", len(text), voice_command.MAX_SAY_TEXT
+        )
+        return "too_long"
+    task = asyncio.create_task(_proactive_voice_worker(text))
+    # detach した task は参照を持たないと GC される (asyncio の既知挙動)。
+    # bot_data に保持し、完了時に done callback で捨てる。
+    tasks: set = app.bot_data.setdefault("proactive_voice_tasks", set())
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    return "dispatched"
+
+
+async def _proactive_voice_worker(text: str) -> None:
+    """裏で合成 → 再生 (cmd_say 流用)。失敗は logger のみ (proactive 本体は道連れにしない)。
+
+    voice_ledger には書かない。voice_ledger は /say = ユーザー実需の集計元 (Phase 4
+    常駐化 trigger) であり、自動の自発発話を混ぜると実需を水増しするため。声の rc は
+    logger に、発火有無は proactive_ledger の voice フィールドに残す (集計の置き場所を分離)。
+    """
+    started = time.monotonic()
+    try:
+        rc, _ = await voice_command.cmd_say(text)
+    except Exception:
+        logger.exception("proactive voice failed")
+        return
+    duration_ms = int((time.monotonic() - started) * 1000)
+    logger.info("proactive voice rc=%d duration_ms=%d", rc, duration_ms)
 
 
 async def _handle_notify_connection(
@@ -1919,6 +1975,15 @@ async def post_shutdown(application: Application) -> None:
                 await worker_task
             except (asyncio.CancelledError, Exception):
                 pass
+    # 自発発話の声 (fire-and-forget) も他 background task と対称に回収する。
+    # 合成中に再起動が来た場合 cancel が cmd_say の finally (engine stop) まで
+    # 走らないと engine が残留しうるため、取り残しを消す (todo#22)。
+    for voice_task in list(application.bot_data.get("proactive_voice_tasks", ())):
+        voice_task.cancel()
+        try:
+            await voice_task
+        except (asyncio.CancelledError, Exception):
+            pass
     try:
         NOTIFY_SOCKET.unlink()
     except FileNotFoundError:
