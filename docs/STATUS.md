@@ -200,7 +200,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
   - `tests/test_quota.py`: CreditBudgetGuard 系テストを撤去、ledger に金額が記録されないこと / `/quota` に `$` が出ないことの assert を追加。
 - **検証**: `venv/bin/python -m unittest discover -s tests` で **180 件全 pass** (quota 15 件含む)、`py_compile` OK。
 - **ledger 既存行**: 過去の `total_cost_usd` 入り行は実データとして残置 (回数 guard は行数のみ参照、改竄しない)。
-- **未了**: restart で本番反映 (requests_count guard へ切替) は OWNER 承認後。
+- **2026-06-16 反映済**: restart で本番切替 (requests_count guard) 完了 (15:42 起動、journal/bot.log に例外なし)、`/quota` 実機確認済み (金額非表示・回数/token のみ)。
 
 ### 自発発話への声載せ (2026-06-16、todo#22、commit `612cec4`。restart + push 済み、実機発火観察待ち)
 
