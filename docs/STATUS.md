@@ -1,6 +1,6 @@
 # companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」 / 第 3 作「なごり」 / 第 4 作「あかり」 / 第 5 作「ともる」 / 第 6 作「さぐり」 / 第 7 作「マインロード」(Mine Road リメイク縦切り)）
 
-最終更新: 2026-06-17 (第7作「マインロード」**v0.2.0 Kenney(CC0) フルリスキン**→実機 FB 4点修正の **v0.2.1** まで実装・playtester ALL PASS・commit `cd43d54`・**本番反映済み**＝`systemctl --user restart companion-games`、本番47825 で v0.2.1 配信中・既存6作 200 不変を確認。v0.2.1 修正=自機緑化+白光輪除去/BGM を Infinite Descent へ低音量/SFX clone 再生/女の子の縦坑追従バグ修正)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は v0.2.0 リスキンを本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
+最終更新: 2026-06-17 (第7作「マインロード」**v0.2.0 Kenney(CC0) フルリスキン**→実機 FB 反映の **v0.2.2** まで実装・playtester ALL PASS・commit `a1d8d6e`・**本番反映済み**＝`systemctl --user restart companion-games`、本番47825 で v0.2.2 配信中・既存6作 200 不変を確認。v0.2.1=自機緑化+白光輪除去/BGM を Infinite Descent へ低音量/SFX clone 再生/女の子の縦坑追従バグ修正、v0.2.2=キャラを Kenney Roguelike(リング無しの人型ピクセル)へ差し替え=自機 髭の坑夫・女の子 金髪三つ編み)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は v0.2.0 リスキンを本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
 
 ## Mine Road リメイク（第 7 作「マインロード」/ `/newgame` 不使用の仕様駆動リメイク、縦切り v0.1.0 実装・配信済み 2026-06-17）
 
@@ -54,6 +54,17 @@ OWNER 実機 FB: ①自機が白っぽい/光の輪が残る ②BGM(shining star
 - **検証（playtester、`tests/debug-mineroad.mjs` v0.2.1 更新）ALL PASS（12ゲート）**: 新 gate N=追従 row トレース（girlRow `12→11→…→1→0` と自機 row に同期・底張り付き stuck=false）/ gate K=miner 緑（G=213.8≫R=158.4）/ gate J=theme.ogg 200+旧 theme.mp3 404 / gate L=clone SFX 24連打 pageerror 0・mute トグル。既存6作回帰・はみ出し0・短高 viewport 維持。本番47825 非接触（47846 で検証・PID 直 kill）。
 - **commit**: games `cd43d54` fix（v0.2.1 4点修正 + tests + assets 差し替え）。docs は本更新で別 commit。
 - **本番反映済み（2026-06-17）**: `systemctl --user restart companion-games`。47825 で VERSION=v0.2.1・theme.ogg 200・旧 mp3 404・緑 miner・既存6作 200 を確認。
+
+### v0.2.2（2026-06-17、キャラを Roguelike へ差し替え、playtester ALL PASS・本番反映済み）
+
+OWNER 実機 FB: 「顔の周りのリングが変、別のキャラがいい」（BGM はこれで OK、女の子の自機一体化はプロトタイプとして了解）。
+
+- **キャラ差し替え**: Kenney 汎用プラットフォーマーのキャラ（alien 系）は**全種が白い宇宙服ヘルメットリング付き**で、小サイズだと白リングが浮いて見えるのが限界。→ **Kenney Roguelike Characters（CC0, リング無しのピクセル人型）**へ。`roguelikeChar_transparent.png` の完成キャラ列から **自機=髭の坑夫(r6c0)・女の子=金髪三つ編み(r5c0)** を 16px セル → 64px(nearest-neighbor) で切り出し（採掘ゲームに人型が thematic にも合う）。`drawCharSprite` でキャラ描画の間だけ `imageSmoothingEnabled=false`（ドットを crisp に、タイルは smooth のまま、位置も整数化）。BGM(Infinite Descent)・女の子追従修正・SFX clone は v0.2.1 のまま。
+- **画風**: タイル=滑らかな Redux ベクター、キャラ=ピクセル、で画風は厳密には混在するが小サイズ(~21px)では破綻せず、白リング解消を優先。さらに替えるなら Character Pack(モジュラー合成=要実装)・自作キャラが選択肢。
+- **女の子の「自機一体化」**: 現状 advanceGirl が女の子を自機マスへ寄せるため重なって見える（OWNER 了解済みのプロトタイプ簡略化）。本来の「1マス後ろを同行」へは別途磨ける（次セッション候補、追従ロジックの 2 周目に当たるので責務から決める）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.2.2 更新）全 14 ゲート ALL PASS**: gate K の判定を「miner 緑」→「miner 64x64 正方形＝Roguelike 切り出しの実証（旧 alien 46x64 と区別）」へ更新（実測 nw=nh=64, 平均色 r170/g139/b101=茶系）。追従 row `12→0`・既存6作回帰・pageerror 0 維持。本番47825 非接触（47849 で検証・PID 直 kill）。
+- **commit**: games `a1d8d6e` fix（キャラ差し替え + smoothing + gate K 更新）。docs は本更新で別 commit。
+- **本番反映済み（2026-06-17）**: `systemctl --user restart companion-games`。47825 で VERSION=v0.2.2・新キャラ png 200・既存6作 200 を確認。
 
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
 
