@@ -144,9 +144,19 @@
       "WebSearch",
       "WebFetch"
     ],
-    "additionalDirectories": [
-      "/home/miho/companion/vault",
-      "/home/miho/companion/logs"
+    "additionalDirectories": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/miho/companion/workspace/.claude/hooks/guard-companion-read.sh"
+          }
+        ]
+      }
     ]
   }
 }
