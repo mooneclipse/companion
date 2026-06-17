@@ -17,7 +17,9 @@
 //    地表まで連れ帰る = 救出成功。
 
 // ---- バージョン(縦切り + Kenney フルリスキン。単一真実源) --------------
-const VERSION = "v0.2.0";
+// v0.2.1: 実機 FB 反映 — 自機=緑キャラ+グロー除去(白光輪解消)、BGM=Infinite Descent
+// (低音量)、SFX clone-per-play(連打停止対策)、女の子の縦坑追従(クライム時 重力ガード)。
+const VERSION = "v0.2.1";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -92,10 +94,13 @@ function loadAudio() {
 }
 function playSfx(k) {
   if (!audioOn) return;
-  const a = SFX[k];
-  if (!a) return;
+  const base = SFX[k];
+  if (!base) return;
+  // 単一 Audio 要素を currentTime=0 で連打すると一部モバイルで途中から鳴らなくなる
+  // ため、毎回 cloneNode した使い捨て要素で鳴らす(再生後 GC)。プリロード済みの base を
+  // 複製するのでキャッシュから即時再生。
   try {
-    a.currentTime = 0;
+    const a = base.cloneNode(true);
     a.volume = SFX_VOL[k] != null ? SFX_VOL[k] : 0.5;
     const p = a.play();
     if (p && p.catch) p.catch(() => {});
@@ -113,9 +118,9 @@ let bgm = null;
 function startBgm() {
   if (typeof Audio === "undefined") return;
   if (!bgm) {
-    bgm = new Audio("/mineroad/assets/bgm/theme.mp3");
+    bgm = new Audio("/mineroad/assets/bgm/theme.ogg");
     bgm.loop = true;
-    bgm.volume = 0.32;
+    bgm.volume = 0.18;
   }
   if (!audioOn) return;
   try {
@@ -519,18 +524,24 @@ function advanceGirl() {
   // 自機の 1 つ手前(直前にいた経路上のマス)へ寄せる: BFS で自機までの最初の 1 歩。
   const next = bfsStep(g.col, g.row, G.px, G.py);
   if (next) {
+    const climbedUp = next[1] < g.row; // 自機へ向かう一歩が上向き = 縦坑のクライム。
     g.col = next[0];
     g.row = next[1];
-    // 女の子にも重力(足元が空間なら落ちる)。
-    let guard = 0;
-    while (guard < CONST.DEPTH_ROWS + 2) {
-      guard++;
-      const below = g.row + 1;
-      if (below > CONST.DEPTH_ROWS) break;
-      if (isSpace(g.col, below) && !(g.col === G.px && below === G.py)) {
-        // 自機の真上には乗らない(同じマスへ落ちない)。自機がいるなら止まる。
-        g.row = below;
-      } else break;
+    // 女の子にも重力(足元が空間なら落ちる)。ただし自機を追って縦坑を登る一歩は
+    // 「掘った空洞を辿って一緒に地上へ」(原作仕様)の意図的クライムなので引き戻さない
+    // (自機の上移動が noGravity なのと同じ責務)。これが無いと中空の縦坑で毎手 gr が
+    // 落ち戻り、女の子が地表まで追従できない(発見後ずっと底に張り付く)。
+    if (!climbedUp) {
+      let guard = 0;
+      while (guard < CONST.DEPTH_ROWS + 2) {
+        guard++;
+        const below = g.row + 1;
+        if (below > CONST.DEPTH_ROWS) break;
+        if (isSpace(g.col, below) && !(g.col === G.px && below === G.py)) {
+          // 自機の真上には乗らない(同じマスへ落ちない)。自機がいるなら止まる。
+          g.row = below;
+        } else break;
+      }
     }
     if (g.row === 0) rescueGirl(g);
   } else {
@@ -994,15 +1005,16 @@ function drawGirl(g) {
   const strong = g.state === "following";
   const col = hexToRgb(PALETTE.girl);
   const r = tile * 0.34;
-  // 暖色グロー(救出対象を闇でも見つけられる前景視認性。なごり方式)。
-  const glow = ctx.createRadialGradient(gx, gy, 1, gx, gy, r * 2.2);
-  const a0 = strong ? 0.95 : 0.55;
-  glow.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},${a0})`);
-  glow.addColorStop(0.6, `rgba(${col[0]},${col[1]},${col[2]},${a0 * 0.4})`);
+  // 暖色グロー(救出対象を闇でも見つけられる前景視認性。なごり方式)。スプライト本体が
+  // 白っぽくならないよう、本体の外側リング状に控えめに置く(中心は透明寄り)。
+  const glow = ctx.createRadialGradient(gx, gy, r * 0.5, gx, gy, r * 1.9);
+  const a0 = strong ? 0.6 : 0.32;
+  glow.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},0)`);
+  glow.addColorStop(0.45, `rgba(${col[0]},${col[1]},${col[2]},${a0})`);
   glow.addColorStop(1, `rgba(${col[0]},${col[1]},${col[2]},0)`);
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(gx, gy, r * 2.2, 0, Math.PI * 2);
+  ctx.arc(gx, gy, r * 1.9, 0, Math.PI * 2);
   ctx.fill();
   // スプライト(読込前は暖色の円で fallback)。
   if (!drawCharSprite("girl", gx, gy)) {
@@ -1018,14 +1030,12 @@ function drawGirl(g) {
 
 function drawMiner(cx, cy) {
   const r = tile * 0.34;
-  // 暖色グロー(自機は常時最明。fog/明背景どちらでも浮く)。
-  const g = ctx.createRadialGradient(cx, cy, 1, cx, cy, r * 1.9);
-  g.addColorStop(0, "rgba(255,243,208,0.9)");
-  g.addColorStop(0.6, "rgba(255,220,150,0.4)");
-  g.addColorStop(1, "rgba(255,220,150,0)");
-  ctx.fillStyle = g;
+  // 自機は緑キャラスプライトで描く。以前は背後に暖色グローを敷いていたが、白い宇宙服
+  // リングと相まって「白い光の輪」に見えたため除去。代わりに足元に薄い影を置いて接地感
+  // と前景の浮きを出す(白飛びさせない)。
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
   ctx.beginPath();
-  ctx.arc(cx, cy, r * 1.9, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy + r * 0.85, r * 0.7, r * 0.28, 0, 0, Math.PI * 2);
   ctx.fill();
   // スプライト(読込前は暗いシルエット + 明縁で fallback)。
   if (!drawCharSprite("miner", cx, cy)) {

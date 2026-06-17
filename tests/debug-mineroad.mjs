@@ -24,7 +24,7 @@
 //     実呼び出しが無い(行コメント除去後に grep。コメント言及は許容)。
 import { chromium } from "playwright";
 
-const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47842";
+const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47846";
 const SHOTDIR = process.env.MR_SHOTDIR || "/home/miho/companion/logs";
 const out = (k, v) => console.log(`  ${k}: ${JSON.stringify(v)}`);
 const VW = 412;
@@ -240,7 +240,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.2.0" &&
+    version === "v0.2.1" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -268,12 +268,13 @@ let corePass = false;
 }
 
 // ============================================================================
-// (J) v0.2.0 フルリスキン: 新アセット 14 本の配信(200 + 正しい Content-Type)。
+// (J) v0.2.1 アセット配信: 新 BGM theme.ogg(audio/ogg) を含む 14 本が 200 + 正 Content-Type。
+//     かつ v0.2.1 で削除された旧 theme.mp3 が 404(allowlist から除去された証明)。
 //     allowlist 配信なので 1 本ずつ HTTP で叩いて status + Content-Type を検証する。
 // ============================================================================
 let assetPass = true;
 {
-  console.log("== v0.2.0 アセット配信(200 + Content-Type) ==");
+  console.log("== v0.2.1 アセット配信(200 + Content-Type / 旧 mp3 は 404) ==");
   const expect = [
     // tiles 4
     ["/mineroad/assets/tiles/surface.png", "image/png"],
@@ -291,8 +292,8 @@ let assetPass = true;
     ["/mineroad/assets/sfx/heal.ogg", "audio/ogg"],
     ["/mineroad/assets/sfx/clear.ogg", "audio/ogg"],
     ["/mineroad/assets/sfx/fail.ogg", "audio/ogg"],
-    // bgm 1
-    ["/mineroad/assets/bgm/theme.mp3", "audio/mpeg"],
+    // bgm 1 (v0.2.1: maou mp3 → Kenney Infinite Descent ogg)
+    ["/mineroad/assets/bgm/theme.ogg", "audio/ogg"],
   ];
   const results = [];
   for (const [path, wantCt] of expect) {
@@ -305,7 +306,14 @@ let assetPass = true;
   }
   out("アセット件数", results.length);
   for (const r of results) out(r.path, { status: r.status, ct: r.ct, bytes: r.len, ok: r.ok });
-  out("PASS(14 アセット 200 + 正しい Content-Type)", assetPass);
+
+  // 旧 BGM theme.mp3 は v0.2.1 で削除 = allowlist から除去された = 404 であること。
+  const mp3 = await fetch(`${BASE}/mineroad/assets/bgm/theme.mp3`);
+  const mp3Gone = mp3.status === 404;
+  out("旧 theme.mp3(404 であるべき)", { status: mp3.status, gone: mp3Gone });
+  if (!mp3Gone) assetPass = false;
+
+  out("PASS(14 アセット 200 + 正 Content-Type / 旧 mp3 404)", assetPass);
 }
 
 // ============================================================================
@@ -370,22 +378,52 @@ let spritePass = false;
     return { sampled: true, mean: +mean.toFixed(1), variance: +varc.toFixed(1) };
   });
 
-  console.log("== v0.2.0 スプライト 実読込 + 描画 ==");
+  // v0.2.1: miner.png が緑(alienGreen)であることをスプライト本体のピクセルから検査する。
+  // miner スプライトを離れた専用 canvas に等倍描画し、不透明ピクセルの平均 RGB を取る。
+  // alienGreen は緑チャンネルが優勢(G が R/B より明確に大きい)。旧 alienBeige は R≈G>B の
+  // 暖色なので G 優勢にならない = 差し替えの実証になる。
+  const minerColor = await page.evaluate(() => {
+    const img = SPRITES.miner;
+    if (!img || !img.complete || img.naturalWidth <= 0) return { ok: false, reason: "not-ready" };
+    const cv = document.createElement("canvas");
+    cv.width = img.naturalWidth;
+    cv.height = img.naturalHeight;
+    const g = cv.getContext("2d");
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, cv.width, cv.height).data;
+    let r = 0, gg = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3];
+      if (a < 128) continue; // 透明部は除外(キャラ本体のみ)。
+      r += d[i]; gg += d[i + 1]; b += d[i + 2]; n++;
+    }
+    if (n === 0) return { ok: false, reason: "all-transparent" };
+    r = +(r / n).toFixed(1); gg = +(gg / n).toFixed(1); b = +(b / n).toFixed(1);
+    // 緑優勢: G が R より、かつ G が B より明確に大きい。
+    const greenDominant = gg > r + 6 && gg > b + 6;
+    return { ok: true, r, g: gg, b, greenDominant, opaquePx: n, nw: img.naturalWidth, nh: img.naturalHeight };
+  });
+
+  console.log("== v0.2.1 スプライト 実読込 + miner 緑差し替え ==");
   out("pageerrors", errors);
   out("broken assets(0 であるべき)", broken);
   out("スプライト complete & naturalWidth", sprites.r);
   out("全スプライト ready", sprites.allReady);
   out("固体土サンプルの色分散(テクスチャ>0)", texture);
+  out("miner スプライト平均色(緑優勢=alienGreen)", minerColor);
 
   // テクスチャ分散の合格条件(初回基準): Kenney soil タイルは陰影/粒状があり分散 > 0 が確実に出る。
   // 単色矩形 fallback なら分散 ≈ 0。閾値は実測で確認(soil タイルは粒状テクスチャありなので
   // 余裕を持って variance > 5 を基準とする)。
+  // miner 緑判定(初回基準): alienGreen は本体が緑で G > R+6 かつ G > B+6 が安定して出る。
   spritePass =
     errors.length === 0 &&
     broken.length === 0 &&
     sprites.allReady === true &&
+    minerColor.ok === true &&
+    minerColor.greenDominant === true &&
     (texture.sampled === false || texture.variance > 5);
-  out("PASS(スプライト実読込/broken なし/テクスチャ描画)", spritePass);
+  out("PASS(スプライト実読込/broken なし/miner 緑/テクスチャ描画)", spritePass);
   await ctx.close();
 }
 
@@ -423,17 +461,34 @@ let audioPass = false;
   const onAfter2 = await page.evaluate(() => audioOn);
   const labelAfter2 = await page.evaluate(() => document.getElementById("btn-mute").textContent);
 
-  // 掘削で playDig / playSfx が走っても pageerror が出ないこと(audioOn=true の経路を踏む)。
+  // v0.2.1: BGM が新パス theme.ogg を指していること(audioOn=true で start 済み)。
+  const bgmSrc = await page.evaluate(() => (typeof bgm !== "undefined" && bgm ? bgm.src : null));
+  const bgmIsOgg = !!bgmSrc && /\/mineroad\/assets\/bgm\/theme\.ogg$/.test(bgmSrc);
+
+  // v0.2.1 #3対策: playSfx を cloneNode した使い捨て要素で再生に変更。
+  // 掘削を連打(20回以上)しても clone 由来の pageerror が一切出ないことを実機操作で踏む。
   await page.evaluate(() => { startDive(); });
   await page.waitForTimeout(80);
-  for (let k = 0; k < 4; k++) { await actTap(page, 0, 1); await page.waitForTimeout(60); }
+  let digTaps = 0;
+  for (let k = 0; k < 24; k++) {
+    const before = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
+    if (before.scr !== "dive") { await page.evaluate(() => { startDive(); }); }
+    await actTap(page, 0, 1); // 真下掘り → playDig(clone 再生)
+    digTaps++;
+    await page.waitForTimeout(35);
+    // 底や地表へ達したら掘り直しのため位置を中段へ戻す(掘削連打そのものが目的)。
+    await page.evaluate(() => { if (G.py >= 14 || G.py <= 0) { G.py = 5; } });
+  }
+  const errAfterSpam = errors.length;
 
-  console.log("== v0.2.0 音 / mute トグル ==");
-  out("pageerrors(Audio 生成・再生で 0)", errors);
+  console.log("== v0.2.1 音 / mute トグル / BGM=theme.ogg / SFX clone 連打 ==");
+  out("pageerrors(Audio 生成・再生・clone 連打で 0)", errors);
   out("Audio 要素状態", audioState);
+  out("BGM src(theme.ogg であるべき)", { bgmSrc, bgmIsOgg });
   out("mute ボタン hittable", muteBtn);
   out("audioOn トグル", { onBefore, onAfter1, onAfter2 });
   out("ラベル ♪/♪̸ 変化", { labelBefore, labelAfter1, labelAfter2 });
+  out("掘削連打回数 / 連打後 pageerror 件数", { digTaps, errAfterSpam });
 
   const okBtn = (b) => b.exists && b.topInView && b.bottomInView && b.hit;
   audioPass =
@@ -441,10 +496,13 @@ let audioPass = false;
     audioState.sfxKeys.length === 7 &&
     audioState.hasClearSfx === true &&
     audioState.bgmCreated === true &&
+    bgmIsOgg === true &&
+    digTaps >= 20 &&
+    errAfterSpam === 0 &&
     okBtn(muteBtn) &&
     onBefore === true && onAfter1 === false && onAfter2 === true &&
     labelBefore === "♪" && labelAfter1 === "♪̸" && labelAfter2 === "♪";
-  out("PASS(mute トグル / Audio pageerror 0 / clear SFX 存在)", audioPass);
+  out("PASS(mute / BGM=theme.ogg / clone 連打 pageerror 0 / clear SFX)", audioPass);
   await ctx.close();
 }
 
@@ -457,7 +515,7 @@ let audioPass = false;
   await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(600);
   // title
-  await page.screenshot({ path: `${SHOTDIR}/mr_v020_title.png` });
+  await page.screenshot({ path: `${SHOTDIR}/mr_v021_title.png` });
   // dive: 掘り進んで断面・タイル・キャラが見える場面を作る。
   await startToDive(page);
   await page.evaluate(() => {
@@ -470,7 +528,7 @@ let audioPass = false;
     renderHud && renderHud();
   });
   await page.waitForTimeout(500); // カメラ追従の補間を落ち着かせる。
-  await page.screenshot({ path: `${SHOTDIR}/mr_v020_dive.png` });
+  await page.screenshot({ path: `${SHOTDIR}/mr_v021_dive.png` });
   // clear: 救出成功 overlay。
   await page.evaluate(() => {
     startDive();
@@ -485,9 +543,9 @@ let audioPass = false;
     }
   });
   await page.waitForTimeout(400);
-  await page.screenshot({ path: `${SHOTDIR}/mr_v020_clear.png` });
+  await page.screenshot({ path: `${SHOTDIR}/mr_v021_clear.png` });
   console.log("== スクリーンショット保存 ==");
-  out("保存先", [`${SHOTDIR}/mr_v020_title.png`, `${SHOTDIR}/mr_v020_dive.png`, `${SHOTDIR}/mr_v020_clear.png`]);
+  out("保存先", [`${SHOTDIR}/mr_v021_title.png`, `${SHOTDIR}/mr_v021_dive.png`, `${SHOTDIR}/mr_v021_clear.png`]);
   await ctx.close();
 }
 
@@ -705,6 +763,102 @@ let mechPass = false;
     explore.increased &&
     det.same;
   out("PASS(二段ゲージ/撤退/救出/重力/探索率/決定論)", mechPass);
+  await ctx.close();
+}
+
+// ============================================================================
+// (N) v0.2.1 #4 最重要・回帰防止: 女の子の縦坑追従。
+//   v0.1.0 既存バグ = 発見(following)後、縦坑を登るとき女の子の重力が空洞を通して下へ
+//   引き戻し、発見直後に底へ張り付いて地表まで追従できなかった。advanceGirl の
+//   「自機へ向かう一歩が上向き(クライム)なら重力を作用させない」ガードで修正。
+//   ここでは window.G を監視し、発見後に自機を縦坑で 1 マスずつ登らせながら advanceGirl を
+//   呼び、女の子の row が「底へ張り付かず」自機 row に追従して減少していくことを実測する。
+//   固定 seed=41027(女の子は決定論配置)。
+// ============================================================================
+let girlFollowPass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToDive(page);
+
+  const trace = await page.evaluate(() => {
+    startDive();
+    const seed = G.seed;
+    const g = G.girl;
+    const startRow = g.row, col = g.col;
+    // 女の子の列に地表(row0)から女の子の行まで一直線の縦坑を掘る(帰り道)。
+    for (let r = 1; r <= startRow; r++) G.dug.add(col + "," + r);
+    // 自機を女の子マスへ置いて発見させる。
+    G.px = col; G.py = startRow;
+    discoverGirl(col, startRow);
+    const discovered = G.girl.state;
+    // 発見直後に女の子が即底へ張り付いていないこと(=バグ症状)を記録。
+    const girlRowAfterDiscover = G.girl.state === "rescued" ? 0 : G.girl.row;
+
+    // 自機を 1 マスずつ上へ登らせ、各手で advanceGirl を呼ぶ。女の子 row が
+    // 自機 row へ追従して減少するかをトレースする(底に張り付くなら row が減らない)。
+    const steps = [];
+    let stuck = false;
+    let prevGirlRow = G.girl.row;
+    for (let pr = startRow - 1; pr >= 0; pr--) {
+      G.px = col; G.py = pr; // 自機が縦坑を 1 マス登った。
+      advanceGirl();
+      const gr = G.girl.state === "rescued" ? 0 : G.girl.row;
+      steps.push({ playerRow: pr, girlRow: gr, girlState: G.girl.state });
+      // 女の子 row が「前手より増えた(底へ落ち戻った)」ら張り付きバグ。
+      if (G.girl.state !== "rescued" && gr > prevGirlRow) stuck = true;
+      prevGirlRow = gr;
+      if (G.girl.state === "rescued") break;
+    }
+    // 女の子が地表(row0)へ追従しきって rescued になった後、自機も地表(py0)に居るので
+    // surfaceReturn が clear 演出(救出成功)へ遷移する。これが「救出 → 連れ帰り → clear」の
+    // 正規責務(rescueGirl は state を rescued にするだけで screen は遷移しない)。
+    if (G.girl.state === "rescued" && G.py === 0) surfaceReturn();
+
+    // 追従の単調減少(rescue 到達まで girlRow は概ね減っていく)を判定。
+    const girlRows = steps.map((s) => s.girlRow);
+    const lastState = G.girl.state;
+    return {
+      seed, col, startRow, discovered, girlRowAfterDiscover,
+      steps, girlRows, stuck, lastState, rescued: G.rescued,
+      // 女の子が startRow から地表(0)まで row を縮められたか。
+      reachedSurface: lastState === "rescued",
+      // 最終 girlRow が startRow より小さい = 追従して上がった(底張り付きの否定)。
+      followedUp: girlRows.length > 0 && Math.min(...girlRows) < startRow,
+    };
+  });
+
+  // clear へ到達したか(救出 → screen=clear)を最終確認。
+  const finalScreen = await page.evaluate(() => ({
+    screen: G.screen,
+    title: document.getElementById("ov-title") ? document.getElementById("ov-title").textContent : "",
+  }));
+
+  console.log("== (N) v0.2.1 女の子 縦坑追従 row トレース(最重要・回帰防止) ==");
+  out("pageerrors", errors);
+  out("seed(=41027)", trace.seed);
+  out("女の子配置(col,startRow)", { col: trace.col, startRow: trace.startRow });
+  out("発見状態(following)", trace.discovered);
+  out("発見直後の girlRow(底張り付きなら startRow 付近のまま)", trace.girlRowAfterDiscover);
+  out("追従 row トレース [playerRow→girlRow]", trace.steps.map((s) => `${s.playerRow}->${s.girlRow}`).join(" "));
+  out("girlRow 系列", trace.girlRows);
+  out("底へ落ち戻り(stuck=true なら回帰)", trace.stuck);
+  out("地表まで追従して救出(reachedSurface)", trace.reachedSurface);
+  out("最終 state / rescued", { lastState: trace.lastState, rescued: trace.rescued });
+  out("最終 screen", finalScreen);
+
+  girlFollowPass =
+    errors.length === 0 &&
+    trace.seed === 41027 &&
+    trace.discovered === "following" &&
+    trace.stuck === false && // 各手で row が増えない(底へ落ち戻らない)
+    trace.followedUp === true && // row が startRow より上がった
+    trace.reachedSurface === true && // 地表まで追従しきって救出
+    trace.rescued >= 1 &&
+    finalScreen.screen === "clear" &&
+    finalScreen.title === "救出成功";
+  out("PASS(女の子 縦坑追従: 底張り付きなし→地表救出)", girlFollowPass);
   await ctx.close();
 }
 
@@ -1070,11 +1224,12 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.2.0", corePass);
-out("(J) v0.2.0 アセット配信 14 本(200 + Content-Type)", assetPass);
-out("(K) スプライト実読込/broken なし/描画", spritePass);
-out("(L) mute トグル / Audio pageerror 0 / clear SFX", audioPass);
+out("(A) コア遷移 + VERSION v0.2.1", corePass);
+out("(J) v0.2.1 アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
+out("(K) スプライト実読込/broken なし/miner 緑/描画", spritePass);
+out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
 out("(B/C/D) 二段ゲージ/撤退/救出/重力/探索率/決定論[内部関数]", mechPass);
+out("(N) 女の子 縦坑追従 row トレース(底張り付きなし→地表救出)[#4 最重要]", girlFollowPass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
@@ -1087,7 +1242,7 @@ if (overflowFails.length) {
 }
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
-  mechPass && dpadPass && shortVpPass && regressionPass &&
+  mechPass && girlFollowPass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);

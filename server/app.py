@@ -119,7 +119,7 @@ STATIC = {
     "/mineroad/assets/sfx/heal.ogg": ("mineroad/web/assets/sfx/heal.ogg", "audio/ogg"),
     "/mineroad/assets/sfx/clear.ogg": ("mineroad/web/assets/sfx/clear.ogg", "audio/ogg"),
     "/mineroad/assets/sfx/fail.ogg": ("mineroad/web/assets/sfx/fail.ogg", "audio/ogg"),
-    "/mineroad/assets/bgm/theme.mp3": ("mineroad/web/assets/bgm/theme.mp3", "audio/mpeg"),
+    "/mineroad/assets/bgm/theme.ogg": ("mineroad/web/assets/bgm/theme.ogg", "audio/ogg"),
 }
 
 
