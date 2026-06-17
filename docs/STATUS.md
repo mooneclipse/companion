@@ -1,10 +1,10 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-15
+最終更新: 2026-06-17
 
 ## 設計メモ
 
-- Linux 機自身の OS / リソース面倒を相棒経由で見るための保守スクリプト群
+- Linux 機自身の OS / リソース面倒、および相棒が依存する外部サービス (Claude 稼働状況) を相棒経由で見るための保守スクリプト群
 - 定期実行は **systemd user timer**（bot と同じ user セッション文脈で動かし、`$XDG_RUNTIME_DIR/companion-bot.sock` に直接書き込む）
 - 通知経路: bot 側の Unix socket listener (`$XDG_RUNTIME_DIR/companion-bot.sock`) に nc / socat で本文を流し込む。bot 本体の責務は土管に閉じる
 - timer の発火時刻は OS 側 `apt-daily-upgrade.timer`（朝 6 時前後）の **2〜3 時間後** に揃える方針（unattended-upgrades 完了後のログを安定して拾うため）
@@ -33,6 +33,13 @@
 
 ## Done
 
+- 2026-06-17 claude-status: Claude サービス稼働状況の変化を #maintenance へ通知 (新規)
+  - **動機**: status.claude.com (旧 status.anthropic.com、302 で改称) の障害 / 復旧を手動で見に行かず受動受信したい (OWNER 要望)
+  - **方式**: 別 bot を立てず既存 bot の socket 通知インフラに相乗り。`scripts/notify-claude-status.py` (標準ライブラリのみ) を systemd user timer (`companion-claude-status.{service,timer}`、起動 2 分後 + 5 分間隔) で回し、Atlassian Statuspage API `/api/v2/summary.json` を `curl -4` で取得 (この網は IPv6 100% loss のため IPv4 強制)。socket 送信は notify.sh と同等 (AF_UNIX、送信成功後に state 確定)
+  - **監視対象**: 実利用分のみ = claude.ai / Claude API / Claude Code (Console / Cowork / Gov は除外)。component status 変化 + 対象に関わる incident の 新規 / 更新 (status・updated_at) / 解決 を diff 検知。`.state/claude-status.json` に前回状態を持ち、初回は通知せず baseline 記録 (初回通知爆発の回避)
+  - **重大度**: impact=major/critical の incident、または component の major_outage 悪化があれば本文先頭に bot の CRITICAL_PREFIX を付け通知音 ON (bot.py L205 / L1676、本文は素通し forward で prefix が残る仕様を利用)
+  - **2 周目ルール整合**: 取得失敗・socket 不在は state 据え置きで exit 0 (次 tick 再取得、リトライ loop なし)、送信失敗のみ exit 1。条件分岐は state を持つ側 (.state JSON) を 1 回引いて確定
+  - **検証**: 構文 + ロジック (回復 / 悪化 / 更新 / 新規 / 解決 / 変化なし) + 送信経路 (テスト socket で [critical] 本文受信・送信成功後 state 更新) + 送信失敗 / socket 不在の state 据え置き、すべて実機テスト済み。COMPANION_BOT_SOCK env で送信先を差し替えテストし本番 #maintenance を汚さず検証。baseline 確立済み (operational×3 + 既存 incident 2 件)
 - 2026-06-15 backup-reminder: バックアップ滞留 nudge を daily system-report に追加 (USB 常時挿し運用の廃止)
   - **背景**: ユーザー判断で「USB は普段外す。ある程度の感覚でバックアップを促してほしい。Linux 機 (USB restic) とフォトをそれぞれ、フォトは年 1 でいい」。S6-2 の TODO だった「挿し忘れ検出を daily report に載せるか」を実装で確定
   - **方式**: CronCreate はセッション限定 + 7 日 expire で月 1 / 年 1 に不適 → 既存の durable な `companion-notify-system-report` (systemd timer、毎日 Telegram) に相乗り。`notify-system-report.sh` の `notify_send` 直前に滞留 nudge ブロックを追加

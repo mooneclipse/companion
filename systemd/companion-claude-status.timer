@@ -1,0 +1,14 @@
+[Unit]
+Description=Poll Claude service status every 5 minutes
+
+[Timer]
+# 起動 2 分後に初回、以後は前回実行から 5 分間隔で polling。
+# 寝ていた分の catch-up (Persistent) は不要 — 常に最新状態を見るため。
+OnBootSec=2min
+OnUnitActiveSec=5min
+# 毎回ぴったりを避け status エンドポイントへの礼儀 (軽いゆらぎ)。
+RandomizedDelaySec=30s
+Unit=companion-claude-status.service
+
+[Install]
+WantedBy=timers.target
