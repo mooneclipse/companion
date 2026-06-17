@@ -84,7 +84,8 @@ OWNER 実機 FB: 「顔の周りのリングが変、別のキャラがいい」
   3. **女の子追従の磨き（既存 line64）**: 5人化で「自機マスに重なる」が顕在化しうる。「1マス後ろ同行」は追従ロジック2周目＝責務から設計。
   4. **girlPositions の col 重複**（同 col 縦掘りで連続救出＝動線単調化）の散らし案（将来メモ）。
 - **commit**: games `1892ccc` feat（app.js/tiles.js + tests 2本）。docs は本更新で別 commit。games は (C) ローカル git のみ＝push なし。
-- **本番反映**: **未（OWNER 承認待ち）**。承認後 `systemctl --user restart companion-games` で 47825 へ。実機 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。
+- **本番反映済み（2026-06-18、OWNER 承認のうえ実施）**: `systemctl --user restart companion-games`。47825 で VERSION=v0.3.0・既存6作+mineroad+healthz 全 200（URL不変）、tailnet 8444 プロキシ経由 `/mineroad/` 200、service active を確認。実機 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。
+- **OWNER 手触り判断（2026-06-18、実機反映後）**: 現状のバランスで **現状維持で OK**（CLEAR_EXPLORE=1.0 のまま、緩和せず）。**死の緊張は次増分のモンスター追加で出す**方針を OWNER が明示（「そのうち敵が出てくるから緊張が出てくる」）。→ **次セッションの本命＝敵（モンスター）増分**。資源数値の単独調整はしない（対症療法回避、上記所見①の通り危険コンテンツで設計から）。
 
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
 
