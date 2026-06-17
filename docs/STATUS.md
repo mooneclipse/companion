@@ -1,6 +1,6 @@
 # companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」 / 第 3 作「なごり」 / 第 4 作「あかり」 / 第 5 作「ともる」 / 第 6 作「さぐり」 / 第 7 作「マインロード」(Mine Road リメイク縦切り)）
 
-最終更新: 2026-06-17 (第7作「マインロード」**v0.2.0 Kenney(CC0) フルリスキン**→実機 FB 反映の **v0.2.2** まで実装・playtester ALL PASS・commit `a1d8d6e`・**本番反映済み**＝`systemctl --user restart companion-games`、本番47825 で v0.2.2 配信中・既存6作 200 不変を確認。v0.2.1=自機緑化+白光輪除去/BGM を Infinite Descent へ低音量/SFX clone 再生/女の子の縦坑追従バグ修正、v0.2.2=キャラを Kenney Roguelike(リング無しの人型ピクセル)へ差し替え=自機 髭の坑夫・女の子 金髪三つ編み)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は v0.2.0 リスキンを本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
+最終更新: 2026-06-18 (第7作「マインロード」**v0.3.0 = 全コンテンツ拡張の第1増分**: 裏庭を本物のダンジョン化＝女の子1→5人 + §7クリア条件(全員救出+最下層到達+探索率100%)。playtester ALL PASS・code-reviewer 修正必須なし・commit `1892ccc`・**本番反映は OWNER 承認待ち**(restart 未実施)。直前の **v0.2.0→v0.2.2**(Kenney CC0 リスキン+実機FB) は commit `a1d8d6e`・本番47825 で配信中・既存6作 200 不変。v0.2.1=自機緑化+白光輪除去/BGM を Infinite Descent へ低音量/SFX clone 再生/女の子の縦坑追従バグ修正、v0.2.2=キャラを Kenney Roguelike(リング無しの人型ピクセル)へ差し替え=自機 髭の坑夫・女の子 金髪三つ編み)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は v0.2.0 リスキンを本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
 
 ## Mine Road リメイク（第 7 作「マインロード」/ `/newgame` 不使用の仕様駆動リメイク、縦切り v0.1.0 実装・配信済み 2026-06-17）
 
@@ -65,6 +65,26 @@ OWNER 実機 FB: 「顔の周りのリングが変、別のキャラがいい」
 - **検証（playtester、`tests/debug-mineroad.mjs` v0.2.2 更新）全 14 ゲート ALL PASS**: gate K の判定を「miner 緑」→「miner 64x64 正方形＝Roguelike 切り出しの実証（旧 alien 46x64 と区別）」へ更新（実測 nw=nh=64, 平均色 r170/g139/b101=茶系）。追従 row `12→0`・既存6作回帰・pageerror 0 維持。本番47825 非接触（47849 で検証・PID 直 kill）。
 - **commit**: games `a1d8d6e` fix（キャラ差し替え + smoothing + gate K 更新）。docs は本更新で別 commit。
 - **本番反映済み（2026-06-17）**: `systemctl --user restart companion-games`。47825 で VERSION=v0.2.2・新キャラ png 200・既存6作 200 を確認。
+
+### v0.3.0（2026-06-18、全コンテンツ拡張の第1増分＝裏庭を本物のダンジョン化、playtester ALL PASS・code-reviewer 修正必須なし・commit 済み・本番反映 OWNER 承認待ち）
+
+- **方向の確定（OWNER）**: 縦切りゲート「撤退判断の手触り」OK を受け、OWNER が **全コンテンツ拡張** を選択。`/newgame` 不使用の仕様駆動のまま、設計正本（`~/mineroad-analysis/`）と一次データ（`assets/*.csv`）に忠実な増分として実装。game-designer/critic は外す（設計判断は原作が済ませている）。
+- **STATUS とコードの食い違いを整合（重要な訂正）**: 旧記述（下記 ⚠️L28 / L44「未対応」/ v0.2.1 L53「保留中の自機重力(A)/(B)」）は**コードの実態と食い違っていた**。`app.js` は **v0.1.0（commit 1b5393c）から自機重力 `applyGravity`・上移動クライム（掘った縦坑のみ・重力で引き戻さない）・上掘り不可（"はしご未実装" 意図的）を実装済み**（git 全バージョンで確認）。つまり重力は **(B) 自機にも重力** を採用済み、🐛「上は掘れない」は**意図的な設計**（バグではない）。OWNER の v0.1.0 FB「上へ登り続けられる/落下感が薄い」は、自分で掘った縦坑を no-gravity でスルスル登れる手触りに由来。→ **(A)/(B) は (B) で決着、上掘り不可は意図的、と本 STATUS に正式記録**（宿題3点の重力・上掘りは decision 済みへ畳む。残る手触り＝浮遊感は下記「死の緊張不足」と併せ次増分で扱う）。
+- **設計判断（着手前に記録）**: 第1増分のスコープ＝**核ループ（複数女の子＋真のクリア条件）のみ**。モンスター/アイテム/クラフト/商人/育成（各々が別サブシステム）は次以降の増分。`§7` のクリア条件（最重要）を入れることが「1人=即クリア」からの最大の前進。
+- **実装（VERSION=v0.3.0、commit `1892ccc`）**:
+  - **女の子 1→5人**: `tiles.js girlPositions` が長さ `CONST.GIRL_COUNT`(=5) の配列。**裏庭(dungeon_info ID0)の `girl num=5` を一次データで確認**（WIDTH=15/FLOOR=15 も現 GRID_COLS/DEPTH_ROWS と一致）。深度40〜95%に均等割り（row 全員 distinct＝セル衝突なし）、col は seed 依存ハッシュ。決定論維持（Math.random/Date.now 不使用）。固定 seed=41027 配置＝`(11,6)(0,8)(4,10)(3,12)(8,14)`。
+  - **クリア条件 §7 忠実**: `isDungeonCleared()` = 全員救出(5) かつ 最下層到達(`maxDepthThisDive>=DEPTH_ROWS`) かつ 探索率≥`CONST.CLEAR_EXPLORE`(=1.0)。`surfaceReturn` は未クリアなら全回復継続（救出済み/掘った跡/探索率/最深度はランで保持）、`showClear` は全達成時のみ。HUD 救出を `X/5`、未クリア帰還ヒント `surfaceProgressText()`。
+  - **複数対応**: `G.girl`→`G.girls` 配列。discoverGirl/advanceGirl(→per-girl `advanceOneGirl`、縦坑クライムの重力ガード維持)/rescueGirl/surfaceReturn/drawGirl/render/renderHud。生涯救出数 `RESCUE_KEY` は rescueGirl で各人1回。
+  - **スコープ境界（記録）**: **fail（力尽き）はランを全リセット**（既存挙動踏襲）。確定済み女の子の fail 跨ぎ永続＝save モデルが要るため次増分。コード/サーバ/アセットへの波及なし（差分4ファイル、URL 不変）。
+- **検証**: playtester **ALL PASS**（別ポート47860、本番47825 非接触、PID 直 kill）。5人 発見→追従→救出・HUD 0/5→2/5、旧「1人=即クリア」回帰防止（1人救出後 screen=dive 継続）、クリアゲート §7（未達は clear せず・全達成のみ `showClear` title=ダンジョン制覇）、決定論（5人 verbatim 一致）、既存6作 200・URL不変。Node 静的シムで5人到達可能・最下層到達可能・**最大探索可能率 225/225=100%**（rock 閉塞なし）。code-reviewer 修正必須なし。
+- **バランス実測（fun-mineroad.mjs、N=20＝policy4種×5、固定seed決定論）**: クリア率 0/20・**力尽き率 0/20**。policy 別 平均: optimal=救出3.0/最深15/探索96%/23ダイブ/363手、rescueOnly=1.0/12/45%、greedyDepth=0/3/11%（7手頭打ち＝劣戦略）、reckless=0/15/41%/785手。
+- **次増分への重要所見（優先順）**:
+  1. **死の緊張＝撤退判断の重みが現状ほぼ無い（力尽き率0%）**。スタミナ100+体力30+地表全回復+落下で下りが速い構造上、reckless でも死なない。「気を抜くとすぐ負ける」設計意図に未達。**忠実な解＝モンスター/ハザード（水・マグマ・なだれ・落盤、§9/§6/§8）の危険コンテンツ追加**。数値（スタミナ/体力/掘削コスト）だけ動かすのは対症療法（上位 `~/companion/CLAUDE.md` 2周目ルール）＝設計から決める。
+  2. **CLEAR_EXPLORE=1.0 の緩和余地**: 100% は到達可能だが「最後の1マス/1人取りこぼし＝制覇不可」の緊張が強い（100%探索に ~870-1970手/21-46ダイブ）。0.95 程度に緩めると「ほぼ全踏破」で報われる。単一定数＝OWNER 実機判断で1行変更可。
+  3. **女の子追従の磨き（既存 line64）**: 5人化で「自機マスに重なる」が顕在化しうる。「1マス後ろ同行」は追従ロジック2周目＝責務から設計。
+  4. **girlPositions の col 重複**（同 col 縦掘りで連続救出＝動線単調化）の散らし案（将来メモ）。
+- **commit**: games `1892ccc` feat（app.js/tiles.js + tests 2本）。docs は本更新で別 commit。games は (C) ローカル git のみ＝push なし。
+- **本番反映**: **未（OWNER 承認待ち）**。承認後 `systemctl --user restart companion-games` で 47825 へ。実機 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。
 
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
 
