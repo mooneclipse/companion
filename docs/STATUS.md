@@ -1,6 +1,6 @@
 # companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」 / 第 3 作「なごり」 / 第 4 作「あかり」 / 第 5 作「ともる」 / 第 6 作「さぐり」 / 第 7 作「マインロード」(Mine Road リメイク縦切り)）
 
-最終更新: 2026-06-17 (第7作「マインロード」縦切り v0.1.0 実装・検証 ALL PASS・本番配信)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は縦切り v0.1.0 を本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。ただし remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
+最終更新: 2026-06-17 (第7作「マインロード」**v0.2.0 Kenney(CC0) フルリスキン**を実装・playtester ALL PASS・code-reviewer OK・commit `dcc87f1` 済み。**本番 restart は OWNER 承認待ち**＝本番47825 は現在も v0.1.0 配信中)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」**は縦切り v0.1.0 を本番配信中、v0.2.0 リスキンは commit 済み・本番反映待ち (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
 
 ## Mine Road リメイク（第 7 作「マインロード」/ `/newgame` 不使用の仕様駆動リメイク、縦切り v0.1.0 実装・配信済み 2026-06-17）
 
@@ -28,6 +28,20 @@
 - ⚠️ **要設計判断（次セッション、対症療法でなく責務から決める）**: 「横から見てる想定なのに自機が上へずっと上がれる／落下がない」。これは**現設計どおり**（§4「重力は女の子と落盤にのみ作用、自機は上下左右どこでも自由移動＝原作 Mine Road 仕様」）。原作忠実 vs サイドビューの物理直感のズレ。→ **(A) 原作どおり自由移動を維持し演出（浮遊感の除去）で違和感を消す**／**(B) 自機にも重力・落下を入れる（原作逸脱）** のどちらかを**着手前に決め、根拠を本 STATUS に記録してから**実装。重力の作用範囲＝責務の置き場所の判断であり、移動可否の条件分岐を場当たりに積み増さない（上位 `~/companion/CLAUDE.md` 対症療法ルール）。
 - 🐛 **要調査（バグ候補）**: 「上は掘れない」。§4 は「上下左右どこでも掘れる」なので設計と食い違う。`act` の上方向掘削の取りこぼしを確認。※上記 (A)/(B) の判断と密接（自機が上に動けることと上を掘れることの整合）なので、重力判断とセットで見る。
 - ℹ️ OWNER が**原作アセットを DL 済み**（用途次第）。ただし**コード・画像・テキストの転用はしない**境界（忠実再現はメカニクス・数値設計のみ参照、設計正本の注記）は次セッションでも維持。使うなら何にどう使うか確認してから。
+
+### フルリスキン v0.2.0（2026-06-17、Kenney CC0 アセット導入、playtester ALL PASS・code-reviewer OK・commit 済み）
+
+- **発端**: OWNER が DL したアセットを「適宜読み込んでリメイク版に反映」依頼。**重要**: DL 物は**原作 Mine Road の著作物ではなく汎用フリーアセットパック**（Kenney / Tiny Tales / Solaria / Premium Platformer + フォント + maou BGM）であり、上記 ℹ️ の「原作著作物の転用禁止」境界とは別物。原作の転用は引き続きゼロ（メカニクス/数値のみ参照を維持）。
+- **ライセンス判定（裏取り済み）**: **Kenney = CC0 → 主軸採用**（無制限・改変・商用可）。**Solaria = 除外**（ライセンス条項5「AI/機械学習プロジェクトでの使用禁止」明記、本制作=AI と相容れない）。**Tiny Tales / Premium Platformer = 不使用**（Tiny Tales は素材ファイル再配布制約、Premium は出所/ライセンス不明。Kenney だけで足りた）。
+- **スコープ判断（user 確定）**: AskUserQuestion で B 質感付与 / A 音だけ / **C フルリスキン** を提示 → **C 選択**。コア操作・救出ルールは保つ。
+- **可視設計の判断（正本で確定、勘でなく）**: C プレビューが「fog を残すか明るい全面可視へ振るか」の設計判断を要求。原作仕様 L20「掘ると視界＝マップが開ける」/ L107「掘った量で黒い部分が消え探索率%表示」より **fog は原作忠実** → **fog 維持**（"明るい全面可視へ振る"は逆に原作逸脱になるため不採用）。リスキンは「未掘=暗い fog、掘って可視化した断面を Kenney タイルで明るく描く」。
+- **実装（VERSION=v0.2.0、コア機構・決定論は不変）**: 矩形塗り → Kenney スプライト（地表=grassMid 緑トップ / 土=grassCenter 茶 / 硬土=dirtCenter ティール灰 / 硬岩=stoneCenter 灰石、自機=alienBeige / 女の子=alienPink+暖色グロー）。深度暗化オーバーレイ + 空グラデ。**探索可能世界（深度1..15）より下は暗い fog 色で描画**（縦長画面で世界が全て収まり camera 上端固定 → 下半分が無意味な灰スラブになる問題を設計判断で回避、screenshot 検証）。効果音（掘削=rockHit/硬岩=lowDown/発見=highUp/回復=pepSound、いずれも意味確実）+ **clear/fail ジングルは聴取不能のため暫定（NES 系、差し替え可）**。BGM=maou_14 shining star（ダイブ開始のユーザー操作起点・ループ・mute トグル `#btn-mute`）。読込前/失敗は矩形・円グロー fallback で描画が壊れない。十字キーを Kenney 風チャンキーボタン化。
+- **配信**: `server/app.py` STATIC 明示 allowlist に `/mineroad/assets/` 14本（tiles4/chars2=image/png, sfx7=audio/ogg, bgm1=audio/mpeg）を純追加（ディレクトリ配信なし設計を維持、既存6 URL + mineroad 既存ルート完全不変）。アセット実体は `mineroad/web/assets/{tiles,chars,sfx,bgm}/`。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.2.0 更新）ALL PASS**: A〜M ゲート + determinism。新ゲート J=アセット14本 200+Content-Type整合 / K=スプライト実読込（complete&&naturalWidth>0、テクスチャ分散 variance=115.6≫単色矩形≈0）/ L=mute トグル・Audio 生成で pageerror 0 / M=スクショ3枚。既存6作回帰（URL 不変）・短高 viewport(412×680/730)・はみ出し0 維持。本番47825 非接触（47842 で検証、PID 直 kill）。
+- **レビュー（code-reviewer）修正必須なし・commit 可**: 配信境界（純追加・traversal 不可・Content-Type 実測整合・新外部依存ゼロ）／決定論不変／矩形 fallback 網羅／mute 状態整合／既存慣習整合。軽微提案3件は判断: ①STATUS 更新（本 commit で実施）②BGM 5.5MB no-store 再fetch（PWA/tailnet ローカル前提で現状維持）③K のテクスチャ分散閾値（主検証は spriteReady、副次的・現状維持）。
+- **commit**: games `dcc87f1` feat（リスキン本体 + server allowlist + tests + assets 14本）。docs は本更新で別 commit。**games は (C) ローカル git のみ＝push なし**。
+- **本番反映＝未（OWNER 承認待ち）**: `server/app.py` はメモリ常駐のため `systemctl --user restart companion-games` まで無反映。本番47825 は現在も **v0.1.0** を配信中。restart は外向き変更ゆえ OWNER 一声後に実施（saguri 前例と同方針）。
+- **未対応（今回スコープ外、宿題として残置）**: 上記 ⚠️ 重力 (A)/(B) 判断・🐛「上は掘れない」バグは**今回のアセット反映では触っていない**（コア機構不変の方針）。次セッションで設計判断とセットで対応。
 
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
 
