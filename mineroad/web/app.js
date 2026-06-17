@@ -19,7 +19,9 @@
 // ---- バージョン(縦切り + Kenney フルリスキン。単一真実源) --------------
 // v0.2.1: 実機 FB 反映 — 自機=緑キャラ+グロー除去(白光輪解消)、BGM=Infinite Descent
 // (低音量)、SFX clone-per-play(連打停止対策)、女の子の縦坑追従(クライム時 重力ガード)。
-const VERSION = "v0.2.1";
+// v0.2.2: 宇宙服リングが変との FB → キャラを Kenney Roguelike Characters(リング無しの
+// ピクセル人型)へ。自機=髭の坑夫、女の子=金髪三つ編み。描画は smoothing off で crisp。
+const VERSION = "v0.2.2";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -992,9 +994,14 @@ function render() {
 function drawCharSprite(key, cx, cy) {
   const img = SPRITES[key];
   if (!(img && img.complete && img.naturalWidth > 0)) return false;
-  const w = tile * 0.78;
+  const w = tile * 0.82;
   const h = w * (img.naturalHeight / img.naturalWidth);
-  ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+  // キャラはピクセルアート(Roguelike Characters)。タイルは smooth のまま、キャラ描画の
+  // 間だけ smoothing を切ってドットをくっきり保つ(位置も整数化)。
+  const prevSmooth = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, Math.round(cx - w / 2), Math.round(cy - h / 2), w, h);
+  ctx.imageSmoothingEnabled = prevSmooth;
   return true;
 }
 

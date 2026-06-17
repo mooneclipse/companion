@@ -240,7 +240,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.2.1" &&
+    version === "v0.2.2" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -378,10 +378,10 @@ let spritePass = false;
     return { sampled: true, mean: +mean.toFixed(1), variance: +varc.toFixed(1) };
   });
 
-  // v0.2.1: miner.png が緑(alienGreen)であることをスプライト本体のピクセルから検査する。
-  // miner スプライトを離れた専用 canvas に等倍描画し、不透明ピクセルの平均 RGB を取る。
-  // alienGreen は緑チャンネルが優勢(G が R/B より明確に大きい)。旧 alienBeige は R≈G>B の
-  // 暖色なので G 優勢にならない = 差し替えの実証になる。
+  // v0.2.2: キャラを Kenney Roguelike Characters(リング無しのピクセル人型)へ差し替え。
+  // 切り出しは 16px セル → 64px(point) なので miner/girl とも 64x64 正方形になる。
+  // 旧 alien スプライトは 46x64(縦長)だったため、64x64 正方形であることが差し替えの実証。
+  // 本体ピクセルの平均色も参考に記録(坑夫=茶髪/前掛けで暖色寄り、緑優勢ではない)。
   const minerColor = await page.evaluate(() => {
     const img = SPRITES.miner;
     if (!img || !img.complete || img.naturalWidth <= 0) return { ok: false, reason: "not-ready" };
@@ -399,31 +399,31 @@ let spritePass = false;
     }
     if (n === 0) return { ok: false, reason: "all-transparent" };
     r = +(r / n).toFixed(1); gg = +(gg / n).toFixed(1); b = +(b / n).toFixed(1);
-    // 緑優勢: G が R より、かつ G が B より明確に大きい。
-    const greenDominant = gg > r + 6 && gg > b + 6;
-    return { ok: true, r, g: gg, b, greenDominant, opaquePx: n, nw: img.naturalWidth, nh: img.naturalHeight };
+    // Roguelike 切り出し = 正方形(旧 alien は 46x64 縦長)。差し替えの実証。
+    const isSquarePixelChar = img.naturalWidth === img.naturalHeight && img.naturalWidth === 64;
+    return { ok: true, r, g: gg, b, isSquarePixelChar, opaquePx: n, nw: img.naturalWidth, nh: img.naturalHeight };
   });
 
-  console.log("== v0.2.1 スプライト 実読込 + miner 緑差し替え ==");
+  console.log("== v0.2.2 スプライト 実読込 + キャラ差し替え(Roguelike, リング無し) ==");
   out("pageerrors", errors);
   out("broken assets(0 であるべき)", broken);
   out("スプライト complete & naturalWidth", sprites.r);
   out("全スプライト ready", sprites.allReady);
   out("固体土サンプルの色分散(テクスチャ>0)", texture);
-  out("miner スプライト平均色(緑優勢=alienGreen)", minerColor);
+  out("miner スプライト(64x64 正方形=Roguelike 差し替え/平均色)", minerColor);
 
   // テクスチャ分散の合格条件(初回基準): Kenney soil タイルは陰影/粒状があり分散 > 0 が確実に出る。
   // 単色矩形 fallback なら分散 ≈ 0。閾値は実測で確認(soil タイルは粒状テクスチャありなので
   // 余裕を持って variance > 5 を基準とする)。
-  // miner 緑判定(初回基準): alienGreen は本体が緑で G > R+6 かつ G > B+6 が安定して出る。
+  // miner 差し替え判定: Roguelike 切り出しは 64x64 正方形(旧 alien 46x64 と区別)。
   spritePass =
     errors.length === 0 &&
     broken.length === 0 &&
     sprites.allReady === true &&
     minerColor.ok === true &&
-    minerColor.greenDominant === true &&
+    minerColor.isSquarePixelChar === true &&
     (texture.sampled === false || texture.variance > 5);
-  out("PASS(スプライト実読込/broken なし/miner 緑/テクスチャ描画)", spritePass);
+  out("PASS(スプライト実読込/broken なし/miner 64x64 差し替え/テクスチャ描画)", spritePass);
   await ctx.close();
 }
 
@@ -1224,9 +1224,9 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.2.1", corePass);
-out("(J) v0.2.1 アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
-out("(K) スプライト実読込/broken なし/miner 緑/描画", spritePass);
+out("(A) コア遷移 + VERSION v0.2.2", corePass);
+out("(J) v0.2.2 アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
+out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
 out("(B/C/D) 二段ゲージ/撤退/救出/重力/探索率/決定論[内部関数]", mechPass);
 out("(N) 女の子 縦坑追従 row トレース(底張り付きなし→地表救出)[#4 最重要]", girlFollowPass);
