@@ -111,6 +111,28 @@ body {
 .count.explore .count-ico {
   color: var(--c-stamina);
 }
+/* 音のオン/オフ。HUD 右上、pointer を拾う小ボタン。 */
+.mute-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9em;
+  height: 1.9em;
+  margin-left: 0.1rem;
+  font-family: var(--mincho);
+  font-size: clamp(0.74rem, 3.4vw, 0.94rem);
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 0.4em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.mute-btn.muted {
+  color: rgba(255, 255, 255, 0.45);
+}
 
 /* ---- 二段ゲージ(スタミナ → 体力)。上バーの下に重ねて配置。横バー 2 段で視認。 ---- */
 .gauge {
@@ -221,21 +243,26 @@ body {
   width: 2.7rem;
   height: 2.7rem;
   font-family: var(--mincho);
-  font-size: 1.1rem;
-  color: var(--ink);
-  background: rgba(230, 178, 90, 0.18);
-  border: 1.5px solid rgba(230, 178, 90, 0.7);
-  border-radius: 0.7rem;
+  font-size: 1.25rem;
+  color: #fff;
+  /* Kenney 風チャンキーボタン: 不透明アンバー + 下に濃い縁の 3D。 */
+  background: linear-gradient(180deg, #f4c878, #e6a948);
+  border: none;
+  border-bottom: 3px solid #a9742a;
+  border-radius: 0.8rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  text-shadow: 0 1px 1px rgba(120, 70, 20, 0.6);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
 .dpad-btn:active {
-  background: rgba(230, 178, 90, 0.45);
+  background: linear-gradient(180deg, #e6a948, #d4922f);
+  border-bottom-width: 1px;
+  transform: translateY(2px);
 }
 .dpad-btn.up {
   top: 0;
@@ -256,13 +283,14 @@ body {
 .dpad-btn.center {
   top: 2.85rem;
   left: 2.85rem;
-  background: rgba(205, 214, 232, 0.18);
-  border-color: rgba(205, 214, 232, 0.6);
-  color: #fff;
-  font-size: 0.92rem;
+  background: linear-gradient(180deg, #dfe6f2, #b9c4dc);
+  border-bottom-color: #7e8aa6;
+  color: #2a3550;
+  font-size: 1rem;
+  text-shadow: none;
 }
 .dpad-btn.center:active {
-  background: rgba(205, 214, 232, 0.42);
+  background: linear-gradient(180deg, #b9c4dc, #a3b0cc);
 }
 
 /* 数値ポップ(掘った打点・発見・硬岩)。背後に半透明プレート。 */

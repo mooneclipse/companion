@@ -16,8 +16,8 @@
 //  - 女の子: 深部に決定論で 1 人。掘って発見 → 追従(掘った空洞を BFS で辿る、重力作用)。
 //    地表まで連れ帰る = 救出成功。
 
-// ---- バージョン(縦切り判定版 = 完成品でない。単一真実源) --------------
-const VERSION = "v0.1.0";
+// ---- バージョン(縦切り + Kenney フルリスキン。単一真実源) --------------
+const VERSION = "v0.2.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -38,6 +38,108 @@ const CONST = {
 };
 // 計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
+
+// ---- アセット(Kenney CC0 スプライト + 効果音 + BGM) ---------------------
+// フルリスキン(v0.2.0): 矩形塗りを Kenney タイル/キャラスプライトに差し替える。
+// 画像は同一オリジン(/mineroad/assets/)。読込前 or 失敗時は PALETTE 矩形へ自動 fallback
+// するので、画像なしでもゲームは成立する(描画は壊れない)。
+// fog(未可視は暗い)は原作忠実(「掘ると視界が開ける」仕様 L20/L107)なので維持。
+const SPRITE_SRC = {
+  surface: "/mineroad/assets/tiles/surface.png", // 地表(緑トップ・安全行)
+  soil: "/mineroad/assets/tiles/soil.png", // 土(1 手・茶)
+  hard: "/mineroad/assets/tiles/hard.png", // 硬土(2 手・ティール灰で別素材感)
+  rock: "/mineroad/assets/tiles/rock.png", // 硬岩(掘れない・灰石)
+  miner: "/mineroad/assets/chars/miner.png", // 自機(alienBeige)
+  girl: "/mineroad/assets/chars/girl.png", // 女の子(alienPink・暖色グロー併用)
+};
+const SPRITES = {};
+function loadSprites() {
+  if (typeof Image === "undefined") return;
+  for (const k of Object.keys(SPRITE_SRC)) {
+    const img = new Image();
+    img.src = SPRITE_SRC[k];
+    SPRITES[k] = img;
+  }
+}
+// 描画可能(読込完了 & デコード成功)か。未完了なら呼び出し側が矩形 fallback。
+function spriteReady(k) {
+  const img = SPRITES[k];
+  return !!(img && img.complete && img.naturalWidth > 0);
+}
+
+// 効果音: 意味の確実なものだけ採用。clear/fail のジングルは聴取不能のため暫定
+// (NES 系、差し替え可)。同一オリジン ogg。読込/再生失敗は握りつぶす(無音で成立)。
+const SFX_SRC = {
+  dig1: "/mineroad/assets/sfx/dig1.ogg",
+  dig2: "/mineroad/assets/sfx/dig2.ogg",
+  blocked: "/mineroad/assets/sfx/blocked.ogg",
+  found: "/mineroad/assets/sfx/found.ogg",
+  heal: "/mineroad/assets/sfx/heal.ogg",
+  clear: "/mineroad/assets/sfx/clear.ogg",
+  fail: "/mineroad/assets/sfx/fail.ogg",
+};
+const SFX_VOL = { dig1: 0.4, dig2: 0.4, blocked: 0.5, found: 0.6, heal: 0.5, clear: 0.7, fail: 0.6 };
+const SFX = {};
+let audioOn = true; // mute トグル(BGM + SFX をまとめて on/off)。
+let digToggle = 0; // dig1/dig2 を交互に鳴らして単調さを避ける。
+function loadAudio() {
+  if (typeof Audio === "undefined") return;
+  for (const k of Object.keys(SFX_SRC)) {
+    const a = new Audio(SFX_SRC[k]);
+    a.preload = "auto";
+    SFX[k] = a;
+  }
+}
+function playSfx(k) {
+  if (!audioOn) return;
+  const a = SFX[k];
+  if (!a) return;
+  try {
+    a.currentTime = 0;
+    a.volume = SFX_VOL[k] != null ? SFX_VOL[k] : 0.5;
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) {
+    /* 再生不可環境でも進行は可能 */
+  }
+}
+function playDig() {
+  playSfx(digToggle++ % 2 === 0 ? "dig1" : "dig2");
+}
+
+// BGM(maou_14 shining star、ループ・低音量)。モバイル autoplay 制約のため初回の
+// ユーザー操作(ダイブ開始ボタン)起点でのみ start する。
+let bgm = null;
+function startBgm() {
+  if (typeof Audio === "undefined") return;
+  if (!bgm) {
+    bgm = new Audio("/mineroad/assets/bgm/theme.mp3");
+    bgm.loop = true;
+    bgm.volume = 0.32;
+  }
+  if (!audioOn) return;
+  try {
+    const p = bgm.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) {
+    /* 自動再生不可でも進行は可能 */
+  }
+}
+function setAudioOn(on) {
+  audioOn = on;
+  if (bgm) {
+    if (on) {
+      try {
+        const p = bgm.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) {
+        /* noop */
+      }
+    } else {
+      bgm.pause();
+    }
+  }
+}
 
 const BEST_DEPTH_KEY = "mineroad_best_depth";
 const RESCUE_KEY = "mineroad_rescued_total";
@@ -110,6 +212,7 @@ const btnDownEl = document.getElementById("btn-down");
 const btnLeftEl = document.getElementById("btn-left");
 const btnRightEl = document.getElementById("btn-right");
 const btnSurfaceEl = document.getElementById("btn-surface");
+const btnMuteEl = document.getElementById("btn-mute");
 
 // ---- canvas / 描画状態 -------------------------------------------------
 let DPR = 1;
@@ -220,6 +323,7 @@ function startDive() {
   hudEl.hidden = false;
   camY = 0;
   revealAround(); // 開始時の地表まわりを可視化。
+  startBgm(); // ダイブ開始(ユーザー操作起点)で BGM。モバイル autoplay 制約を満たす。
   renderHud();
 }
 
@@ -316,6 +420,7 @@ function act(dc, dr) {
     // 硬岩は掘れない(軽フィードバック)。
     showHint(TEXT.cueRockHit, false);
     spawnPopupAt(col, row, "×", "warn");
+    playSfx("blocked");
     return;
   }
   // 土 / 硬土 / 女の子 → 掘る。
@@ -324,6 +429,7 @@ function act(dc, dr) {
   if (remain === undefined) remain = digTaps(t);
   remain -= 1;
   spawnPopupAt(col, row, "・");
+  playDig();
   spendAction();
   if (remain > 0) {
     G.digProgress.set(key, remain);
@@ -397,6 +503,7 @@ function discoverGirl(col, row) {
     g.state = "following";
     showHint(TEXT.cueGirlFound, false);
     spawnPopupAt(col, row, "！", "cue");
+    playSfx("found");
   }
 }
 
@@ -511,6 +618,7 @@ function surfaceReturn() {
   G.hp = CONST.HP_MAX;
   G.enteredHpZone = false;
   showHint(TEXT.cueSurface, false);
+  playSfx("heal");
   renderHud();
 }
 
@@ -604,6 +712,7 @@ function showHowto(returnTo) {
 function showFail() {
   G.screen = "fail";
   hudEl.hidden = true;
+  playSfx("fail");
   if (G.maxDepthThisDive > getInt(BEST_DEPTH_KEY)) setInt(BEST_DEPTH_KEY, G.maxDepthThisDive);
   resetOverlayParts();
   ovTitleEl.textContent = TEXT.failTitle;
@@ -620,6 +729,7 @@ function showFail() {
 function showClear() {
   G.screen = "clear";
   hudEl.hidden = true;
+  playSfx("clear");
   resetOverlayParts();
   ovTitleEl.textContent = TEXT.clearTitle;
   ovTitleEl.hidden = false;
@@ -728,6 +838,14 @@ btnSurfaceEl.addEventListener("click", () => {
   if (G.screen !== "dive") return;
   showHint(TEXT.cueSurface.replace("。全回復した", "へ戻ると全回復"), false);
 });
+// 音のオン/オフ(BGM + SFX をまとめて)。
+if (btnMuteEl) {
+  btnMuteEl.addEventListener("click", () => {
+    setAudioOn(!audioOn);
+    btnMuteEl.textContent = audioOn ? "♪" : "♪̸";
+    btnMuteEl.classList.toggle("muted", !audioOn);
+  });
+}
 
 // ---- 描画(タイル粒度、per-pixel 禁止) --------------------------------
 function caveColor(row) {
@@ -741,6 +859,18 @@ function soilColor(row) {
   const sd = hexToRgb(PALETTE.soilDeep);
   const t = Math.max(0, Math.min(1, row / CONST.DEPTH_ROWS));
   return mixRgb(ss, sd, t);
+}
+
+// 深度による暗化アルファ(深いほど暗い。明るい Kenney スプライトでも「深い=暗い」を保つ)。
+function depthShade(row) {
+  const t = Math.max(0, Math.min(1, row / CONST.DEPTH_ROWS));
+  return t * 0.5; // 地表 0 → 最下層 0.5。
+}
+// タイルスプライトを 1 マスへ描く。読込済みなら true(=矩形 fallback 不要)。
+function drawTileSprite(key, sx, sy) {
+  if (!spriteReady(key)) return false;
+  ctx.drawImage(SPRITES[key], sx, sy, tile + 1, tile + 1);
+  return true;
 }
 
 function render() {
@@ -764,6 +894,16 @@ function render() {
   const hardC = hexToRgb(PALETTE.hard);
   const rockC = hexToRgb(PALETTE.rock);
 
+  // 空(地表より上)。明るいリスキンの「外」。地表行が画面下方にある時だけ覗く。
+  const surfaceY = (0 - camY) * tile;
+  if (surfaceY > 0) {
+    const sky = ctx.createLinearGradient(0, 0, 0, surfaceY);
+    sky.addColorStop(0, "#bfe0f2");
+    sky.addColorStop(1, "#e8eecf");
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, surfaceY);
+  }
+
   const rows = Math.ceil(H / tile) + 2;
   const startRow = Math.floor(camY) - 1;
 
@@ -773,31 +913,54 @@ function render() {
     const sy = (row - camY) * tile;
     for (let col = 0; col < CONST.GRID_COLS; col++) {
       const sx = col * tile;
-      let color;
 
       if (row === 0) {
-        color = surf; // 地表(明るい安全行)。
-      } else if (row > CONST.DEPTH_ROWS) {
-        color = rockC; // 底の岩盤。
-      } else if (!isVisible(col, row)) {
-        color = fog; // 未可視は黒。
-      } else {
-        const t = tileAt(col, row);
-        if (t === TILE.NONE) color = caveColor(row); // 掘った道/空間。
-        else if (t === TILE.HARD) color = hardC;
-        else if (t === TILE.ROCK) color = rockC;
-        else color = soilColor(row); // 土 + 女の子マスの地(女の子は上に重ねて描く)。
+        // 地表(明るい安全行) = 緑トップのタイル。
+        if (!drawTileSprite("surface", sx, sy)) {
+          ctx.fillStyle = `rgb(${surf[0]},${surf[1]},${surf[2]})`;
+          ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        }
+        continue;
+      }
+      if (row > CONST.DEPTH_ROWS) {
+        // 探索可能な世界(深度 1..DEPTH_ROWS)より下 = 到達不能な岩盤の闇。
+        // 世界は縦に短く縦長画面へ全て収まる(camera は上端固定)。ここに明るい石スプライト
+        // を敷くと画面下半分が無意味な灰スラブになり fog 美学と衝突するため、暗い基盤色で
+        // 「世界の下へ続く闇」として描く(リスキンの設計判断、ロジック不変)。
+        ctx.fillStyle = PALETTE.fog;
+        ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        continue;
+      }
+      if (!isVisible(col, row)) {
+        // 未可視 = fog(暗い)。原作「掘ると視界が開ける」を維持。
+        ctx.fillStyle = `rgb(${fog[0]},${fog[1]},${fog[2]})`;
+        ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        continue;
       }
 
-      ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
-      ctx.fillRect(sx, sy, tile + 1, tile + 1);
+      const t = tileAt(col, row);
+      if (t === TILE.NONE) {
+        // 掘った道/空間 = 暗い空洞(スプライトなし。帰り道として相対的に明るい藍)。
+        const cc = caveColor(row);
+        ctx.fillStyle = `rgb(${cc[0]},${cc[1]},${cc[2]})`;
+        ctx.fillRect(sx, sy, tile + 1, tile + 1);
+      } else {
+        // 固体タイル = スプライト(SOIL/HARD/ROCK、女の子マスは soil で描き上に重ねる)。
+        const key = t === TILE.HARD ? "hard" : t === TILE.ROCK ? "rock" : "soil";
+        if (!drawTileSprite(key, sx, sy)) {
+          const fc = t === TILE.HARD ? hardC : t === TILE.ROCK ? rockC : soilColor(row);
+          ctx.fillStyle = `rgb(${fc[0]},${fc[1]},${fc[2]})`;
+          ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        }
+        // 深度暗化(明るいスプライトに「深い=暗い」を重ねる)。
+        ctx.fillStyle = `rgba(0,0,0,${depthShade(row)})`;
+        ctx.fillRect(sx, sy, tile + 1, tile + 1);
+      }
 
       // タイル境界の薄い格子(断面の読みやすさ。fog には引かない)。
-      if (row >= 1 && row <= CONST.DEPTH_ROWS && isVisible(col, row)) {
-        ctx.strokeStyle = "rgba(0,0,0,0.18)";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(sx + 0.5, sy + 0.5, tile, tile);
-      }
+      ctx.strokeStyle = "rgba(0,0,0,0.18)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(sx + 0.5, sy + 0.5, tile, tile);
     }
   }
 
@@ -807,10 +970,21 @@ function render() {
     if (isVisible(g.col, g.row) || g.state === "following") drawGirl(g);
   }
 
-  // 自機(常時最明 + 1px 縁)。
+  // 自機(暖色グロー + スプライト)。
   const cx = G.px * tile + tile / 2;
   const cy = (G.py - camY) * tile + tile / 2;
   drawMiner(cx, cy);
+}
+
+// セル中央にキャラスプライトを描く(縦長アスペクト維持・足元をマス中央付近に)。
+// fog/明背景どちらでも輪郭が出るよう背後にソフトな縁取りグローを置く。
+function drawCharSprite(key, cx, cy) {
+  const img = SPRITES[key];
+  if (!(img && img.complete && img.naturalWidth > 0)) return false;
+  const w = tile * 0.78;
+  const h = w * (img.naturalHeight / img.naturalWidth);
+  ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+  return true;
 }
 
 function drawGirl(g) {
@@ -820,46 +994,53 @@ function drawGirl(g) {
   const strong = g.state === "following";
   const col = hexToRgb(PALETTE.girl);
   const r = tile * 0.34;
-  const glow = ctx.createRadialGradient(gx, gy, 1, gx, gy, r * 2);
+  // 暖色グロー(救出対象を闇でも見つけられる前景視認性。なごり方式)。
+  const glow = ctx.createRadialGradient(gx, gy, 1, gx, gy, r * 2.2);
   const a0 = strong ? 0.95 : 0.55;
   glow.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},${a0})`);
   glow.addColorStop(0.6, `rgba(${col[0]},${col[1]},${col[2]},${a0 * 0.4})`);
   glow.addColorStop(1, `rgba(${col[0]},${col[1]},${col[2]},0)`);
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(gx, gy, r * 2, 0, Math.PI * 2);
+  ctx.arc(gx, gy, r * 2.2, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
-  ctx.beginPath();
-  ctx.arc(gx, gy, r * 0.55, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(60,30,10,0.85)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  // スプライト(読込前は暖色の円で fallback)。
+  if (!drawCharSprite("girl", gx, gy)) {
+    ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+    ctx.beginPath();
+    ctx.arc(gx, gy, r * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(60,30,10,0.85)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
 }
 
 function drawMiner(cx, cy) {
   const r = tile * 0.34;
-  const g = ctx.createRadialGradient(cx, cy, 1, cx, cy, r * 1.8);
-  g.addColorStop(0, "rgba(255,243,208,0.95)");
-  g.addColorStop(0.6, "rgba(255,220,150,0.45)");
+  // 暖色グロー(自機は常時最明。fog/明背景どちらでも浮く)。
+  const g = ctx.createRadialGradient(cx, cy, 1, cx, cy, r * 1.9);
+  g.addColorStop(0, "rgba(255,243,208,0.9)");
+  g.addColorStop(0.6, "rgba(255,220,150,0.4)");
   g.addColorStop(1, "rgba(255,220,150,0)");
   ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.arc(cx, cy, r * 1.8, 0, Math.PI * 2);
+  ctx.arc(cx, cy, r * 1.9, 0, Math.PI * 2);
   ctx.fill();
-  // 本体(暗いシルエット + 1px 明縁で輪郭確保 = fog/明背景どちらでもコントラスト)。
-  ctx.fillStyle = "#241810";
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255,243,208,0.95)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  ctx.fillStyle = PALETTE.miner;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 0.3, 0, Math.PI * 2);
-  ctx.fill();
+  // スプライト(読込前は暗いシルエット + 明縁で fallback)。
+  if (!drawCharSprite("miner", cx, cy)) {
+    ctx.fillStyle = "#241810";
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,243,208,0.95)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = PALETTE.miner;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 // ---- メインループ(イベント駆動。tick は描画のみ) ---------------------
@@ -871,6 +1052,8 @@ function tick(t) {
 }
 
 // ---- 起動 --------------------------------------------------------------
+loadSprites(); // Kenney タイル/キャラ(読込前は矩形 fallback)。
+loadAudio(); // 効果音(BGM はダイブ開始まで遅延)。
 resize();
 window.addEventListener("resize", () => resize());
 showTitle();

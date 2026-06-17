@@ -24,7 +24,8 @@
 //     実呼び出しが無い(行コメント除去後に grep。コメント言及は許容)。
 import { chromium } from "playwright";
 
-const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47827";
+const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47842";
+const SHOTDIR = process.env.MR_SHOTDIR || "/home/miho/companion/logs";
 const out = (k, v) => console.log(`  ${k}: ${JSON.stringify(v)}`);
 const VW = 412;
 const VH = 915;
@@ -239,7 +240,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.1.0" &&
+    version === "v0.2.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -263,6 +264,230 @@ let corePass = false;
     init.girlRow >= 10 && init.girlRow <= 13 &&
     init.girlState === "hidden";
   out("PASS(コア遷移/初回howto/飛び越えなし/可読性)", corePass);
+  await ctx.close();
+}
+
+// ============================================================================
+// (J) v0.2.0 フルリスキン: 新アセット 14 本の配信(200 + 正しい Content-Type)。
+//     allowlist 配信なので 1 本ずつ HTTP で叩いて status + Content-Type を検証する。
+// ============================================================================
+let assetPass = true;
+{
+  console.log("== v0.2.0 アセット配信(200 + Content-Type) ==");
+  const expect = [
+    // tiles 4
+    ["/mineroad/assets/tiles/surface.png", "image/png"],
+    ["/mineroad/assets/tiles/soil.png", "image/png"],
+    ["/mineroad/assets/tiles/hard.png", "image/png"],
+    ["/mineroad/assets/tiles/rock.png", "image/png"],
+    // chars 2
+    ["/mineroad/assets/chars/miner.png", "image/png"],
+    ["/mineroad/assets/chars/girl.png", "image/png"],
+    // sfx 7
+    ["/mineroad/assets/sfx/dig1.ogg", "audio/ogg"],
+    ["/mineroad/assets/sfx/dig2.ogg", "audio/ogg"],
+    ["/mineroad/assets/sfx/blocked.ogg", "audio/ogg"],
+    ["/mineroad/assets/sfx/found.ogg", "audio/ogg"],
+    ["/mineroad/assets/sfx/heal.ogg", "audio/ogg"],
+    ["/mineroad/assets/sfx/clear.ogg", "audio/ogg"],
+    ["/mineroad/assets/sfx/fail.ogg", "audio/ogg"],
+    // bgm 1
+    ["/mineroad/assets/bgm/theme.mp3", "audio/mpeg"],
+  ];
+  const results = [];
+  for (const [path, wantCt] of expect) {
+    const resp = await fetch(`${BASE}${path}`);
+    const ct = (resp.headers.get("content-type") || "").split(";")[0].trim();
+    const len = +(resp.headers.get("content-length") || "0");
+    const ok = resp.status === 200 && ct === wantCt && len > 0;
+    results.push({ path: path.replace("/mineroad/assets/", ""), status: resp.status, ct, len, ok });
+    if (!ok) assetPass = false;
+  }
+  out("アセット件数", results.length);
+  for (const r of results) out(r.path, { status: r.status, ct: r.ct, bytes: r.len, ok: r.ok });
+  out("PASS(14 アセット 200 + 正しい Content-Type)", assetPass);
+}
+
+// ============================================================================
+// (K) スプライトが実読込・描画され、broken 画像が無いこと。
+//     SPRITES.<key>.complete && naturalWidth>0 を page.evaluate で確認(矩形 fallback ではない)。
+//     さらに掘削後の canvas に「矩形 fallback でない」スプライト描画が出ているかを補助確認。
+// ============================================================================
+let spritePass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  // 画像読込失敗(broken)を監視。
+  const broken = [];
+  page.on("requestfailed", (req) => {
+    if (/\/mineroad\/assets\//.test(req.url())) broken.push(req.url());
+  });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(500);
+
+  // 全 6 スプライト(tiles4 + chars2)が complete & naturalWidth>0(=実デコード済み)。
+  const sprites = await page.evaluate(() => {
+    const keys = ["surface", "soil", "hard", "rock", "miner", "girl"];
+    const r = {};
+    let allReady = true;
+    for (const k of keys) {
+      const img = SPRITES[k];
+      const ready = !!(img && img.complete && img.naturalWidth > 0);
+      r[k] = { complete: !!(img && img.complete), nw: img ? img.naturalWidth : 0, ready };
+      if (!ready) allReady = false;
+    }
+    return { r, allReady };
+  });
+
+  // dive へ入り、土を掘って断面を描かせる。soil スプライトが固体タイルとして描かれている領域の
+  // 平均色が「矩形 fallback の soilColor」ではなく、スプライト由来(複数色を含む)であることを補助的に確認。
+  await startToDive(page);
+  await page.evaluate(() => { startDive(); G.py = 2; revealAround && revealAround(); });
+  await page.waitForTimeout(300);
+  // canvas 上で固体タイルが占める帯(自機より下の土行)の色分散をサンプル。スプライトは
+  // 矩形単色 fallback と違い、テクスチャがあるので色のばらつき(分散)が大きく出る。
+  const texture = await page.evaluate(() => {
+    const c = document.getElementById("scene");
+    const g = c.getContext("2d");
+    const t = tile;
+    // 自機の真下(掘っていない固体土)の 1 マス分の領域をサンプル。
+    const camY = window.__camY || 0;
+    const col = G.px;
+    const row = G.py + 3; // 自機より下 = 固体土(可視外なら fog なので可視内に寄せる)
+    const sx = Math.round(col * t * (c.width / window.innerWidth));
+    const sy = Math.round((row - camY) * t * (c.height / window.innerHeight));
+    const sw = Math.max(4, Math.round(t * 0.6 * (c.width / window.innerWidth)));
+    const sh = sw;
+    if (sx < 0 || sy < 0 || sx + sw > c.width || sy + sh > c.height) return { sampled: false };
+    const d = g.getImageData(sx, sy, sw, sh).data;
+    // 分散(R チャンネル)。単色 fallback ≈ 0、テクスチャあり > 0。
+    let sum = 0, n = 0;
+    const rs = [];
+    for (let i = 0; i < d.length; i += 4) { rs.push(d[i]); sum += d[i]; n++; }
+    const mean = sum / n;
+    let varc = 0;
+    for (const v of rs) varc += (v - mean) * (v - mean);
+    varc /= n;
+    return { sampled: true, mean: +mean.toFixed(1), variance: +varc.toFixed(1) };
+  });
+
+  console.log("== v0.2.0 スプライト 実読込 + 描画 ==");
+  out("pageerrors", errors);
+  out("broken assets(0 であるべき)", broken);
+  out("スプライト complete & naturalWidth", sprites.r);
+  out("全スプライト ready", sprites.allReady);
+  out("固体土サンプルの色分散(テクスチャ>0)", texture);
+
+  // テクスチャ分散の合格条件(初回基準): Kenney soil タイルは陰影/粒状があり分散 > 0 が確実に出る。
+  // 単色矩形 fallback なら分散 ≈ 0。閾値は実測で確認(soil タイルは粒状テクスチャありなので
+  // 余裕を持って variance > 5 を基準とする)。
+  spritePass =
+    errors.length === 0 &&
+    broken.length === 0 &&
+    sprites.allReady === true &&
+    (texture.sampled === false || texture.variance > 5);
+  out("PASS(スプライト実読込/broken なし/テクスチャ描画)", spritePass);
+  await ctx.close();
+}
+
+// ============================================================================
+// (L) 音: mute ボタンで audioOn トグル(♪ <-> ♪̸)。Audio 要素生成で pageerror が出ない。
+//     SFX/BGM の Audio 要素が生成されていること。clear SFX 要素の存在(救出ジングル)。
+//     ※ headless では実音は鳴らない。鳴らなくてよいが「pageerror が出ない」ことを担保する。
+// ============================================================================
+let audioPass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(400);
+  await startToDive(page); // ダイブ開始 = startBgm() のユーザー操作起点。
+  await page.waitForTimeout(300);
+
+  // SFX/BGM の Audio 要素が JS 内で生成されているか + clear SFX キー存在。
+  const audioState = await page.evaluate(() => ({
+    sfxKeys: Object.keys(typeof SFX !== "undefined" ? SFX : {}),
+    hasClearSfx: typeof SFX !== "undefined" && SFX.clear instanceof Audio,
+    bgmCreated: typeof bgm !== "undefined" && bgm instanceof Audio,
+    audioOnInit: typeof audioOn !== "undefined" ? audioOn : null,
+  }));
+
+  // mute ボタンが hittable で、押下で audioOn がトグル(true -> false -> true)。
+  const muteBtn = await buttonHittable(page, "#btn-mute");
+  const onBefore = await page.evaluate(() => audioOn);
+  const labelBefore = await page.evaluate(() => document.getElementById("btn-mute").textContent);
+  await tapSelector(page, "#btn-mute");
+  await page.waitForTimeout(80);
+  const onAfter1 = await page.evaluate(() => audioOn);
+  const labelAfter1 = await page.evaluate(() => document.getElementById("btn-mute").textContent);
+  await tapSelector(page, "#btn-mute");
+  await page.waitForTimeout(80);
+  const onAfter2 = await page.evaluate(() => audioOn);
+  const labelAfter2 = await page.evaluate(() => document.getElementById("btn-mute").textContent);
+
+  // 掘削で playDig / playSfx が走っても pageerror が出ないこと(audioOn=true の経路を踏む)。
+  await page.evaluate(() => { startDive(); });
+  await page.waitForTimeout(80);
+  for (let k = 0; k < 4; k++) { await actTap(page, 0, 1); await page.waitForTimeout(60); }
+
+  console.log("== v0.2.0 音 / mute トグル ==");
+  out("pageerrors(Audio 生成・再生で 0)", errors);
+  out("Audio 要素状態", audioState);
+  out("mute ボタン hittable", muteBtn);
+  out("audioOn トグル", { onBefore, onAfter1, onAfter2 });
+  out("ラベル ♪/♪̸ 変化", { labelBefore, labelAfter1, labelAfter2 });
+
+  const okBtn = (b) => b.exists && b.topInView && b.bottomInView && b.hit;
+  audioPass =
+    errors.length === 0 &&
+    audioState.sfxKeys.length === 7 &&
+    audioState.hasClearSfx === true &&
+    audioState.bgmCreated === true &&
+    okBtn(muteBtn) &&
+    onBefore === true && onAfter1 === false && onAfter2 === true &&
+    labelBefore === "♪" && labelAfter1 === "♪̸" && labelAfter2 === "♪";
+  out("PASS(mute トグル / Audio pageerror 0 / clear SFX 存在)", audioPass);
+  await ctx.close();
+}
+
+// ============================================================================
+// (M) スクリーンショット 3 枚(412x915): title / dive(断面+キャラ+タイル) / clear。
+//     私(OWNER)が後で見た目を確認するため。検証合否には含めない(目視確認用)。
+// ============================================================================
+{
+  const { ctx, page } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(600);
+  // title
+  await page.screenshot({ path: `${SHOTDIR}/mr_v020_title.png` });
+  // dive: 掘り進んで断面・タイル・キャラが見える場面を作る。
+  await startToDive(page);
+  await page.evaluate(() => {
+    startDive();
+    // 縦坑を掘り下げて断面を作り、女の子も近くに可視化する。
+    const col = G.px;
+    for (let r = 1; r <= 6; r++) { G.dug.add(col + "," + r); }
+    G.px = col; G.py = 6;
+    revealAround && revealAround();
+    renderHud && renderHud();
+  });
+  await page.waitForTimeout(500); // カメラ追従の補間を落ち着かせる。
+  await page.screenshot({ path: `${SHOTDIR}/mr_v020_dive.png` });
+  // clear: 救出成功 overlay。
+  await page.evaluate(() => {
+    startDive();
+    const g = G.girl;
+    for (let r = 1; r <= g.row; r++) G.dug.add(g.col + "," + r);
+    G.px = g.col; G.py = g.row;
+    discoverGirl(g.col, g.row);
+    for (let r = g.row - 1; r >= 0; r--) {
+      G.px = g.col; G.py = r;
+      advanceGirl();
+      if (r === 0) { surfaceReturn(); break; }
+    }
+  });
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${SHOTDIR}/mr_v020_clear.png` });
+  console.log("== スクリーンショット保存 ==");
+  out("保存先", [`${SHOTDIR}/mr_v020_title.png`, `${SHOTDIR}/mr_v020_dive.png`, `${SHOTDIR}/mr_v020_clear.png`]);
   await ctx.close();
 }
 
@@ -845,7 +1070,10 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移", corePass);
+out("(A) コア遷移 + VERSION v0.2.0", corePass);
+out("(J) v0.2.0 アセット配信 14 本(200 + Content-Type)", assetPass);
+out("(K) スプライト実読込/broken なし/描画", spritePass);
+out("(L) mute トグル / Audio pageerror 0 / clear SFX", audioPass);
 out("(B/C/D) 二段ゲージ/撤退/救出/重力/探索率/決定論[内部関数]", mechPass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
@@ -858,7 +1086,8 @@ if (overflowFails.length) {
   for (const f of overflowFails) console.log("   ", JSON.stringify(f));
 }
 const allPass =
-  corePass && mechPass && dpadPass && shortVpPass && regressionPass &&
+  corePass && assetPass && spritePass && audioPass &&
+  mechPass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);

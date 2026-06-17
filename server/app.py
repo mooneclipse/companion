@@ -104,6 +104,22 @@ STATIC = {
     "/mineroad/manifest.json": ("mineroad/web/manifest.json", "application/manifest+json"),
     "/mineroad/icons/icon-192.png": ("mineroad/web/icons/icon-192.png", "image/png"),
     "/mineroad/icons/icon-512.png": ("mineroad/web/icons/icon-512.png", "image/png"),
+    # フルリスキン(v0.2.0)アセット: Kenney CC0 タイル/キャラ + 効果音 + BGM(maou_14)。
+    # 明示 allowlist なので 1 ファイルずつ登録(ディレクトリ配信はしない設計を維持)。
+    "/mineroad/assets/tiles/surface.png": ("mineroad/web/assets/tiles/surface.png", "image/png"),
+    "/mineroad/assets/tiles/soil.png": ("mineroad/web/assets/tiles/soil.png", "image/png"),
+    "/mineroad/assets/tiles/hard.png": ("mineroad/web/assets/tiles/hard.png", "image/png"),
+    "/mineroad/assets/tiles/rock.png": ("mineroad/web/assets/tiles/rock.png", "image/png"),
+    "/mineroad/assets/chars/miner.png": ("mineroad/web/assets/chars/miner.png", "image/png"),
+    "/mineroad/assets/chars/girl.png": ("mineroad/web/assets/chars/girl.png", "image/png"),
+    "/mineroad/assets/sfx/dig1.ogg": ("mineroad/web/assets/sfx/dig1.ogg", "audio/ogg"),
+    "/mineroad/assets/sfx/dig2.ogg": ("mineroad/web/assets/sfx/dig2.ogg", "audio/ogg"),
+    "/mineroad/assets/sfx/blocked.ogg": ("mineroad/web/assets/sfx/blocked.ogg", "audio/ogg"),
+    "/mineroad/assets/sfx/found.ogg": ("mineroad/web/assets/sfx/found.ogg", "audio/ogg"),
+    "/mineroad/assets/sfx/heal.ogg": ("mineroad/web/assets/sfx/heal.ogg", "audio/ogg"),
+    "/mineroad/assets/sfx/clear.ogg": ("mineroad/web/assets/sfx/clear.ogg", "audio/ogg"),
+    "/mineroad/assets/sfx/fail.ogg": ("mineroad/web/assets/sfx/fail.ogg", "audio/ogg"),
+    "/mineroad/assets/bgm/theme.mp3": ("mineroad/web/assets/bgm/theme.mp3", "audio/mpeg"),
 }
 
 
