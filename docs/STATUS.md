@@ -1,6 +1,6 @@
 # companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」 / 第 3 作「なごり」 / 第 4 作「あかり」 / 第 5 作「ともる」 / 第 6 作「さぐり」 / 第 7 作「マインロード」(Mine Road リメイク縦切り)）
 
-最終更新: 2026-06-17 (第7作「マインロード」**v0.2.0 Kenney(CC0) フルリスキン**を実装・playtester ALL PASS・code-reviewer OK・commit `dcc87f1` 済み。**本番 restart は OWNER 承認待ち**＝本番47825 は現在も v0.1.0 配信中)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」**は縦切り v0.1.0 を本番配信中、v0.2.0 リスキンは commit 済み・本番反映待ち (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
+最終更新: 2026-06-17 (第7作「マインロード」**v0.2.0 Kenney(CC0) フルリスキン**を実装・playtester ALL PASS・code-reviewer OK・commit `dcc87f1` 済み・**本番反映済み**＝OWNER 承認のうえ `systemctl --user restart companion-games`、本番47825 で v0.2.0 配信中・既存6作 200 不変を確認)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は v0.2.0 リスキンを本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
 
 ## Mine Road リメイク（第 7 作「マインロード」/ `/newgame` 不使用の仕様駆動リメイク、縦切り v0.1.0 実装・配信済み 2026-06-17）
 
@@ -40,7 +40,7 @@
 - **検証（playtester、`tests/debug-mineroad.mjs` v0.2.0 更新）ALL PASS**: A〜M ゲート + determinism。新ゲート J=アセット14本 200+Content-Type整合 / K=スプライト実読込（complete&&naturalWidth>0、テクスチャ分散 variance=115.6≫単色矩形≈0）/ L=mute トグル・Audio 生成で pageerror 0 / M=スクショ3枚。既存6作回帰（URL 不変）・短高 viewport(412×680/730)・はみ出し0 維持。本番47825 非接触（47842 で検証、PID 直 kill）。
 - **レビュー（code-reviewer）修正必須なし・commit 可**: 配信境界（純追加・traversal 不可・Content-Type 実測整合・新外部依存ゼロ）／決定論不変／矩形 fallback 網羅／mute 状態整合／既存慣習整合。軽微提案3件は判断: ①STATUS 更新（本 commit で実施）②BGM 5.5MB no-store 再fetch（PWA/tailnet ローカル前提で現状維持）③K のテクスチャ分散閾値（主検証は spriteReady、副次的・現状維持）。
 - **commit**: games `dcc87f1` feat（リスキン本体 + server allowlist + tests + assets 14本）。docs は本更新で別 commit。**games は (C) ローカル git のみ＝push なし**。
-- **本番反映＝未（OWNER 承認待ち）**: `server/app.py` はメモリ常駐のため `systemctl --user restart companion-games` まで無反映。本番47825 は現在も **v0.1.0** を配信中。restart は外向き変更ゆえ OWNER 一声後に実施（saguri 前例と同方針）。
+- **本番反映済み（OWNER 承認のうえ実施、2026-06-17）**: `systemctl --user restart companion-games`。本番47825 で `/mineroad/`・`/mineroad/app.js`(VERSION=v0.2.0)・`/mineroad/assets/*` 200（png=image/png・mp3=audio/mpeg）、既存 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/`・`/healthz` 全 200（既存 URL 不変を確認）、service active。実機 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。
 - **未対応（今回スコープ外、宿題として残置）**: 上記 ⚠️ 重力 (A)/(B) 判断・🐛「上は掘れない」バグは**今回のアセット反映では触っていない**（コア機構不変の方針）。次セッションで設計判断とセットで対応。
 
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
