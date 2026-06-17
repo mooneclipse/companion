@@ -1,6 +1,6 @@
 # companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」 / 第 3 作「なごり」 / 第 4 作「あかり」 / 第 5 作「ともる」 / 第 6 作「さぐり」 / 第 7 作「マインロード」(Mine Road リメイク縦切り)）
 
-最終更新: 2026-06-17 (第7作「マインロード」**v0.2.0 Kenney(CC0) フルリスキン**を実装・playtester ALL PASS・code-reviewer OK・commit `dcc87f1` 済み・**本番反映済み**＝OWNER 承認のうえ `systemctl --user restart companion-games`、本番47825 で v0.2.0 配信中・既存6作 200 不変を確認)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は v0.2.0 リスキンを本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
+最終更新: 2026-06-17 (第7作「マインロード」**v0.2.0 Kenney(CC0) フルリスキン**→実機 FB 4点修正の **v0.2.1** まで実装・playtester ALL PASS・commit `cd43d54`・**本番反映済み**＝`systemctl --user restart companion-games`、本番47825 で v0.2.1 配信中・既存6作 200 不変を確認。v0.2.1 修正=自機緑化+白光輪除去/BGM を Infinite Descent へ低音量/SFX clone 再生/女の子の縦坑追従バグ修正)。**第 1〜6 作 (みちゆき/ともしび/なごり/あかり/ともる/さぐり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/` 200 で配信中 (remote GAMES 配列に 6 本)。**第 7 作「マインロード」は v0.2.0 リスキンを本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
 
 ## Mine Road リメイク（第 7 作「マインロード」/ `/newgame` 不使用の仕様駆動リメイク、縦切り v0.1.0 実装・配信済み 2026-06-17）
 
@@ -42,6 +42,18 @@
 - **commit**: games `dcc87f1` feat（リスキン本体 + server allowlist + tests + assets 14本）。docs は本更新で別 commit。**games は (C) ローカル git のみ＝push なし**。
 - **本番反映済み（OWNER 承認のうえ実施、2026-06-17）**: `systemctl --user restart companion-games`。本番47825 で `/mineroad/`・`/mineroad/app.js`(VERSION=v0.2.0)・`/mineroad/assets/*` 200（png=image/png・mp3=audio/mpeg）、既存 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/`・`/healthz` 全 200（既存 URL 不変を確認）、service active。実機 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。
 - **未対応（今回スコープ外、宿題として残置）**: 上記 ⚠️ 重力 (A)/(B) 判断・🐛「上は掘れない」バグは**今回のアセット反映では触っていない**（コア機構不変の方針）。次セッションで設計判断とセットで対応。
+
+### v0.2.1（2026-06-17、v0.2.0 実機 FB 4点修正、playtester ALL PASS・本番反映済み）
+
+OWNER 実機 FB: ①自機が白っぽい/光の輪が残る ②BGM(shining star)が合わない・音量大 ③効果音が途中から聞こえなくなる ④女の子がついてこなくなる。
+
+- **①自機の白光輪**: Kenney プラットフォーマーのキャラは全種が白い宇宙服リング付き。alienBeige(最も白い)＋背後の暖色グロー＝白い塊だった。**alienGreen に差し替え＋背後グロー除去**（足元に薄い楕円影のみ）。女の子(alienPink)は暖色グローを本体外側リング状に縮小（白飛び回避、自発光は維持）。※白リング自体はスプライト固有で残存（汎用 Kenney キャラの限界。気になれば Character/Roguelike パックや自作キャラへ）。
+- **②BGM**: maou_14 shining star(mp3, 276s) → **Kenney「Infinite Descent」(ogg, CC0, 13.2s ループ, 採掘降下にフィット)**。音量 0.32→0.18。`theme.mp3` 削除・`theme.ogg` 追加、server allowlist も `.ogg`/`audio/ogg` へ。他候補(Retro Mystic/Time Driving/Sad Descent 等)へ差し替えも容易。
+- **③効果音が途中停止**: `playSfx` を単一 Audio 要素の `currentTime=0` 連打 → **`cloneNode` 使い捨て要素で再生**に変更（モバイルで連打時に途中から鳴らなくなる単一要素再利用の stall を回避）。
+- **④女の子の追従バグ（根本原因 + 責務修正）**: 縦坑を登る際、`advanceGirl` が女の子を1マス上へ寄せた直後に**女の子の重力が中空の縦坑を通して下へ引き戻し**、発見後ずっと底(row13)に張り付き、地表到達時の `surfaceReturn` 強制歩行でだけ最後に rescued になっていた（**v0.1.0 からの既存バグ**、playtester は最終 rescued のみ見て PASS していた＝リスキンで見た目が変わり顕在化）。修正＝「自機へ向かう BFS の一歩が上向き(縦坑クライム)なら重力を作用させない」ガードを追加。**自機の上移動が noGravity なのと同じ責務**を女の子側にも適用（場当たり条件追加でなく既存責務の一貫適用）。保留中の自機重力 (A)/(B) 判断とは別件（女の子が追従する仕様自体は原作明記）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.2.1 更新）ALL PASS（12ゲート）**: 新 gate N=追従 row トレース（girlRow `12→11→…→1→0` と自機 row に同期・底張り付き stuck=false）/ gate K=miner 緑（G=213.8≫R=158.4）/ gate J=theme.ogg 200+旧 theme.mp3 404 / gate L=clone SFX 24連打 pageerror 0・mute トグル。既存6作回帰・はみ出し0・短高 viewport 維持。本番47825 非接触（47846 で検証・PID 直 kill）。
+- **commit**: games `cd43d54` fix（v0.2.1 4点修正 + tests + assets 差し替え）。docs は本更新で別 commit。
+- **本番反映済み（2026-06-17）**: `systemctl --user restart companion-games`。47825 で VERSION=v0.2.1・theme.ogg 200・旧 mp3 404・緑 miner・既存6作 200 を確認。
 
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
 
