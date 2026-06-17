@@ -60,18 +60,25 @@ function blockThresholds(row) {
 }
 
 // ---- 女の子の決定論配置 ------------------------------------------------
-// 縦切り = 1 人。深部(row 10〜13 の到達可能な土中)に決定論で埋める。
+// 裏庭(dungeon_info ID0)の girl num = 5 を忠実再現(一次データで確認)。深度を散らして
+// 埋める(深いほど深部寄り、最深の 1 人は最下層付近 = 深追いと最下層到達の動線)。
+// row は均等割りで全員 distinct なのでセル衝突なし(col が重複しても row 違いで別マス)。
 // 救出体験を濃くするため敵スポーン抽選には混ぜず専用ロジック(仕様 §12 所見の通り)。
-// 返り値: [{col, row}, ...]
+// 返り値: [{col, row}, ...](長さ = CONST.GIRL_COUNT)
 function girlPositions(seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
   const cols = C.GRID_COLS;
-  const lo = 10;
-  const hi = 13;
-  const span = hi - lo; // 10..13
-  const row = lo + Math.floor(hash3(seed, 7001, 7) * (span + 1));
-  const col = Math.floor(hash3(seed, 7001, 99) * cols);
-  return [{ col, row }];
+  const floors = C.DEPTH_ROWS;
+  const count = (C.GIRL_COUNT | 0) || 5;
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    // 深度 40%〜95% に均等割り(count=5/floors=15 で row=6,8,10,12,14)。
+    const frac = count > 1 ? 0.4 + (0.55 * i) / (count - 1) : 0.6;
+    const row = Math.max(2, Math.min(floors - 1, Math.round(floors * frac)));
+    const col = Math.floor(hash3(seed, 7001, 100 + i) * cols);
+    out.push({ col, row });
+  }
+  return out;
 }
 
 // ある (col,row) が このダイブの女の子配置に一致するか。
@@ -108,6 +115,7 @@ function tileType(col, row, seed) {
 const TILES_FALLBACK_CONST = {
   GRID_COLS: 15,
   DEPTH_ROWS: 15,
+  GIRL_COUNT: 5,
 };
 
 // ---- PALETTE(深度軸 + 掘った道) --------------------------------------

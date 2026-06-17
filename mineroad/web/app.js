@@ -21,7 +21,10 @@
 // (低音量)、SFX clone-per-play(連打停止対策)、女の子の縦坑追従(クライム時 重力ガード)。
 // v0.2.2: 宇宙服リングが変との FB → キャラを Kenney Roguelike Characters(リング無しの
 // ピクセル人型)へ。自機=髭の坑夫、女の子=金髪三つ編み。描画は smoothing off で crisp。
-const VERSION = "v0.2.2";
+// v0.3.0: 全コンテンツ拡張の第1増分 — 裏庭を本物のダンジョン化。女の子 1→5 人(dungeon_info
+// ID0 girl num=5 に忠実)、クリア条件を §7 忠実へ(全員救出+最下層到達+探索率しきい値)。
+// 1 人救出=即クリアを廃し、地表帰還で全回復しつつ複数ダイブで全条件を満たす撤退ループへ。
+const VERSION = "v0.3.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -34,7 +37,8 @@ const CONST = {
   SP_PER_ACTION: 1, // 移動 1 / 掘り 1 手ごとに 1 消費(SP 切れなら HP が減る)。
   // タイル種別の掘削手数(TILE_DIG_KEY と整合)。
   DIG_TAPS: { SOIL: 1, HARD: 2 },
-  GIRL_COUNT: 1, // 縦切りは 1 人(裏庭 5 人は拡張フェーズ)。
+  GIRL_COUNT: 5, // 裏庭(dungeon_info ID0)= 5 人(一次データで確認)。
+  CLEAR_EXPLORE: 1.0, // クリアに要る探索率(§7=100%。実機計測で到達可能性を確認し調整)。
   BASE_SEED: 41027, // 決定論シードの基底(Math.random/Date.now 厳禁)。
   VISIBLE_RADIUS: 2, // 自機周囲この半径を可視化(fog を晴らす)。
   LONGPRESS_MS: 320, // 予備(将来の長押し操作用、現状未使用)。
@@ -164,7 +168,8 @@ const TEXT = {
     "足元が空（くう）になると落ちる。掘った跡が帰り道になる。",
     "行動するたびスタミナが減る。スタミナが尽きると体力が減りはじめる。体力ゼロで力尽きる。",
     "地表（いちばん上の明るい行）に戻るとスタミナも体力も全回復。どこまで潜って引き返すかが肝。",
-    "深くに女の子が埋まっている。掘り当てると付いてくる。地表まで連れ帰れば救出成功。",
+    "深くに女の子が5人埋まっている。掘り当てると付いてくる。地表まで連れ帰ろう。",
+    "5人すべて救出し、最下層まで掘り進み、探索率を100%にして地表へ戻るとダンジョン制覇。",
   ],
   howtoStart: "もぐる",
   howtoBack: "もどる",
@@ -182,8 +187,8 @@ const TEXT = {
   failTitle: "力尽きた",
   failSub: "地表へ戻れなかった",
   retry: "もういちど",
-  clearTitle: "救出成功",
-  clearSub: "女の子を地表へ連れ帰った",
+  clearTitle: "ダンジョン制覇",
+  clearSub: "裏庭の女の子5人を全員救出・最下層到達・探索率100%",
   again: "もういちど潜る",
   bestDepthPrefix: "最深 ",
   bestDepthSuffix: " 層",
@@ -269,8 +274,8 @@ const G = {
   dug: null, // Set("col,row") 掘削済み(空間化した)タイル。
   digProgress: null, // Map("col,row" -> 残り掘削手数)。
   seen: null, // Set("col,row") 一度でも可視になったタイル(探索率 + fog 解除)。
-  girl: null, // {col,row,state} state: "hidden"/"following"/"rescued"。
-  rescued: 0, // このダイブで救出した数。
+  girls: null, // [{col,row,origRow,state}, ...] state: "hidden"/"following"/"rescued"。
+  rescued: 0, // このランで救出した数(全員 = CONST.GIRL_COUNT でクリア要件①)。
   maxDepthThisDive: 0,
   busy: false, // overlay 遷移中などの入力ロック。
   enteredHpZone: false, // スタミナ切れ通知を一度だけ出すフラグ。
@@ -318,8 +323,12 @@ function startDive() {
   G.dug = new Set();
   G.digProgress = new Map();
   G.seen = new Set();
-  const gp = girlPositions(G.seed)[0];
-  G.girl = { col: gp.col, row: gp.row, origRow: gp.row, state: "hidden" };
+  G.girls = girlPositions(G.seed).map((p) => ({
+    col: p.col,
+    row: p.row,
+    origRow: p.row,
+    state: "hidden",
+  }));
   G.rescued = 0;
   G.maxDepthThisDive = 0;
   G.busy = false;
@@ -505,20 +514,30 @@ function applyGravity() {
 
 // ---- 女の子: 発見と追従 ------------------------------------------------
 function discoverGirl(col, row) {
-  const g = G.girl;
-  if (g && g.state === "hidden" && g.col === col && g.row === row) {
-    g.state = "following";
-    showHint(TEXT.cueGirlFound, false);
-    spawnPopupAt(col, row, "！", "cue");
-    playSfx("found");
+  if (!G.girls) return;
+  for (const g of G.girls) {
+    if (g.state === "hidden" && g.col === col && g.row === row) {
+      g.state = "following";
+      showHint(TEXT.cueGirlFound, false);
+      spawnPopupAt(col, row, "！", "cue");
+      playSfx("found");
+      return;
+    }
   }
 }
 
-// 追従中の女の子を 1 歩、自機へ近づける(掘った空洞を BFS で辿る)→ そのあと重力で落とす。
-// 経路が無ければ(道が塞がれた)その場で待機し、掘り直しを促す。
+// 追従中の女の子を全員 1 歩ずつ自機へ近づける。経路が無ければ(道が塞がれた)その場で
+// 待機し、掘り直しを促す(per-girl は advanceOneGirl)。
 function advanceGirl() {
-  const g = G.girl;
-  if (!g || g.state !== "following") return;
+  if (!G.girls) return;
+  for (const g of G.girls) {
+    if (g.state === "following") advanceOneGirl(g);
+  }
+}
+
+// 追従中の女の子 1 人を 1 歩、自機へ近づける(掘った空洞を BFS で辿る)→ そのあと重力で落とす。
+// 複数人が追従すると見た目上は自機マス付近で重なる(プロトタイプ簡略化、STATUS line64 別件)。
+function advanceOneGirl(g) {
   // 自機と同マス(発見直後など)はまだ寄せる必要がない。bfsStep が同点 null を返すのを
   // 「はぐれた(経路なし)」と取り違えて cueGirlBlocked を出すのを抑止する(発見演出の直後に
   // 矛盾警告で上書きしない)。
@@ -601,36 +620,58 @@ function rescueGirl(g) {
   if (g.state === "rescued") return;
   g.state = "rescued";
   G.rescued += 1;
+  setInt(RESCUE_KEY, getInt(RESCUE_KEY) + 1); // 生涯救出数(タイトル表示)。各人 1 回だけ加算。
+}
+
+// クリア判定(§7 忠実): 全員救出 かつ 最下層到達 かつ 探索率がしきい値以上。
+function isDungeonCleared() {
+  return (
+    G.rescued >= CONST.GIRL_COUNT &&
+    G.maxDepthThisDive >= CONST.DEPTH_ROWS &&
+    exploreRatio() >= CONST.CLEAR_EXPLORE
+  );
+}
+
+// 地表帰還時、未クリアなら残りのクリア要件を簡潔に示すヒント文。
+function surfaceProgressText() {
+  const need = [];
+  if (G.rescued < CONST.GIRL_COUNT) need.push("救出 " + G.rescued + "/" + CONST.GIRL_COUNT);
+  if (G.maxDepthThisDive < CONST.DEPTH_ROWS) need.push("最下層 未到達");
+  if (exploreRatio() < CONST.CLEAR_EXPLORE) need.push("探索 " + Math.round(exploreRatio() * 100) + "%");
+  if (!need.length) return TEXT.cueSurface;
+  return "地表。全回復。残り → " + need.join("・");
 }
 
 // ---- 地表帰還 = 全回復(撤退の報酬) -----------------------------------
 function surfaceReturn() {
-  // 追従中の女の子は自機の 1 マス後ろを辿っている。自機が地表に着いたら、女の子も
+  // 追従中の女の子は自機の後ろを辿っている。自機が地表に着いたら、追従中の全員が
   // 残りの帰り道を歩いて地表へ上がりきる(掘った縦坑を 1 歩ずつ詰める)。
-  if (G.girl && G.girl.state === "following") {
-    let guard = 0;
-    while (G.girl.state === "following" && G.girl.row > 0 && guard < CONST.DEPTH_ROWS + 4) {
-      guard++;
-      const next = bfsStep(G.girl.col, G.girl.row, G.px, G.py);
-      if (!next) break; // 道が塞がれていて上がれない。
-      G.girl.col = next[0];
-      G.girl.row = next[1];
-      if (G.girl.row === 0) rescueGirl(G.girl);
+  if (G.girls) {
+    for (const g of G.girls) {
+      if (g.state !== "following") continue;
+      let guard = 0;
+      while (g.state === "following" && g.row > 0 && guard < CONST.DEPTH_ROWS + 4) {
+        guard++;
+        const next = bfsStep(g.col, g.row, G.px, G.py);
+        if (!next) break; // 道が塞がれていて上がれない(地中に残る = 掘り直し)。
+        g.col = next[0];
+        g.row = next[1];
+        if (g.row === 0) rescueGirl(g);
+      }
     }
   }
   // best 記録。
   if (G.maxDepthThisDive > getInt(BEST_DEPTH_KEY)) setInt(BEST_DEPTH_KEY, G.maxDepthThisDive);
-  // 救出して地表 = 縦切りの一区切り(勝利演出)。
-  if (G.rescued > 0 && G.girl && G.girl.state === "rescued") {
-    setInt(RESCUE_KEY, getInt(RESCUE_KEY) + G.rescued);
+  // クリア(§7): 全員救出 + 最下層到達 + 探索率しきい値 を満たして地表 = ダンジョン制覇。
+  if (isDungeonCleared()) {
     showClear();
     return;
   }
-  // 救出前の撤退 = 全回復して継続(力尽きていない)。
+  // 未クリアの撤退 = 全回復して継続(救出済み・掘った跡・探索率・最深度はランで保持)。
   G.stamina = CONST.STAMINA_MAX;
   G.hp = CONST.HP_MAX;
   G.enteredHpZone = false;
-  showHint(TEXT.cueSurface, false);
+  showHint(surfaceProgressText(), false);
   playSfx("heal");
   renderHud();
 }
@@ -758,7 +799,7 @@ function showClear() {
 // ---- HUD レンダリング(DOM) --------------------------------------------
 function renderHud() {
   depthValEl.textContent = TEXT.depthPrefix + G.py + TEXT.depthSuffix;
-  rescueValEl.textContent = G.rescued;
+  rescueValEl.textContent = G.rescued + "/" + CONST.GIRL_COUNT;
   exploreValEl.textContent = Math.round(exploreRatio() * 100) + "%";
   const spRatio = Math.max(0, Math.min(1, G.stamina / CONST.STAMINA_MAX));
   staminaFillEl.style.width = spRatio * 100 + "%";
@@ -977,10 +1018,12 @@ function render() {
     }
   }
 
-  // 女の子(暖色自発光。未発見でも可視マスなら気配として淡く光る)。
-  const g = G.girl;
-  if (g && g.state !== "rescued") {
-    if (isVisible(g.col, g.row) || g.state === "following") drawGirl(g);
+  // 女の子(暖色自発光。未発見でも可視マスなら気配として淡く光る)。全員ぶん描く。
+  if (G.girls) {
+    for (const g of G.girls) {
+      if (g.state === "rescued") continue;
+      if (isVisible(g.col, g.row) || g.state === "following") drawGirl(g);
+    }
   }
 
   // 自機(暖色グロー + スプライト)。

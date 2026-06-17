@@ -1,4 +1,4 @@
-// マインロード v0.1.0 縦切り実機相当デバッグ + 既存 6 作回帰。
+// マインロード v0.3.0 実機相当デバッグ + 既存 6 作回帰。
 // Mine Road 忠実リメイク。自由掘削サイドビュー探索 × スタミナ→体力の二段ゲージ ×
 // 地上全回復の撤退判断 × 女の子救出誘導。文字・数値・ゲージ・十字キーは全て DOM、
 // canvas にはタイル矩形 + fog + 自機 + 女の子のみ。
@@ -24,7 +24,9 @@
 //     実呼び出しが無い(行コメント除去後に grep。コメント言及は許容)。
 import { chromium } from "playwright";
 
-const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47846";
+// 本番ポート 47825 は絶対に使わない(本番 companion-games が稼働)。検証は別ポートで自前起動した
+// サーバ(既定 47860)に向ける。GAMES_BASE で上書き可。
+const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47860";
 const SHOTDIR = process.env.MR_SHOTDIR || "/home/miho/companion/logs";
 const out = (k, v) => console.log(`  ${k}: ${JSON.stringify(v)}`);
 const VW = 412;
@@ -213,7 +215,11 @@ let corePass = false;
   const init = await page.evaluate(() => ({
     screen: G.screen, py: G.py, px: G.px,
     stamina: G.stamina, hp: G.hp, seed: G.seed,
-    girlRow: G.girl.row, girlState: G.girl.state,
+    girlCount: G.girls.length,
+    girlPositions: G.girls.map((g) => g.col + "," + g.row).join("|"),
+    allHidden: G.girls.every((g) => g.state === "hidden"),
+    rescued: G.rescued,
+    rescueHud: document.getElementById("rescue-val").textContent,
   }));
   const hudVisible = await page.evaluate(() => !document.getElementById("hud").hidden);
   const diveOverflow = await overflowReport(page, "dive-initial");
@@ -235,12 +241,14 @@ let corePass = false;
   out("dive 中央 最前面が #scene(飛び越えなし)", sceneAtCenter);
   out("断面の最前面(HUD が pointer 食わない)", topAtCanvasMid);
   out("HUD 表示", hudVisible);
-  out("dive 初期状態", init);
+  out("dive 初期状態(5人/HUD 0/5)", init);
 
+  // 固定 BASE_SEED=41027 の 5 人配置(lead 指定の verbatim)。
+  const EXPECTED_GIRLS = "11,6|0,8|4,10|3,12|8,14";
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.2.2" &&
+    version === "v0.3.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -249,7 +257,7 @@ let corePass = false;
     titleButtons.howtoHidden === false &&
     tappedStart === true &&
     screenHowto === "howto" &&
-    howtoInfo.lines === 6 &&
+    howtoInfo.lines === 7 &&
     howtoInfo.howtoHidden === false &&
     howtoInfo.action === "もぐる" &&
     tappedHowtoStart === true &&
@@ -261,9 +269,12 @@ let corePass = false;
     init.py === 0 &&
     init.stamina === 100 &&
     init.hp === 30 &&
-    init.girlRow >= 10 && init.girlRow <= 13 &&
-    init.girlState === "hidden";
-  out("PASS(コア遷移/初回howto/飛び越えなし/可読性)", corePass);
+    init.girlCount === 5 &&
+    init.girlPositions === EXPECTED_GIRLS &&
+    init.allHidden === true &&
+    init.rescued === 0 &&
+    init.rescueHud === "0/5";
+  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性)", corePass);
   await ctx.close();
 }
 
@@ -515,7 +526,7 @@ let audioPass = false;
   await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(600);
   // title
-  await page.screenshot({ path: `${SHOTDIR}/mr_v021_title.png` });
+  await page.screenshot({ path: `${SHOTDIR}/mr_v030_title.png` });
   // dive: 掘り進んで断面・タイル・キャラが見える場面を作る。
   await startToDive(page);
   await page.evaluate(() => {
@@ -528,24 +539,24 @@ let audioPass = false;
     renderHud && renderHud();
   });
   await page.waitForTimeout(500); // カメラ追従の補間を落ち着かせる。
-  await page.screenshot({ path: `${SHOTDIR}/mr_v021_dive.png` });
-  // clear: 救出成功 overlay。
+  await page.screenshot({ path: `${SHOTDIR}/mr_v030_dive.png` });
+  // clear: ダンジョン制覇 overlay。v0.3.0 は全員救出 + 最下層到達 + 探索率 100% が必要なので、
+  // 状態を作って(全 girls rescued・rescued=5・maxDepth=15・全マス seen)から地表帰還経路を踏む。
   await page.evaluate(() => {
     startDive();
-    const g = G.girl;
-    for (let r = 1; r <= g.row; r++) G.dug.add(g.col + "," + r);
-    G.px = g.col; G.py = g.row;
-    discoverGirl(g.col, g.row);
-    for (let r = g.row - 1; r >= 0; r--) {
-      G.px = g.col; G.py = r;
-      advanceGirl();
-      if (r === 0) { surfaceReturn(); break; }
-    }
+    for (const g of G.girls) { g.state = "rescued"; }
+    G.rescued = CONST.GIRL_COUNT;
+    G.maxDepthThisDive = CONST.DEPTH_ROWS;
+    for (let r = 1; r <= CONST.DEPTH_ROWS; r++) for (let c = 0; c < CONST.GRID_COLS; c++) G.seen.add(c + "," + r);
+    // 地表へ戻る経路: 1 マス縦坑を掘り、地表へ moveTo。
+    G.dug.add(G.px + ",1");
+    G.py = 1;
+    moveTo(G.px, 0, true);
   });
   await page.waitForTimeout(400);
-  await page.screenshot({ path: `${SHOTDIR}/mr_v021_clear.png` });
+  await page.screenshot({ path: `${SHOTDIR}/mr_v030_clear.png` });
   console.log("== スクリーンショット保存 ==");
-  out("保存先", [`${SHOTDIR}/mr_v021_title.png`, `${SHOTDIR}/mr_v021_dive.png`, `${SHOTDIR}/mr_v021_clear.png`]);
+  out("保存先", [`${SHOTDIR}/mr_v030_title.png`, `${SHOTDIR}/mr_v030_dive.png`, `${SHOTDIR}/mr_v030_clear.png`]);
   await ctx.close();
 }
 
@@ -617,15 +628,18 @@ let mechPass = false;
     return { stamina: G.stamina, hp: G.hp, screen: G.screen, recovered: G.stamina === 100 && G.hp === 30 };
   });
 
-  // --- (C) 女の子: 縦シャフトを掘って発見→追従→地表で救出成功(clear)。---
+  // --- (C) 女の子: 縦シャフトを掘って発見→追従→地表で救出。v0.3.0 は 1 人救出では clear に
+  //     ならない(全員 + 最下層 + 探索率)。ここでは最寄りの 1 人を発見→追従→地表帰還し、
+  //     その人だけ rescued になり、HUD が 0/5→1/5、かつ screen が dive のまま(全回復継続)であることを確認。---
   const rescue = await page.evaluate(() => {
     startDive();
-    const g = G.girl;
-    // 女の子の列に縦シャフトを掘る(自機がその列を降りた帰り道)。
+    // 最寄り(自機 col7 から右下)= (11,6)。その人を発見→追従→連れ帰る。
+    const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
     for (let r = 1; r <= g.row; r++) G.dug.add(g.col + "," + r);
     G.px = g.col; G.py = g.row;
     discoverGirl(g.col, g.row);
-    const discovered = G.girl.state;
+    const discovered = g.state;
+    const hudAfterFound = document.getElementById("rescue-val").textContent;
     // 上へ 1 マスずつ戻る(掘った跡が帰り道)。女の子が追従して一緒に地表へ。
     let guard = 0;
     for (let r = g.row - 1; r >= 0 && guard < 60; r--) {
@@ -636,10 +650,12 @@ let mechPass = false;
     }
     return {
       discovered,
-      girlState: G.girl.state,
+      hudAfterFound,
+      girlState: g.state,
       rescued: G.rescued,
-      screen: G.screen, // clear
-      clearTitle: document.getElementById("ov-title").textContent,
+      hudAfterRescue: document.getElementById("rescue-val").textContent,
+      screen: G.screen, // dive のまま(1 人=clear ではない)
+      ovTitle: document.getElementById("ov-title").textContent,
     };
   });
 
@@ -649,18 +665,19 @@ let mechPass = false;
   // 同マス早期 return の修正後は cueGirlFound 系のまま、追従も継続することを assert する。
   const discoverHint = await page.evaluate(() => {
     startDive();
-    const g = G.girl;
+    const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
+    const gi = G.girls.indexOf(g);
     // 女の子の真上(g.col, g.row-1)へ自機を置き、縦坑を g.row-1 まで掘っておく。
     for (let r = 1; r < g.row; r++) G.dug.add(g.col + "," + r);
     G.px = g.col; G.py = g.row - 1;
     // 真下(=女の子マス)を掘る = 実経路の act(0,1)。土相当の手数で掘り抜き discoverGirl→moveTo。
     let guard = 0;
-    while (G.girl.state === "hidden" && guard < 5) { act(0, 1); guard++; }
+    while (G.girls[gi].state === "hidden" && guard < 5) { act(0, 1); guard++; }
     const hint = document.getElementById("hud-hint").textContent;
     const hintHidden = document.getElementById("hud-hint").hidden;
     // 文言は app.js TEXT の verbatim(cueGirlFound / cueGirlBlocked)。
     return {
-      girlState: G.girl.state,
+      girlState: G.girls[gi].state,
       hint,
       hintHidden,
       isFoundHint: hint === "女の子を見つけた。地表へ連れ帰ろう",
@@ -733,7 +750,7 @@ let mechPass = false;
   out("(B2) スタミナ0→体力減(二段ゲージ)", twoStage);
   out("(B3) 体力0で力尽き(fail)", failFlow);
   out("(B4) 地表帰還で全回復", recover);
-  out("(C) 女の子 発見→追従→地表救出(clear)", rescue);
+  out("(C) 女の子 1人 発見→追従→地表救出(HUD 0/5→1/5, screen=dive 継続)", rescue);
   out("(C2) 発見直後の hint が cueGirlFound(誤 cueGirlBlocked 抑止)", discoverHint);
   out("(D1) 重力(足元空間で落下)", gravity);
   out("(D2) 上移動は 1 マス", upLimit);
@@ -751,10 +768,11 @@ let mechPass = false;
     failFlow.title === "力尽きた" &&
     recover.recovered &&
     rescue.discovered === "following" &&
+    rescue.hudAfterFound === "0/5" && // 発見だけでは救出数は増えない
     rescue.girlState === "rescued" &&
-    rescue.rescued >= 1 &&
-    rescue.screen === "clear" &&
-    rescue.clearTitle === "救出成功" &&
+    rescue.rescued === 1 && // 1 人だけ救出
+    rescue.hudAfterRescue === "1/5" && // HUD が 0/5→1/5
+    rescue.screen === "dive" && // 1 人救出では clear にならない(dive 継続)
     discoverHint.girlState === "following" && // 発見後は追従継続
     discoverHint.isFoundHint === true && // 発見直後の表示は cueGirlFound
     discoverHint.isBlockedHint === false && // 誤 cueGirlBlocked が出ていない
@@ -785,43 +803,45 @@ let girlFollowPass = false;
   const trace = await page.evaluate(() => {
     startDive();
     const seed = G.seed;
-    const g = G.girl;
+    // 最深の 1 人(8,14)で追従トレース(縦坑が一番長い = 底張り付きが最も出やすい)。
+    const g = G.girls.find((x) => x.col === 8 && x.row === 14) || G.girls[G.girls.length - 1];
+    const gi = G.girls.indexOf(g);
     const startRow = g.row, col = g.col;
     // 女の子の列に地表(row0)から女の子の行まで一直線の縦坑を掘る(帰り道)。
     for (let r = 1; r <= startRow; r++) G.dug.add(col + "," + r);
     // 自機を女の子マスへ置いて発見させる。
     G.px = col; G.py = startRow;
     discoverGirl(col, startRow);
-    const discovered = G.girl.state;
+    const discovered = G.girls[gi].state;
     // 発見直後に女の子が即底へ張り付いていないこと(=バグ症状)を記録。
-    const girlRowAfterDiscover = G.girl.state === "rescued" ? 0 : G.girl.row;
+    const girlRowAfterDiscover = G.girls[gi].state === "rescued" ? 0 : G.girls[gi].row;
 
     // 自機を 1 マスずつ上へ登らせ、各手で advanceGirl を呼ぶ。女の子 row が
     // 自機 row へ追従して減少するかをトレースする(底に張り付くなら row が減らない)。
     const steps = [];
     let stuck = false;
-    let prevGirlRow = G.girl.row;
+    let prevGirlRow = G.girls[gi].row;
     for (let pr = startRow - 1; pr >= 0; pr--) {
       G.px = col; G.py = pr; // 自機が縦坑を 1 マス登った。
       advanceGirl();
-      const gr = G.girl.state === "rescued" ? 0 : G.girl.row;
-      steps.push({ playerRow: pr, girlRow: gr, girlState: G.girl.state });
+      const gr = G.girls[gi].state === "rescued" ? 0 : G.girls[gi].row;
+      steps.push({ playerRow: pr, girlRow: gr, girlState: G.girls[gi].state });
       // 女の子 row が「前手より増えた(底へ落ち戻った)」ら張り付きバグ。
-      if (G.girl.state !== "rescued" && gr > prevGirlRow) stuck = true;
+      if (G.girls[gi].state !== "rescued" && gr > prevGirlRow) stuck = true;
       prevGirlRow = gr;
-      if (G.girl.state === "rescued") break;
+      if (G.girls[gi].state === "rescued") break;
     }
     // 女の子が地表(row0)へ追従しきって rescued になった後、自機も地表(py0)に居るので
-    // surfaceReturn が clear 演出(救出成功)へ遷移する。これが「救出 → 連れ帰り → clear」の
-    // 正規責務(rescueGirl は state を rescued にするだけで screen は遷移しない)。
-    if (G.girl.state === "rescued" && G.py === 0) surfaceReturn();
+    // surfaceReturn が走る。v0.3.0 は 1 人救出では clear にならず全回復継続(screen=dive)。
+    if (G.girls[gi].state === "rescued" && G.py === 0) surfaceReturn();
 
     // 追従の単調減少(rescue 到達まで girlRow は概ね減っていく)を判定。
     const girlRows = steps.map((s) => s.girlRow);
-    const lastState = G.girl.state;
+    const lastState = G.girls[gi].state;
     return {
       seed, col, startRow, discovered, girlRowAfterDiscover,
       steps, girlRows, stuck, lastState, rescued: G.rescued,
+      hud: document.getElementById("rescue-val").textContent,
       // 女の子が startRow から地表(0)まで row を縮められたか。
       reachedSurface: lastState === "rescued",
       // 最終 girlRow が startRow より小さい = 追従して上がった(底張り付きの否定)。
@@ -829,7 +849,7 @@ let girlFollowPass = false;
     };
   });
 
-  // clear へ到達したか(救出 → screen=clear)を最終確認。
+  // 1 人救出後の最終確認(v0.3.0 = clear ではなく dive 継続)。
   const finalScreen = await page.evaluate(() => ({
     screen: G.screen,
     title: document.getElementById("ov-title") ? document.getElementById("ov-title").textContent : "",
@@ -855,10 +875,10 @@ let girlFollowPass = false;
     trace.stuck === false && // 各手で row が増えない(底へ落ち戻らない)
     trace.followedUp === true && // row が startRow より上がった
     trace.reachedSurface === true && // 地表まで追従しきって救出
-    trace.rescued >= 1 &&
-    finalScreen.screen === "clear" &&
-    finalScreen.title === "救出成功";
-  out("PASS(女の子 縦坑追従: 底張り付きなし→地表救出)", girlFollowPass);
+    trace.rescued === 1 &&
+    trace.hud === "1/5" && // HUD 1/5
+    finalScreen.screen === "dive"; // v0.3.0: 1 人救出では clear にならず dive 継続
+  out("PASS(女の子 縦坑追従: 底張り付きなし→地表救出/1人=dive継続)", girlFollowPass);
   await ctx.close();
 }
 
@@ -1104,8 +1124,12 @@ let e2ePass = false;
     recovered.sp === 100 && recovered.hp === 30 && // 全回復
     recovered.scr === "dive";
 
-  // --- (G2) 救出 e2e: 女の子列へ寄せ → 真下掘りで掘り当て(following) → 上掘りで連れ帰り → clear ---
-  const girl = await page.evaluate(() => ({ col: G.girl.col, row: G.girl.row }));
+  // --- (G2) 救出 e2e(画面操作): 最寄りの女の子(11,6)へ寄せ → 真下掘りで掘り当て(following) →
+  //     上掘りで連れ帰り → 地表で救出(HUD 1/5)。v0.3.0 は 1 人では clear にならず dive 継続。---
+  const girl = await page.evaluate(() => {
+    const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
+    return { col: g.col, row: g.row, idx: G.girls.indexOf(g) };
+  });
   // 女の子列へ横移動。
   for (let i = 0; i < 20; i++) {
     const px = await page.evaluate(() => G.px);
@@ -1116,14 +1140,14 @@ let e2ePass = false;
   // 真下掘りで掘り当て(列を保ったまま。HARD は 2 手かかるので py 不動でも掘り続ける)。
   let found = false;
   for (let k = 0; k < 40 && !found; k++) {
-    const st = await page.evaluate(() => ({ scr: G.screen, gstate: G.girl.state, py: G.py }));
+    const st = await page.evaluate(([gi]) => ({ scr: G.screen, gstate: G.girls[gi].state, py: G.py }), [girl.idx]);
     if (st.scr !== "dive") break;
     if (st.gstate === "following") { found = true; break; }
     if (st.py >= 15) break; // 底まで来たら詰み(到達不能 = 欠陥のサイン)。
     if (!(await tapTile(0, 1))) allScene = false;
     await page.waitForTimeout(45);
   }
-  const discovered = await page.evaluate(() => G.girl.state);
+  const discovered = await page.evaluate(([gi]) => G.girls[gi].state, [girl.idx]);
   // 連れ帰り(掘った一直線の縦坑を真上 act で 1 マスずつ登る。女の子が追従)。
   // 救出経路は同一列の縦坑なので真上が常に空間 = 登れる(横回避不要)。塞がれば即異常。
   if (found) {
@@ -1137,17 +1161,14 @@ let e2ePass = false;
       if (after.py === st.py) break; // 登れず詰み = 帰り道が成立しない(欠陥サイン)。
     }
   }
-  const rescueEnd = await page.evaluate(() => ({
-    scr: G.screen, gstate: G.girl.state, rescued: G.rescued,
-    title: document.getElementById("ov-title").textContent,
-  }));
-  // clear 画面のはみ出し検査(reward 画面 = lead 必須)。
-  const clearOverflow = await overflowReport(page, "clear-overlay");
-  if (clearOverflow.overflowCount > 0) overflowFails.push(clearOverflow);
+  const rescueEnd = await page.evaluate(([gi]) => ({
+    scr: G.screen, gstate: G.girls[gi].state, rescued: G.rescued,
+    hud: document.getElementById("rescue-val").textContent,
+  }), [girl.idx]);
   const rescueE2eOk =
     found && discovered === "following" &&
-    rescueEnd.scr === "clear" && rescueEnd.gstate === "rescued" &&
-    rescueEnd.rescued >= 1 && rescueEnd.title === "救出成功";
+    rescueEnd.scr === "dive" && rescueEnd.gstate === "rescued" &&
+    rescueEnd.rescued === 1 && rescueEnd.hud === "1/5";
 
   console.log("== 画面操作 end-to-end(撤退ループ / 救出) ==");
   out("pageerrors", errors);
@@ -1156,8 +1177,8 @@ let e2ePass = false;
   out("(G1) 帰還後(全回復&地表)", recovered);
   out("(G1) 撤退ループ成立", retreatLoopOk);
   out("(G2) 女の子掘り当て(following)", { found, discovered, girl });
-  out("(G2) 連れ帰り(clear/rescued)", rescueEnd);
-  out("(G2) 救出 e2e 成立", rescueE2eOk);
+  out("(G2) 連れ帰り(rescued/HUD 1/5/dive継続)", rescueEnd);
+  out("(G2) 救出 e2e 成立(1人=clearにならず dive継続)", rescueE2eOk);
   out("全操作で最前面が #scene", allScene);
 
   e2ePass = errors.length === 0 && allScene && retreatLoopOk && rescueE2eOk;
@@ -1194,6 +1215,171 @@ let failOverflowPass = true;
 }
 
 // ============================================================================
+// (O) v0.3.0 クリアゲート: §7 忠実(全員救出 + 最下層到達 + 探索率しきい値)。
+//   ① 全条件未達では isDungeonCleared()=false で clear しない(地表帰還で dive 継続)。
+//   ② 全条件達成(全 girls rescued・rescued=5・maxDepth=15・探索率100%)から地表帰還経路を
+//      踏むと showClear → screen=clear, overlay title="ダンジョン制覇"。
+//   ③ 旧「1 人=即クリア」回帰防止: 1 人だけ rescued + 最下層到達 + 探索率100% でも clear しない。
+//   状態は window.G を作ってから「最後の地表帰還経路」(縦坑 1 マス掘り → moveTo row0)を踏ませる
+//   (canvas へ直接 dispatch せず、内部状態 + 正規の surfaceReturn 経路で判定する)。
+// ============================================================================
+let clearGatePass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToDive(page);
+
+  // 地表帰還経路を踏む共通ヘルパ(縦坑 1 マス掘って row1→row0 へ moveTo)。
+  const goSurface = `
+    G.dug.add(G.px + ",1");
+    G.py = 1;
+    moveTo(G.px, 0, true);
+  `;
+
+  // ① 全条件未達(救出 0・最下層未到達・探索率低)で地表帰還 → clear しない。
+  const notCleared = await page.evaluate((surf) => {
+    startDive();
+    G.rescued = 0; G.maxDepthThisDive = 3;
+    const cleared = isDungeonCleared();
+    eval(surf);
+    return { isCleared: cleared, screen: G.screen };
+  }, goSurface);
+
+  // ③ 1 人だけ rescued + 最下層 + 探索率100% でも clear しない(旧 1人=即クリア回帰防止)。
+  const onePlusDepth = await page.evaluate((surf) => {
+    startDive();
+    G.girls[0].state = "rescued"; G.rescued = 1;
+    G.maxDepthThisDive = CONST.DEPTH_ROWS;
+    for (let r = 1; r <= CONST.DEPTH_ROWS; r++) for (let c = 0; c < CONST.GRID_COLS; c++) G.seen.add(c + "," + r);
+    const cleared = isDungeonCleared();
+    const explore = exploreRatio();
+    eval(surf);
+    return { isCleared: cleared, explore: +(explore * 100).toFixed(0), screen: G.screen };
+  }, goSurface);
+
+  // 救出 5 だが最下層未到達でも clear しない(条件②欠落)。
+  const fiveNoDepth = await page.evaluate(() => {
+    startDive();
+    for (const g of G.girls) g.state = "rescued";
+    G.rescued = 5; G.maxDepthThisDive = 10; // 最下層未到達
+    for (let r = 1; r <= CONST.DEPTH_ROWS; r++) for (let c = 0; c < CONST.GRID_COLS; c++) G.seen.add(c + "," + r);
+    return { isCleared: isDungeonCleared() };
+  });
+
+  // 救出 5 + 最下層だが探索率不足でも clear しない(条件③欠落)。
+  const fiveNoExplore = await page.evaluate(() => {
+    startDive();
+    for (const g of G.girls) g.state = "rescued";
+    G.rescued = 5; G.maxDepthThisDive = CONST.DEPTH_ROWS;
+    // seen は startDive 時の地表まわりのみ(探索率 << 100%)。
+    return { isCleared: isDungeonCleared(), explore: +(exploreRatio() * 100).toFixed(0) };
+  });
+
+  // ② 全条件達成 → 地表帰還で showClear(title="ダンジョン制覇")。
+  const fullClear = await page.evaluate((surf) => {
+    startDive();
+    for (const g of G.girls) g.state = "rescued";
+    G.rescued = CONST.GIRL_COUNT;
+    G.maxDepthThisDive = CONST.DEPTH_ROWS;
+    for (let r = 1; r <= CONST.DEPTH_ROWS; r++) for (let c = 0; c < CONST.GRID_COLS; c++) G.seen.add(c + "," + r);
+    const clearedBefore = isDungeonCleared();
+    const explore = +(exploreRatio() * 100).toFixed(0);
+    eval(surf);
+    return {
+      clearedBefore, explore,
+      screen: G.screen,
+      title: document.getElementById("ov-title").textContent,
+      sub: document.getElementById("ov-sub").textContent,
+    };
+  }, goSurface);
+
+  console.log("== (O) v0.3.0 クリアゲート(§7 忠実 / 旧1人=即クリア回帰防止) ==");
+  out("pageerrors", errors);
+  out("① 全条件未達 → clear しない(dive 継続)", notCleared);
+  out("③ 1人+最下層+探索100% でも clear しない(旧即クリア回帰防止)", onePlusDepth);
+  out("救出5+最下層未到達 → clear しない", fiveNoDepth);
+  out("救出5+最下層+探索不足 → clear しない", fiveNoExplore);
+  out("② 全条件達成 → showClear(ダンジョン制覇)", fullClear);
+
+  clearGatePass =
+    errors.length === 0 &&
+    notCleared.isCleared === false && notCleared.screen === "dive" &&
+    onePlusDepth.isCleared === false && onePlusDepth.explore === 100 && onePlusDepth.screen === "dive" &&
+    fiveNoDepth.isCleared === false &&
+    fiveNoExplore.isCleared === false && fiveNoExplore.explore < 100 &&
+    fullClear.clearedBefore === true && fullClear.explore === 100 &&
+    fullClear.screen === "clear" &&
+    fullClear.title === "ダンジョン制覇";
+  out("PASS(クリアゲート §7 忠実 / 旧1人=即クリア回帰防止 / 全達成で制覇)", clearGatePass);
+  await ctx.close();
+}
+
+// ============================================================================
+// (P) 複数女の子: 2 人を実掘り当て → HUD が 0/5 → 1/5 → 2/5 と増える(全員 hidden→following→
+//   rescued 遷移)。最寄り(11,6)と (0,8) を順に救出する画面操作 e2e に近い検証
+//   (掘削/移動は内部 act/moveTo 経由だが G.dug を実際に作って帰り道を成立させる)。
+// ============================================================================
+let multiGirlPass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToDive(page);
+
+  const multi = await page.evaluate(() => {
+    startDive();
+    const hud0 = document.getElementById("rescue-val").textContent; // 0/5
+    const log = [];
+    // 1 人目: (11,6)。列に縦坑を掘って発見→追従→地表帰還で救出。
+    function rescueOne(col, row) {
+      for (let r = 1; r <= row; r++) G.dug.add(col + "," + r);
+      G.px = col; G.py = row;
+      discoverGirl(col, row);
+      const found = G.girls.find((g) => g.col === col && g.origRow === row);
+      const st1 = found ? found.state : "?";
+      for (let r = row - 1; r >= 0; r--) { G.px = col; G.py = r; advanceGirl(); if (r === 0) { surfaceReturn(); break; } }
+      const after = G.girls.find((g) => g.origRow === row && g.col === col);
+      return { foundState: st1, finalState: after ? after.state : "?" };
+    }
+    const g1 = rescueOne(11, 6);
+    const hud1 = document.getElementById("rescue-val").textContent; // 1/5
+    log.push({ girl: "11,6", g1, hud1 });
+    const g2 = rescueOne(0, 8);
+    const hud2 = document.getElementById("rescue-val").textContent; // 2/5
+    log.push({ girl: "0,8", g2, hud2 });
+
+    return {
+      hud0, hud1, hud2,
+      rescued: G.rescued,
+      screen: G.screen, // 2 人では未達 = dive 継続
+      states: G.girls.map((g) => `${g.col},${g.origRow}:${g.state}`),
+      g1, g2,
+    };
+  });
+
+  console.log("== (P) 複数女の子 2人救出で HUD 0/5→1/5→2/5 ==");
+  out("pageerrors", errors);
+  out("HUD 推移", { hud0: multi.hud0, hud1: multi.hud1, hud2: multi.hud2 });
+  out("1人目(11,6) found→rescued", multi.g1);
+  out("2人目(0,8) found→rescued", multi.g2);
+  out("rescued 合計 / screen", { rescued: multi.rescued, screen: multi.screen });
+  out("全 girls state", multi.states);
+
+  multiGirlPass =
+    errors.length === 0 &&
+    multi.hud0 === "0/5" &&
+    multi.g1.foundState === "following" && multi.g1.finalState === "rescued" &&
+    multi.hud1 === "1/5" &&
+    multi.g2.foundState === "following" && multi.g2.finalState === "rescued" &&
+    multi.hud2 === "2/5" &&
+    multi.rescued === 2 &&
+    multi.screen === "dive"; // 2 人では未達 = clear にならない
+  out("PASS(2人救出: hidden→following→rescued, HUD 0/5→1/5→2/5, 未達dive継続)", multiGirlPass);
+  await ctx.close();
+}
+
+// ============================================================================
 // (I) determinism 静的検査(lead 必須): app.js/tiles.js に Math.random/Date.now/
 //     performance.now の実呼び出しが無い(コメント言及は可)。配信中のソースを取得して検査。
 // ============================================================================
@@ -1224,16 +1410,18 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.2.2", corePass);
-out("(J) v0.2.2 アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
+out("(A) コア遷移 + VERSION v0.3.0 + 5人配置 + HUD 0/5", corePass);
+out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
-out("(B/C/D) 二段ゲージ/撤退/救出/重力/探索率/決定論[内部関数]", mechPass);
-out("(N) 女の子 縦坑追従 row トレース(底張り付きなし→地表救出)[#4 最重要]", girlFollowPass);
+out("(B/C/D) 二段ゲージ/撤退/1人救出(HUD 1/5,dive継続)/重力/探索率/決定論[内部関数]", mechPass);
+out("(N) 女の子 縦坑追従 row トレース(底張り付きなし→地表救出/1人=dive継続)", girlFollowPass);
+out("(O) v0.3.0 クリアゲート §7 忠実 / 旧1人=即クリア回帰防止 / 全達成で制覇", clearGatePass);
+out("(P) 複数女の子 2人救出 HUD 0/5→1/5→2/5", multiGirlPass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
-out("(G) 画面操作 e2e[撤退ループ + 救出]", e2ePass);
+out("(G) 画面操作 e2e[撤退ループ + 1人救出(dive継続)]", e2ePass);
 out("(H) fail はみ出し0 + retry", failOverflowPass);
 out("(I) determinism 静的検査", determinismPass);
 if (overflowFails.length) {
@@ -1242,7 +1430,8 @@ if (overflowFails.length) {
 }
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
-  mechPass && girlFollowPass && dpadPass && shortVpPass && regressionPass &&
+  mechPass && girlFollowPass && clearGatePass && multiGirlPass &&
+  dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);
