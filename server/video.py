@@ -109,12 +109,22 @@ def play_playlist_load(urls):
     投入後 playlist の構成を server から変更しない(契約 C1: index と PWA 保持 title が
     1:1 固定。次/前/ジャンプは queue_next/prev/jump のみ)。返り値は先頭 replace の応答
     (再生開始の成否を _video_result が写像)。append は即応(yt-dlp 解決は再生時まで遅延)。
+
+    **全エントリに per-file `pause=no` を付ける**(先頭の replace だけでなく append も):
+    実 vo + ytdl 環境では、per-file pause 指定の無いエントリが current になると paused で
+    読み込まれる(本番 TV 実測 2026-06-18: pause=no を持つ entry は解決中も再生継続、持たない
+    entry は次へ/自動 advance で pause=true)。pause=no が無いと **eof 自動 advance が各曲で
+    一時停止して止まる = 中核機能 (1 曲終わったら自動で次へ) が壊れる**。headless (vo=null)
+    では再現しないため headless 検証ではなく本番 TV 検証で確定。pause はグローバル property
+    だが per-file 指定はそのエントリが current の間だけ適用され、指定の無いエントリへ移ると
+    その既定に戻るため、全エントリに明示する(reactive に queue_next 後へ set pause を足す案は
+    自動 advance を救えず 2 周目の温床ゆえ採らない)。
     """
     if not urls:
         return None
     cmds = [(1, ["loadfile", urls[0], "replace", "pause=no"])]
     for i, u in enumerate(urls[1:], start=2):
-        cmds.append((i, ["loadfile", u, "append"]))
+        cmds.append((i, ["loadfile", u, "append", "pause=no"]))
     res = _send(cmds)
     if res is None:
         return None
