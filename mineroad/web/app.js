@@ -465,6 +465,14 @@ function act(dc, dr) {
     moveTo(col, row);
     return;
   }
+  if (t === TILE.SURFACE) {
+    // 地表は安全な歩行帯(全回復・帰還地点)。横移動で歩ける = isSpace(row<=0)=true と整合。
+    // v0.4.0 の power ゲート(下記)は SOIL/HARD/ROCK/GIRL 専用。地表に req は無いので、
+    // ゲートに落とすと SURFACE が「掘削不能」で弾かれ地表を横歩きできなくなる(v0.3.0 退行)。
+    // → 地表は掘らず素通りで移動する(v0.3.0 は digTaps(SURFACE)=1 の素通りで歩けていた)。
+    moveTo(col, row);
+    return;
+  }
   // v0.4.0 A: ツルハシ power ゲート。所持する最強ツルハシの power がタイル必要 power 未満なら
   // 掘れない(blocked 演出/SFX を流用)。木 power1 では HARD(2)/ROCK(3) が掘れず、石で HARD、
   // 鉄で ROCK、ダイヤで全部。GIRL は SOIL 相当=1(救出対象)。req が無いタイルは掘削不能扱い。

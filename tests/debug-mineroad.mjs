@@ -1073,15 +1073,25 @@ let e2ePass = false;
   //     正常挙動なので、ここでは縦坑掘り = プレイヤーが意図する帰還可能な掘り方を検証する。
   //     硬岩に当たらない列を地形から選び、その列の真下のみを掘り下げる。
   let allScene = startScreen === "dive";
-  // 硬岩(ROCK)が深さ 1..D まで無い列を選ぶ(縦坑が R で詰まらない列)。
+  // v0.4.0: 初期ツルハシ=木(power1)。power ゲート導入で HARD(power2)/ROCK(power3) は木で掘れない
+  // (= v0.3.0 まで HARD は 2 手で誰でも掘れたが、v0.4.0 は石ツルハシ以上が要る)。そのため
+  // 「ROCK が無い列」だけでは縦坑が HARD で詰まる。木 power1 で 1..D を一直線に掘り下げられる列
+  //  = 全マスが SOIL か NONE(空間)の列を選ぶ(HARD/ROCK/GIRL を含まない)。一番深くまで soft な
+  // 列を採って撤退ループ(py>=4)を確実に成立させる。これは v0.4.0 の power ゲート挙動に追随した
+  // 列選択の更新(実装の挙動は STATUS v0.4.0 A の設計どおり)。
   const shaftCol = await page.evaluate(() => {
     const D = 9;
+    let best = G.px, bestSoft = -1;
     for (let c = 0; c < CONST.GRID_COLS; c++) {
-      let clear = true;
-      for (let r = 1; r <= D; r++) if (tileAt(c, r) === TILE.ROCK) { clear = false; break; }
-      if (clear) return c;
+      let soft = 0;
+      for (let r = 1; r <= D; r++) {
+        const t = tileAt(c, r);
+        if (t === TILE.SOIL || t === TILE.NONE) soft = r; // power1 で掘れる/通れる
+        else break; // HARD/ROCK/GIRL でその列の縦坑は詰まる
+      }
+      if (soft > bestSoft) { bestSoft = soft; best = c; }
     }
-    return G.px;
+    return best;
   });
   // 地表で目的列へ横移動(地表は安全・落下しない)。
   for (let i = 0; i < 20; i++) {
@@ -1406,6 +1416,145 @@ let multiGirlPass = false;
 }
 
 // ============================================================================
+// (Q) v0.4.0 新機能スモーク(STATUS v0.4.0 エントリ準拠)。実機反映前の最小ゲートとして追加。
+//   Q1 クラフト UI: #btn-craft 画面タップ → クラフトオーバーレイが DOM 表示 →
+//      craft.csv 6 レシピ(名前 + コスト verbatim)が出る → #craft-close で閉じる。pageerror 0。
+//      (overlay 開閉は画面座標ヒットテスト経由 = 最前面が想定ボタンであることを確認)。
+//   Q2 HUD インベントリ描画: 鉱石 4 種カウント + ツルハシ最強段アイコン/はしご/回復薬/アンテナ。
+//   Q3 鉱石産出(oreAt 決定論): SOIL を掘り抜くとインベントリ加算。固定 seed で oreAt が再現一致
+//      (2 回読み同一)。col7 r2 = SOIL × COPPER の既知マスを掘って COPPER 0→1 を実測。
+//   Q4 ツルハシ power 掘削ゲート(回帰防止): 木(power1)で ROCK が掘れない(= v0.3.0 挙動保存)。
+//      かつ鉄(power3)では掘れる(= v0.4.0 拡張)を併記して、ゲートが「機能している」ことも示す。
+// ============================================================================
+let v040Pass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToDive(page);
+  const diveScr = await page.evaluate(() => G.screen);
+
+  // --- Q2 HUD インベントリ DOM 描画(初期値)。 ---
+  const inv0 = await page.evaluate(() => {
+    const v = (id) => { const e = document.getElementById(id); return e ? e.textContent : null; };
+    const invVisible = !!document.getElementById("inventory") &&
+      getComputedStyle(document.getElementById("inventory")).display !== "none";
+    return {
+      invVisible,
+      ore: { cu: v("ore-cu"), fe: v("ore-fe"), au: v("ore-au"), di: v("ore-di") },
+      pickIco: v("pick-ico"), // 初期 = 木
+      potion: v("potion-val"),
+      hasPotionBtn: !!document.getElementById("btn-potion"),
+      hasCraftBtn: !!document.getElementById("btn-craft"),
+      antenna: G.antenna, ladders: G.ladders,
+    };
+  });
+
+  // --- Q1 クラフト UI: 画面タップで開く → 6 レシピ verbatim → 閉じる。---
+  const craftBtnHit = await buttonHittable(page, "#btn-craft");
+  const craftOpened = await tapSelector(page, "#btn-craft"); // 画面座標ヒットテスト経由。
+  await page.waitForTimeout(250);
+  const craft = await page.evaluate(() => {
+    const ov = document.getElementById("craft-overlay");
+    const rows = [...document.querySelectorAll("#craft-list .craft-row")];
+    return {
+      open: !!ov && !ov.hidden,
+      count: rows.length,
+      names: rows.map((r) => (r.querySelector(".craft-name") || {}).textContent),
+      costs: rows.map((r) => (r.querySelector(".craft-cost") || {}).textContent),
+    };
+  });
+  const closeHit = await buttonHittable(page, "#craft-close");
+  const closed = await tapSelector(page, "#craft-close");
+  await page.waitForTimeout(200);
+  const craftClosed = await page.evaluate(() => {
+    const ov = document.getElementById("craft-overlay");
+    return !!ov && ov.hidden;
+  });
+  // craft.csv verbatim(STATUS v0.4.0 C / tiles.js CRAFT_RECIPES と一致)。
+  const EXPECT_NAMES = ["石のツルハシ", "鉄のツルハシ", "はしご", "回復薬", "ダイヤのツルハシ", "アンテナ"];
+  const EXPECT_COSTS = ["銅3", "鉄2 銅2", "銅1", "鉄1", "ダ1 鉄3", "金1"];
+  const namesOk = JSON.stringify(craft.names) === JSON.stringify(EXPECT_NAMES);
+  const costsOk = JSON.stringify(craft.costs) === JSON.stringify(EXPECT_COSTS);
+
+  // --- Q3 鉱石産出 + oreAt 決定論。固定 seed で 2 回読み同一 + 既知 SOIL×COPPER 掘りで加算。---
+  const ore = await page.evaluate(() => {
+    startDive();
+    // 決定論: 全マス oreAt を 2 回読んで同一(ランタイム乱数なら一致しない)。
+    const sweep = () => {
+      const a = [];
+      for (let c = 0; c < CONST.GRID_COLS; c++) for (let r = 1; r <= CONST.DEPTH_ROWS; r++) a.push(oreAt(c, r, CONST.BASE_SEED));
+      return a.join(",");
+    };
+    const detSame = sweep() === sweep();
+    // 既知マス col7 r2 = SOIL(1) × COPPER(1)(BASE_SEED=41027 で実測、STATUS 行100 の col7 下方=S 系)。
+    const c7r2tile = tileType(7, 2, CONST.BASE_SEED);
+    const c7r2ore = oreAt(7, 2, CONST.BASE_SEED);
+    // WOOD で col7 を真下に r1,r2,r3 掘る(SOIL=power1 なので掘れる)。掘り抜きで COPPER が加算される。
+    G.px = 7; G.py = 0; G.pick = "WOOD";
+    const cu0 = G.ore.COPPER;
+    act(0, 1); act(0, 1); act(0, 1);
+    const cu1 = G.ore.COPPER;
+    return { detSame, c7r2tile, c7r2ore, cu0, cu1 };
+  });
+
+  // --- Q4 ツルハシ power 掘削ゲート(回帰防止 + 拡張確認)。---
+  const gate = await page.evaluate(() => {
+    startDive();
+    // 盤面上の最初の ROCK を見つけ、その真上に縦坑を掘っておいて「ROCK だけが障害」の状態を作る。
+    let rc = null;
+    for (let c = 0; c < CONST.GRID_COLS && !rc; c++) for (let r = 1; r <= CONST.DEPTH_ROWS; r++) {
+      if (tileType(c, r, CONST.BASE_SEED) === TILE.ROCK) { rc = { c, r }; break; }
+    }
+    G.pick = "WOOD";
+    G.px = rc.c; G.py = rc.r - 1;
+    for (let r = 1; r < rc.r; r++) G.dug.add(rc.c + "," + r);
+    const pyBefore = G.py;
+    // WOOD(power1) で ROCK(req3) を掘ろうとする → blocked(掘り抜けない・前進しない)。
+    act(0, 1); act(0, 1); act(0, 1);
+    const woodBlockedRock = !G.dug.has(rc.c + "," + rc.r) && G.py === pyBefore;
+    // 鉄(power3)に昇格 → ROCK が掘れる(v0.4.0 拡張)。
+    G.pick = "IRON";
+    for (let k = 0; k < CONST.DIG_TAPS.ROCK + 1; k++) act(0, 1);
+    const ironCanDigRock = G.dug.has(rc.c + "," + rc.r);
+    return { rc, woodBlockedRock, ironCanDigRock };
+  });
+
+  console.log("== (Q) v0.4.0 新機能スモーク(クラフト/インベントリ/鉱石/power ゲート) ==");
+  out("pageerrors", errors);
+  out("dive 遷移", diveScr);
+  out("(Q2) HUD インベントリ初期描画", inv0);
+  out("(Q1) クラフトボタン hittable / 開く", { craftBtnHit, craftOpened });
+  out("(Q1) クラフトオーバーレイ(6 レシピ verbatim)", craft);
+  out("(Q1) close hittable / 閉じた", { closeHit, closed, craftClosed });
+  out("(Q3) 鉱石 oreAt 決定論 + SOIL 掘りで COPPER 加算", ore);
+  out("(Q4) power ゲート: 木で ROCK 不可(v0.3.0 保存)/鉄で可(v0.4.0 拡張)", gate);
+
+  const okBtn = (b) => b.exists && b.topInView && b.bottomInView && b.hit;
+  v040Pass =
+    errors.length === 0 &&
+    diveScr === "dive" &&
+    // Q2 インベントリ
+    inv0.invVisible === true &&
+    inv0.ore.cu === "0" && inv0.ore.fe === "0" && inv0.ore.au === "0" && inv0.ore.di === "0" &&
+    inv0.pickIco === "木" && inv0.potion === "0" &&
+    inv0.hasPotionBtn === true && inv0.hasCraftBtn === true &&
+    inv0.antenna === false && inv0.ladders === 0 &&
+    // Q1 クラフト UI
+    okBtn(craftBtnHit) && craftOpened === true && craft.open === true &&
+    craft.count === 6 && namesOk && costsOk &&
+    okBtn(closeHit) && closed === true && craftClosed === true &&
+    // Q3 鉱石
+    ore.detSame === true &&
+    ore.c7r2tile === 1 /* SOIL */ && ore.c7r2ore === 1 /* COPPER */ &&
+    ore.cu0 === 0 && ore.cu1 === 1 &&
+    // Q4 power ゲート
+    gate.woodBlockedRock === true && gate.ironCanDigRock === true;
+  out("PASS(v0.4.0: クラフト UI 6 レシピ / インベントリ / 鉱石決定論加算 / power ゲート回帰)", v040Pass);
+  await ctx.close();
+}
+
+// ============================================================================
 // (I) determinism 静的検査(lead 必須): app.js/tiles.js に Math.random/Date.now/
 //     performance.now の実呼び出しが無い(コメント言及は可)。配信中のソースを取得して検査。
 // ============================================================================
@@ -1436,7 +1585,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.3.0 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.4.0 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -1444,6 +1593,7 @@ out("(B/C/D) 二段ゲージ/撤退/1人救出(HUD 1/5,dive継続)/重力/探索
 out("(N) 女の子 縦坑追従 row トレース(底張り付きなし→地表救出/1人=dive継続)", girlFollowPass);
 out("(O) v0.3.0 クリアゲート §7 忠実 / 旧1人=即クリア回帰防止 / 全達成で制覇", clearGatePass);
 out("(P) 複数女の子 2人救出 HUD 0/5→1/5→2/5", multiGirlPass);
+out("(Q) v0.4.0 クラフト UI 6 レシピ / インベントリ / 鉱石決定論加算 / power ゲート回帰", v040Pass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
@@ -1457,7 +1607,7 @@ if (overflowFails.length) {
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
   mechPass && girlFollowPass && clearGatePass && multiGirlPass &&
-  dpadPass && shortVpPass && regressionPass &&
+  v040Pass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);
