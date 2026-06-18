@@ -28,7 +28,7 @@
 // タイル掘削ゲート(SOIL1/HARD2/ROCK3、木で岩掘れず石/鉄/ダイヤで段階開放)、決定論 oreAt の
 // 鉱石ドロップ(深度帯=銅/鉄/金/ダイヤ)、クラフト 6 レシピ UI、アイテム使用(回復薬+50/
 // アンテナ透視/はしご)、HUD インベントリ。tileType/girlPositions には非介入(決定論 snapshot 不変)。
-const VERSION = "v0.4.0";
+const VERSION = "v0.4.1";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -254,6 +254,13 @@ let H = 0;
 let lastT = 0;
 let tile = 28; // タイル一辺(px)。resize で W/GRID_COLS から決める。
 let camY = 0; // カメラ縦オフセット(行単位、自機追従)。
+// 上部 HUD 帯(深度 / 二段ゲージ / インベントリ)の高さ(px)。地表でこの帯ぶん世界を下げ、
+// 自機・体力バー・インベントリとの被りを無くす(カメラに負ヘッドルームを許す)。
+// インベントリは clamp+vw でスケールし rem 推定とずれるため、実値は render で invEl の実
+// bottom から確定する(下記 hudBandMeasured)。ここでは計測前のフォールバック推定のみ。
+const HUD_BAND_REM = 8;
+let hudBandPx = HUD_BAND_REM * 16;
+let hudBandMeasured = false;
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -265,6 +272,11 @@ function resize() {
   canvas.style.height = H + "px";
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   tile = W / CONST.GRID_COLS;
+  // フォールバック: root font-size 基準の概算。実値は render で invEl bottom から確定。
+  const remPx =
+    parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  hudBandPx = HUD_BAND_REM * remPx;
+  hudBandMeasured = false; // viewport 変化で再計測。
 }
 
 // ---- 色補間 ------------------------------------------------------------
@@ -1134,10 +1146,25 @@ function render() {
     return;
   }
 
-  // カメラ追従: 自機を画面のやや上(行 4 付近)に。地表は上端で止め、底も超えない。
+  // HUD 帯の実高さを、インベントリ(clamp+vw でスケールし rem 推定とずれる)の実 bottom
+  // から一度だけ確定する。+10px = 自機スプライト(高さ ~0.82*tile)の頭まで帯の下へ収める余白。
+  if (!hudBandMeasured && !invEl.hidden) {
+    const b = invEl.getBoundingClientRect().bottom;
+    if (b > 0) {
+      hudBandPx = b + 10;
+      hudBandMeasured = true;
+    }
+  }
+
+  // カメラ追従: 自機の画面上端を常に HUD 帯(深度/二段ゲージ/インベントリ)より下に保つ。
+  // 追従距離を固定「4 行」にすると、tile が小さいモバイルでは 4 行 < 帯高 となり自機の頭が
+  // 帯に食い込む(地表でも潜行中でも、自機は画面上端から followRows 行に居るため)。そこで
+  // followRows を「帯の行数換算 + 余白」に引き上げ、自機上端 ((followRows-0.41)*tile) が
+  // hudBandPx を超えるようにする(PC は tile が大きく従来の 4 行で足りる)。底(maxCam)は超えず、
+  // 地表側は targetCam が負(上に空が覗く)。row<0 はタイルループ skip で空描画。
   const maxCam = Math.max(0, CONST.DEPTH_ROWS + 1 - Math.floor(H / tile));
-  let targetCam = G.py - 4;
-  targetCam = Math.max(0, Math.min(maxCam, targetCam));
+  const followRows = Math.max(4, hudBandPx / tile + 0.5);
+  const targetCam = Math.min(maxCam, G.py - followRows);
   camY += (targetCam - camY) * 0.2;
   if (typeof window !== "undefined") window.__camY = camY;
 

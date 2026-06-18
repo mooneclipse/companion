@@ -64,6 +64,23 @@ body {
 .hud[hidden] {
   display: none !important;
 }
+/* 上部 HUD 帯の下地。地表で空(明色)が覗いても深度/ゲージ/インベントリが浮く帯として
+   読ませる。世界はカメラ側で帯ぶん下げてあるので計器に被らない。pointer は素通し。 */
+.hud::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(env(safe-area-inset-top) + 7.4rem);
+  background: linear-gradient(
+    180deg,
+    rgba(16, 19, 31, 0.55),
+    rgba(16, 19, 31, 0)
+  );
+  pointer-events: none;
+  z-index: -1;
+}
 
 /* ---- 上部: 深度 + 救出 + 探索率 ---- */
 .top-bar {
@@ -117,11 +134,11 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.9em;
-  height: 1.9em;
+  width: 2.2em;
+  height: 2.2em;
   margin-left: 0.1rem;
   font-family: var(--mincho);
-  font-size: clamp(0.74rem, 3.4vw, 0.94rem);
+  font-size: clamp(0.78rem, 3.4vw, 0.98rem);
   color: #fff;
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.28);
@@ -248,32 +265,57 @@ body {
 .inv-tool.pick .inv-ico {
   color: #f4c878;
 }
-/* 回復薬 / 作る ボタン。pointer を拾う小ボタン。 */
+/* 回復薬 / 作る ボタン。d-pad と同じ Kenney チャンキー語彙(アンバー 3D)に統一 =
+   操作系を 1 つの「触れる家族」として読ませ、PC でも縮まないタップ標的(min 2.2rem)にする。 */
 .inv-btn {
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
+  justify-content: center;
+  gap: 0.28rem;
+  min-height: 2.2rem;
   font-family: var(--mincho);
-  font-size: clamp(0.64rem, 2.9vw, 0.8rem);
-  color: #fff;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 0.4em;
-  padding: 0.18em 0.55em;
+  font-size: clamp(0.82rem, 2.2vw, 1rem);
+  font-weight: 500;
+  color: #2a3550;
+  background: linear-gradient(180deg, #f4c878, #e6a948);
+  border: none;
+  border-bottom: 3px solid #a9742a;
+  border-radius: 0.6rem;
+  padding: 0.34em 0.95em;
   cursor: pointer;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.25);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   white-space: nowrap;
 }
+.inv-btn:active {
+  background: linear-gradient(180deg, #e6a948, #d4922f);
+  border-bottom-width: 1px;
+  transform: translateY(2px);
+}
+.inv-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
 .inv-btn.disabled,
 .inv-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: default;
+  box-shadow: none;
+  transform: none;
 }
+/* 作る = 主アクション。アンバーの発光を一段強め、操作系の中で最初に目が行くように。 */
 #btn-craft {
-  background: rgba(230, 178, 90, 0.28);
-  border-color: rgba(230, 178, 90, 0.6);
+  letter-spacing: 0.04em;
+  border-bottom-color: #8a5e20;
+  box-shadow: 0 2px 8px rgba(230, 178, 90, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+/* id 特異性で .inv-btn:disabled の box-shadow:none に勝つため、disabled 時の発光を明示で消す
+   (現状 craft は disabled 化されないが、将来条件付き disabled にした時の発光残りを防ぐ)。 */
+#btn-craft:disabled {
+  box-shadow: none;
 }
 
 /* ---- 下部ヒント(発見・スタミナ切れ・硬岩 cue) ---- */
@@ -342,6 +384,15 @@ body {
   background: linear-gradient(180deg, #e6a948, #d4922f);
   border-bottom-width: 1px;
   transform: translateY(2px);
+}
+/* キーボード操作の可視フォーカス(品質フロア)。操作系・ミュート・各オーバーレイボタン共通。 */
+.dpad-btn:focus-visible,
+.mute-btn:focus-visible,
+.craft-make:focus-visible,
+.craft-close:focus-visible,
+.ov-action:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 .dpad-btn.up {
   top: 0;
