@@ -4,9 +4,12 @@
 設計: ~/companion/workspace/redesign/video-design.md §3.4 / §6(契約2,3) / §7(live)。
 
 設計契約(破ると壊れる一線):
-- **固定テンプレートのみ**(loadfile replace / set pause / stop / seek abs / set volume /
+- **固定テンプレートのみ**(loadfile replace / loadfile append / set pause / stop /
+  seek abs / set volume / playlist-next / playlist-prev / set playlist-pos /
   get_property 固定リスト)を `json.dumps` 構築で mpv に送る。
   `run`/`load-script`/任意 `set_property` を **HTTP 層から一切受けない**(RCE 面の一線)。
+  playlist verb (RV-12) は再生キューの index 操作のみで、外部由来文字列を property に
+  流さない (title は PWA 保持 = 契約 C2、force-media-title は使わない)。
 - socket は同一権限(miho-uid)からのみ到達(0o600 + /run/user/1000 が 0700/miho)。
   HTTP token は RCE verb を gate しない = fs パーミッションが gate する。
 - **PulseAudio sink 不可触**(契約1): 音量は mpv `volume` プロパティのみ。pactl/sink を触らない。
@@ -27,8 +30,10 @@ CONNECT_TIMEOUT = 2.0  # mpv unit 停止時に即 503 へ落とす
 IO_TIMEOUT = 5.0       # loadfile/get_property は即応(yt-dlp 解決は mpv 内で非同期)
 
 # state() で読む property の固定リスト(verb whitelist の read 側)。
+# playlist-pos / playlist-count は RV-12 再生キュー (PWA がキュー UI と現在曲を描く)。
 _STATE_PROPS = (
     "idle-active", "core-idle", "time-pos", "duration", "pause", "media-title", "seekable",
+    "playlist-pos", "playlist-count",
 )
 
 
@@ -96,6 +101,26 @@ def play(url):
     return _command(["loadfile", url, "replace", "pause=no"])
 
 
+def play_playlist_load(urls):
+    """urls を mpv 内部 playlist に積む(RV-12)。先頭=loadfile replace(即再生)/残り=append。
+
+    urls は app.py で playlist.expand → urlguard.normalize 済みのみが届く前提(非空)。
+    eof 自動 advance は mpv keep-open=no がネイティブに行う(監視スレッド不要 = stateless 維持)。
+    投入後 playlist の構成を server から変更しない(契約 C1: index と PWA 保持 title が
+    1:1 固定。次/前/ジャンプは queue_next/prev/jump のみ)。返り値は先頭 replace の応答
+    (再生開始の成否を _video_result が写像)。append は即応(yt-dlp 解決は再生時まで遅延)。
+    """
+    if not urls:
+        return None
+    cmds = [(1, ["loadfile", urls[0], "replace", "pause=no"])]
+    for i, u in enumerate(urls[1:], start=2):
+        cmds.append((i, ["loadfile", u, "append"]))
+    res = _send(cmds)
+    if res is None:
+        return None
+    return res.get(1)
+
+
 def pause():
     return _command(["set_property", "pause", True])
 
@@ -121,6 +146,25 @@ def seek(amount, relative=False):
 def set_volume(v):
     """mpv volume プロパティのみ(PulseAudio sink は不可触 = 契約1)。"""
     return _command(["set_property", "volume", v])
+
+
+def queue_next():
+    """再生キューを次の曲へ(RV-12)。末尾で打つと mpv は idle に戻る(成否1回確定)。"""
+    return _command(["playlist-next"])
+
+
+def queue_prev():
+    """再生キューを前の曲へ(RV-12)。"""
+    return _command(["playlist-prev"])
+
+
+def queue_jump(pos):
+    """playlist-pos へ絶対ジャンプ(RV-12、index)。範囲外は mpv が弾く(成否1回確定)。
+
+    pos は app.py で int 検証済み。固定テンプレート(set playlist-pos)で外部文字列を
+    property に流さない(verb whitelist の一線、契約 C2/C3)。
+    """
+    return _command(["set_property", "playlist-pos", pos])
 
 
 def _derive(v):
@@ -154,6 +198,10 @@ def _derive(v):
         "pause": pause,
         "is_live": is_live,
         "seekable": seekable,
+        # RV-12 再生キュー: PWA が現在曲(pos)とキュー長(count)を描く。単一再生は count=1、
+        # idle は count=0/pos=None(unavailable→None)。title 一覧は PWA 保持(契約 C2)。
+        "playlist_pos": v.get("playlist-pos"),
+        "playlist_count": v.get("playlist-count"),
     }
 
 

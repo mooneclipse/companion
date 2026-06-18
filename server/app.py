@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import auth
 import dlqueue
+import playlist
 import status as os_status
 import tickets
 import urlguard
@@ -163,6 +164,62 @@ def api_video_play_local(handler):
     if path is None:
         return 404, {"error": "not found"}
     return _video_result(video.play(path))
+
+
+def api_video_play_playlist(handler):
+    """POST /api/video/play_playlist {url} — プレイリスト URL を flat 展開してキュー再生。Bearer 必須。
+
+    url は urlguard.normalize(再生 allowlist)を通る。playlist.expand が yt-dlp
+    --flat-playlist で各動画の (url, title) を取得(C3 先頭 100 件 cap / C4 allowlist 外
+    entry skip)。展開失敗は 502、entries 空(全 reject 等)は 400。レスポンスの titles は
+    PWA がキュー UI で保持(契約 C2、server は再生キュー state を持たない)。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    url = urlguard.normalize(data.get("url"))
+    if url is None:
+        return 400, {"error": "url rejected"}
+    try:
+        expanded = playlist.expand(url)
+    except playlist.PlaylistError:
+        return 502, {"error": "playlist expand failed"}
+    entries = expanded["entries"]
+    if not entries:
+        return 400, {"error": "empty playlist"}
+    code, body = _video_result(video.play_playlist_load([e["url"] for e in entries]))
+    if code != 200:
+        return code, body
+    return 200, {
+        "titles": [e["title"] for e in entries],
+        "count": expanded["loaded"],   # allowlist 通過してキューに載った件数
+        "total": expanded["total"],    # flat が返した生件数(loaded < total なら一部 skip)
+    }
+
+
+def api_video_queue_next(handler):
+    """POST /api/video/queue/next — 再生キューを次の曲へ。Bearer 必須。"""
+    return _video_result(video.queue_next())
+
+
+def api_video_queue_prev(handler):
+    """POST /api/video/queue/prev — 再生キューを前の曲へ。Bearer 必須。"""
+    return _video_result(video.queue_prev())
+
+
+def api_video_queue_jump(handler):
+    """POST /api/video/queue/jump {pos} — キューの index へジャンプ。Bearer 必須。
+
+    pos は非負整数(playlist-pos)。範囲外は mpv が弾く(502 に写像)。文字列を property に
+    流さない(video.queue_jump は固定テンプレート、verb whitelist の一線)。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    pos = data.get("pos")
+    if isinstance(pos, bool) or not isinstance(pos, int) or pos < 0:
+        return 400, {"error": "pos must be a non-negative integer"}
+    return _video_result(video.queue_jump(pos))
 
 
 def api_dl_add(handler):
@@ -323,6 +380,11 @@ ROUTES = {
     ("POST", "/api/video/volume"): (api_video_volume, True),
     ("GET", "/api/video/state"): (api_video_state, True),
     ("POST", "/api/video/play_local"): (api_video_play_local, True),
+    # F-video 再生キュー (RV-12)。play_playlist は flat 展開、queue/* は index 操作。
+    ("POST", "/api/video/play_playlist"): (api_video_play_playlist, True),
+    ("POST", "/api/video/queue/next"): (api_video_queue_next, True),
+    ("POST", "/api/video/queue/prev"): (api_video_queue_prev, True),
+    ("POST", "/api/video/queue/jump"): (api_video_queue_jump, True),
     # F-dl 事前ダウンロードキュー (RV-10)。全て Bearer 必須。
     ("POST", "/api/dl"): (api_dl_add, True),
     ("GET", "/api/dl"): (api_dl_list, True),
