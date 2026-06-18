@@ -1,4 +1,4 @@
-// マインロード v0.3.0 実機相当デバッグ + 既存 6 作回帰。
+// マインロード v0.4.0 実機相当デバッグ + 既存 6 作回帰。
 // Mine Road 忠実リメイク。自由掘削サイドビュー探索 × スタミナ→体力の二段ゲージ ×
 // 地上全回復の撤退判断 × 女の子救出誘導。文字・数値・ゲージ・十字キーは全て DOM、
 // canvas にはタイル矩形 + fog + 自機 + 女の子のみ。
@@ -248,7 +248,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.3.0" &&
+    version === "v0.4.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -1125,7 +1125,32 @@ let e2ePass = false;
     recovered.scr === "dive";
 
   // --- (G2) 救出 e2e(画面操作): 最寄りの女の子(11,6)へ寄せ → 真下掘りで掘り当て(following) →
-  //     上掘りで連れ帰り → 地表で救出(HUD 1/5)。v0.3.0 は 1 人では clear にならず dive 継続。---
+  //     上掘りで連れ帰り → 地表で救出(HUD 1/5)。v0.3.0 は 1 人では clear にならず dive 継続。
+  //     v0.4.0: 女の子(11,6)の列 col11 には HARD タイル(必要 power2)があるため、初期の木ツルハシ
+  //     (power1)では掘り抜けない(power ゲート = アイテム系の核)。クラフトボタンを画面操作で開いて
+  //     石のツルハシ(power2、銅3)を作ってから救出に向かう。銅3 は鉱石ドロップ gate で別途検証する
+  //     ので、ここでは材料を直接付与して「クラフト UI 経由でツルハシが昇格し HARD が掘れる」ことを
+  //     画面操作で踏む。---
+  // 銅3 を付与(鉱石の決定論ドロップは gate (P) で検証)。クラフトは画面操作で行う。
+  await page.evaluate(() => { G.ore.COPPER = 3; renderHud(); });
+  await tapSelector(page, "#btn-craft"); // クラフトオーバーレイを開く。
+  await page.waitForTimeout(250);
+  const craftOpen = await page.evaluate(() => !document.getElementById("craft-overlay").hidden);
+  // 「石のツルハシ」行の つくる ボタンを画面座標タップ(最前面ヒットテスト)。
+  const craftedStone = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("#craft-list .craft-row")];
+    const row = rows.find((r) => (r.querySelector(".craft-name") || {}).textContent === "石のツルハシ");
+    if (!row) return { ok: false, reason: "no-row" };
+    const btn = row.querySelector(".craft-make");
+    if (!btn || btn.disabled) return { ok: false, reason: "disabled" };
+    btn.click();
+    return { ok: G.pick === "STONE", pick: G.pick, copper: G.ore.COPPER };
+  });
+  await tapSelector(page, "#craft-close");
+  await page.waitForTimeout(200);
+  const pickAfterCraft = await page.evaluate(() => G.pick);
+  out("(G2-craft) クラフト開く / 石ツルハシ作成", { craftOpen, craftedStone, pickAfterCraft });
+
   const girl = await page.evaluate(() => {
     const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
     return { col: g.col, row: g.row, idx: G.girls.indexOf(g) };
@@ -1166,6 +1191,7 @@ let e2ePass = false;
     hud: document.getElementById("rescue-val").textContent,
   }), [girl.idx]);
   const rescueE2eOk =
+    craftedStone.ok && pickAfterCraft === "STONE" && // v0.4.0: 石ツルハシをクラフト経由で得た
     found && discovered === "following" &&
     rescueEnd.scr === "dive" && rescueEnd.gstate === "rescued" &&
     rescueEnd.rescued === 1 && rescueEnd.hud === "1/5";

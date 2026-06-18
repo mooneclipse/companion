@@ -197,6 +197,85 @@ body {
   color: #ff8a6a;
 }
 
+/* ---- v0.4.0 インベントリ: 鉱石 4 種 + 道具。ゲージの下、横一列。pointer はボタンのみ。 ---- */
+.inventory {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 5.4rem);
+  left: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  pointer-events: none;
+}
+.inventory[hidden] {
+  display: none !important;
+}
+.inv-ore,
+.inv-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.16rem;
+  font-size: clamp(0.66rem, 3vw, 0.82rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  white-space: nowrap;
+}
+.inv-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: 0.35em;
+  font-size: 0.82em;
+  background: rgba(0, 0, 0, 0.5);
+}
+.inv-ore.cu .inv-ico {
+  color: #d98a5a;
+}
+.inv-ore.fe .inv-ico {
+  color: #c8c8d0;
+}
+.inv-ore.au .inv-ico {
+  color: #e6c35a;
+}
+.inv-ore.di .inv-ico {
+  color: #7ec8e3;
+}
+.inv-tool.pick .inv-ico {
+  color: #f4c878;
+}
+/* 回復薬 / 作る ボタン。pointer を拾う小ボタン。 */
+.inv-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-family: var(--mincho);
+  font-size: clamp(0.64rem, 2.9vw, 0.8rem);
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 0.4em;
+  padding: 0.18em 0.55em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  white-space: nowrap;
+}
+.inv-btn.disabled,
+.inv-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+#btn-craft {
+  background: rgba(230, 178, 90, 0.28);
+  border-color: rgba(230, 178, 90, 0.6);
+}
+
 /* ---- 下部ヒント(発見・スタミナ切れ・硬岩 cue) ---- */
 .hud-hint {
   position: absolute;
@@ -446,4 +525,120 @@ body {
   .overlay {
     animation: none;
   }
+}
+
+/* ===== v0.4.0 クラフトオーバーレイ(craft.csv 6 レシピ) =====
+   dive 中に開く。2 段 flex でリストをスクロール領域・とじるを固定フッター
+   (短高 viewport でも行数が増えてボタンが clip 境界をはみ出さない。tomoru/saguri 流)。 */
+.craft-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100svh;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.4rem 1.2rem calc(1.4rem + env(safe-area-inset-bottom));
+  background: rgba(16, 19, 31, 0.86);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.craft-overlay.visible {
+  opacity: 1;
+}
+.craft-overlay[hidden] {
+  display: none !important;
+}
+.craft-overlay:not(.visible) {
+  pointer-events: none;
+}
+.craft-panel {
+  max-width: 24rem;
+  width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  background: rgba(26, 22, 16, 0.5);
+  border: 1px solid rgba(230, 178, 90, 0.4);
+  border-radius: 0.9rem;
+  padding: 1rem 0.9rem;
+}
+.craft-title {
+  font-weight: 500;
+  font-size: clamp(1.1rem, 5vw, 1.4rem);
+  letter-spacing: 0.14em;
+  text-align: center;
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+.craft-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+.craft-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  background: rgba(0, 0, 0, 0.32);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
+}
+.craft-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.16rem;
+  min-width: 0;
+}
+.craft-name {
+  font-size: clamp(0.82rem, 3.8vw, 0.98rem);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.craft-cost {
+  font-size: clamp(0.7rem, 3.2vw, 0.82rem);
+  color: rgba(244, 238, 226, 0.7);
+  letter-spacing: 0.04em;
+}
+.craft-make {
+  flex: 0 0 auto;
+  font-family: var(--mincho);
+  font-size: clamp(0.74rem, 3.4vw, 0.9rem);
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  background: rgba(230, 178, 90, 0.22);
+  border: 1px solid rgba(230, 178, 90, 0.6);
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  white-space: nowrap;
+}
+.craft-make.disabled,
+.craft-make:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.craft-close {
+  flex: 0 0 auto;
+  font-family: var(--mincho);
+  font-size: clamp(0.82rem, 4vw, 1rem);
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  background: rgba(244, 238, 226, 0.08);
+  border: 1px solid rgba(244, 238, 226, 0.3);
+  border-radius: 0.6rem;
+  padding: 0.5rem 1.4rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }

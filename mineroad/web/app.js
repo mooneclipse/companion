@@ -24,7 +24,11 @@
 // v0.3.0: 全コンテンツ拡張の第1増分 — 裏庭を本物のダンジョン化。女の子 1→5 人(dungeon_info
 // ID0 girl num=5 に忠実)、クリア条件を §7 忠実へ(全員救出+最下層到達+探索率しきい値)。
 // 1 人救出=即クリアを廃し、地表帰還で全回復しつつ複数ダイブで全条件を満たす撤退ループへ。
-const VERSION = "v0.3.0";
+// v0.4.0: アイテム/クラフト系の第2増分(原作 item.csv/craft.csv 忠実)。ツルハシ power による
+// タイル掘削ゲート(SOIL1/HARD2/ROCK3、木で岩掘れず石/鉄/ダイヤで段階開放)、決定論 oreAt の
+// 鉱石ドロップ(深度帯=銅/鉄/金/ダイヤ)、クラフト 6 レシピ UI、アイテム使用(回復薬+50/
+// アンテナ透視/はしご)、HUD インベントリ。tileType/girlPositions には非介入(決定論 snapshot 不変)。
+const VERSION = "v0.4.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -35,14 +39,17 @@ const CONST = {
   DIG_SOIL: 1, // 土の掘削手数。
   DIG_HARD: 2, // 硬土の掘削手数。硬岩は掘れない。
   SP_PER_ACTION: 1, // 移動 1 / 掘り 1 手ごとに 1 消費(SP 切れなら HP が減る)。
-  // タイル種別の掘削手数(TILE_DIG_KEY と整合)。
-  DIG_TAPS: { SOIL: 1, HARD: 2 },
+  // タイル種別の掘削手数(TILE_DIG_KEY と整合)。ROCK は v0.4.0 で鉄ツルハシ以上が掘れる。
+  DIG_TAPS: { SOIL: 1, HARD: 2, ROCK: 3 },
   GIRL_COUNT: 5, // 裏庭(dungeon_info ID0)= 5 人(一次データで確認)。
   CLEAR_EXPLORE: 1.0, // クリアに要る探索率(§7=100%。実機計測で到達可能性を確認し調整)。
   BASE_SEED: 41027, // 決定論シードの基底(Math.random/Date.now 厳禁)。
   VISIBLE_RADIUS: 2, // 自機周囲この半径を可視化(fog を晴らす)。
   LONGPRESS_MS: 320, // 予備(将来の長押し操作用、現状未使用)。
   TAP_MAX_MOVE: 18, // タップ判定の移動許容(px)。
+  // v0.4.0 アイテム系。
+  POTION_HEAL: 50, // 回復薬の体力回復量(原作 HP+50。現 HP_MAX=30 なので min で頭打ち)。
+  INIT_PICK: "WOOD", // 初期ツルハシ(木 power1、岩は掘れない)。
 };
 // 計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
@@ -226,6 +233,20 @@ const btnRightEl = document.getElementById("btn-right");
 const btnSurfaceEl = document.getElementById("btn-surface");
 const btnMuteEl = document.getElementById("btn-mute");
 
+// v0.4.0 インベントリ + クラフト DOM 参照。
+const invEl = document.getElementById("inventory");
+const oreCuEl = document.getElementById("ore-cu");
+const oreFeEl = document.getElementById("ore-fe");
+const oreAuEl = document.getElementById("ore-au");
+const oreDiEl = document.getElementById("ore-di");
+const pickIcoEl = document.getElementById("pick-ico");
+const potionValEl = document.getElementById("potion-val");
+const btnPotionEl = document.getElementById("btn-potion");
+const btnCraftEl = document.getElementById("btn-craft");
+const craftOverlayEl = document.getElementById("craft-overlay");
+const craftListEl = document.getElementById("craft-list");
+const craftCloseEl = document.getElementById("craft-close");
+
 // ---- canvas / 描画状態 -------------------------------------------------
 let DPR = 1;
 let W = 0;
@@ -280,6 +301,12 @@ const G = {
   busy: false, // overlay 遷移中などの入力ロック。
   enteredHpZone: false, // スタミナ切れ通知を一度だけ出すフラグ。
   totalTiles: 0, // 探索率の分母(GRID_COLS * DEPTH_ROWS)。
+  // ---- v0.4.0 インベントリ(ランごと初期化。fail/再挑戦でリセット、save モデルは次増分) ----
+  ore: null, // { COPPER, IRON, GOLD, DIAMOND } 鉱石所持数。
+  pick: "WOOD", // 所持する最強ツルハシの段(PICK のキー)。power ゲートに直結。
+  ladders: 0, // はしご所持数(縦穴を登る移動補助。クラフトで増える)。
+  potions: 0, // 回復薬所持数(使用で体力 +POTION_HEAL)。
+  antenna: false, // アンテナ所持(女の子の位置を未発見でも透視)。
 };
 window.G = G;
 
@@ -334,6 +361,12 @@ function startDive() {
   G.busy = false;
   G.enteredHpZone = false;
   G.totalTiles = CONST.GRID_COLS * CONST.DEPTH_ROWS;
+  // v0.4.0 インベントリ初期化(ランごと。fail/再挑戦でリセット = v0.3.0 スコープ境界踏襲)。
+  G.ore = { COPPER: 0, IRON: 0, GOLD: 0, DIAMOND: 0 };
+  G.pick = CONST.INIT_PICK;
+  G.ladders = 0;
+  G.potions = 0;
+  G.antenna = false;
   G.screen = "dive";
   hideOverlay();
   hudEl.hidden = false;
@@ -432,14 +465,17 @@ function act(dc, dr) {
     moveTo(col, row);
     return;
   }
-  if (t === TILE.ROCK) {
-    // 硬岩は掘れない(軽フィードバック)。
+  // v0.4.0 A: ツルハシ power ゲート。所持する最強ツルハシの power がタイル必要 power 未満なら
+  // 掘れない(blocked 演出/SFX を流用)。木 power1 では HARD(2)/ROCK(3) が掘れず、石で HARD、
+  // 鉄で ROCK、ダイヤで全部。GIRL は SOIL 相当=1(救出対象)。req が無いタイルは掘削不能扱い。
+  const req = TILE_REQ_POWER[t];
+  if (req === undefined || pickPower() < req) {
     showHint(TEXT.cueRockHit, false);
     spawnPopupAt(col, row, "×", "warn");
     playSfx("blocked");
     return;
   }
-  // 土 / 硬土 / 女の子 → 掘る。
+  // 土 / 硬土 / 硬岩 / 女の子 → 掘る。
   const key = col + "," + row;
   let remain = G.digProgress.get(key);
   if (remain === undefined) remain = digTaps(t);
@@ -457,6 +493,7 @@ function act(dc, dr) {
   G.digProgress.delete(key);
   G.dug.add(key);
   if (t === TILE.GIRL) discoverGirl(col, row);
+  else collectOre(col, row); // v0.4.0 B: 掘り抜いたマスの鉱石を決定論で産出(GIRL は除外)。
   // 横/下方向に掘ったらそのマスへ前進(原作: 土なら自動で掘って進む)。掘りで行動コストは
   // 払い済みなので、前進では二重に取らない(costPaid=true)。
   if (dr === 1 || dc !== 0) {
@@ -472,6 +509,68 @@ function act(dc, dr) {
 function digTaps(t) {
   const k = TILE_DIG_KEY[t];
   return CONST.DIG_TAPS[k] || 1;
+}
+
+// ---- v0.4.0 アイテム/クラフト系ヘルパー --------------------------------
+// 所持する最強ツルハシの power(掘削ゲート A の判定値)。
+function pickPower() {
+  const p = PICK[G.pick];
+  return p ? p.power : 1;
+}
+// 掘り抜いたマスの鉱石を決定論で産出しインベントリへ加算(B)。GIRL は呼び出し側で除外済み。
+function collectOre(col, row) {
+  if (!G.ore) return;
+  const o = oreAt(col, row, G.seed);
+  if (o === ORE.NONE) return;
+  const meta = ORE_META[o];
+  if (!meta) return;
+  G.ore[meta.key] = (G.ore[meta.key] || 0) + 1;
+  spawnPopupAt(col, row, "+" + meta.ico, "cue"); // 産出を暖色ポップで明示。
+}
+// クラフトレシピ rec の材料が現在のインベントリで足りているか。
+function canCraft(rec) {
+  if (!G.ore) return false;
+  for (const k of Object.keys(rec.cost)) {
+    if ((G.ore[k] || 0) < rec.cost[k]) return false;
+  }
+  return true;
+}
+// ツルハシ段の強さ比較(クラフトで弱い段に "ダウングレード" しないため)。
+function pickRank(key) {
+  return PICK[key] ? PICK[key].power : 0;
+}
+// レシピを実行: 材料を消費し完成品を付与。実行できたら true。
+function doCraft(rec) {
+  if (!canCraft(rec)) return false;
+  for (const k of Object.keys(rec.cost)) G.ore[k] -= rec.cost[k];
+  const r = rec.result;
+  if (r.type === "pick") {
+    // 最強の段だけを保持(より強い段を作ったら昇格、弱い段は無意味なので据え置き)。
+    if (pickRank(r.id) > pickRank(G.pick)) G.pick = r.id;
+  } else if (r.type === "tool") {
+    if (r.id === "LADDER") G.ladders += 1;
+    else if (r.id === "ANTENNA") G.antenna = true;
+  } else if (r.type === "consumable") {
+    if (r.id === "POTION") G.potions += 1;
+  }
+  playSfx("heal"); // クラフト成功の合図(専用 SFX 無し、heal を流用)。
+  renderHud();
+  renderCraft(); // パネルの可否表示を更新。
+  return true;
+}
+// 回復薬を使う(体力 +POTION_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
+function usePotion() {
+  if (G.screen !== "dive" || G.potions <= 0) return false;
+  if (G.hp >= CONST.HP_MAX) {
+    showHint("体力は満タン", false);
+    return false;
+  }
+  G.potions -= 1;
+  G.hp = Math.min(CONST.HP_MAX, G.hp + CONST.POTION_HEAL);
+  playSfx("heal");
+  showHint("回復薬を使った", false);
+  renderHud();
+  return true;
 }
 
 // ---- 移動 + 重力解決 ---------------------------------------------------
@@ -809,6 +908,93 @@ function renderHud() {
   hpValEl.textContent = Math.round(G.hp);
   // スタミナ切れ(体力ゾーン)で警告色。
   gaugeEl.classList.toggle("hp-zone", G.stamina <= 0);
+  renderInventory();
+}
+
+// ---- v0.4.0 インベントリ表示(鉱石数 + 所持道具)。canvas 外 DOM。 ---------
+function renderInventory() {
+  if (!invEl || !G.ore) return;
+  // 鉱石 4 種(銅/鉄/金/ダイヤ)。
+  if (oreCuEl) oreCuEl.textContent = G.ore.COPPER || 0;
+  if (oreFeEl) oreFeEl.textContent = G.ore.IRON || 0;
+  if (oreAuEl) oreAuEl.textContent = G.ore.GOLD || 0;
+  if (oreDiEl) oreDiEl.textContent = G.ore.DIAMOND || 0;
+  // 道具: ツルハシ最強段アイコン / はしご数 / 回復薬数 / アンテナ有無。
+  const p = PICK[G.pick];
+  if (pickIcoEl) pickIcoEl.textContent = p ? p.ico : "木";
+  if (potionValEl) potionValEl.textContent = G.potions || 0;
+  // 回復薬ボタンは所持があるときだけ押下可。
+  if (btnPotionEl) {
+    btnPotionEl.disabled = (G.potions || 0) <= 0;
+    btnPotionEl.classList.toggle("disabled", (G.potions || 0) <= 0);
+  }
+}
+
+// ---- v0.4.0 クラフトオーバーレイ(C) ------------------------------------
+// craft.csv 6 レシピを表示。材料充足なら「つくる」可、不足は disabled。dive 中に開ける。
+let craftOpen = false;
+function openCraft() {
+  if (G.screen !== "dive") return;
+  craftOpen = true;
+  renderCraft();
+  if (craftOverlayEl) {
+    craftOverlayEl.hidden = false;
+    requestAnimationFrame(() => craftOverlayEl.classList.add("visible"));
+  }
+}
+function closeCraft() {
+  craftOpen = false;
+  if (craftOverlayEl) {
+    craftOverlayEl.classList.remove("visible");
+    craftOverlayEl.hidden = true;
+  }
+}
+// 材料コストを「銅3」等の verbatim 文字列に。
+function costText(cost) {
+  const parts = [];
+  for (const k of Object.keys(cost)) {
+    // k = ORE_META.key。アイコン1字 + 個数。
+    let ico = "?";
+    for (const o of Object.keys(ORE_META)) {
+      if (ORE_META[o].key === k) { ico = ORE_META[o].ico; break; }
+    }
+    parts.push(ico + cost[k]);
+  }
+  return parts.join(" ");
+}
+// 既に最強段のツルハシを持っているレシピは「所持済み」で実質無効化(混乱防止)。
+function recipeRedundant(rec) {
+  return rec.result.type === "pick" && pickRank(rec.result.id) <= pickRank(G.pick);
+}
+function renderCraft() {
+  if (!craftListEl || !G.ore) return;
+  craftListEl.innerHTML = "";
+  for (const rec of CRAFT_RECIPES) {
+    const row = document.createElement("div");
+    row.className = "craft-row";
+    const info = document.createElement("div");
+    info.className = "craft-info";
+    const nm = document.createElement("span");
+    nm.className = "craft-name";
+    nm.textContent = rec.name;
+    const cost = document.createElement("span");
+    cost.className = "craft-cost";
+    cost.textContent = costText(rec.cost);
+    info.appendChild(nm);
+    info.appendChild(cost);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "craft-make";
+    const redundant = recipeRedundant(rec);
+    const ok = canCraft(rec) && !redundant;
+    btn.textContent = redundant ? "所持済み" : "つくる";
+    btn.disabled = !ok;
+    btn.classList.toggle("disabled", !ok);
+    btn.onclick = () => { doCraft(rec); };
+    row.appendChild(info);
+    row.appendChild(btn);
+    craftListEl.appendChild(row);
+  }
 }
 
 let hintTimer = null;
@@ -900,6 +1086,10 @@ if (btnMuteEl) {
     btnMuteEl.classList.toggle("muted", !audioOn);
   });
 }
+// v0.4.0: クラフトを開く / 閉じる、回復薬を使う。
+if (btnCraftEl) btnCraftEl.addEventListener("click", () => openCraft());
+if (craftCloseEl) craftCloseEl.addEventListener("click", () => closeCraft());
+if (btnPotionEl) btnPotionEl.addEventListener("click", () => usePotion());
 
 // ---- 描画(タイル粒度、per-pixel 禁止) --------------------------------
 function caveColor(row) {
@@ -1019,10 +1209,11 @@ function render() {
   }
 
   // 女の子(暖色自発光。未発見でも可視マスなら気配として淡く光る)。全員ぶん描く。
+  // v0.4.0 D: アンテナ所持時は未可視・未発見の女の子も透視表示(原作「位置を透視」)。
   if (G.girls) {
     for (const g of G.girls) {
       if (g.state === "rescued") continue;
-      if (isVisible(g.col, g.row) || g.state === "following") drawGirl(g);
+      if (isVisible(g.col, g.row) || g.state === "following" || G.antenna) drawGirl(g);
     }
   }
 

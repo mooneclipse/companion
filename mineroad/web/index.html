@@ -54,6 +54,17 @@
     </div>
   </section>
 
+  <!-- v0.4.0 インベントリ: 鉱石 4 種 + 所持道具(ツルハシ段/回復薬)。アイコン+数値主体。 -->
+  <section id="inventory" class="inventory">
+    <span class="inv-ore cu"><span class="inv-ico">銅</span><span id="ore-cu">0</span></span>
+    <span class="inv-ore fe"><span class="inv-ico">鉄</span><span id="ore-fe">0</span></span>
+    <span class="inv-ore au"><span class="inv-ico">金</span><span id="ore-au">0</span></span>
+    <span class="inv-ore di"><span class="inv-ico">ダ</span><span id="ore-di">0</span></span>
+    <span class="inv-tool pick"><span class="inv-ico">ツ</span><span id="pick-ico">木</span></span>
+    <button id="btn-potion" class="inv-btn" type="button" aria-label="回復薬を使う">薬 <span id="potion-val">0</span></button>
+    <button id="btn-craft" class="inv-btn" type="button" aria-label="クラフトを開く">作る</button>
+  </section>
+
   <!-- 下部ヒント(発見・スタミナ切れ・硬岩など)。 -->
   <div id="hud-hint" class="hud-hint" hidden></div>
 
@@ -67,6 +78,16 @@
       <button id="btn-down" class="dpad-btn down" type="button" aria-label="下を掘る">▼</button>
     </div>
   </section>
+</div>
+
+<!-- v0.4.0 クラフトオーバーレイ(craft.csv 6 レシピ)。dive 中に開ける。
+     短高 viewport で破綻しないよう 2 段 flex(スクロール領域 + 固定フッター)。 -->
+<div id="craft-overlay" class="craft-overlay" hidden>
+  <div class="craft-panel">
+    <h2 class="craft-title">クラフト</h2>
+    <div id="craft-list" class="craft-list"></div>
+    <button id="craft-close" class="craft-close" type="button">とじる</button>
+  </div>
 </div>
 
 <!-- 各種オーバーレイ(title / howto / fail / clear)。hidden で完全非表示。 -->

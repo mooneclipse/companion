@@ -29,6 +29,7 @@ const TILE = {
 const TILE_DIG_KEY = {
   [TILE.SOIL]: "SOIL",
   [TILE.HARD]: "HARD",
+  [TILE.ROCK]: "ROCK", // v0.4.0: 鉄ツルハシ以上で掘れる(手数 DIG_TAPS.ROCK)。
   [TILE.GIRL]: "SOIL",
 };
 
@@ -111,6 +112,85 @@ function tileType(col, row, seed) {
   return TILE.SOIL;
 }
 
+// ---- 鉱石(ore) — 原作 item.csv 忠実 + 決定論ドロップ(v0.4.0) -------------
+// tileType には混ぜない(既存 girlPositions・determinism snapshot・タイル分布を一切
+// 変えないため)。SOIL/HARD を掘り抜いた瞬間に oreAt(col,row,seed) を引き、含有なら
+// インベントリへ加算する別レイヤー。鉱石種は深度帯で分布(深いほど高価)、含有率は控えめ。
+//
+// 原作 item.csv の鉱石(ore, 売値): 銅鉱石8 / 鉄鉱石15 / 金鉱石60 / ダイヤ原石300。
+const ORE = {
+  NONE: 0,
+  COPPER: 1, // 銅鉱石(売値8)。浅層。
+  IRON: 2, // 鉄鉱石(売値15)。中層。
+  GOLD: 3, // 金鉱石(売値60)。深層。
+  DIAMOND: 4, // ダイヤ原石(売値300)。最深層。
+};
+// 鉱石メタ(verbatim 売値 + 表示名 + HUD アイコン1字)。
+const ORE_META = {
+  [ORE.COPPER]: { key: "COPPER", name: "銅鉱石", price: 8, ico: "銅" },
+  [ORE.IRON]: { key: "IRON", name: "鉄鉱石", price: 15, ico: "鉄" },
+  [ORE.GOLD]: { key: "GOLD", name: "金鉱石", price: 60, ico: "金" },
+  [ORE.DIAMOND]: { key: "DIAMOND", name: "ダイヤ原石", price: 300, ico: "ダ" },
+};
+
+// ある (col,row) を掘り抜いたとき産出する鉱石種(決定論・乱数禁止)。含有しないなら ORE.NONE。
+// 深度帯で種を決め(浅=銅/中=鉄/深=金/最深=ダイヤ)、別シード位相のハッシュで含有率を絞る。
+// GIRL マスは鉱石を出さない(救出対象)。同じ (col,row,seed) は常に同じ結果。
+function oreAt(col, row, seed) {
+  const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
+  if (row <= 0 || col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return ORE.NONE;
+  if (isGirlAt(col, row, seed)) return ORE.NONE; // 救出対象マスは鉱石なし。
+  const floors = C.DEPTH_ROWS;
+  // 深度帯(4 等分): 浅=銅 / 中=鉄 / 深=金 / 最深=ダイヤ。
+  const frac = row / floors;
+  let kind;
+  if (frac <= 0.27) kind = ORE.COPPER;
+  else if (frac <= 0.54) kind = ORE.IRON;
+  else if (frac <= 0.8) kind = ORE.GOLD;
+  else kind = ORE.DIAMOND;
+  // 含有率(控えめ): 浅いほど出やすく、高価な深層ほど絞る。tileType と別位相のハッシュ。
+  const RATE = { [ORE.COPPER]: 0.22, [ORE.IRON]: 0.16, [ORE.GOLD]: 0.1, [ORE.DIAMOND]: 0.06 };
+  const h = hash3(col + 911, row + 733, seed + 5557); // tileType の hash3(col,row,seed) と非衝突。
+  return h < RATE[kind] ? kind : ORE.NONE;
+}
+
+// ---- ツルハシ(pickaxe) — 原作 item.csv 忠実(v0.4.0) ----------------------
+// power でタイル必要 power 以上なら掘れる。木(初期,岩掘れない)/石(rock=HARD)/鉄(hard=ROCK)/
+// ダイヤ(何でも)。最強の所持ツルハシが常時有効。タイル必要 power: SOIL=1 / HARD=2 / ROCK=3。
+const PICK = {
+  WOOD: { key: "WOOD", name: "木のツルハシ", power: 1, ico: "木" },
+  STONE: { key: "STONE", name: "石のツルハシ", power: 2, ico: "石" },
+  IRON: { key: "IRON", name: "鉄のツルハシ", power: 3, ico: "鉄" },
+  DIAMOND: { key: "DIAMOND", name: "ダイヤのツルハシ", power: 5, ico: "ダ" },
+};
+// タイル種ごとの必要 power(掘削ゲート、A の核)。GIRL は SOIL 相当=1(救出対象)。
+const TILE_REQ_POWER = {
+  [TILE.SOIL]: 1,
+  [TILE.HARD]: 2,
+  [TILE.ROCK]: 3,
+  [TILE.GIRL]: 1,
+};
+
+// ---- クラフトレシピ — 原作 craft.csv 忠実(v0.4.0) -----------------------
+// 材料(ore/品目→個数)→ 完成品。完成品は pick(ツルハシ段)/tool(はしご/アンテナ)/
+// consumable(回復薬)。材料が足りていれば実行可、足りなければ disabled 表示。
+//   石のツルハシ ← 銅鉱石3
+//   鉄のツルハシ ← 鉄鉱石2 + 銅鉱石2
+//   はしご       ← 銅鉱石1
+//   回復薬       ← 鉄鉱石1
+//   ダイヤのツルハシ ← ダイヤ原石1 + 鉄鉱石3
+//   アンテナ     ← 金鉱石1
+// cost のキーは ORE_META.key("COPPER"/"IRON"/"GOLD"/"DIAMOND")。
+// result: { type:"pick"|"tool"|"consumable", id, name }
+const CRAFT_RECIPES = [
+  { id: "pick_stone", name: "石のツルハシ", result: { type: "pick", id: "STONE" }, cost: { COPPER: 3 } },
+  { id: "pick_iron", name: "鉄のツルハシ", result: { type: "pick", id: "IRON" }, cost: { IRON: 2, COPPER: 2 } },
+  { id: "ladder", name: "はしご", result: { type: "tool", id: "LADDER" }, cost: { COPPER: 1 } },
+  { id: "potion", name: "回復薬", result: { type: "consumable", id: "POTION" }, cost: { IRON: 1 } },
+  { id: "pick_diamond", name: "ダイヤのツルハシ", result: { type: "pick", id: "DIAMOND" }, cost: { DIAMOND: 1, IRON: 3 } },
+  { id: "antenna", name: "アンテナ", result: { type: "tool", id: "ANTENNA" }, cost: { GOLD: 1 } },
+];
+
 // app.js 未読込でも tiles.js 単体で node --check が通るフォールバック定数。
 const TILES_FALLBACK_CONST = {
   GRID_COLS: 15,
@@ -157,4 +237,11 @@ if (typeof window !== "undefined") {
   window.isGirlAt = isGirlAt;
   window.tilesHash3 = hash3;
   window.PALETTE = PALETTE;
+  // v0.4.0 アイテム/クラフト系。
+  window.ORE = ORE;
+  window.ORE_META = ORE_META;
+  window.oreAt = oreAt;
+  window.PICK = PICK;
+  window.TILE_REQ_POWER = TILE_REQ_POWER;
+  window.CRAFT_RECIPES = CRAFT_RECIPES;
 }
