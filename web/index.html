@@ -160,6 +160,17 @@
             <label class="fld mt" for="video-volume">Volume</label>
             <input type="range" id="video-volume" min="0" max="130" value="100" aria-label="音量">
           </div>
+          <!-- 再生キュー(RV-12): playlist_count>1 のとき表示。前/次 + 曲タップで jump。
+               title は PWA 保持(vQueueTitles と playlist-pos を index で突き合わせ、契約 C2) -->
+          <div id="video-queue" class="card" hidden>
+            <div class="ctitle">再生リスト <span id="video-queue-count" class="muted"></span></div>
+            <div class="row tight">
+              <button id="video-prev" type="button" class="btn ghost small">‹ 前へ</button>
+              <button id="video-next" type="button" class="btn ghost small">次へ ›</button>
+            </div>
+            <p id="video-queue-live" class="note" hidden>LIVE は自動で次に進みません。「次へ」で送ってください</p>
+            <ol id="video-queue-list" class="queue-list"></ol>
+          </div>
           <!-- 「閉じる」(可逆・TV 継続)と「停止」(不可逆・破壊的)を語彙/位置で分離(§5.1) -->
           <div class="row mt">
             <button id="video-close" type="button" class="btn secondary">閉じる</button>

@@ -146,6 +146,7 @@ function renderStatus(s) {
 const V_RESOLVE_KEY = "video_resolve_at";  // resolve 開始 epoch ms（経過秒の起点）
 const V_LASTURL_KEY = "video_last_url";    // 直前投入 URL（取りこぼし時の再投入ヒント）
 const V_STEP_KEY = "video_skip_step";      // ±N スキップのステップ秒（client 表示ヒント、token と分離。RV-7）
+const V_QUEUE_KEY = "video_queue_titles";  // 再生キューの title 配列（JSON、表示ヒント。token と分離。RV-12）
 const V_STEP_OPTIONS = [5, 10, 30, 60];    // 上下ボタンで巡回するステップ候補
 const V_STEP_DEFAULT = 10;
 let vState = null;          // 直近の server state
@@ -156,6 +157,11 @@ let vTick = null;           // 1s resolve 経過秒の更新
 let vAttemptActive = false; // 自分が押した再生が in-flight か（playing 到達 / 停止で false）
 let vFailedLoad = false;    // 投入直後の読み込み失敗（resolving→idle、playing 未到達）
 let vLocalTitle = null;     // play_local 中の表示 title（mpv media-title はファイル名になるため）
+let vExpanding = false;     // play_playlist の flat 展開が in-flight（server 側で mpv 未投入＝idle のまま）
+// 再生キュー(RV-12): title 配列は server 非保持(stateless)。PWA がメモリ+localStorage で保持(契約 C2)、
+// playlist-pos と index で 1:1 突き合わせ(C1)。PWA を閉じて再開しても一覧を復元できるよう localStorage。
+let vQueueTitles = readQueueTitles();
+let vQueueRendered = null;  // キューリスト DOM の再構築シグネチャ(aligned+count、毎 poll の作り直しを避ける)
 
 const vSetResolveAt = (ms) => localStorage.setItem(V_RESOLVE_KEY, String(ms));
 const vClearResolveAt = () => localStorage.removeItem(V_RESOLVE_KEY);
@@ -169,6 +175,41 @@ function vElapsed() {
 function vStep() {
   const n = parseInt(localStorage.getItem(V_STEP_KEY) || "", 10);
   return V_STEP_OPTIONS.includes(n) ? n : V_STEP_DEFAULT;
+}
+
+// 再生キュー title 配列の永続化(C2: server 非保持、PWA 側で保持)。token とは別 key。
+function readQueueTitles() {
+  try {
+    const v = JSON.parse(localStorage.getItem(V_QUEUE_KEY) || "null");
+    return Array.isArray(v) ? v : null;
+  } catch (e) { return null; }
+}
+function vSetQueue(titles) {
+  vQueueTitles = Array.isArray(titles) ? titles : null;
+  vQueueRendered = null;  // 配列が変わったらリストを作り直す
+  if (vQueueTitles) localStorage.setItem(V_QUEUE_KEY, JSON.stringify(vQueueTitles));
+  else localStorage.removeItem(V_QUEUE_KEY);
+}
+function vClearQueue() {
+  vQueueTitles = null;
+  vQueueRendered = null;
+  localStorage.removeItem(V_QUEUE_KEY);
+}
+
+// URL クエリに list= があればプレイリスト経路(出口 UI = 自動判定、URL 欄 1 本維持。RV-12)。
+function urlHasPlaylist(url) {
+  try { return new URL(url).searchParams.has("list"); }
+  catch (e) { return /[?&]list=/.test(url); }
+}
+
+// 現在曲の表示 title。play_local の vLocalTitle 最優先、次にキュー保持 title(index 1:1)、最後に mpv。
+function vCurrentTitle(s) {
+  if (vLocalTitle) return vLocalTitle;
+  if (vQueueTitles && s && typeof s.playlist_pos === "number"
+      && s.playlist_count === vQueueTitles.length && vQueueTitles[s.playlist_pos]) {
+    return vQueueTitles[s.playlist_pos];
+  }
+  return (s && s.title) || "(タイトル取得中)";
 }
 
 function fmtTime(sec) {
@@ -232,9 +273,9 @@ function renderResolving() {
 
 function renderTransport() {
   const s = vState;
-  // ローカル再生 (play_local) 中は mpv の media-title がファイル名 (dl-7.mp4) になる
-  // ため、queue の title (vLocalTitle) で表示を上書きする (dlqueue-design §6)。
-  $("video-title").textContent = vLocalTitle || s.title || "(タイトル取得中)";
+  // 表示 title は vCurrentTitle で決定: play_local の vLocalTitle / キュー保持 title(RV-12) / mpv の順。
+  // ローカル再生や playlist 各エントリは mpv の media-title が当てにならない(ファイル名/解決前)ため。
+  $("video-title").textContent = vCurrentTitle(s);
   $("video-toggle").textContent = s.pause ? "再開" : "一時停止";
   // LIVE: シーク無効 + ●LIVE 表示（§5.1）。VOD: duration が分かればシークバー。
   const live = !!s.is_live;
@@ -248,6 +289,43 @@ function renderTransport() {
     seek.value = Math.floor(s.pos || 0);
     $("video-time").textContent = fmtTime(s.pos) + " / " + fmtTime(s.duration);
   }
+  renderQueue();  // 再生キュー(RV-12): count>1 のとき一覧+ハイライト、単一/非プレイリストは非表示
+}
+
+// 再生キューの一覧描画(RV-12)。count<=1 / 非プレイリストは非表示。
+// リスト DOM は signature(aligned+count) が変わった時だけ作り直し、ハイライトは毎回更新。
+function renderQueue() {
+  const wrap = $("video-queue");
+  const s = vState;
+  const count = s && typeof s.playlist_count === "number" ? s.playlist_count : 0;
+  if (!vQueueTitles || count <= 1) { wrap.hidden = true; vQueueRendered = null; return; }
+  wrap.hidden = false;
+  // C1: title 配列長と mpv playlist-count が食い違う(再開時の stale 等)= 1:1 が崩れている。
+  // 誤った曲名↔index 対応を出さないため、その場合は件数のみ表示しタップ jump は無効化する。
+  const aligned = vQueueTitles.length === count;
+  const list = $("video-queue-list");
+  const sig = (aligned ? "A:" : "N:") + count;
+  if (vQueueRendered !== sig) {
+    list.textContent = "";  // innerHTML 不使用方針(app.js:4)に揃える
+    if (aligned) {
+      vQueueTitles.forEach((t, i) => {
+        const li = document.createElement("li");
+        li.className = "queue-item";
+        li.dataset.idx = String(i);
+        li.textContent = (i + 1) + ". " + (t || "(タイトルなし)");
+        li.addEventListener("click", () => videoQueueJump(i));
+        list.appendChild(li);
+      });
+    }
+    vQueueRendered = sig;
+  }
+  $("video-queue-count").textContent =
+    "（" + count + "曲" + (aligned ? "" : "・一覧は復元できません") + "）";
+  $("video-queue-live").hidden = !s.is_live;  // live は自動 advance しない(§7、手動「次へ」で送る)
+  const pos = typeof s.playlist_pos === "number" ? s.playlist_pos : -1;
+  Array.from(list.children).forEach((li) => {
+    li.classList.toggle("current", Number(li.dataset.idx) === pos);
+  });
 }
 
 // 再生中バー(ホーム常駐、再生中のみ)。タップで動画詳細へ。現行 renderNow を昇格。
@@ -266,7 +344,7 @@ function renderNow() {
     time.textContent = "";
   } else {
     icon.textContent = s.is_live ? "●" : (s.pause ? "⏸" : "▶");
-    title.textContent = vLocalTitle || s.title || "(タイトル取得中)";
+    title.textContent = vCurrentTitle(s);
     if (s.is_live) {
       time.textContent = "LIVE";
     } else if (typeof s.duration === "number" && s.duration > 0) {
@@ -286,6 +364,9 @@ function startVideoPoll() {
 
 async function pollVideo() {
   if (!getToken()) return;
+  // play_playlist の flat 展開中は mpv 未投入で /state が idle を返す。これを「読み込み失敗」と
+  // 誤判定しないよう、展開 in-flight の間は state 反映を保留(楽観 resolving 表示を維持)。
+  if (vExpanding) return;
   try {
     const r = await api("/api/video/state");
     if (!r.ok) return;
@@ -299,7 +380,7 @@ async function pollVideo() {
     }
     vState = ns;
     if (ns.phase !== "resolving") vClearResolveAt();
-    if (ns.phase === "idle") { vCollapsed = false; vLocalTitle = null; }  // 終了したら畳み状態とローカル title を解除
+    if (ns.phase === "idle") { vCollapsed = false; vLocalTitle = null; vClearQueue(); }  // 終了で畳み/ローカル title/キュー解除
     renderVideo();
     renderNow();
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
@@ -309,6 +390,7 @@ async function playVideo() {
   const url = $("video-url").value.trim();
   const err = $("video-msg");
   if (!url) { err.textContent = "URL を入力してください"; return; }
+  if (urlHasPlaylist(url)) { return playPlaylist(url); }  // 出口 UI: list= 自動判定で playlist 経路(RV-12)
   // 楽観的遷移: タップ即 RESOLVING（§5.2）。新規投入なので失敗フラグをリセットし attempt 開始。
   localStorage.setItem(V_LASTURL_KEY, url);
   vSetResolveAt(Date.now());
@@ -316,6 +398,7 @@ async function playVideo() {
   vFailedLoad = false;
   vAttemptActive = true;
   vLocalTitle = null;  // URL 再生開始 = ローカル再生の表示 title を引き継がない
+  vClearQueue();       // 単一再生は旧プレイリストのキュー一覧を引き継がない
   err.textContent = "";
   vState = { phase: "resolving", title: null, is_live: false };
   renderVideo();
@@ -350,6 +433,87 @@ async function playVideo() {
   }
 }
 
+// プレイリスト投入(RV-12)。list= 検出で playVideo から分岐。server が flat 展開(最大60s)してから
+// mpv に積むため、展開中は vExpanding で poll の state 反映を保留する(mpv は未投入で idle のまま)。
+async function playPlaylist(url) {
+  const err = $("video-msg");
+  localStorage.setItem(V_LASTURL_KEY, url);
+  vSetResolveAt(Date.now());
+  vCollapsed = false;
+  vFailedLoad = false;
+  vAttemptActive = true;
+  vLocalTitle = null;
+  vClearQueue();        // 旧キューを消してから展開待ち(成功時に新 titles を載せる)
+  vExpanding = true;    // 展開 in-flight: poll の idle 誤判定を抑止
+  err.textContent = "";
+  vState = { phase: "resolving", title: null, is_live: false };
+  renderVideo();
+  renderNow();
+  startVideoPoll();
+  try {
+    const r = await api("/api/video/play_playlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    vExpanding = false;
+    if (r.ok) {
+      if (!vAttemptActive) {
+        // 展開中にキャンセル/停止された。server 側 load は完了しているので打ち消す。
+        vClearQueue();
+        try { await api("/api/video/stop", { method: "POST" }); } catch (e) { /* noop */ }
+        return;
+      }
+      const data = await r.json();   // {titles, count, total}
+      vSetQueue(data.titles || []);
+      // C3/C4: 読み込み件数を表示(total>count なら一部 skip/100 件 cap)。成功後は poll が playing を拾う。
+      if (typeof data.count === "number" && typeof data.total === "number" && data.count < data.total) {
+        err.textContent = "全 " + data.total + " 件中 " + data.count + " 件を読み込みました";
+      }
+    } else {
+      vClearResolveAt();
+      vAttemptActive = false;
+      vState = { phase: "idle" };
+      if (r.status === 400) err.textContent = "プレイリストが空、または受け付けない URL です";
+      else if (r.status === 502) err.textContent = "プレイリストの読み込みに失敗しました";
+      else if (r.status === 503) err.textContent = "動画プレイヤーに接続できません";
+      else err.textContent = "再生開始に失敗しました";
+      renderVideo();
+      renderNow();
+    }
+  } catch (e) {
+    vExpanding = false;
+    if (e.message !== "unauthorized") {
+      vClearResolveAt();
+      vAttemptActive = false;
+      vState = { phase: "idle" };
+      err.textContent = "送信エラー";
+      renderVideo();
+      renderNow();
+    }
+  }
+}
+
+// 再生キュー操作(RV-12)。固定 verb を叩いて即 poll で state を引き直す(2s 待たずハイライト反映)。
+async function videoQueueNext() {
+  try { await api("/api/video/queue/next", { method: "POST" }); } catch (e) { return; }
+  pollVideo();
+}
+async function videoQueuePrev() {
+  try { await api("/api/video/queue/prev", { method: "POST" }); } catch (e) { return; }
+  pollVideo();
+}
+async function videoQueueJump(pos) {
+  try {
+    await api("/api/video/queue/jump", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pos }),
+    });
+  } catch (e) { return; }
+  pollVideo();
+}
+
 // キャンセル(resolving) / 停止(transport) はどちらも mpv stop（state 1本で確定、§5.2）。
 async function videoStop() {
   // 明示停止/キャンセルは失敗ではない（読み込み失敗文言を出さない）。
@@ -357,6 +521,8 @@ async function videoStop() {
   vAttemptActive = false;
   vFailedLoad = false;
   vLocalTitle = null;
+  vExpanding = false;  // 展開中キャンセルで poll の保留を即解除(60s 固着を防ぐ)
+  vClearQueue();
   try { await api("/api/video/stop", { method: "POST" }); } catch (e) { /* noop */ }
   vState = { phase: "idle" };
   vCollapsed = false;
@@ -449,6 +615,8 @@ function initVideo() {
   });
   $("video-reopen").addEventListener("click", () => { vCollapsed = false; renderVideo(); });
   $("video-toggle").addEventListener("click", videoToggle);
+  $("video-prev").addEventListener("click", videoQueuePrev);  // 再生キュー(RV-12)
+  $("video-next").addEventListener("click", videoQueueNext);
   const seek = $("video-seek");
   ["pointerdown", "touchstart", "mousedown"].forEach((ev) =>
     seek.addEventListener(ev, () => { vSeeking = true; }));

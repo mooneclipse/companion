@@ -249,3 +249,12 @@ dl.os dd{font-size:15px;font-weight:800;letter-spacing:.01em;margin:0 0 15px;pad
 .muted{color:var(--grey-6);font-size:13px;}
 .note{font-size:11px;color:var(--grey-4);letter-spacing:.03em;margin:10px 0;line-height:1.5;}
 .result{color:var(--grey-6);font-size:13px;min-height:1.4em;margin:12px 0 0;letter-spacing:.02em;}
+
+/* --- 再生キュー(RV-12) --- */
+.queue-list{list-style:none;margin:12px 0 0;padding:0;max-height:50vh;overflow-y:auto;}
+.queue-item{font-size:14px;line-height:1.4;color:var(--ink);padding:11px 12px;min-height:44px;
+  display:flex;align-items:center;border-bottom:1px solid var(--hair);word-break:break-word;cursor:pointer;}
+.queue-item:last-child{border-bottom:none;}
+.queue-item:active{background:var(--line);}
+.queue-item.current{color:var(--acc);font-weight:800;}
+.queue-item.current::before{content:"▶";margin-right:8px;font-size:11px;flex:0 0 auto;}
