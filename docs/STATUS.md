@@ -100,6 +100,8 @@ OWNER 発注＝アイテム/クラフト系。設計正本（原作 item.csv / c
 - **既存テスト非破壊の確認（着手前に静的検算）**: seed=41027 で col7 下方向 = `SSSHSS R...`（row1-3 SOIL→木 power1 で掘れる）→ gate B1（spDrain）の `act(0,1)` 8 回でドレイン成立を維持。女の子(11,6)は GIRL power1 で掘り当て可＝gate C2 維持。tileType/girlPositions に手を入れない＝determinism gate・EXPECTED_GIRLS 維持。HP_MAX=30/STAMINA_MAX=100/GIRL_COUNT=5 不変＝gate A/B 維持。
 - **決定論**: 鉱石は `oreAt(col,row,seed)`（hash3 派生）、クラフト/アイテムは状態遷移のみ＝Math.random/Date.now 不使用を維持。
 - **実装**: VERSION=v0.3.0→v0.4.0。`app.js`（インベントリ状態・ツルハシ power ゲート・鉱石産出・クラフト/アイテム使用・HUD/オーバーレイ・入力）/ `tiles.js`（`oreAt` 決定論関数 + ORE 定数 + 鉱石/ツルハシ/レシピの verbatim データ）/ `index.html`（HUD インベントリ + クラフトボタン + クラフトオーバーレイ DOM）/ `style.css`（インベントリ/クラフトパネルのスタイル）。新規アセット無し＝server allowlist 追記不要・URL 不変。
+- **commit / 凍結（2026-06-18、Phase 0 足場固めで整合）**: 本エントリは当初「commit 済み」と記したが実体は未コミットだった。リメイク継続の土台として確定コミット `0725be7` を作成し、rollback 点として **git タグ `mineroad-v0.4.0`** を付与。games は (C) ローカル git のみ＝push なし。**本番反映は引き続き OWNER 承認待ち**（コミット/タグは配信ゲートを越えない）。
+- **ロードマップ訂正（2026-06-18）**: 同日に別途作られた `docs/mineroad-remake-plan.md`「ゲーム性ごと刷新／コアループ廃棄／別 URL 新ライン」草案は、本リメイク節・OWNER 方針（行88 = 次増分はモンスター）・健全な進捗と矛盾する誤りだったため**破棄し、忠実移植の継続ロードマップへ全面書き直し**（コアループは原作の核として維持、main 継続増分、別 URL/並行ブランチなし）。次の本命増分は **モンスター + ハザード（死の緊張の本命）**。
 
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
 
