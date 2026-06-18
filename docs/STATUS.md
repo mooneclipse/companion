@@ -107,6 +107,16 @@ OWNER 発注＝アイテム/クラフト系。設計正本（原作 item.csv / c
 - **軽微 follow-up（次のモンスター増分で `act()`/test を触るついでに対応、code-reviewer 提案）**: ①`act()` の NONE 分岐と SURFACE 分岐を `t===NONE||t===SURFACE` に統合（同一概念集約＝2周目でない。SURFACE を req/dig テーブルに足す案は地表掘り扱いになり surfaceReturn/dug と概念衝突で不可）②地表横歩きの直接アサート（地表で `act(1,0)`→`G.px` +1）をゲート追加＝再混入の番兵（現 (G) は seed 次第で横移動を踏まない場合がある）。
 - **本番配信中（2026-06-18、OWNER 承認のうえ実測確認、restart 不要）**: companion-games は static を **disk から即時配信**（memory「web/ 静的は即反映」を実測＝修正済み app.js の SURFACE 分岐が 47825 配信で grep 一致、restart せず live）。47825 で `/mineroad/`・既存6作・`/healthz` 全 200（URL 不変）、VERSION=v0.4.0。実機 URL = tailnet 8444 経由 `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。**finding（要注意）**: static live-from-disk のため、ディスク上の v0.4.0 ファイル（コミット前の作業ツリー）は本セッション以前から本番配信されていた＝「本番反映 OWNER 承認待ち」は実際には production を gating していなかった（地表横歩きバグ入り版が修正まで配信状態だった。mineroad はランチャー未掲載・直 URL のみで露出は OWNER 限定）。今後「承認待ち」を実効化するなら static のステージング分離が要る（次以降の検討事項）。
 
+### v0.4.1（2026-06-18、UI ポリッシュ＝OWNER 実機 FB 2 点、frontend-design スキル、playtester 16 ゲート ALL PASS・code-reviewer 修正必須なし・commit `01f6ef3`）
+
+OWNER 実機 FB: ①PC でクラフト「作る」ボタンが小さい ②地表で自機(canvas)と体力バー/インベントリ(DOM HUD)が被る。frontend-design スキルで既存トークン（アンバー/朱/明朝/暗地・Kenney チャンキー）を尊重したリファインとして対応。
+
+- **②被り解消（設計引き直し、2周目でない）**: カメラ追従の固定「4 行」を `followRows = Math.max(4, hudBandPx/tile + 0.5)`、`targetCam = Math.min(maxCam, G.py - followRows)` に置換。自機の画面上端 `(followRows-0.41)*tile` が HUD 帯を常に下回り、地表・潜行中とも自機が深度/二段ゲージ/インベントリに被らない（上に空が覗く、row<0 はループ skip で空グラデ）。帯高 `hudBandPx` は rem 推定でなく `invEl.getBoundingClientRect().bottom + 10` を render で一度計測（`hudBandMeasured`、resize リセット）＝`clamp+vw` でスケールするインベントリの実 bottom に追随。**経緯**: 初手で minCam（カメラ床）を深くしたが playtester 実機検証で「地表 targetCam=-4 止まりで clamp が効かず無効」と判明 → targetCam（追従距離）側へ設計し直し（magic number 4 を帯行数換算へ）。ヒットテスト/描画式 `(row-camY)` は不変。
+- **①ボタン拡大**: `.inv-btn`（薬/作る）を d-pad と同じ Kenney チャンキー語彙（アンバー3D・`min-height:2.2rem`・`clamp(0.82rem,2.2vw,1rem)`）へ統一＝PC でも縮まないタップ標的。`#btn-craft` 主アクション発光強調（`:disabled` で発光を消す将来防御の id 規則も追加）。`:active`/`:focus-visible`、`.mute-btn` 拡大、`.hud::before` 上部スクリム（明るい空でも計器が読める）、操作系に `:focus-visible`（品質フロア）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.4.1）16 ゲート ALL PASS**: gate R を自機**上端**判定（`cy - 0.41*tile > invBottom かつ > hpBottom`）へ強化 + 深部 py=10 の被り assert 追加。地表実測＝自機上端がインベントリ帯を PC +224.7px / モバイル・短高 +26.2px クリア、体力バーは全 viewport で大きくクリア。ボタン高 PC 37.9px・モバイル 35.2px・craft タップで overlay 開く。既存6作 URL 不変・短高 viewport はみ出し0・determinism（Math.random/Date.now 実呼び 0）維持。本番47825 非接触（47860 で検証・PID 直 kill）。3 viewport スクショ目視一致（`~/companion/logs/mr_v041_*`）。
+- **スコープ判断（follow-up）**: PC でセル巨大化（`tile = W/15` の幅基準ポートレート前提）は別問題。プレイフィールドの letterbox 化（resize/ヒットテスト x/HUD 整列に波及、中リスク）が要るため今回見送り＝**推奨 follow-up**。今回の 2 変更は PC/モバイル両方で改善。
+- **本番反映**: static は live-from-disk（v0.4.0 の finding 参照）。VERSION=v0.4.1。
+
 ## 第 6 作「さぐり」（出荷済み・感想待ち、2026-06-08 着手 / `/newgame` 4 度目、Steam 実データ起点 + ユーザー引数でジャンル固定）
 
 > **発注の特殊性**: 今回はユーザーが引数で「マインロード風の穴掘り救出ゲームを作って」と**ジャンル土台を明示固定**（直前セッションで Android `Mine Road` を逆コンパイル解析した流れ）。スキル大前提「完全 AI 自決・要望を聞かない」と衝突するため AskUserQuestion で 1 点確認 → ユーザー選択「穴掘り救出で確定（スキルの完全自決を今回のみ上書き）」。**ジャンル土台＝穴掘り救出は固定。核メカ・ひねり・美学・断章は一次資料から AI 完全自決**。参考資料 = `~/mineroad-analysis/MINE_ROAD_仕様まとめ.md`（掘る→女の子を地上へ誘導／二段ゲージ/撤退/探索率・全救出・最下層クリア／クラフト・物々交換／アンテナ透視&死亡保険）。
