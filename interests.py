@@ -171,6 +171,47 @@ def should_investigate(
     return (True, candidates[0]["topic"])
 
 
+def should_ticket(
+    data: dict, now: datetime, interval_days: float, last_ticket: str | None,
+) -> tuple[bool, str | None]:
+    """「今 ticket 起票するか + 起票材料の signal」を index と now から決める (純関数)。
+
+    should_investigate と対称の判定。state を持つ側 (index) を 1 回引いて確定する。
+    file IO・claude 起動・save は呼び出し側の責務。ここは判定だけ。
+
+    起票するのは次を全部満たすとき (どれか欠ければ ``(False, None)``):
+      1. interval 経過: ``last_ticket`` (ISO) から ``interval_days`` 日以上経過。
+         None / パース不能 = 一度も起票していない = due (``_interval_elapsed`` 共用)。
+      2. 実 signal が 1 本以上: actionable な active thread (topic が
+         ``recent_conversation`` でない = 実トピック) が存在する。これが §F の核 =
+         **でっち上げたタスクを起票しない**。index が空 / recent_conversation だけ
+         なら signal なし → ``(False, None)`` (index が空の現状では絶対に発火しない)。
+
+    signal 部分は build_ticket_prompt に渡す材料。freshest な actionable thread の
+    topic を代表として返す (investigate が topic を返すのと対称)。``researched`` 除外は
+    しない (起票は調査でなく、調べ終えた thread からも actionable なタスクは出るため。
+    重複は呼び出し側の list --all チェックで抑える)。
+
+    decay は呼び出し側で先にかけて渡す前提 (期限切れスレッドは signal に含めない)。
+    enable フラグ (PROACTIVE_TICKET_ENABLED) は呼び出し側で別途引く。
+    """
+    if interval_days < 0:
+        return (False, None)
+    if not _interval_elapsed(last_ticket, now, interval_days):
+        return (False, None)
+    candidates = [
+        t for t in data.get("threads", [])
+        if isinstance(t, dict)
+        and isinstance(t.get("topic"), str)
+        and t.get("topic")
+        and t.get("topic") != _INVESTIGATE_SKIP_TOPIC
+    ]
+    if not candidates:
+        return (False, None)
+    candidates.sort(key=lambda t: t.get("last_touched") or "", reverse=True)
+    return (True, candidates[0]["topic"])
+
+
 def _interval_elapsed(last_investigate: str | None, now: datetime, interval_days: float) -> bool:
     """``last_investigate`` から ``interval_days`` 日以上経過したか (パース不能 = 経過扱い)。"""
     if not isinstance(last_investigate, str) or not last_investigate:

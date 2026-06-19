@@ -325,5 +325,74 @@ class ShouldInvestigateTest(unittest.TestCase):
         self.assertIsNone(topic)
 
 
+class ShouldTicketTest(unittest.TestCase):
+    """should_ticket (純関数): interval ゲート + 実 signal 有無 (§F でっち上げ禁止)。
+
+    should_investigate と対称。違い = researched state を除外しない (起票は調査でない)。
+    """
+
+    def _thread(self, topic, days_ago, state="active"):
+        return {
+            "topic": topic,
+            "source": "vault",
+            "last_touched": (_now() - timedelta(days=days_ago)).isoformat(),
+            "state": state,
+        }
+
+    def test_never_ticketed_and_active_thread_is_due(self) -> None:
+        data = {"threads": [self._thread("topic-a", 1)]}
+        should, signal = interests.should_ticket(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(signal, "topic-a")
+
+    def test_interval_not_elapsed_skips(self) -> None:
+        last = (_now() - timedelta(days=3)).isoformat()
+        data = {"threads": [self._thread("topic-a", 1)]}
+        should, signal = interests.should_ticket(data, _now(), 7, last)
+        self.assertFalse(should)
+        self.assertIsNone(signal)
+
+    def test_interval_elapsed_due(self) -> None:
+        last = (_now() - timedelta(days=8)).isoformat()
+        data = {"threads": [self._thread("topic-a", 1)]}
+        should, signal = interests.should_ticket(data, _now(), 7, last)
+        self.assertTrue(should)
+        self.assertEqual(signal, "topic-a")
+
+    def test_unparsable_last_ticket_is_due(self) -> None:
+        data = {"threads": [self._thread("topic-a", 1)]}
+        should, _ = interests.should_ticket(data, _now(), 7, "not-a-date")
+        self.assertTrue(should)
+
+    def test_picks_freshest_active_thread(self) -> None:
+        data = {"threads": [
+            self._thread("old", 5),
+            self._thread("fresh", 1),
+            self._thread("mid", 3),
+        ]}
+        should, signal = interests.should_ticket(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(signal, "fresh")
+
+    def test_recent_conversation_topic_excluded(self) -> None:
+        data = {"threads": [self._thread("recent_conversation", 1)]}
+        should, signal = interests.should_ticket(data, _now(), 7, None)
+        self.assertFalse(should)
+        self.assertIsNone(signal)
+
+    def test_researched_state_NOT_excluded(self) -> None:
+        # investigate と違い、調べ終えた thread からも actionable なタスクは出る。
+        data = {"threads": [self._thread("done-topic", 1, state="researched")]}
+        should, signal = interests.should_ticket(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(signal, "done-topic")
+
+    def test_empty_index_skips(self) -> None:
+        # §F の核: 実 signal が無ければ絶対に発火しない (でっち上げ起票をしない)。
+        should, signal = interests.should_ticket({"threads": []}, _now(), 7, None)
+        self.assertFalse(should)
+        self.assertIsNone(signal)
+
+
 if __name__ == "__main__":
     unittest.main()
