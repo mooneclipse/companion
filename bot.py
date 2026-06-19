@@ -28,6 +28,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -90,6 +91,19 @@ except ValueError:
     PROACTIVE_INTEREST_TTL_DAYS = 14.0
 # prompt に滲ませる候補として読む上位本数 (滲ませは「1 つだけ軽く」なので候補は数本)。
 PROACTIVE_INTEREST_PROMPT_LIMIT = 3
+
+# 自律ループの「動く」分岐 (persona 軸 4 拡張 (3) 勝手な実行 A = notes 自己調査)。
+# 自発発話の発火回のうち条件成立時に、関心スレッドを 1 本選んで Web 調査 → vault
+# notes/ に調査ノート新規作成 → #chat に一言報告する。off にすると従来の「喋る」
+# パスのみ (二度調査回避や interval は index の last_investigate state で確定)。
+PROACTIVE_INVESTIGATE_ENABLED_RAW = os.environ.get("PROACTIVE_INVESTIGATE_ENABLED", "1").strip().lower()
+PROACTIVE_INVESTIGATE_ENABLED = PROACTIVE_INVESTIGATE_ENABLED_RAW in ("1", "true", "yes", "on")
+# 前回 investigate からこの日数以上空いた発火回でのみ「動く」(未設定 = 一度も調査
+# していない = due)。index トップレベル last_investigate (ISO) を state として引く。
+try:
+    PROACTIVE_INVESTIGATE_INTERVAL_DAYS = float(os.environ.get("PROACTIVE_INVESTIGATE_INTERVAL_DAYS", "7"))
+except ValueError:
+    PROACTIVE_INVESTIGATE_INTERVAL_DAYS = 7.0
 
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
@@ -262,6 +276,32 @@ PROACTIVE_SCENE_PROMPT = (
     "「寂しい」「行かないで」のような情緒で引き止める言い回しは絶対に使わない。"
     "時間帯や今日の話題ヒントに合う、新しい角度の軽い一言を 1〜2 文の短さで送る。"
     "前置きや自己説明はせず、本文だけを返す。"
+)
+
+# 自律ループ「動く」分岐の調査指示 (persona 軸 4 拡張 (3))。口調・性格は
+# PERSONA_SYSTEM_PROMPT が system prompt 側に常駐するため、ここでは作業手順のみ。
+# {{TOPIC}} には関心 index から選んだ実トピック (実活動由来の topic) を埋める
+# (str.format でなく単純置換 = topic に紛れ込んだ波括弧で KeyError/IndexError を
+# 起こさない)。多段ツール使用 (WebSearch/WebFetch → Write(notes/**)) を明示指示。
+# 境界: notes/ への新規作成のみ、既存ファイル・OWNER 手書きノートは絶対に上書き
+# しない。報告は #chat に 1〜3 行だけ返す (notes 本文・全文ダンプは返さない)。
+PROACTIVE_INVESTIGATE_PROMPT = (
+    "今は誰にも頼まれていない自分の時間。前から気になっていた話題を自分で調べて、"
+    "調べたことを vault のノートに残す場面。話題はこれ: 「{{TOPIC}}」。\n"
+    "次の手順を順にやること:\n"
+    "(1) この話題を Web で調べる (WebSearch / WebFetch を使って実際に検索する)。\n"
+    "(2) ~/companion/vault/notes/ に調査ノートを 1 本『新規作成』する (必須)。\n"
+    "    - 既存ファイルや OWNER が手書きしたノートを絶対に上書き・追記しない。\n"
+    "    - notes/ 以外 (aidiary/clips/inbox/templates/.obsidian/vault ルート) には書かない。\n"
+    "    - 機械生成と分かる一意なファイル名にする (例: notes/<YYYY-MM-DD>_ren-research-<slug>.md。\n"
+    "      日付やトピックから自分で一意な名前を選ぶ。既存と衝突したら別名にする)。\n"
+    "    - frontmatter に source: companion-bot / type: auto-research / topic / created を含める。\n"
+    "    - vault の frontmatter・タグ・wikilink 規約は ~/companion/vault/CLAUDE.md に従う"
+    " (作業前にこのファイルを読んで規約を確認する)。\n"
+    "(3) 最後に、調べてノートに残したことを #chat 用に 1〜3 行で報告する。\n"
+    "    「○○調べといた」式のさらっとした事後報告にする。前置き・自己説明・"
+    "ノート全文の貼り付けはしない。報告本文だけを返す (ノートに何を書いたかの"
+    "演技や『メモにこう書いた』式の語りもしない)。"
 )
 
 _runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
@@ -689,6 +729,106 @@ def record_proactive_interest(payload: dict, now: datetime) -> None:
     interests.append_thought(
         THOUGHTS_LOG_PATH,
         f"{seed_kind} の種で自発発話を一言かけた (topic={topic})",
+        now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 自律ループ「動く」分岐 (persona 軸 4 拡張 (3) = notes 自己調査)
+# ---------------------------------------------------------------------------
+
+
+def decide_investigate(now: datetime) -> str | None:
+    """この発火回で investigate するなら対象 topic、しないなら None を返す。
+
+    判定は index (state を持つ側) を 1 回引いて確定する (純関数 interests.
+    should_investigate に委譲、ここは enable フラグ + file 読み + decay の配線)。
+    enable off / interval 未経過 / 対象スレッド無し のいずれかで None。
+
+    decay を 1 回かけてから判定する (期限切れスレッドは investigate 対象に
+    しない、build_interest_context と同じく save はしない = 掃除は記録側に相乗り)。
+    """
+    if not PROACTIVE_INVESTIGATE_ENABLED:
+        return None
+    data = interests.load_interests(INTERESTS_INDEX_PATH)
+    data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    should, topic = interests.should_investigate(
+        data, now, PROACTIVE_INVESTIGATE_INTERVAL_DAYS, data.get("last_investigate"),
+    )
+    return topic if should else None
+
+
+def build_investigate_prompt(topic: str) -> str:
+    """調査 claude に渡す prompt を組む (純関数)。topic は関心 index の実トピック。
+
+    topic は index 由来 = 種 (vault_hint/dormant_hint basename or 過去の実活動)
+    のみが入る bounded な文字列。捏造トピックは入らない (should_investigate が
+    recent_conversation を弾く)。多段ツール使用 + notes 新規作成 + 1〜3 行報告を指示。
+    """
+    return PROACTIVE_INVESTIGATE_PROMPT.replace("{{TOPIC}}", topic)
+
+
+async def run_investigate(topic: str, now: datetime) -> str:
+    """investigate 専用に毎回新規 ephemeral session で claude を起動して報告本文を返す。
+
+    #chat の会話 session は resume しない (調査のツール使用ターンで #chat の会話履歴・
+    context を汚染しない)。budget_guard は必ず通す (M-14 単一 guard 境界、迂回禁止)。
+    session は永続化しない (resume しない ephemeral なので sessions.record_usage は不要)。
+
+    guard 拒否時は空文字を返す (呼び出し側で skip + ledger)。エラー時も空文字を返し、
+    呼び出し側で「報告なし」として扱う (talk への fallback はしない = この回は動くと
+    決めた回、喋りに落とさない)。
+    """
+    if not budget_guard.allow(now):
+        summary = budget_guard.summary(now)
+        logger.info(
+            "investigate skip: budget guard not allowing (kind=%s)", summary.guard_kind
+        )
+        return ""
+    session_id = str(uuid.uuid4())
+    options = ClaudeOptions(
+        session_id=session_id,
+        timeout_s=CLAUDE_TIMEOUT,
+        append_system_prompt=PERSONA_SYSTEM_PROMPT,
+    )
+    result = await runner.run_discord(build_investigate_prompt(topic), options)
+    budget_guard.record(
+        datetime.now(quota.JST),
+        result,
+        topic_key="proactive_investigation",
+        session_id=session_id,
+    )
+    if result.error_kind != ErrorKind.OK:
+        logger.warning(
+            "investigate claude error kind=%s rc=%s session_id=%s stderr_len=%d",
+            result.error_kind.value, result.rc, session_id, len(result.raw_stderr),
+        )
+        return ""
+    body = result.result_text if result.result_text is not None else result.raw_stdout
+    return body or ""
+
+
+def record_investigate(topic: str, now: datetime) -> None:
+    """investigate 回の関心 index と思考ログを更新する (load → decay → touch → save)。
+
+    対象スレッドを state="researched" で touch (last_touched 更新 + 二度調査回避) し、
+    index トップレベル last_investigate を now の ISO で更新して save。思考ログに実活動
+    の機械観察を 1 行残す (感情・趣味は書かない)。state を持つ側を 1 回引いて確定する。
+
+    last_investigate の更新は claude 起動を決めた時点で確定する設計 (interval を
+    成否に関わらず消費 = 場当たりリトライを作らない、dormant の handoff 消費と同思想)。
+    呼び出し側が claude 起動後に必ず 1 回呼ぶ。
+    """
+    data = interests.load_interests(INTERESTS_INDEX_PATH)
+    data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    # source は元スレッドの値を保てないが touch は topic 一致で last_touched/state を
+    # 更新するだけ (source は引数必須なので "investigation" を入れる = 実活動の出どころ)。
+    data = interests.touch_thread(data, topic, source="investigation", now=now, state="researched")
+    data = {**data, "last_investigate": now.isoformat()}
+    interests.save_interests(INTERESTS_INDEX_PATH, data)
+    interests.append_thought(
+        THOUGHTS_LOG_PATH,
+        f"{topic} について調べて notes に書いた",
         now,
     )
 
@@ -1832,6 +1972,15 @@ async def _run_proactive(app: Application, payload: dict) -> None:
         })
         return
 
+    # 全 7 ゲート (script 側) + PROACTIVE_ENABLED / snooze / budget の二重防御を通過
+    # した発火回。ここで index (state を持つ側) を 1 回引いて「動く (investigate)」か
+    # 「喋る (talk)」かを確定する (場当たりな確率分岐は作らない)。動く条件を満たせば
+    # 調査ブランチへ、欠ければ従来の喋るパスへフォールスルー。
+    investigate_topic = decide_investigate(now)
+    if investigate_topic is not None:
+        await _run_proactive_investigate(app, base, investigate_topic, now)
+        return
+
     # prompt 構築時に読む関心 index は「前回までに溜まった分」(今回の種の touch は
     # 送信後)。今喋る内容は過去の関心から滲ませ、今の種は新たな接触として後で記録する。
     interest_topics = build_interest_context(now)
@@ -1859,6 +2008,55 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     )
     _append_proactive_ledger({
         **base, "sent": True, "reason": "ok", "output_len": len(output),
+        "voice": voice_state,
+        "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
+    })
+
+
+async def _run_proactive_investigate(
+    app: Application, base: dict, topic: str, now: datetime,
+) -> None:
+    """「動く」分岐: 関心スレッドを Web 調査 → notes 新規作成 → #chat に一言報告。
+
+    ephemeral session で claude を起動し (run_investigate)、report 本文を #chat に
+    送る。investigate は #chat の会話 session を更新しないため、報告送信後に #chat
+    session の last_prompt_at を明示更新する (4h 最低間隔の暴走防止を investigate 後も
+    効かせる。これは「bot が #chat に喋った」事実の正しい反映でもある)。
+
+    last_investigate / state=researched の index 更新は claude 起動を決めた時点で確定
+    する (record_investigate を成否に関わらず必ず 1 回呼ぶ = interval を消費して場当たり
+    リトライを作らない)。budget guard 拒否 / 空報告は talk にフォールバックせず skip +
+    ledger (この回は「動く」と決めた回、喋りに落とさない)。
+    """
+    chat_id = NOTIFY_CHAT_ID
+    thread_id = BOT_THREAD_ID_CHAT
+    ibase = {**base, "mode": "investigate", "investigate_topic": topic}
+
+    output = await run_investigate(topic, now)
+
+    # interval / 二度調査回避の state を消費する (claude を起動した時点で確定)。
+    # 記録失敗は本体を道連れにしない (index は次回 due として再挑戦になるだけ)。
+    try:
+        record_investigate(topic, now)
+    except OSError as e:
+        logger.warning("investigate interest record failed: %s", e)
+
+    if not output or not output.strip():
+        logger.info("investigate skip: empty/denied report (topic=%s)", topic)
+        _append_proactive_ledger({**ibase, "sent": False, "reason": "empty_or_denied"})
+        return
+
+    await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
+    # investigate は ephemeral session で #chat session を更新しないため、ここで
+    # 明示的に #chat の last_prompt_at を進める (沈黙ゲート 4h の最低間隔を保全)。
+    meta, _ = sessions.start_or_resume(chat_id, thread_id)
+    sessions.record_usage(meta)
+    voice_state = _dispatch_proactive_voice(app, output)
+    logger.info(
+        "investigate sent len=%d topic=%s voice=%s", len(output), topic, voice_state
+    )
+    _append_proactive_ledger({
+        **ibase, "sent": True, "reason": "ok", "output_len": len(output),
         "voice": voice_state,
         "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
     })

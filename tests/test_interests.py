@@ -252,5 +252,78 @@ class AppendThoughtTest(unittest.TestCase):
         self.assertEqual(rec["timestamp"], _now().isoformat())
 
 
+class ShouldInvestigateTest(unittest.TestCase):
+    """should_investigate (純関数): interval ゲート + 対象スレッド選択。"""
+
+    def _thread(self, topic, days_ago, state="active"):
+        return {
+            "topic": topic,
+            "source": "vault",
+            "last_touched": (_now() - timedelta(days=days_ago)).isoformat(),
+            "state": state,
+        }
+
+    def test_never_investigated_and_active_thread_is_due(self) -> None:
+        data = {"threads": [self._thread("topic-a", 1)]}
+        should, topic = interests.should_investigate(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(topic, "topic-a")
+
+    def test_interval_not_elapsed_skips(self) -> None:
+        last = (_now() - timedelta(days=3)).isoformat()
+        data = {"threads": [self._thread("topic-a", 1)]}
+        should, topic = interests.should_investigate(data, _now(), 7, last)
+        self.assertFalse(should)
+        self.assertIsNone(topic)
+
+    def test_interval_elapsed_due(self) -> None:
+        last = (_now() - timedelta(days=8)).isoformat()
+        data = {"threads": [self._thread("topic-a", 1)]}
+        should, topic = interests.should_investigate(data, _now(), 7, last)
+        self.assertTrue(should)
+        self.assertEqual(topic, "topic-a")
+
+    def test_unparsable_last_investigate_is_due(self) -> None:
+        data = {"threads": [self._thread("topic-a", 1)]}
+        should, _ = interests.should_investigate(data, _now(), 7, "not-a-date")
+        self.assertTrue(should)
+
+    def test_picks_freshest_active_thread(self) -> None:
+        data = {"threads": [
+            self._thread("old", 5),
+            self._thread("fresh", 1),
+            self._thread("mid", 3),
+        ]}
+        should, topic = interests.should_investigate(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(topic, "fresh")
+
+    def test_recent_conversation_topic_excluded(self) -> None:
+        data = {"threads": [self._thread("recent_conversation", 1)]}
+        should, topic = interests.should_investigate(data, _now(), 7, None)
+        self.assertFalse(should)
+        self.assertIsNone(topic)
+
+    def test_researched_state_excluded(self) -> None:
+        data = {"threads": [self._thread("done-topic", 1, state="researched")]}
+        should, topic = interests.should_investigate(data, _now(), 7, None)
+        self.assertFalse(should)
+        self.assertIsNone(topic)
+
+    def test_freshest_skips_researched_picks_next(self) -> None:
+        data = {"threads": [
+            self._thread("done", 1, state="researched"),
+            self._thread("open", 2),
+        ]}
+        should, topic = interests.should_investigate(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(topic, "open")
+
+    def test_empty_index_skips(self) -> None:
+        should, topic = interests.should_investigate({"threads": []}, _now(), 7, None)
+        self.assertFalse(should)
+        self.assertIsNone(topic)
+
+
 if __name__ == "__main__":
     unittest.main()

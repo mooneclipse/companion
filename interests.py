@@ -128,6 +128,60 @@ def active_threads(data: dict, now: datetime, limit: int) -> list:
     return threads[:max(0, limit)]
 
 
+# investigate の対象から除外する topic / state。直近会話起点は実トピックでない
+# (種が basename でなく "recent_conversation")、researched は既に一度調べた印。
+_INVESTIGATE_SKIP_TOPIC = "recent_conversation"
+_INVESTIGATE_DONE_STATE = "researched"
+
+
+def should_investigate(
+    data: dict, now: datetime, interval_days: float, last_investigate: str | None,
+) -> tuple[bool, str | None]:
+    """「今 investigate するか + 対象 topic」を index と now から決める (純関数)。
+
+    state を持つ側 (index) を 1 回引いて確定する設計。file IO・claude 起動・
+    save は呼び出し側の責務。ここは判定だけ (条件分岐・リトライの積み増しをしない)。
+
+    investigate するのは次を全部満たすとき (どれか欠ければ ``(False, None)``):
+      1. interval 経過: ``last_investigate`` (ISO) から ``interval_days`` 日以上
+         経過。``last_investigate`` が None / パース不能 = 一度も調査していない =
+         due (「state を引けない」を due の 1 状態へ正規化、回復分岐は作らない)。
+      2. 対象スレッドが 1 本以上: topic が ``recent_conversation`` でなく state が
+         ``researched`` でない active thread。freshest (last_touched 降順の先頭)
+         を選ぶ。
+
+    decay は呼び出し側で先にかけて渡す前提 (期限切れスレッドは候補に含めない)。
+    enable フラグ (PROACTIVE_INVESTIGATE_ENABLED) は呼び出し側で別途引く。
+    """
+    if interval_days < 0:
+        return (False, None)
+    if not _interval_elapsed(last_investigate, now, interval_days):
+        return (False, None)
+    candidates = [
+        t for t in data.get("threads", [])
+        if isinstance(t, dict)
+        and isinstance(t.get("topic"), str)
+        and t.get("topic")
+        and t.get("topic") != _INVESTIGATE_SKIP_TOPIC
+        and t.get("state") != _INVESTIGATE_DONE_STATE
+    ]
+    if not candidates:
+        return (False, None)
+    candidates.sort(key=lambda t: t.get("last_touched") or "", reverse=True)
+    return (True, candidates[0]["topic"])
+
+
+def _interval_elapsed(last_investigate: str | None, now: datetime, interval_days: float) -> bool:
+    """``last_investigate`` から ``interval_days`` 日以上経過したか (パース不能 = 経過扱い)。"""
+    if not isinstance(last_investigate, str) or not last_investigate:
+        return True
+    try:
+        last = datetime.fromisoformat(last_investigate)
+    except ValueError:
+        return True
+    return now - last >= timedelta(days=interval_days)
+
+
 def activity_score(data: dict, now: datetime, freshness_days: float) -> float:
     """index の「新鮮でアクティブさ」を 0.0〜1.0 で返す (純関数、機構 2 の活性度)。
 

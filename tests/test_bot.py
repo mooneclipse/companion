@@ -53,6 +53,15 @@ def _import_bot_with_stub_env():
     return mod
 
 
+def _ok_result(text: str):
+    """投資調査テスト用の OK な ClaudeResult を組む (run_discord の戻り値モック)。"""
+    from claude_runner import ClaudeResult, ErrorKind
+    return ClaudeResult(
+        rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
+        result_text=text, session_id="dummy",
+    )
+
+
 class ChunkTelegramTest(unittest.TestCase):
 
     @classmethod
@@ -683,11 +692,16 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.PROACTIVE_INVESTIGATE_ENABLED,
         )
         self.bot.PROACTIVE_LEDGER_PATH = d / "proactive_ledger.jsonl"
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
         self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
         self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+        # この class は talk パス (滲ませ + seeding) を検証する。investigate 分岐は
+        # 別 class (ProactiveInvestigateTest) で検証するため、ここでは off にして
+        # talk パスを isolate する (default on だと active thread 仕込みで動く側へ分岐)。
+        self.bot.PROACTIVE_INVESTIGATE_ENABLED = False
 
     def tearDown(self) -> None:
         (
@@ -695,6 +709,7 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.PROACTIVE_INVESTIGATE_ENABLED,
         ) = self._orig
         self._tmp.cleanup()
 
@@ -780,6 +795,268 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
         topics = {t["topic"] for t in index["threads"]}
         self.assertIn("2026-06-10_prior", topics)
         self.assertIn("2026-06-19_today", topics)
+
+
+class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
+    """自律ループ「動く」分岐 (persona 軸 4 拡張 (3) = notes 自己調査) の配線。
+
+    - 条件成立 (enabled + interval due + active thread) で investigate ブランチに
+      入り、ephemeral session で claude を起動 → #chat に報告送信 → index 更新
+      (state=researched + last_investigate) → #chat session の last_prompt_at 更新。
+    - enabled off / interval 未経過 / 対象スレッド無し は talk パスへフォールスルー。
+    - budget guard 拒否 / 空報告は talk に落とさず skip + ledger。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self._orig = (
+            self.bot.PROACTIVE_LEDGER_PATH,
+            self.bot.PROACTIVE_STATE_FILE,
+            self.bot.INTERESTS_INDEX_PATH,
+            self.bot.THOUGHTS_LOG_PATH,
+            self.bot.PROACTIVE_INVESTIGATE_ENABLED,
+            self.bot.sessions._SESSIONS_DIR,
+        )
+        self.bot.PROACTIVE_LEDGER_PATH = d / "proactive_ledger.jsonl"
+        self.bot.PROACTIVE_STATE_FILE = d / "proactive"
+        self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
+        self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+        self.bot.PROACTIVE_INVESTIGATE_ENABLED = True
+        # #chat session の last_prompt_at 更新を tmp に隔離 (本番 sessions/ を汚さない)。
+        self.bot.sessions._SESSIONS_DIR = d / "topics"
+
+    def tearDown(self) -> None:
+        (
+            self.bot.PROACTIVE_LEDGER_PATH,
+            self.bot.PROACTIVE_STATE_FILE,
+            self.bot.INTERESTS_INDEX_PATH,
+            self.bot.THOUGHTS_LOG_PATH,
+            self.bot.PROACTIVE_INVESTIGATE_ENABLED,
+            self.bot.sessions._SESSIONS_DIR,
+        ) = self._orig
+        self._tmp.cleanup()
+
+    def _seed_active(self, topic, days_ago=1):
+        from datetime import datetime, timedelta
+        now = datetime(2026, 6, 19, 12, 0, 0, tzinfo=self.bot.quota.JST)
+        touched = now - timedelta(days=days_ago)
+        data = self.bot.interests.touch_thread({"threads": []}, topic, "vault", touched)
+        self.bot.interests.save_interests(self.bot.INTERESTS_INDEX_PATH, data)
+        return now
+
+    def _ledger(self):
+        import json as _json
+        lines = [
+            l for l in self.bot.PROACTIVE_LEDGER_PATH.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        return [_json.loads(l) for l in lines]
+
+    async def test_investigate_branch_runs_records_and_sends(self) -> None:
+        from unittest import mock
+
+        now = self._seed_active("ディスク管理")
+        ran = {"discord": 0}
+
+        async def _fake_run_discord(prompt, options):
+            ran["discord"] += 1
+            ran["prompt"] = prompt
+            ran["session_id"] = options.session_id
+            ran["resume"] = options.resume_session
+            return _ok_result("ディスク管理のこと調べといた。notes に残しといたよ")
+
+        async def _fail_run_claude(*a, **kw):
+            raise AssertionError("talk パスの run_claude を呼んではいけない")
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        sent = mock.AsyncMock()
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "record"), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fail_run_claude), \
+             mock.patch.object(self.bot, "send_text", new=sent), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+
+        # ephemeral session で起動 (resume しない、新規 session_id)。
+        self.assertEqual(ran["discord"], 1)
+        self.assertIsNotNone(ran["session_id"])
+        self.assertIsNone(ran["resume"])
+        self.assertIn("ディスク管理", ran["prompt"])
+        # #chat に報告送信。
+        sent.assert_awaited_once()
+        # index: 対象が researched + last_investigate が now で更新。
+        index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        t = index["threads"][0]
+        self.assertEqual(t["topic"], "ディスク管理")
+        self.assertEqual(t["state"], "researched")
+        self.assertEqual(index["last_investigate"], now.isoformat())
+        # 思考ログに観察 1 行。
+        thoughts = [
+            l for l in self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        self.assertEqual(len(thoughts), 1)
+        # ledger は investigate モードで sent。
+        rec = self._ledger()[-1]
+        self.assertEqual(rec["mode"], "investigate")
+        self.assertEqual(rec["investigate_topic"], "ディスク管理")
+        self.assertTrue(rec["sent"])
+        # #chat session の last_prompt_at が更新された (4h 最低間隔保全)。
+        meta = self.bot.sessions.load(self.bot.NOTIFY_CHAT_ID, self.bot.BOT_THREAD_ID_CHAT)
+        self.assertIsNotNone(meta)
+        self.assertIsNotNone(meta.last_prompt_at)
+
+    async def test_disabled_falls_through_to_talk(self) -> None:
+        from unittest import mock
+
+        now = self._seed_active("ディスク管理")
+        self.bot.PROACTIVE_INVESTIGATE_ENABLED = False
+        talk = {"called": 0}
+
+        async def _fake_run_claude(prompt, chat_id, thread_id):
+            talk["called"] += 1
+            return "やあ、ちょっと一息どう"
+
+        async def _no_investigate(prompt, options):
+            raise AssertionError("disabled 時に investigate claude を呼んではいけない")
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_investigate), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+
+        self.assertEqual(talk["called"], 1)
+        rec = self._ledger()[-1]
+        self.assertNotIn("mode", rec)
+
+    async def test_no_active_thread_falls_through_to_talk(self) -> None:
+        from unittest import mock
+        from datetime import datetime
+
+        now = datetime(2026, 6, 19, 12, 0, 0, tzinfo=self.bot.quota.JST)
+        # 対象スレッドが recent_conversation のみ = investigate 候補ゼロ。
+        data = self.bot.interests.touch_thread(
+            {"threads": []}, "recent_conversation", "conv", now
+        )
+        self.bot.interests.save_interests(self.bot.INTERESTS_INDEX_PATH, data)
+        talk = {"called": 0}
+
+        async def _fake_run_claude(prompt, chat_id, thread_id):
+            talk["called"] += 1
+            return "やあ"
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+
+        self.assertEqual(talk["called"], 1)
+
+    async def test_empty_report_skips_but_consumes_interval(self) -> None:
+        from unittest import mock
+
+        now = self._seed_active("ディスク管理")
+        sent = mock.AsyncMock()
+
+        async def _fake_run_discord(prompt, options):
+            return _ok_result("   ")  # 空白のみ = 空報告
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "record"), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot, "send_text", new=sent), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+
+        # 送信されない。
+        sent.assert_not_awaited()
+        # interval は消費 (last_investigate が更新、二度調査回避 state=researched)。
+        index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        self.assertEqual(index["last_investigate"], now.isoformat())
+        self.assertEqual(index["threads"][0]["state"], "researched")
+        rec = self._ledger()[-1]
+        self.assertEqual(rec["mode"], "investigate")
+        self.assertFalse(rec["sent"])
+        self.assertEqual(rec["reason"], "empty_or_denied")
+
+    async def test_budget_denied_in_run_investigate_skips(self) -> None:
+        from unittest import mock
+
+        now = self._seed_active("ディスク管理")
+        sent = mock.AsyncMock()
+
+        async def _no_discord(prompt, options):
+            raise AssertionError("budget 拒否時に claude を起動してはいけない")
+
+        # _run_proactive 入口の guard は通すが、run_investigate 内の allow を False に。
+        allow_calls = {"n": 0}
+
+        def _allow(now_arg):
+            allow_calls["n"] += 1
+            # 1 回目 (_run_proactive 入口) は True、2 回目 (run_investigate) は False。
+            return allow_calls["n"] == 1
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", side_effect=_allow), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="requests_count")), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_discord), \
+             mock.patch.object(self.bot, "send_text", new=sent), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+
+        sent.assert_not_awaited()
+        rec = self._ledger()[-1]
+        self.assertEqual(rec["mode"], "investigate")
+        self.assertFalse(rec["sent"])
+        # interval は起動を決めた時点で消費する設計 (budget 拒否でも record_investigate は走る)。
+        index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        self.assertEqual(index["last_investigate"], now.isoformat())
 
 
 class DispatchProactiveVoiceTest(unittest.IsolatedAsyncioTestCase):
