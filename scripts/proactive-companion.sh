@@ -15,8 +15,11 @@
 #   2. 現在時刻が発火時間帯 (PROACTIVE_HOUR_START〜END JST) 内か
 #   3. snooze 中でないか (state file の snooze_until)
 #   4. 全 topic session の max(last_prompt_at) から沈黙閾値 (PROACTIVE_SILENCE_HOURS) 超か
-#   5. 同 JST 日の発火回数が上限未満か (state file の last_proactive_date +
-#      proactive_count、1 日 PROACTIVE_DAILY_MAX 回上限)
+#   5. 過去 168h (7 日) のローリングウィンドウ内の発火回数が上限未満か
+#      (state file の proactive_fire_epochs = 発火 epoch のカンマ区切り列、
+#      PROACTIVE_WEEKLY_MAX 回上限)。日次上限 → 週ローリングに置換 (OWNER 確定
+#      2026-06-19): step7 の活性度確率変調 (乗ってる日↑/静かな日↓) と噛み合わせ、
+#      硬い日次天井で乗ってる日の山を頭打ちにせず波の振幅を週総量で管理する。
 #   6. 種があるか (直近 topic session の存在 + 任意で当日 vault 追記)。種ゼロなら発火しない
 #      ※発火が確定した回の種の中身は、週 1 (PROACTIVE_DORMANT_INTERVAL_DAYS) で
 #        「死蔵知識との再会」(古い vault ノートの掘り起こし) に切り替わる。判定順
@@ -43,7 +46,7 @@ PROACTIVE_HOUR_START="${PROACTIVE_HOUR_START:-9}"     # JST、この時刻以上
 PROACTIVE_HOUR_END="${PROACTIVE_HOUR_END:-22}"        # JST、この時刻未満で発火可 (22:00 ちょうどは除外)
 PROACTIVE_SILENCE_HOURS="${PROACTIVE_SILENCE_HOURS:-4}"
 PROACTIVE_PROBABILITY="${PROACTIVE_PROBABILITY:-0.7}" # 0.0〜1.0、種ありかつ条件成立時に発火する確率
-PROACTIVE_DAILY_MAX="${PROACTIVE_DAILY_MAX:-2}"       # 同 JST 日の発火回数上限
+PROACTIVE_WEEKLY_MAX="${PROACTIVE_WEEKLY_MAX:-8}"     # 過去 168h (7 日) ローリングの発火回数上限
 PROACTIVE_DORMANT_INTERVAL_DAYS="${PROACTIVE_DORMANT_INTERVAL_DAYS:-7}"  # 死蔵知識種の最短間隔 (日)
 PROACTIVE_DORMANT_MIN_AGE_DAYS="${PROACTIVE_DORMANT_MIN_AGE_DAYS:-30}"   # この日数より古い mtime のノートを死蔵候補とする
 
@@ -68,10 +71,13 @@ log() {
 }
 
 # state file は単純な key=value 行 (snooze_until=<epoch> /
-# last_proactive_date=<YYYY-MM-DD> / proactive_count=<その日の発火回数> /
+# proactive_fire_epochs=<発火 epoch のカンマ区切り列、過去 168h ローリング上限の
+#   カウント源。handoff 成功時に now_epoch を 1 つ足し 168h 超を prune してから書く> /
 # last_dormant_date=<YYYY-MM-DD、死蔵知識種を最後に使った日> /
 # dormant_last=<前回掘り起こしたノート basename、連続同一ノート除外用>)。
-# 無ければ空扱い。
+# 旧 last_proactive_date / proactive_count は週ローリングに置換され不要 (OWNER 確定
+# 2026-06-19)。bot.py write_snooze_until は総なめ保持なので残骸があっても害なし
+# (script 側が書かなくなれば自然に持ち越されなくなる)。無ければ空扱い。
 state_get() {
     local key="$1"
     [[ -f "$STATE_FILE" ]] || return 0
@@ -144,17 +150,52 @@ fi
 # この値は prompt の文脈足し専用。
 silence_hours=$(( (now_epoch - max_last_prompt_epoch) / 3600 ))
 
-# --- 5. 1 日上限 (JST 日付単位、PROACTIVE_DAILY_MAX 回) ----------------------------
-last_proactive_date=$(state_get last_proactive_date)
-proactive_count=$(state_get proactive_count)
-today_count=0
-if [[ "$last_proactive_date" == "$today_jst" ]]; then
-    # 後方互換: 旧形式 state (proactive_count なし) は「本日 1 回発火済み」の
-    # 意味だったので count=1 とみなす (安全側)。
-    today_count="${proactive_count:-1}"
+# --- 5. 週ローリング上限 (過去 168h、PROACTIVE_WEEKLY_MAX 回) -----------------------
+# 日次上限 → 週ローリングに置換 (OWNER 確定 2026-06-19)。発火履歴は script 側 state の
+# proactive_fire_epochs (カンマ区切り epoch 列) で持ち、ここを 1 回だけ読んで
+# now_epoch - 168*3600 より新しい epoch を数える (= 過去 7 日のローリングカウント)。
+# カウント源は script 側 handoff 履歴 1 本のみ (bot 側 ledger は読まない: handoff
+# カウントと実送信カウントの 2 源混在 = 二重計上 = 2 周目ルール抵触を避ける)。
+# 判定は state を 1 回引いて確定 (read-once の epoch 列から純粋に出す、乱数を増やさない)。
+#
+# bootstrap-safe: キー無し / 空 / parse 不能 / 旧形式 state (proactive_count のみ) は
+# すべて 0 回扱い (発火可) に正規化する (「state が引けない」を履歴ゼロの 1 状態に倒す、
+# interests.load_interests と同じ思想、回復用の条件分岐を積まない)。set -euo pipefail
+# 下で python3 が異常終了しても末尾 `|| recent_fire_count=""` で空に倒し、直後の
+# `[[ -z ]]` で 0 に正規化する (errexit による step5 即死を防ぐ)。
+fire_epochs_raw=$(state_get proactive_fire_epochs)
+window_start_epoch=$(( now_epoch - 168 * 3600 ))
+recent_fire_count=$(python3 -c '
+import sys
+raw, window_start = sys.argv[1], sys.argv[2]
+try:
+    cutoff = int(window_start)
+    n = 0
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            ep = int(tok)
+        except (TypeError, ValueError):
+            # parse 不能トークンは無視 (履歴ゼロ寄り = 発火可へ倒す)。
+            continue
+        if ep >= cutoff:
+            n += 1
+    print(n)
+except Exception:
+    # 算出不能はすべて 0 (発火可) へ正規化。
+    print(0)
+' "$fire_epochs_raw" "$window_start_epoch") \
+    || recent_fire_count=""
+
+# python3 が何も返さない (異常終了 / rc≠0 で上の || が空にした) 場合は 0 回へ正規化。
+if [[ -z "$recent_fire_count" ]]; then
+    recent_fire_count=0
 fi
-if (( today_count >= PROACTIVE_DAILY_MAX )); then
-    log "skip: already fired ${today_count}x today ($today_jst, max=$PROACTIVE_DAILY_MAX)"
+
+if (( recent_fire_count >= PROACTIVE_WEEKLY_MAX )); then
+    log "skip: already fired ${recent_fire_count}x in last 168h (max=$PROACTIVE_WEEKLY_MAX)"
     exit 0
 fi
 
@@ -320,18 +361,47 @@ print(json.dumps(obj, ensure_ascii=False))
 message=$(printf '[[proactive-v1]]\n%s' "$payload")
 
 if printf '%s' "$message" | nc -U -N "$SOCK"; then
-    # last_proactive_date=today + proactive_count を +1 = 「本日の 1 回分を消費」を
-    # state で確定 (日付が変わっていれば count=1 から数え直し)。依頼の handoff 成功
-    # (socket 書き込み成功) を以て消費する。bot 側で guard 拒否 / claude 失敗だった
-    # 場合も script からは再試行しない (場当たりリトライ禁止、2 周目ルール)。
-    # bot 側の成否は bot 側 ledger / log に残る。
+    # 週ローリング履歴 proactive_fire_epochs に now_epoch を 1 つ足し、168h より古い
+    # epoch を prune してから書き戻す (state が単調肥大しない)。依頼の handoff 成功
+    # (socket 書き込み成功) を以て 1 回消費する。bot 側で guard 拒否 / claude 失敗
+    # だった場合も script からは再試行しない (場当たりリトライ禁止、2 周目ルール)。
+    # bot 側の成否は bot 側 ledger / log に残る (script は handoff 履歴 1 本のみ持つ)。
     # snooze_until は保持する (依頼が通っても snooze 設定は消さない)。
     # 注意: ここはキー明示列挙で書き戻す (bot 側 write_snooze_until の総なめ保持と
     # 非対称)。state に新キーを足すときは、この書き戻しにも必ず足すこと。
+    # 旧 last_proactive_date / proactive_count は週ローリング化で廃止 (書かない)。
+    new_fire_epochs=$(python3 -c '
+import sys
+raw, now_epoch, window_start = sys.argv[1], sys.argv[2], sys.argv[3]
+now = int(now_epoch)
+cutoff = int(window_start)
+kept = []
+for tok in raw.split(","):
+    tok = tok.strip()
+    if not tok:
+        continue
+    try:
+        ep = int(tok)
+    except (TypeError, ValueError):
+        continue
+    if ep >= cutoff:
+        kept.append(ep)
+kept.append(now)
+print(",".join(str(e) for e in sorted(kept)))
+' "$fire_epochs_raw" "$now_epoch" "$window_start_epoch") \
+        || new_fire_epochs=""
+
+    # python3 が異常終了 (rc≠0 で上の || が空にした) 場合、最低限この回の now_epoch
+    # だけは記録する (handoff は成功済み = この発火を週カウントから漏らさない、
+    # 二重発火リスクを断つ既定動作)。「prune が引けない」を「今回分のみ記録」の
+    # 1 状態に倒す (errexit 下でも state 更新を貫通させる、step7 と同じ思想)。
+    if [[ -z "$new_fire_epochs" ]]; then
+        new_fire_epochs="$now_epoch"
+    fi
+
     tmp=$(mktemp "${STATE_FILE}.XXXXXX")
     [[ -n "$snooze_until" ]] && printf 'snooze_until=%s\n' "$snooze_until" >> "$tmp"
-    printf 'last_proactive_date=%s\n' "$today_jst" >> "$tmp"
-    printf 'proactive_count=%s\n' "$(( today_count + 1 ))" >> "$tmp"
+    printf 'proactive_fire_epochs=%s\n' "$new_fire_epochs" >> "$tmp"
     # 死蔵知識キー: 死蔵種を使った回は today + 掘り起こした basename で更新。
     # 使わなかった回 (従来種 / 候補ゼロ) も既存値をそのまま保持して書き戻す。
     if [[ -n "$dormant_hint" ]]; then
@@ -342,7 +412,7 @@ if printf '%s' "$message" | nc -U -N "$SOCK"; then
         [[ -n "$dormant_last" ]] && printf 'dormant_last=%s\n' "$dormant_last" >> "$tmp"
     fi
     mv "$tmp" "$STATE_FILE"
-    log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', dormant_hint='${dormant_hint}', silence_hours=$silence_hours, roll=$roll, eff_p=$eff_probability)"
+    log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', dormant_hint='${dormant_hint}', silence_hours=$silence_hours, roll=$roll, eff_p=$eff_probability, weekly_count=$(( recent_fire_count + 1 ))/$PROACTIVE_WEEKLY_MAX)"
 else
     log "send failed"
     exit 1

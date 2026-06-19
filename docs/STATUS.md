@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-19 (proactive 不在の可変ケイデンス = step7 の固定確率を関心 index 活性度で変調、bootstrap-safe、bot/interests.py の activity_score を import。詳細は Done 同日)
+最終更新: 2026-06-19 (proactive step5 を日次上限 → 週ローリング上限に置換 — 過去 168h で PROACTIVE_WEEKLY_MAX=8、発火 epoch 列を script 側 state proactive_fire_epochs で持ち read-once カウント + handoff 成功時に prune。step7 可変ケイデンスと噛み合わせ波の振幅を週総量で管理。詳細は Done 同日 / 直前 entry = step7 の活性度変調)
 
 ## 設計メモ
 
@@ -33,6 +33,15 @@
 
 ## Done
 
+- 2026-06-19 proactive: step5 を日次上限 → 週ローリング上限に置換 (OWNER 確定、直前の可変ケイデンスと噛み合わせ)
+  - **動機**: 直前タスクで step7 に活性度連動の確率変調を入れた (乗ってる日↑/静かな日↓) が、step5 の硬い日次上限 `PROACTIVE_DAILY_MAX=2` が天井になり乗ってる日の山を頭打ちにして波の振幅を潰していた。OWNER が方向を「週で総量管理」に確定 (2026-06-19)
+  - **方式**: step5 を「過去 168h (7 日) ローリングウィンドウ内の発火回数 < `PROACTIVE_WEEKLY_MAX`」に置換。発火履歴は **script 側 state の `proactive_fire_epochs`** (発火 epoch のカンマ区切り列) で 1 本だけ持ち、判定時に 1 回読んで `now - 168h` 以降の epoch を数える。handoff 成功時に `now_epoch` を 1 つ足し 168h 超を prune してから書き戻す (単調肥大しない)
+  - **新 env**: `PROACTIVE_WEEKLY_MAX=8` (調整可)。旧 `PROACTIVE_DAILY_MAX` / `last_proactive_date` / `proactive_count` は廃止 (step5 読み・末尾書き戻しから除去)
+  - **カウント源 1 本 (2 周目ルール)**: bot 側 ledger (`proactive_ledger.jsonl`) は読まない。既存設計は「socket handoff 成功 = 1 回消費」で、ledger を読むと handoff カウントと実送信カウントの 2 源混在 = 二重計上 = カウント源の積み増しに当たるため。週ローリングも従来どおり script 側 handoff 履歴 1 本でカウントし state を 1 回引いて確定
+  - **依存確認**: `last_proactive_date` / `proactive_count` の他経路依存を grep。bot.py `write_snooze_until` は **総なめ保持** (全キー読み込み → snooze_until のみ上書き → 全行書き戻し) で旧キーに**依存していない** = script が書かなくなれば自然に持ち越されなくなる。test_bot.py の保持テストは「任意キーを保持する」性質テストで旧キーを例に使うだけ → 新キー `proactive_fire_epochs` でも同じ総なめで素通り。bot.py / timer 以外の変更不要 (timer はコメントのみ更新)
+  - **bootstrap-safe**: epochs キー無し / 空 / parse 不能 / 旧形式 state (proactive_count のみ残骸) → すべて 0 回扱い (発火可) に正規化 (「state が引けない」を履歴ゼロの 1 状態に倒す、interests.load_interests と同じ思想)。step7 (活性度変調) は一切触らず役割分担を保つ (静かな日を作るのは活性度確率、乗ってる日の連発総量を抑えるのが週上限)。silence 4h (step4) も維持
+  - **errexit 安全 (step7 と同じ轍を踏まない)**: カウント側 `|| recent_fire_count=""` → `[[ -z ]]` → 0、handoff prune 側 `|| new_fire_epochs=""` → `[[ -z ]]` → now_epoch のみ記録 (handoff 成功済みの発火を週カウントから漏らさず二重発火を断つ)。両ガードが `set -euo pipefail` 下で python3 rc127 でも貫通することを実測
+  - **検証 (実測)**: bash -n OK。隔離 HOME での end-to-end 実機実行 — (i) 168h に 8 件 → step5 skip (state 不変)、(ii) 7 件 → step5 通過、(iii) 古 192h 前 1 件 + 新 7 件 → 古は窓外で count=7 通過、(iv) epochs キー無し (旧 proactive_count のみ) / 空 → 通過、(v) handoff 成功 → state に now epoch 追加 + 192h 前 prune (新 4 件 + now=5 件)・snooze_until / last_dormant_date / dormant_last 非破壊保持・socket に正しい payload 到達・log に weekly_count=5/8。errexit ガードは python3 rc127 で直接実証
 - 2026-06-19 proactive: 不在の可変ケイデンス = step7 の固定確率を関心 index 活性度で変調 (persona 軸 4 拡張 (2)、bot repo と対)
   - **動機**: 自発発話が「ほぼ毎日 1〜2 回」の固定ケイデンスで不在感が薄い。数日静か / 乗ってる日の波を作る (persona STATUS 軸 4 拡張、方針 A = 活性度連動・確定済)
   - **方式**: `PROACTIVE_PROBABILITY` を base とし、`bot/sessions/companion_interests.json` の活性度 a∈[0,1] で `P_eff = FLOOR + (CEIL - FLOOR) * a` に変調 (CEIL=base に張る = 上限を越えない)。a は `bot/interests.py` を inline python3 で import し canonical な decay + 新 `activity_score` で算出 (decay を script 側で別解釈にしない、DRY)。interests.py は stdlib のみで system python3 で import 可。判定順 1〜6 不変、変えたのは step7 の確率値の出し方のみ
