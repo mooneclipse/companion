@@ -1082,6 +1082,23 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
         self.assertEqual(index["last_investigate"], now.isoformat())
 
+    def test_record_investigate_preserves_other_mode_intervals(self) -> None:
+        # 先に ticket / remind の interval がある index で investigate を record しても、
+        # 他 mode の interval が残り、自分の interval が新しく入る (逆向き clobber 回帰)。
+        now = self._seed_active("ディスク管理")
+        data = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        data = {
+            **data,
+            "last_ticket": "2026-06-01T00:00:00+09:00",
+            "last_remind": "2026-06-02T00:00:00+09:00",
+        }
+        self.bot.interests.save_interests(self.bot.INTERESTS_INDEX_PATH, data)
+        self.bot.record_investigate("ディスク管理", now)
+        idx = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        self.assertEqual(idx["last_ticket"], "2026-06-01T00:00:00+09:00")
+        self.assertEqual(idx["last_remind"], "2026-06-02T00:00:00+09:00")
+        self.assertEqual(idx["last_investigate"], now.isoformat())
+
 
 class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
     """自律ループ「起票する」分岐 (persona 軸 4 拡張 (4) = 共用チケット自発起票) の配線。
@@ -1419,6 +1436,23 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         # interval は起動を決めた時点で消費する設計 (budget 拒否でも record_ticket は走る)。
         index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
         self.assertEqual(index["last_ticket"], now.isoformat())
+
+    def test_record_ticket_preserves_other_mode_intervals(self) -> None:
+        # 先に investigate / remind の interval がある index で ticket を record しても、
+        # 他 mode の interval が残り、自分の interval が新しく入る (逆向き clobber 回帰)。
+        now = self._seed_active("ディスク管理")
+        data = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        data = {
+            **data,
+            "last_investigate": "2026-06-01T00:00:00+09:00",
+            "last_remind": "2026-06-02T00:00:00+09:00",
+        }
+        self.bot.interests.save_interests(self.bot.INTERESTS_INDEX_PATH, data)
+        self.bot.record_ticket(now)
+        idx = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        self.assertEqual(idx["last_investigate"], "2026-06-01T00:00:00+09:00")
+        self.assertEqual(idx["last_remind"], "2026-06-02T00:00:00+09:00")
+        self.assertEqual(idx["last_ticket"], now.isoformat())
 
 
 class BuildTicketPromptTest(unittest.TestCase):
@@ -1793,6 +1827,23 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         # interval は起動を決めた時点で消費する設計 (budget 拒否でも record_remind は走る)。
         index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
         self.assertEqual(index["last_remind"], now.isoformat())
+
+    def test_record_remind_preserves_other_mode_intervals(self) -> None:
+        # 先に investigate / ticket の interval がある index で remind を record しても、
+        # 他 mode の interval が残り、自分の interval が新しく入る (逆向き clobber 回帰)。
+        now = self._seed_active("ディスク管理")
+        data = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        data = {
+            **data,
+            "last_investigate": "2026-06-01T00:00:00+09:00",
+            "last_ticket": "2026-06-02T00:00:00+09:00",
+        }
+        self.bot.interests.save_interests(self.bot.INTERESTS_INDEX_PATH, data)
+        self.bot.record_remind(now)
+        idx = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        self.assertEqual(idx["last_investigate"], "2026-06-01T00:00:00+09:00")
+        self.assertEqual(idx["last_ticket"], "2026-06-02T00:00:00+09:00")
+        self.assertEqual(idx["last_remind"], now.isoformat())
 
 
 class BuildRemindPromptTest(unittest.TestCase):
