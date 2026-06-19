@@ -166,6 +166,74 @@ class ActiveThreadsTest(unittest.TestCase):
         self.assertEqual(interests.active_threads({"threads": []}, _now(), limit=3), [])
 
 
+class ActivityScoreTest(unittest.TestCase):
+    def test_empty_index_is_zero(self) -> None:
+        self.assertEqual(
+            interests.activity_score({"threads": []}, _now(), freshness_days=7),
+            0.0,
+        )
+
+    def test_all_touched_now_is_one(self) -> None:
+        # MAX_THREADS 本すべてを今この瞬間に触った = 満点。
+        threads = [
+            {"topic": f"t{i}", "last_touched": _now().isoformat()}
+            for i in range(interests.MAX_THREADS)
+        ]
+        self.assertAlmostEqual(
+            interests.activity_score({"threads": threads}, _now(), freshness_days=7),
+            1.0,
+        )
+
+    def test_threads_outside_window_dont_contribute(self) -> None:
+        # 窓 (7日) より古いスレッドは寄与 0。新鮮 1 本のみが効く。
+        old = (_now() - timedelta(days=10)).isoformat()
+        fresh = _now().isoformat()
+        threads = [
+            {"topic": "old", "last_touched": old},
+            {"topic": "fresh", "last_touched": fresh},
+        ]
+        score = interests.activity_score({"threads": threads}, _now(), freshness_days=7)
+        # fresh 1 本 (重み 1.0) / MAX_THREADS。
+        self.assertAlmostEqual(score, 1.0 / interests.MAX_THREADS)
+
+    def test_freshness_decays_linearly(self) -> None:
+        # 窓のちょうど半分の age なら重み 0.5。
+        half = (_now() - timedelta(days=3.5)).isoformat()
+        threads = [{"topic": "half", "last_touched": half}]
+        score = interests.activity_score({"threads": threads}, _now(), freshness_days=7)
+        self.assertAlmostEqual(score, 0.5 / interests.MAX_THREADS)
+
+    def test_boundary_at_exactly_window_is_zero(self) -> None:
+        edge = (_now() - timedelta(days=7)).isoformat()
+        threads = [{"topic": "edge", "last_touched": edge}]
+        self.assertEqual(
+            interests.activity_score({"threads": threads}, _now(), freshness_days=7),
+            0.0,
+        )
+
+    def test_unparseable_or_missing_timestamp_ignored(self) -> None:
+        threads = [
+            {"topic": "nots"},
+            {"topic": "badts", "last_touched": "not-a-date"},
+            {"topic": "ok", "last_touched": _now().isoformat()},
+        ]
+        score = interests.activity_score({"threads": threads}, _now(), freshness_days=7)
+        self.assertAlmostEqual(score, 1.0 / interests.MAX_THREADS)
+
+    def test_zero_freshness_days_is_zero(self) -> None:
+        threads = [{"topic": "t", "last_touched": _now().isoformat()}]
+        self.assertEqual(
+            interests.activity_score({"threads": threads}, _now(), freshness_days=0),
+            0.0,
+        )
+
+    def test_future_timestamp_clamped_to_full_weight(self) -> None:
+        future = (_now() + timedelta(days=1)).isoformat()
+        threads = [{"topic": "future", "last_touched": future}]
+        score = interests.activity_score({"threads": threads}, _now(), freshness_days=7)
+        self.assertAlmostEqual(score, 1.0 / interests.MAX_THREADS)
+
+
 class AppendThoughtTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

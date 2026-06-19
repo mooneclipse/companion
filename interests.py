@@ -128,6 +128,50 @@ def active_threads(data: dict, now: datetime, limit: int) -> list:
     return threads[:max(0, limit)]
 
 
+def activity_score(data: dict, now: datetime, freshness_days: float) -> float:
+    """index の「新鮮でアクティブさ」を 0.0〜1.0 で返す (純関数、機構 2 の活性度)。
+
+    各スレッドの last_touched が freshness_days 窓内なら、新鮮さに比例した
+    重み (触った直後 = 1.0、窓の端 = 0.0 へ線形に減衰) を与え、その合計を
+    MAX_THREADS で割って正規化する。窓外 / パース不能なスレッドは寄与 0。
+
+    - 空 index / 全スレッド窓外 → 0.0 (「静かな日」)。
+    - MAX_THREADS 本すべてを今この瞬間に触った → 1.0 (「乗ってる日」)。
+    decay 済み data を渡す前提だが、freshness_days < ttl_days で「decay より
+    手前の新鮮さ窓」を別概念として測れる (ケイデンス用の窓は decay TTL と独立)。
+
+    波の生成は決定的: スコアは read-once の index から純粋に導かれ、ここに
+    乱数を持ち込まない (per-tick の追加乱数で静寂をランダム生成しない)。
+    日をまたぐ波は last_touched が時間で古くなる = スコアが自然に下がることで
+    創発する (場当たりな静寂期間の挿入ではない)。
+    """
+    if freshness_days <= 0:
+        return 0.0
+    total = 0.0
+    for t in data.get("threads", []):
+        if not isinstance(t, dict):
+            continue
+        last = t.get("last_touched")
+        if not isinstance(last, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(last)
+        except ValueError:
+            continue
+        age_days = (now - ts).total_seconds() / 86400.0
+        if age_days < 0:
+            age_days = 0.0  # 未来の timestamp は「今触った」に丸める
+        if age_days >= freshness_days:
+            continue
+        total += 1.0 - (age_days / freshness_days)
+    score = total / MAX_THREADS
+    if score < 0.0:
+        return 0.0
+    if score > 1.0:
+        return 1.0
+    return score
+
+
 def append_thought(path: Path, observation: str, now: datetime) -> None:
     """私的思考ログに 1 行追記する (proactive_ledger と同じ append-only jsonl)。
 
