@@ -35,7 +35,7 @@ function showApp() {
 
 // ===== 画面ナビゲーション(section.active 切替。mock の show/open_/home 方式) =====
 // ホーム(タイルランチャー)⇄ 各機能詳細。詳細は左上「‹ 戻る」でホームへ。
-const SCREENS = ["home", "video", "todo", "games", "os", "vault"];
+const SCREENS = ["home", "video", "todo", "games", "os", "vault", "thoughts"];
 
 function showScreen(id) {
   for (const s of SCREENS) {
@@ -50,6 +50,7 @@ function openScreen(id) {
   if (id === "todo") { refreshTodo(); if (!$("todo-history-list").hidden) refreshHistory(); }
   if (id === "os") refreshGlance();
   if (id === "vault") openVault();
+  if (id === "thoughts") refreshThoughts();
   if (id === "video" && dlOpen()) refreshDl();
 }
 function goHome() { showScreen("home"); }
@@ -1360,6 +1361,71 @@ function initVault() {
   });
 }
 
+// ===== 思考ログ（read-only タイムライン） =====
+// bot の私的観察を最新が上の時系列で「そっと読む」だけ。新着バッジ / 未読 / push は
+// 一切持たない(軸4拡張 機構1 = 読まれない前提の領域)。本文はサーバ無加工で来たものを
+// そのまま表示し、ここでも触らない(timestamp だけ整形)。createElement のみ(innerHTML 不使用)。
+
+// timestamp を読みやすく整形する。bot 側の形式は epoch 秒 / epoch ミリ / ISO 文字列の
+// いずれでも来うるため best-effort で日時化し、解釈できなければ原文をそのまま出す
+// (本文 = observation には一切触れない、整形対象は timestamp のみ)。
+function fmtThoughtTime(ts) {
+  if (ts === null || ts === undefined || ts === "") return "";
+  let d = null;
+  if (typeof ts === "number") {
+    d = new Date(ts < 1e12 ? ts * 1000 : ts);  // 秒 / ミリ秒を桁で判別
+  } else if (typeof ts === "string") {
+    const parsed = Date.parse(ts);
+    if (!isNaN(parsed)) d = new Date(parsed);
+  }
+  if (!d || isNaN(d.getTime())) return String(ts);  // 解釈不能は原文透過
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+    + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+function renderThoughts(entries) {
+  const list = $("thoughts-timeline");
+  const msg = $("thoughts-msg");
+  list.textContent = "";
+  if (!entries || !entries.length) {
+    // 控えめな空表示。発火前 / 全行壊れも同じ静かな佇まいにする(「見て見て」を作らない)。
+    msg.hidden = false;
+    msg.textContent = "まだ何もありません";
+    return;
+  }
+  msg.hidden = true;
+  entries.forEach((e) => {
+    const li = document.createElement("li");
+    li.className = "thought-item";
+
+    const when = document.createElement("div");
+    when.className = "thought-when";
+    when.textContent = fmtThoughtTime(e.timestamp);
+
+    const body = document.createElement("p");
+    body.className = "thought-body";
+    body.textContent = e.observation == null ? "" : String(e.observation);  // 無加工透過
+
+    li.appendChild(when);
+    li.appendChild(body);
+    list.appendChild(li);
+  });
+}
+
+async function refreshThoughts() {
+  if (!getToken()) return;
+  const msg = $("thoughts-msg");
+  msg.hidden = false;
+  msg.textContent = "読み込み中…";
+  try {
+    const r = await api("/api/thoughts");
+    if (!r.ok) { msg.textContent = "取得に失敗しました"; return; }
+    const data = await r.json();
+    renderThoughts(data.entries || []);
+  } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
+}
+
 // ===== ナビゲーション初期化 =====
 // タイル(data-open) → 詳細画面、戻る(data-back/data-home) → ホーム。
 // 委譲ではなく要素列挙で結線(タイル枚数は少数、将来追加も局所で済む)。
@@ -1400,6 +1466,8 @@ function initNav() {
       else vaultShowList();
     } else if (s === "os") {
       refreshGlance();
+    } else if (s === "thoughts") {
+      refreshThoughts();
     } else if (s === "todo") {
       refreshTodo();
       if (!$("todo-history-list").hidden) refreshHistory();

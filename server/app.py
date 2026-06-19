@@ -21,6 +21,7 @@ import auth
 import dlqueue
 import playlist
 import status as os_status
+import thoughts
 import tickets
 import urlguard
 import vault
@@ -349,6 +350,16 @@ def api_vault_search(handler):
     return 200, vault.search(_query(handler).get("q", ""))
 
 
+def api_thoughts(handler):
+    """GET /api/thoughts — bot の私的思考ログを最新が上の時系列で返す(read-only)。Bearer 必須。
+
+    thoughts.list_entries が bot の観察行を無加工で透過(解釈・要約・感情ラベルなし)。
+    ファイル未生成(bot 発火前)・空は count 0 / entries [] を graceful に返す。
+    プッシュ・未読・新着の概念は一切持たない(軸4拡張 機構1 の表示境界)。
+    """
+    return 200, thoughts.list_entries()
+
+
 def api_vault_image(handler):
     """GET /api/vault/image?path=<相対パス> — ノート埋め込みローカル画像を read 専用配信。Bearer 必須。
 
@@ -399,6 +410,8 @@ ROUTES = {
     ("GET", "/api/vault/get"): (api_vault_get, True),
     ("GET", "/api/vault/search"): (api_vault_search, True),
     ("GET", "/api/vault/image"): (api_vault_image, True),
+    # 思考ログ(bot の私的観察を read-only で時系列閲覧)。GET / Bearer 必須。書き込み endpoint なし。
+    ("GET", "/api/thoughts"): (api_thoughts, True),
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。

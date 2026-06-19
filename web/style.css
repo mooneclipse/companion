@@ -258,3 +258,20 @@ dl.os dd{font-size:15px;font-weight:800;letter-spacing:.01em;margin:0 0 15px;pad
 .queue-item:active{background:var(--line);}
 .queue-item.current{color:var(--acc);font-weight:800;}
 .queue-item.current::before{content:"▶";margin-right:8px;font-size:11px;flex:0 0 auto;}
+
+/* --- 思考ログ(read-only タイムライン) ---
+   静かに読ませる設計: 左の細い縦ラインで時系列をつなぎ、timestamp は従属(小さく grey、
+   uppercase の tabular)、observation を主役(ink 本文、ゆったり行間)に置く。新着バッジ /
+   未読 / 強調アクセントは付けない(軸4拡張 機構1 = 控えめな佇まいを表示でも守る)。 */
+.thoughts-timeline{list-style:none;margin:6px 0 0;padding:0;}
+.thought-item{position:relative;padding:0 0 26px 22px;}
+/* 縦ライン: 各項目の左に通し、節目に小さなドット。最後の項目は線を本文末で止める。 */
+.thought-item::before{content:"";position:absolute;left:3px;top:6px;bottom:0;
+  width:1px;background:var(--line);}
+.thought-item:last-child::before{bottom:auto;height:14px;}
+.thought-item::after{content:"";position:absolute;left:0;top:6px;width:7px;height:7px;
+  border-radius:50%;background:var(--grey-2);border:1px solid var(--paper);}
+.thought-when{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--grey-4);
+  font-weight:700;font-variant-numeric:tabular-nums;}
+.thought-body{margin:6px 0 0;font-size:15px;line-height:1.7;color:var(--ink);
+  letter-spacing:.005em;white-space:pre-wrap;word-break:break-word;}

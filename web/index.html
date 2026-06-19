@@ -59,7 +59,7 @@
         <div class="np-time"><span id="nowbar-time"></span></div>
       </button>
 
-      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">6</span></div>
+      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">7</span></div>
 
       <!-- タイルグリッド(2列)。
            将来機能拡張: この .grid 内に <button class="tile" data-open="xxx"> を 1 枚足し、
@@ -93,6 +93,14 @@
         <button class="tile" type="button" data-open="vault">
           <span class="t-mark">¶ 06</span><span class="t-name">ノート</span>
           <span class="t-sub" id="tile-vault-sub">vault 閲覧</span>
+        </button>
+        <!-- 思考ログ: bot の私的観察を read-only で時系列に覗くだけのタイル。
+             新着バッジ / 未読件数 / push は意図的に付けない(軸4拡張 機構1 = 読まれない前提で
+             書く領域。「見て見て」装置を足すと不在の核を自分で壊す)。他 read タイルと同じ
+             控えめな佇まいに揃える。 -->
+        <button class="tile" type="button" data-open="thoughts">
+          <span class="t-mark">… 07</span><span class="t-name">思考ログ</span>
+          <span class="t-sub">そっと覗く</span>
         </button>
       </div>
     </section>
@@ -280,6 +288,22 @@
             <div id="vault-doc" class="vault-doc"></div>
             <p id="vault-doc-msg" class="result" role="status"></p>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ THOUGHTS（思考ログ、read-only） ============ -->
+    <!-- bot の私的観察を時系列タイムラインで「そっと読む」だけ。編集・削除・既読・お気に入り等の
+         双方向操作は付けない(read-only 厳守)。観察行はサーバ無加工で透過し、ここでも本文は
+         触らない(timestamp だけ読みやすく整形)。発火前は静かな空表示。 -->
+    <section id="thoughts" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">07 / Thoughts</span></div>
+      <div class="body">
+        <div class="kicker">Private Notes（閲覧専用）</div>
+        <h1 class="h1">思考ログ</h1>
+        <div class="card">
+          <p id="thoughts-msg" class="note">読み込み中…</p>
+          <ol id="thoughts-timeline" class="thoughts-timeline"></ol>
         </div>
       </div>
     </section>
