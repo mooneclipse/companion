@@ -52,6 +52,7 @@ from telegram.ext import (
     filters,
 )
 
+import interests
 import quota
 import sessions
 import voice_command
@@ -79,6 +80,16 @@ PROACTIVE_ENABLED = PROACTIVE_ENABLED_RAW in ("1", "true", "yes", "on")
 # 出典: voice/docs/STATUS.md 2026-06-12 entry + persona 軸 4。
 PROACTIVE_VOICE_ENABLED_RAW = os.environ.get("PROACTIVE_VOICE_ENABLED", "1").strip().lower()
 PROACTIVE_VOICE_ENABLED = PROACTIVE_VOICE_ENABLED_RAW in ("1", "true", "yes", "on")
+
+# 関心 state (persona 軸 4 拡張 機構 1、TODO (1))。触らないスレッドが消えるまでの
+# 日数。env override 可 (PROACTIVE_* env の慣習に倣う)。妥当な既定 = 14 日
+# (「数日静か / 乗ってる日」の波より長く、月単位より短い = 自分の時間が流れる手触り)。
+try:
+    PROACTIVE_INTEREST_TTL_DAYS = float(os.environ.get("PROACTIVE_INTEREST_TTL_DAYS", "14"))
+except ValueError:
+    PROACTIVE_INTEREST_TTL_DAYS = 14.0
+# prompt に滲ませる候補として読む上位本数 (滲ませは「1 つだけ軽く」なので候補は数本)。
+PROACTIVE_INTEREST_PROMPT_LIMIT = 3
 
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
@@ -220,6 +231,12 @@ PROACTIVE_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "proactiv
 # bot 側 /snooze で snooze_until=<epoch> を書き、script 側で snooze 中 skip を判定。
 PROACTIVE_STATE_FILE = Path.home() / "companion" / "maintenance" / ".state" / "proactive"
 
+# 関心 state の 2 層 (機構 1)。どちらも sessions/ 配下 = bot 自身の非 commit state
+# (proactive_ledger.jsonl と同居、.gitignore 済み、vault 外)。構造化 index と
+# 私的思考ログ。vault には置かない (vault は notes/ 限定 + OWNER の知識空間)。
+INTERESTS_INDEX_PATH = Path(__file__).resolve().parent / "sessions" / "companion_interests.json"
+THOUGHTS_LOG_PATH = Path(__file__).resolve().parent / "sessions" / "companion_thoughts.jsonl"
+
 # ペルソナ system prompt (軸 1「対等な相方」)。persona/docs/STATUS.md 軸 1 確定内容を
 # 自己完結した形で持たせ、run_claude が組む全 ClaudeOptions に --append-system-prompt
 # で常駐させる (全 topic 共通)。CLAUDE.md の 1 行指示だけだと敬語デフォルトに押し
@@ -294,7 +311,11 @@ os.umask(0o077)
 # bot 経由 prompt の topic_key / session_id / token 量を含むので明示的に追加。
 _LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "ledger.jsonl"
 _PROACTIVE_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "proactive_ledger.jsonl"
-for _existing in [LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*"), _LEDGER_PATH, _PROACTIVE_LEDGER_PATH]:
+for _existing in [
+    LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*"),
+    _LEDGER_PATH, _PROACTIVE_LEDGER_PATH,
+    INTERESTS_INDEX_PATH, THOUGHTS_LOG_PATH,
+]:
     try:
         os.chmod(_existing, 0o600)
     except FileNotFoundError:
@@ -469,18 +490,35 @@ def parse_proactive_payload(text: str) -> dict | None:
     return obj
 
 
-def build_proactive_prompt(payload: dict) -> str:
+def build_proactive_prompt(payload: dict, interest_topics: list[str] | None = None) -> str:
     """Compose the claude prompt for a proactive utterance from persona + seed.
 
     Pure function → unit-testable. payload は parse_proactive_payload の戻り。
+    interest_topics は呼び出し側 (build_interest_context) が関心 index から読んだ
+    「最近気にしてるスレッドの topic」リスト。純関数に保つため file IO は呼び出し側で
+    済ませ、ここには bounded な文字列リストだけを渡す。
 
     注入防止: prompt に展開してよいのは bounded/サニタイズ済みフィールドのみ
     (現状 vault_hint / dormant_hint = script 側で basename 化したノート名、
-    silence_hours = 数値検証済みの非負 int)。socket payload の任意文字列フィールド
+    silence_hours = 数値検証済みの非負 int、interest_topics = 関心 index の
+    topic = 過去の種由来で basename 相当)。socket payload の任意文字列フィールド
     (seed_kind 等) は prompt に流さない (ledger 記録専用)。将来フィールドを足す
     ときもこの境界を守る。
     """
     parts = [PROACTIVE_SCENE_PROMPT]
+    # 関心 state を滲ませる (機構 1 の私的版): 全部に触れず「1 つだけ軽く」。
+    # str のみ展開し、空は省く (非文字列は展開しないだけ、フォールバック分岐は作らない)。
+    if interest_topics:
+        topics = [t for t in interest_topics if isinstance(t, str) and t]
+        if topics:
+            parts.append(
+                "最近あなたが気にしてること (過去に自分から触れた話題のヒント): "
+                + " / ".join(topics) + "。"
+                "話すなら『さっき○○のこと考えてたんだけど』くらいに 1 つだけ軽く滲ませてよい "
+                "(全部に触れない、無理に出さない)。"
+                "これは自分用のメモであって読まれる前提のものではないので、"
+                "全文を並べたり「メモにこう書いた」式の演技はしない。"
+            )
     # silence_hours は非負 int のときだけ展開する (bool は int の subclass なので除外)。
     # 数値でない / 欠落時は黙って省略 (展開しないだけ、フォールバック分岐は作らない)。
     silence_hours = payload.get("silence_hours")
@@ -602,6 +640,56 @@ def _append_proactive_ledger(entry: dict) -> None:
     line = json.dumps(entry, ensure_ascii=False)
     with PROACTIVE_LEDGER_PATH.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
+
+
+def _proactive_topic_from_payload(payload: dict) -> str:
+    """この回の種から関心スレッドの topic を導出する (実活動起点のみ)。
+
+    dormant_hint / vault_hint = script 側で basename 化済みのノート名を優先し、
+    どちらも無ければ "recent_conversation" (直近会話起点)。捏造はしない =
+    payload に既にある実活動由来フィールドだけから決める。
+    """
+    dormant = payload.get("dormant_hint")
+    if isinstance(dormant, str) and dormant:
+        return dormant
+    vault = payload.get("vault_hint")
+    if isinstance(vault, str) and vault:
+        return vault
+    return "recent_conversation"
+
+
+def build_interest_context(now: datetime) -> list[str]:
+    """関心 index から滲ませ候補 topic を読む (prompt 構築時、送信前)。
+
+    decay を 1 回かけてから active_threads 上位を読む (期限切れは滲ませない)。
+    index 読み出しは判定を伴わない参照のみ (touch は送信確定後に別途行う =
+    state を持つ側を 1 回引いて確定する設計と整合)。decay の結果は save しない
+    (掃除は送信後の touch save に相乗りさせ、ここでは prompt 用に読むだけ)。
+    """
+    data = interests.load_interests(INTERESTS_INDEX_PATH)
+    data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    threads = interests.active_threads(data, now, PROACTIVE_INTEREST_PROMPT_LIMIT)
+    return [t.get("topic") for t in threads if isinstance(t.get("topic"), str)]
+
+
+def record_proactive_interest(payload: dict, now: datetime) -> None:
+    """送信確定後に関心 index と思考ログを更新する (実活動起点の seeding)。
+
+    load → decay → touch_thread → save を 1 回で確定する (state を持つ側を 1 回
+    引いて決める設計、条件分岐の積み増しをしない)。あわせて思考ログに実活動の
+    機械的な観察を 1 行残す (感情・趣味は書かない)。
+    """
+    topic = _proactive_topic_from_payload(payload)
+    seed_kind = payload.get("seed_kind", "unknown")
+    data = interests.load_interests(INTERESTS_INDEX_PATH)
+    data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    data = interests.touch_thread(data, topic, source=str(seed_kind), now=now)
+    interests.save_interests(INTERESTS_INDEX_PATH, data)
+    interests.append_thought(
+        THOUGHTS_LOG_PATH,
+        f"{seed_kind} の種で自発発話を一言かけた (topic={topic})",
+        now,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1743,7 +1831,10 @@ async def _run_proactive(app: Application, payload: dict) -> None:
         })
         return
 
-    prompt = build_proactive_prompt(payload)
+    # prompt 構築時に読む関心 index は「前回までに溜まった分」(今回の種の touch は
+    # 送信後)。今喋る内容は過去の関心から滲ませ、今の種は新たな接触として後で記録する。
+    interest_topics = build_interest_context(now)
+    prompt = build_proactive_prompt(payload, interest_topics=interest_topics)
     # run_claude は guard を通り、#chat の session を resume して claude を起動する。
     output = await run_claude(prompt, chat_id, thread_id)
     if not output or not output.strip():
@@ -1756,6 +1847,12 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     # (連投防止 = 沈黙判定がこの時刻基準で再カウントされる)。
     # 送信済みの一言を TV からも声で流す (todo#22、同期待ちしない fire-and-forget)。
     voice_state = _dispatch_proactive_voice(app, output)
+    # 送信が確定した実活動なので、その種から関心 index を更新し思考ログに観察を残す
+    # (機構 1 の seeding、実活動起点のみ)。記録失敗は proactive 本体を道連れにしない。
+    try:
+        record_proactive_interest(payload, now)
+    except OSError as e:
+        logger.warning("proactive interest record failed: %s", e)
     logger.info(
         "proactive sent len=%d seed_kind=%s voice=%s", len(output), seed_kind, voice_state
     )

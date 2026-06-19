@@ -513,6 +513,35 @@ class BuildProactivePromptTest(unittest.TestCase):
         self.assertIn("2026-06-12_today", prompt)
         self.assertIn("2026-04-01_old-topic", prompt)
 
+    def test_interest_topics_smeared_when_present(self) -> None:
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation"},
+            interest_topics=["2026-06-01_topic", "dormant-x"],
+        )
+        self.assertIn("最近あなたが気にしてること", prompt)
+        self.assertIn("2026-06-01_topic", prompt)
+        self.assertIn("dormant-x", prompt)
+        # 「1 つだけ軽く滲ませる」指示と「読まれる前提でない」境界が乗ること
+        self.assertIn("1 つだけ軽く滲ませてよい", prompt)
+        self.assertIn("演技はしない", prompt)
+
+    def test_interest_topics_omitted_when_absent(self) -> None:
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("最近あなたが気にしてること", prompt)
+
+    def test_interest_topics_empty_list_omitted(self) -> None:
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation"}, interest_topics=[]
+        )
+        self.assertNotIn("最近あなたが気にしてること", prompt)
+
+    def test_interest_topics_non_string_filtered(self) -> None:
+        # bounded: str のみ展開 (注入防止境界)。全部非文字列なら section ごと省く。
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation"}, interest_topics=[123, None, ["x"]]
+        )
+        self.assertNotIn("最近あなたが気にしてること", prompt)
+
 
 class SnoozeTest(unittest.TestCase):
     """/snooze の日数→snooze_until 計算と state 読み書き、snooze 中判定。"""
@@ -633,6 +662,124 @@ class ProactiveGuardNotBypassedTest(unittest.IsolatedAsyncioTestCase):
         rec = _json.loads(lines[-1])
         self.assertFalse(rec["sent"])
         self.assertEqual(rec["reason"], "snoozed")
+
+
+class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
+    """関心 state (機構 1) の最小配線。
+
+    - 送信確定後に index へ topic が seeding され、思考ログに観察が 1 行残ること。
+    - prompt 構築時に「前回までに溜まった」index が滲ませ候補として読まれること。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self._orig = (
+            self.bot.PROACTIVE_LEDGER_PATH,
+            self.bot.PROACTIVE_STATE_FILE,
+            self.bot.INTERESTS_INDEX_PATH,
+            self.bot.THOUGHTS_LOG_PATH,
+        )
+        self.bot.PROACTIVE_LEDGER_PATH = d / "proactive_ledger.jsonl"
+        self.bot.PROACTIVE_STATE_FILE = d / "proactive"
+        self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
+        self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+
+    def tearDown(self) -> None:
+        (
+            self.bot.PROACTIVE_LEDGER_PATH,
+            self.bot.PROACTIVE_STATE_FILE,
+            self.bot.INTERESTS_INDEX_PATH,
+            self.bot.THOUGHTS_LOG_PATH,
+        ) = self._orig
+        self._tmp.cleanup()
+
+    async def test_send_seeds_index_and_thought(self) -> None:
+        import json as _json
+        from datetime import datetime
+        from unittest import mock
+
+        now = datetime(2026, 6, 19, 12, 0, 0, tzinfo=self.bot.quota.JST)
+
+        async def _fake_run_claude(prompt, chat_id, thread_id):
+            return "やあ、ちょっと一息どう"
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app,
+                {"kind": "proactive", "seed_kind": "dormant_knowledge",
+                 "dormant_hint": "2026-04-01_old-topic"},
+            )
+
+        index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        topics = [t["topic"] for t in index["threads"]]
+        self.assertIn("2026-04-01_old-topic", topics)
+        t = index["threads"][0]
+        self.assertEqual(t["source"], "dormant_knowledge")
+        self.assertEqual(t["last_touched"], now.isoformat())
+
+        thoughts = [
+            l for l in self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        self.assertEqual(len(thoughts), 1)
+        rec = _json.loads(thoughts[0])
+        self.assertIn("2026-04-01_old-topic", rec["observation"])
+
+    async def test_prompt_reads_prior_index_then_records_new(self) -> None:
+        from datetime import datetime, timedelta
+        from unittest import mock
+
+        now = datetime(2026, 6, 19, 12, 0, 0, tzinfo=self.bot.quota.JST)
+        earlier = now - timedelta(days=1)
+        # 前回までに溜まった index を仕込む。
+        seeded = self.bot.interests.touch_thread(
+            {"threads": []}, "2026-06-10_prior", "vault", earlier
+        )
+        self.bot.interests.save_interests(self.bot.INTERESTS_INDEX_PATH, seeded)
+
+        captured = {}
+
+        async def _fake_run_claude(prompt, chat_id, thread_id):
+            captured["prompt"] = prompt
+            return "ちょっと一息どう"
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app,
+                {"kind": "proactive", "seed_kind": "recent_conversation+vault",
+                 "vault_hint": "2026-06-19_today"},
+            )
+
+        # prompt は「前回までに溜まった」prior を滲ませ候補として読む。
+        self.assertIn("2026-06-10_prior", captured["prompt"])
+        # 送信後に今回の種 (today) が新たな接触として記録される。
+        index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        topics = {t["topic"] for t in index["threads"]}
+        self.assertIn("2026-06-10_prior", topics)
+        self.assertIn("2026-06-19_today", topics)
 
 
 class DispatchProactiveVoiceTest(unittest.IsolatedAsyncioTestCase):
