@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-19 (proactive step5 を日次上限 → 週ローリング上限に置換 — 過去 168h で PROACTIVE_WEEKLY_MAX=8、発火 epoch 列を script 側 state proactive_fire_epochs で持ち read-once カウント + handoff 成功時に prune。step7 可変ケイデンスと噛み合わせ波の振幅を週総量で管理。詳細は Done 同日 / 直前 entry = step7 の活性度変調)
+最終更新: 2026-06-19 (proactive 確率変調 CEIL を base に張る設計を撤回 → PROACTIVE_PROBABILITY_CEIL の既定を 0.92 に引き上げ。日次上限 → 週ローリング総量 (前 entry) に移したことで乗ってる日の山を硬い日次天井で頭打ちにする必要が無くなり、波の振幅を出すため base 超を許可。鬱陶しさの安全弁は週総量 PROACTIVE_WEEKLY_MAX 側に役割分担。詳細は Done 同日先頭 entry)
 
 ## 設計メモ
 
@@ -33,6 +33,11 @@
 
 ## Done
 
+- 2026-06-19 proactive: 確率変調 CEIL を base に張る設計を撤回 → 既定 CEIL=0.92 に引き上げ (週ローリング化に伴う引き直し、OWNER 確定)
+  - **動機 / 設計引き直し**: 直前 entry で step5 を日次上限 → 週ローリング総量 (`PROACTIVE_WEEKLY_MAX`) に移したことで、step7 の確率変調を「CEIL=base に張る (乗ってる日でも base 以上に出さない =『ほぼ毎日』上限を越えない)」とした旧設計の前提が崩れた。硬い日次天井が無くなり、乗ってる日の山を頭打ちにする役割は週総量側が担うようになったため、CEIL を base に張る必要が消えた。OWNER 方針「日々の波は活性度に任せ、鬱陶しさを抑える安全弁は週の総量で縛る」に沿い CEIL を base 超に開放
+  - **変更**: `PROACTIVE_PROBABILITY_CEIL` の既定を `$PROACTIVE_PROBABILITY` (=base 0.7) から **0.92** に引き上げ。`P_eff = FLOOR + (CEIL - FLOOR) * a` の式・clamp[0,1]・bootstrap-safe (空/欠落 index → base) は不変。step7 の判定ロジック自体は触らず env 既定値 1 本 + 該当コメントのみ変更。SILENCE_HOURS は据え置き (まず週上限 + CEIL で様子見、最小変更)
+  - **役割分担 (2 周目ルール整合)**: 静かな日を作るのは活性度確率 (FLOOR=0.25 へ沈む)、乗ってる日に集中させるのが CEIL=0.92 (base 超)、連発総量を抑える安全弁が週ローリング上限。3 つが別レイヤで噛み合う。確率の数値を場当たりに動かしたのではなく、日次→週総量への state 置き場移動に伴って CEIL=base の制約を外しただけ (FLOOR=CEIL=base で従来固定に戻せる env 経路は維持)
+  - **検証 (実測)**: bash -n OK。本番 step7 inline python を env override で end-to-end 実行 — hot index (5 本を今触った = 活性度 1.0) + CEIL=0.92 → eff_p=**0.9200** (base 0.7 超を実証)、同 index で旧 CEIL=base → 0.7000 (旧挙動)、空 index (bootstrap) → 0.7000 (base 維持で潰れない)、欠落 index → 0.7000 (base へ正規化)。活性度 a=0/0.25/0.5/0.75/1.0 の変調マッピングで a≧0.75 から base 超になることを確認。bot.py は不変 (CEIL は script 内 env のみで bot socket / state に無関係)
 - 2026-06-19 proactive: step5 を日次上限 → 週ローリング上限に置換 (OWNER 確定、直前の可変ケイデンスと噛み合わせ)
   - **動機**: 直前タスクで step7 に活性度連動の確率変調を入れた (乗ってる日↑/静かな日↓) が、step5 の硬い日次上限 `PROACTIVE_DAILY_MAX=2` が天井になり乗ってる日の山を頭打ちにして波の振幅を潰していた。OWNER が方向を「週で総量管理」に確定 (2026-06-19)
   - **方式**: step5 を「過去 168h (7 日) ローリングウィンドウ内の発火回数 < `PROACTIVE_WEEKLY_MAX`」に置換。発火履歴は **script 側 state の `proactive_fire_epochs`** (発火 epoch のカンマ区切り列) で 1 本だけ持ち、判定時に 1 回読んで `now - 168h` 以降の epoch を数える。handoff 成功時に `now_epoch` を 1 つ足し 168h 超を prune してから書き戻す (単調肥大しない)
