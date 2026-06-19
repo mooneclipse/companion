@@ -394,5 +394,83 @@ class ShouldTicketTest(unittest.TestCase):
         self.assertIsNone(signal)
 
 
+class ShouldRemindTest(unittest.TestCase):
+    """should_remind (純関数): interval ゲート + 振り返り signal 有無 (§F でっち上げ禁止)。
+
+    should_ticket と対称。違い = freshest でなく oldest (last_touched 昇順の先頭) を
+    選ぶ (振り返りは「しばらく触っていない / 調べたきり」の thread が自然なため)。
+    researched state は除外しない (調べたきり放置の thread こそ振り返り対象)。
+    """
+
+    def _thread(self, topic, days_ago, state="active"):
+        return {
+            "topic": topic,
+            "source": "vault",
+            "last_touched": (_now() - timedelta(days=days_ago)).isoformat(),
+            "state": state,
+        }
+
+    def test_never_reminded_and_thread_is_due(self) -> None:
+        data = {"threads": [self._thread("topic-a", 3)]}
+        should, signal = interests.should_remind(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(signal, "topic-a")
+
+    def test_interval_not_elapsed_skips(self) -> None:
+        last = (_now() - timedelta(days=3)).isoformat()
+        data = {"threads": [self._thread("topic-a", 3)]}
+        should, signal = interests.should_remind(data, _now(), 7, last)
+        self.assertFalse(should)
+        self.assertIsNone(signal)
+
+    def test_interval_elapsed_due(self) -> None:
+        last = (_now() - timedelta(days=8)).isoformat()
+        data = {"threads": [self._thread("topic-a", 3)]}
+        should, signal = interests.should_remind(data, _now(), 7, last)
+        self.assertTrue(should)
+        self.assertEqual(signal, "topic-a")
+
+    def test_unparsable_last_remind_is_due(self) -> None:
+        data = {"threads": [self._thread("topic-a", 3)]}
+        should, _ = interests.should_remind(data, _now(), 7, "not-a-date")
+        self.assertTrue(should)
+
+    def test_picks_oldest_thread_for_lookback(self) -> None:
+        # 振り返りは investigate / ticket と逆向き = oldest (しばらく触っていない方) を拾う。
+        data = {"threads": [
+            self._thread("old", 5),
+            self._thread("fresh", 1),
+            self._thread("mid", 3),
+        ]}
+        should, signal = interests.should_remind(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(signal, "old")
+
+    def test_recent_conversation_topic_excluded(self) -> None:
+        data = {"threads": [self._thread("recent_conversation", 3)]}
+        should, signal = interests.should_remind(data, _now(), 7, None)
+        self.assertFalse(should)
+        self.assertIsNone(signal)
+
+    def test_researched_state_NOT_excluded(self) -> None:
+        # 調べたきり放置の thread こそ「そういえばあれどうなった?」の振り返り対象。
+        data = {"threads": [self._thread("done-topic", 4, state="researched")]}
+        should, signal = interests.should_remind(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(signal, "done-topic")
+
+    def test_empty_index_skips(self) -> None:
+        # §F の核: 実 signal が無ければ絶対に発火しない (でっち上げた過去を振り返らない)。
+        should, signal = interests.should_remind({"threads": []}, _now(), 7, None)
+        self.assertFalse(should)
+        self.assertIsNone(signal)
+
+    def test_negative_interval_skips(self) -> None:
+        data = {"threads": [self._thread("topic-a", 3)]}
+        should, signal = interests.should_remind(data, _now(), -1, None)
+        self.assertFalse(should)
+        self.assertIsNone(signal)
+
+
 if __name__ == "__main__":
     unittest.main()

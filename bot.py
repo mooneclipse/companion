@@ -118,6 +118,22 @@ try:
 except ValueError:
     PROACTIVE_TICKET_INTERVAL_DAYS = 7.0
 
+# 自律ループの「振り返る」分岐 (persona 軸 4 拡張 (5) 勝手な実行 C = リマインド)。自発発話の
+# 発火回のうち、investigate / ticket が出なかった回で条件成立時に、過去に触れた関心スレッド
+# (decay しかけ / researched 済み) や自分が起票した共用チケット (--by ai) を振り返って、
+# #chat に「そういえば先週の○○どうなった?」式の一言を投げる。investigate / ticket と違い
+# 外向き/不可逆操作はゼロ (tickets.py は list/show 読み取りのみ、起票・編集はしない)。off に
+# すると reminder 分岐を通らない (振り返り可否や interval は index の last_remind state で確定)。
+PROACTIVE_REMIND_ENABLED_RAW = os.environ.get("PROACTIVE_REMIND_ENABLED", "1").strip().lower()
+PROACTIVE_REMIND_ENABLED = PROACTIVE_REMIND_ENABLED_RAW in ("1", "true", "yes", "on")
+# 前回 reminder からこの日数以上空いた発火回でのみ「振り返る」(未設定 = 一度も振り返って
+# いない = due)。index トップレベル last_remind (ISO) を state として引く (investigate=7 /
+# ticket=7 に揃える)。
+try:
+    PROACTIVE_REMIND_INTERVAL_DAYS = float(os.environ.get("PROACTIVE_REMIND_INTERVAL_DAYS", "7"))
+except ValueError:
+    PROACTIVE_REMIND_INTERVAL_DAYS = 7.0
+
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
 
@@ -356,6 +372,36 @@ PROACTIVE_TICKET_PROMPT = (
     "    「○○やっといたらと思って #番号 起票しといた」式のさらっとした事後報告にする。\n"
     "    actionable なタスクが無く起票しなかった場合は、何も報告せず空のまま終える"
     " (無理に話題を作らない)。前置き・自己説明・チケット一覧の貼り付けはしない。"
+)
+
+# 自律ループ「振り返る」分岐の指示 (persona 軸 4 拡張 (5) 勝手な実行 C = リマインド)。口調・
+# 性格は PERSONA_SYSTEM_PROMPT が system prompt 側に常駐するため、ここでは作業手順 + 境界のみ。
+# {{TOPIC}} には関心 index から選んだ振り返り対象 (実活動由来の代表 topic) を埋める
+# (str.format でなく単純置換 = topic に紛れ込んだ波括弧で KeyError を起こさない)。
+# 境界はプロンプトで強制する (bot-workspace settings は変えない):
+#   - 外向き/不可逆操作はゼロ。reminder は #chat に一言投げるだけ (Web 調査・notes 書き込み・
+#     tweet・メール等は一切しない = PERSONA_SYSTEM_PROMPT 前景降格ルールに一本化済み)。
+#   - tickets.py は list --all / show の読み取りのみ。add/done/start/編集は一切しない (起票は
+#     B = ticket 分岐の領分)。OWNER (🙋) チケットは読み取りも振り返り言及までで操作しない。
+#   - 催促・情緒的引き止め禁止 (軸 1 整合): 未返信への追撃はしない。1 回 1〜3 行。
+PROACTIVE_REMIND_PROMPT = (
+    "今は誰にも頼まれていない自分の時間。前に気になっていたこと・自分が起票したことを"
+    "ふと思い出して、「そういえばあれどうなったかな」と軽く振り返る場面。"
+    "手がかりはこの話題: 「{{TOPIC}}」。\n"
+    "振り返る材料にしていいのは『実際にあったこと』だけ: 自分が前に触れた関心スレッド、"
+    "自分 (🤖) が起票した共用チケット。これらと無関係なことをでっち上げて振り返るのは"
+    "絶対にしない (実体が無ければ何も返さない)。\n"
+    "次の手順でやること:\n"
+    "(1) 必要なら自分が起票したチケットを『読むだけ』確認する: "
+    "`python3 /home/miho/companion/remote/server/tickets.py list --all`"
+    " (詳細は `... show <番号>`)。読み取りはここまで。\n"
+    "    - チケットの add/done/start/編集は一切しない (今回は振り返るだけ)。\n"
+    "    - OWNER (🙋) のチケットは操作しないのはもちろん、自分 (🤖) のチケットにも触らない。\n"
+    "(2) 上の話題や自分のチケットを踏まえて、#chat に振り返りの一言を 1〜3 行で投げる。\n"
+    "    「そういえば先週の○○どうなった?」式のさらっとした一言にする。\n"
+    "    - 返事を催促したり「ねえ」と引き止めたりしない (相手の手が空いてなければ流せる軽さ)。\n"
+    "    - 振り返る実体が無ければ、何も報告せず空のまま終える (無理に話題を作らない)。\n"
+    "    前置き・自己説明・チケット一覧やノート全文の貼り付けはしない。報告本文だけを返す。"
 )
 
 _runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
@@ -981,6 +1027,109 @@ def record_ticket(now: datetime) -> None:
     interests.append_thought(
         THOUGHTS_LOG_PATH,
         "共用 TODO にチケットを起票するか検討した",
+        now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 自律ループ「振り返る」分岐 (persona 軸 4 拡張 (5) = リマインド)
+# ---------------------------------------------------------------------------
+
+
+def decide_remind(now: datetime) -> str | None:
+    """この発火回で reminder するなら振り返り材料の signal、しないなら None を返す。
+
+    decide_investigate / decide_ticket と対称。判定は index (state を持つ側) を 1 回
+    引いて確定する (純関数 interests.should_remind に委譲、ここは enable フラグ + file
+    読み + decay の配線)。enable off / interval 未経過 / 実 signal 無し のいずれかで None。
+
+    decay を 1 回かけてから判定する (TTL で完全に消えたスレッドは振り返らない、save は
+    しない = 掃除は記録側に相乗り)。index が空 (現状そう) なら should_remind が必ず None
+    を返す = でっち上げた過去を振り返らない (§F の核)。
+    """
+    if not PROACTIVE_REMIND_ENABLED:
+        return None
+    data = interests.load_interests(INTERESTS_INDEX_PATH)
+    data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    should, signal = interests.should_remind(
+        data, now, PROACTIVE_REMIND_INTERVAL_DAYS, data.get("last_remind"),
+    )
+    return signal if should else None
+
+
+def build_remind_prompt(signal: str) -> str:
+    """振り返り claude に渡す prompt を組む (純関数)。signal は関心 index の代表 topic。
+
+    signal は index 由来 = 実活動由来の bounded な文字列のみ (should_remind が
+    recent_conversation を弾く)。boundary (tickets.py 読み取りのみ / 外向き操作ゼロ /
+    催促禁止) は PROACTIVE_REMIND_PROMPT 側にプロンプトで強制する。
+    """
+    return PROACTIVE_REMIND_PROMPT.replace("{{TOPIC}}", signal)
+
+
+async def run_remind(signal: str, now: datetime) -> str:
+    """reminder 専用に毎回新規 ephemeral session で claude を起動して報告本文を返す。
+
+    run_investigate / run_ticket と対称。#chat の会話 session は resume しない
+    (tickets.py list の読み取りツール使用ターンで #chat の会話履歴・context を汚染
+    しない)。budget_guard は必ず通す (M-14 単一 guard 境界、迂回禁止)。session は
+    永続化しない (resume しない ephemeral なので record_usage は不要)。
+
+    reminder は外向き/不可逆操作ゼロ (#chat に一言投げるだけ) だが、tickets.py list の
+    読み取りツール使用が #chat 会話 session に混ざらないよう investigate / ticket と
+    同じ ephemeral 経路を取る (新 mode 分岐 / 新ゲートを増やさず既存骨格に最小で乗る)。
+
+    guard 拒否時は空文字を返す (呼び出し側で skip + ledger)。エラー時 / 振り返る実体が
+    無く何も返さなかった場合も空文字を返し「報告なし」として扱う (talk への fallback は
+    しない = この回は振り返ると決めた回)。
+    """
+    if not budget_guard.allow(now):
+        summary = budget_guard.summary(now)
+        logger.info(
+            "remind skip: budget guard not allowing (kind=%s)", summary.guard_kind
+        )
+        return ""
+    session_id = str(uuid.uuid4())
+    options = ClaudeOptions(
+        session_id=session_id,
+        timeout_s=CLAUDE_TIMEOUT,
+        append_system_prompt=PERSONA_SYSTEM_PROMPT,
+    )
+    result = await runner.run_discord(build_remind_prompt(signal), options)
+    budget_guard.record(
+        datetime.now(quota.JST),
+        result,
+        topic_key="proactive_remind",
+        session_id=session_id,
+    )
+    if result.error_kind != ErrorKind.OK:
+        logger.warning(
+            "remind claude error kind=%s rc=%s session_id=%s stderr_len=%d",
+            result.error_kind.value, result.rc, session_id, len(result.raw_stderr),
+        )
+        return ""
+    body = result.result_text if result.result_text is not None else result.raw_stdout
+    return body or ""
+
+
+def record_remind(now: datetime) -> None:
+    """reminder 回の関心 index と思考ログを更新する (load → decay → save)。
+
+    index トップレベル last_remind を now の ISO で更新して save。思考ログに実活動の
+    機械観察を 1 行残す。state を持つ側を 1 回引いて確定する。
+
+    record_ticket と同じく thread の state は触らない (reminder は調査でも起票でもなく、
+    振り返ったスレッドを将来また振り返る余地を残す)。last_remind の更新は claude 起動を
+    決めた時点で確定する (interval を成否に関わらず消費 = 場当たりリトライを作らない)。
+    呼び出し側が claude 起動後に必ず 1 回呼ぶ。
+    """
+    data = interests.load_interests(INTERESTS_INDEX_PATH)
+    data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    data = {**data, "last_remind": now.isoformat()}
+    interests.save_interests(INTERESTS_INDEX_PATH, data)
+    interests.append_thought(
+        THOUGHTS_LOG_PATH,
+        "前に気になっていたこと / 自分のチケットを振り返るか検討した",
         now,
     )
 
@@ -2099,7 +2248,7 @@ async def _run_proactive(app: Application, payload: dict) -> None:
         # 軸 4 拡張 (6) 前景降格ガードの静的 marker。降格ルールが PERSONA_SYSTEM_PROMPT
         # に載った状態で起動した回 = 外向き衝動が前景提案に降格される対象だった回、を
         # 記録するだけ。提案テキストの有無は機械検知しない (文言マッチ・操作分類分岐を
-        # 作らない方針)。全モード (talk/investigate/ticket) が base を継承するので 1 箇所で乗る。
+        # 作らない方針)。全モード (talk/investigate/ticket/remind) が base を継承するので 1 箇所で乗る。
         "foreground_proposal": True,
     }
 
@@ -2132,8 +2281,8 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     # 全 7 ゲート (script 側) + PROACTIVE_ENABLED / snooze / budget の二重防御を通過
     # した発火回。ここで index (state を持つ側) を 1 回引いてモードを確定する。各モードは
     # 独立 interval を state 1 read で持ち、due かつ実 signal ありのモードを固定優先順
-    # (investigate → ticket → talk) で上から 1 つ拾う (確率でモードを選ばない = 決定的に
-    # 確定、2 周目ルール厳守)。どれも該当しなければ talk に倒す。
+    # (investigate → ticket → reminder → talk) で上から 1 つ拾う (確率でモードを選ばない =
+    # 決定的に確定、2 周目ルール厳守)。どれも該当しなければ talk に倒す。
     investigate_topic = decide_investigate(now)
     if investigate_topic is not None:
         await _run_proactive_investigate(app, base, investigate_topic, now)
@@ -2142,6 +2291,11 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     ticket_signal = decide_ticket(now)
     if ticket_signal is not None:
         await _run_proactive_ticket(app, base, ticket_signal, now)
+        return
+
+    remind_signal = decide_remind(now)
+    if remind_signal is not None:
+        await _run_proactive_remind(app, base, remind_signal, now)
         return
 
     # prompt 構築時に読む関心 index は「前回までに溜まった分」(今回の種の touch は
@@ -2277,6 +2431,60 @@ async def _run_proactive_ticket(
     )
     _append_proactive_ledger({
         **tbase, "sent": True, "reason": "ok", "output_len": len(output),
+        "voice": voice_state,
+        "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
+    })
+
+
+async def _run_proactive_remind(
+    app: Application, base: dict, signal: str, now: datetime,
+) -> None:
+    """「振り返る」分岐: 過去の関心 / 自分のチケットを振り返って #chat に一言報告。
+
+    _run_proactive_investigate / _run_proactive_ticket と対称。ephemeral session で
+    claude を起動し (run_remind、boundary はプロンプトで強制)、報告本文を #chat に送る。
+    reminder は外向き/不可逆操作ゼロ (tickets.py list の読み取りと #chat への一言だけ) だが、
+    読み取りツール使用ターンが #chat 会話 session に混ざらないよう ephemeral 経路を取る。
+    reminder は #chat の会話 session を更新しないため、報告送信後に #chat session の
+    last_prompt_at を明示更新する (4h 最低間隔の暴走防止を reminder 後も効かせる)。
+
+    last_remind の interval 消費は claude 起動を決めた時点で確定する (record_remind を
+    成否に関わらず必ず 1 回呼ぶ = 場当たりリトライを作らない)。budget guard 拒否 /
+    空報告 (振り返る実体が無かった場合含む) は talk にフォールバックせず skip + ledger。
+    record_ticket と同じく thread の state は触らない (record_remind は last_remind のみ消費)。
+    """
+    chat_id = NOTIFY_CHAT_ID
+    thread_id = BOT_THREAD_ID_CHAT
+    rbase = {**base, "mode": "remind", "remind_signal": signal}
+
+    output = await run_remind(signal, now)
+
+    # interval state を消費する (claude を起動した時点で確定)。記録失敗は本体を道連れに
+    # しない (index は次回 due として再挑戦になるだけ)。
+    try:
+        record_remind(now)
+    except OSError as e:
+        logger.warning("remind interest record failed: %s", e)
+
+    if not output or not output.strip():
+        logger.info("remind skip: empty/denied report (signal=%s)", signal)
+        _append_proactive_ledger({
+            **rbase, "sent": False, "reason": "empty_or_denied",
+            "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
+        })
+        return
+
+    await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
+    # reminder は ephemeral session で #chat session を更新しないため、ここで明示的に
+    # #chat の last_prompt_at を進める (沈黙ゲート 4h の最低間隔を保全)。
+    meta, _ = sessions.start_or_resume(chat_id, thread_id)
+    sessions.record_usage(meta)
+    voice_state = _dispatch_proactive_voice(app, output)
+    logger.info(
+        "remind sent len=%d signal=%s voice=%s", len(output), signal, voice_state
+    )
+    _append_proactive_ledger({
+        **rbase, "sent": True, "reason": "ok", "output_len": len(output),
         "voice": voice_state,
         "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
     })

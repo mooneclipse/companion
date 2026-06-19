@@ -212,6 +212,58 @@ def should_ticket(
     return (True, candidates[0]["topic"])
 
 
+def should_remind(
+    data: dict, now: datetime, interval_days: float, last_remind: str | None,
+) -> tuple[bool, str | None]:
+    """「今 reminder で振り返るか + 振り返り材料の signal」を index と now から決める (純関数)。
+
+    should_investigate / should_ticket と対称の判定。state を持つ側 (index) を 1 回
+    引いて確定する。file IO・claude 起動・save は呼び出し側の責務。ここは判定だけ
+    (条件分岐・リトライの積み増しをしない)。
+
+    reminder は外向き/不可逆操作を一切伴わない (過去を振り返って #chat に一言投げる
+    だけ)。signal 源 = 自分が過去に触れた実スレッド (decay しかけ = 古いが TTL 内、
+    researched 済み = 一度調べたきり放置)。「そういえば先週の○○どうなった?」式の
+    振り返りは、まさに調べ終えた / しばらく触っていない thread から自然に出るため、
+    ``researched`` を除外しない (should_ticket と同じく除外せず、investigate とは逆)。
+    呼び出し側の claude session は自分の ``--by ai`` チケットも振り返り材料として
+    読むが (read-only)、この純関数の signal 源は index の実スレッドに一本化する
+    (起票チケットは index に thread として残っているのが通常で、判定は index 1 read
+    で確定する設計を踏襲)。
+
+    振り返るのは次を全部満たすとき (どれか欠ければ ``(False, None)``):
+      1. interval 経過: ``last_remind`` (ISO) から ``interval_days`` 日以上経過。
+         None / パース不能 = 一度も振り返っていない = due (``_interval_elapsed`` 共用)。
+      2. 実 signal が 1 本以上: 過去に触れた実スレッド (topic が ``recent_conversation``
+         でない = 実トピック) が存在する。これが §F の核 = **でっち上げた過去を振り返ら
+         ない**。index が空 / recent_conversation だけなら signal なし → ``(False, None)``
+         (index が空の現状では絶対に発火しない)。
+
+    振り返り対象は「しばらく触っていない / 調べたきり」が自然なので、freshest ではなく
+    **oldest (last_touched 昇順の先頭)** な実スレッドを代表として返す (investigate /
+    ticket が freshest を選ぶのと逆向き = 振り返りの意味に沿う)。
+
+    decay は呼び出し側で先にかけて渡す前提 (TTL で完全に消えたスレッドは振り返らない。
+    まだ TTL 内で「decay しかけ」の古いスレッドが oldest として拾われる)。
+    enable フラグ (PROACTIVE_REMIND_ENABLED) は呼び出し側で別途引く。
+    """
+    if interval_days < 0:
+        return (False, None)
+    if not _interval_elapsed(last_remind, now, interval_days):
+        return (False, None)
+    candidates = [
+        t for t in data.get("threads", [])
+        if isinstance(t, dict)
+        and isinstance(t.get("topic"), str)
+        and t.get("topic")
+        and t.get("topic") != _INVESTIGATE_SKIP_TOPIC
+    ]
+    if not candidates:
+        return (False, None)
+    candidates.sort(key=lambda t: t.get("last_touched") or "")
+    return (True, candidates[0]["topic"])
+
+
 def _interval_elapsed(last_investigate: str | None, now: datetime, interval_days: float) -> bool:
     """``last_investigate`` から ``interval_days`` 日以上経過したか (パース不能 = 経過扱い)。"""
     if not isinstance(last_investigate, str) or not last_investigate:
