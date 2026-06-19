@@ -105,6 +105,19 @@ try:
 except ValueError:
     PROACTIVE_INVESTIGATE_INTERVAL_DAYS = 7.0
 
+# 自律ループの「起票する」分岐 (persona 軸 4 拡張 (4) 勝手な実行 B = 共用チケット自発起票)。
+# 自発発話の発火回のうち、investigate が出なかった回で条件成立時に、関心 signal を元に
+# 共用 TODO に 1 件だけ起票 (tickets.py add --by ai) → #chat に一言報告する。off にすると
+# ticket 分岐を通らない (起票可否や interval は index の last_ticket state で確定)。
+PROACTIVE_TICKET_ENABLED_RAW = os.environ.get("PROACTIVE_TICKET_ENABLED", "1").strip().lower()
+PROACTIVE_TICKET_ENABLED = PROACTIVE_TICKET_ENABLED_RAW in ("1", "true", "yes", "on")
+# 前回起票からこの日数以上空いた発火回でのみ「起票する」(未設定 = 一度も起票して
+# いない = due)。index トップレベル last_ticket (ISO) を state として引く。
+try:
+    PROACTIVE_TICKET_INTERVAL_DAYS = float(os.environ.get("PROACTIVE_TICKET_INTERVAL_DAYS", "7"))
+except ValueError:
+    PROACTIVE_TICKET_INTERVAL_DAYS = 7.0
+
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
 
@@ -302,6 +315,39 @@ PROACTIVE_INVESTIGATE_PROMPT = (
     "    「○○調べといた」式のさらっとした事後報告にする。前置き・自己説明・"
     "ノート全文の貼り付けはしない。報告本文だけを返す (ノートに何を書いたかの"
     "演技や『メモにこう書いた』式の語りもしない)。"
+)
+
+# 自律ループ「起票する」分岐の指示 (persona 軸 4 拡張 (4) 勝手な実行 B)。口調・性格は
+# PERSONA_SYSTEM_PROMPT が system prompt 側に常駐するため、ここでは作業手順 + 境界のみ。
+# {{SIGNAL}} には関心 index から選んだ実トピック (実活動由来の代表 topic) を埋める
+# (str.format でなく単純置換 = signal に紛れ込んだ波括弧で KeyError を起こさない)。
+# 境界はプロンプトで強制する (bot-workspace settings は変えない):
+#   - 起票元は実活動 signal のみ (思考ログ観察 / 関心 thread / 既存チケット)。でっち上げ厳禁。
+#   - 許す操作 = tickets.py の list --all / show 読み取りと add "<text>" --by ai 1 件のみ。
+#   - 禁止 = --by user / done / start / 編集 / OWNER (🙋) チケットへの一切の操作 / 2 件以上 /
+#     tickets.py 以外の不可逆・外向き操作。重複起票抑止 = 起票前に list --all を読む。
+PROACTIVE_TICKET_PROMPT = (
+    "今は誰にも頼まれていない自分の時間。最近の自分の活動を振り返って、"
+    "「これOWNERと自分の共用TODOに入れといた方がいいかも」と思うことがあれば、"
+    "共用チケットに自分から 1 件だけ起票する場面。手がかりはこの話題: 「{{SIGNAL}}」。\n"
+    "起票元にしていいのは『実際の活動』だけ: 自分の思考ログ (最近の観察)、"
+    "関心スレッド、既に立っている共用チケット。これらと無関係なタスクを"
+    "でっち上げて起票するのは絶対にしない (実体が無ければ起票せず、何も返さない)。\n"
+    "次の手順を順にやること:\n"
+    "(1) まず既存チケットを読む: `python3 /home/miho/companion/remote/server/tickets.py list --all`\n"
+    "    (必要なら `... show <番号>` で詳細も読める。読み取りはここまで)。\n"
+    "(2) 上の話題に関係する actionable なタスクが実在し、かつ同趣旨のチケットが"
+    "まだ無いと確認できたときだけ、1 件だけ起票する:\n"
+    "    `python3 /home/miho/companion/remote/server/tickets.py add \"<タスク本文>\" --by ai`\n"
+    "    - 起票は『1 回の発火につき 1 件まで』。2 件以上は絶対に起票しない。\n"
+    "    - `--by user` を付けない。OWNER (🙋) のチケットには done/start/編集を含め一切触らない。\n"
+    "    - 自分の過去チケットの done/start/編集もしない (今回は新規起票だけ)。\n"
+    "    - 同趣旨のチケットが既にあれば起票しない (共用 TODO を重複で汚さない)。\n"
+    "    - tickets.py 以外の不可逆・外向き操作 (ツイート/メール/vault push/notes 外書き込み) はしない。\n"
+    "(3) 起票したら、出力の `#番号` を読んで #chat 用に 1〜3 行で報告する。\n"
+    "    「○○やっといたらと思って #番号 起票しといた」式のさらっとした事後報告にする。\n"
+    "    actionable なタスクが無く起票しなかった場合は、何も報告せず空のまま終える"
+    " (無理に話題を作らない)。前置き・自己説明・チケット一覧の貼り付けはしない。"
 )
 
 _runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
@@ -829,6 +875,104 @@ def record_investigate(topic: str, now: datetime) -> None:
     interests.append_thought(
         THOUGHTS_LOG_PATH,
         f"{topic} について調べて notes に書いた",
+        now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 自律ループ「起票する」分岐 (persona 軸 4 拡張 (4) = 共用チケット自発起票)
+# ---------------------------------------------------------------------------
+
+
+def decide_ticket(now: datetime) -> str | None:
+    """この発火回で起票するなら起票材料の signal、しないなら None を返す。
+
+    decide_investigate と対称。判定は index (state を持つ側) を 1 回引いて確定する
+    (純関数 interests.should_ticket に委譲、ここは enable フラグ + file 読み + decay
+    の配線)。enable off / interval 未経過 / 実 signal 無し のいずれかで None。
+
+    decay を 1 回かけてから判定する (期限切れスレッドは signal にしない、save はしない
+    = 掃除は記録側に相乗り)。index が空 (現状そう) なら should_ticket が必ず None を返す
+    = でっち上げ起票をしない (§F の核)。
+    """
+    if not PROACTIVE_TICKET_ENABLED:
+        return None
+    data = interests.load_interests(INTERESTS_INDEX_PATH)
+    data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    should, signal = interests.should_ticket(
+        data, now, PROACTIVE_TICKET_INTERVAL_DAYS, data.get("last_ticket"),
+    )
+    return signal if should else None
+
+
+def build_ticket_prompt(signal: str) -> str:
+    """起票 claude に渡す prompt を組む (純関数)。signal は関心 index の代表 topic。
+
+    signal は index 由来 = 実活動由来の bounded な文字列のみ (should_ticket が
+    recent_conversation を弾く)。boundary (add --by ai 1 件のみ / list 読み取り /
+    重複 skip / OWNER 不可触) は PROACTIVE_TICKET_PROMPT 側にプロンプトで強制する。
+    """
+    return PROACTIVE_TICKET_PROMPT.replace("{{SIGNAL}}", signal)
+
+
+async def run_ticket(signal: str, now: datetime) -> str:
+    """ticket 専用に毎回新規 ephemeral session で claude を起動して報告本文を返す。
+
+    run_investigate と対称。#chat の会話 session は resume しない (起票のツール使用
+    ターンで #chat の会話履歴・context を汚染しない)。budget_guard は必ず通す (迂回禁止)。
+    session は永続化しない (resume しない ephemeral なので record_usage は不要)。
+
+    guard 拒否時は空文字を返す (呼び出し側で skip + ledger)。エラー時 / 起票しなかった
+    場合も空文字を返し「報告なし」として扱う (talk への fallback はしない = この回は
+    起票すると決めた回)。
+    """
+    if not budget_guard.allow(now):
+        summary = budget_guard.summary(now)
+        logger.info(
+            "ticket skip: budget guard not allowing (kind=%s)", summary.guard_kind
+        )
+        return ""
+    session_id = str(uuid.uuid4())
+    options = ClaudeOptions(
+        session_id=session_id,
+        timeout_s=CLAUDE_TIMEOUT,
+        append_system_prompt=PERSONA_SYSTEM_PROMPT,
+    )
+    result = await runner.run_discord(build_ticket_prompt(signal), options)
+    budget_guard.record(
+        datetime.now(quota.JST),
+        result,
+        topic_key="proactive_ticket",
+        session_id=session_id,
+    )
+    if result.error_kind != ErrorKind.OK:
+        logger.warning(
+            "ticket claude error kind=%s rc=%s session_id=%s stderr_len=%d",
+            result.error_kind.value, result.rc, session_id, len(result.raw_stderr),
+        )
+        return ""
+    body = result.result_text if result.result_text is not None else result.raw_stdout
+    return body or ""
+
+
+def record_ticket(now: datetime) -> None:
+    """ticket 回の関心 index と思考ログを更新する (load → decay → save)。
+
+    index トップレベル last_ticket を now の ISO で更新して save。思考ログに実活動の
+    機械観察を 1 行残す。state を持つ側を 1 回引いて確定する。
+
+    investigate と違い thread の state は "researched" にしない (起票は調査でなく、
+    同じ thread から将来別 ticket が出る余地を残す。重複は list での内容チェックで抑える)。
+    last_ticket の更新は claude 起動を決めた時点で確定する (interval を成否に関わらず
+    消費 = 場当たりリトライを作らない)。呼び出し側が claude 起動後に必ず 1 回呼ぶ。
+    """
+    data = interests.load_interests(INTERESTS_INDEX_PATH)
+    data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    data = {**data, "last_ticket": now.isoformat()}
+    interests.save_interests(INTERESTS_INDEX_PATH, data)
+    interests.append_thought(
+        THOUGHTS_LOG_PATH,
+        "共用 TODO にチケットを起票するか検討した",
         now,
     )
 
@@ -1973,12 +2117,18 @@ async def _run_proactive(app: Application, payload: dict) -> None:
         return
 
     # 全 7 ゲート (script 側) + PROACTIVE_ENABLED / snooze / budget の二重防御を通過
-    # した発火回。ここで index (state を持つ側) を 1 回引いて「動く (investigate)」か
-    # 「喋る (talk)」かを確定する (場当たりな確率分岐は作らない)。動く条件を満たせば
-    # 調査ブランチへ、欠ければ従来の喋るパスへフォールスルー。
+    # した発火回。ここで index (state を持つ側) を 1 回引いてモードを確定する。各モードは
+    # 独立 interval を state 1 read で持ち、due かつ実 signal ありのモードを固定優先順
+    # (investigate → ticket → talk) で上から 1 つ拾う (確率でモードを選ばない = 決定的に
+    # 確定、2 周目ルール厳守)。どれも該当しなければ talk に倒す。
     investigate_topic = decide_investigate(now)
     if investigate_topic is not None:
         await _run_proactive_investigate(app, base, investigate_topic, now)
+        return
+
+    ticket_signal = decide_ticket(now)
+    if ticket_signal is not None:
+        await _run_proactive_ticket(app, base, ticket_signal, now)
         return
 
     # prompt 構築時に読む関心 index は「前回までに溜まった分」(今回の種の touch は
@@ -2062,6 +2212,58 @@ async def _run_proactive_investigate(
     )
     _append_proactive_ledger({
         **ibase, "sent": True, "reason": "ok", "output_len": len(output),
+        "voice": voice_state,
+        "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
+    })
+
+
+async def _run_proactive_ticket(
+    app: Application, base: dict, signal: str, now: datetime,
+) -> None:
+    """「起票する」分岐: 関心 signal を元に共用 TODO に 1 件起票 → #chat に一言報告。
+
+    _run_proactive_investigate と対称。ephemeral session で claude を起動し (run_ticket、
+    boundary はプロンプトで強制)、報告本文を #chat に送る。ticket は #chat の会話 session
+    を更新しないため、報告送信後に #chat session の last_prompt_at を明示更新する
+    (4h 最低間隔の暴走防止を ticket 後も効かせる)。
+
+    last_ticket の interval 消費は claude 起動を決めた時点で確定する (record_ticket を
+    成否に関わらず必ず 1 回呼ぶ = 場当たりリトライを作らない)。budget guard 拒否 /
+    空報告 (起票しなかった場合含む) は talk にフォールバックせず skip + ledger。
+    investigate と違い thread の state は触らない (record_ticket は last_ticket のみ消費)。
+    """
+    chat_id = NOTIFY_CHAT_ID
+    thread_id = BOT_THREAD_ID_CHAT
+    tbase = {**base, "mode": "ticket", "ticket_signal": signal}
+
+    output = await run_ticket(signal, now)
+
+    # interval state を消費する (claude を起動した時点で確定)。記録失敗は本体を道連れに
+    # しない (index は次回 due として再挑戦になるだけ)。
+    try:
+        record_ticket(now)
+    except OSError as e:
+        logger.warning("ticket interest record failed: %s", e)
+
+    if not output or not output.strip():
+        logger.info("ticket skip: empty/denied report (signal=%s)", signal)
+        _append_proactive_ledger({
+            **tbase, "sent": False, "reason": "empty_or_denied",
+            "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
+        })
+        return
+
+    await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
+    # ticket は ephemeral session で #chat session を更新しないため、ここで明示的に
+    # #chat の last_prompt_at を進める (沈黙ゲート 4h の最低間隔を保全)。
+    meta, _ = sessions.start_or_resume(chat_id, thread_id)
+    sessions.record_usage(meta)
+    voice_state = _dispatch_proactive_voice(app, output)
+    logger.info(
+        "ticket sent len=%d signal=%s voice=%s", len(output), signal, voice_state
+    )
+    _append_proactive_ledger({
+        **tbase, "sent": True, "reason": "ok", "output_len": len(output),
         "voice": voice_state,
         "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
     })
