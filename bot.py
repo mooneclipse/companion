@@ -2043,7 +2043,12 @@ async def _run_proactive_investigate(
 
     if not output or not output.strip():
         logger.info("investigate skip: empty/denied report (topic=%s)", topic)
-        _append_proactive_ledger({**ibase, "sent": False, "reason": "empty_or_denied"})
+        # reason は "empty_or_denied" でまとめるが、guard_kind を併記して budget 拒否
+        # (guard が allowing でない) と claude の空報告を ledger 上で切り分け可能にする。
+        _append_proactive_ledger({
+            **ibase, "sent": False, "reason": "empty_or_denied",
+            "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
+        })
         return
 
     await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
