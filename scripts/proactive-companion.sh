@@ -21,7 +21,12 @@
 #      ※発火が確定した回の種の中身は、週 1 (PROACTIVE_DORMANT_INTERVAL_DAYS) で
 #        「死蔵知識との再会」(古い vault ノートの掘り起こし) に切り替わる。判定順
 #        1〜7 自体は変えない (persona 軸 4 実装 (2)、チケット #20)
-#   7. 確率パス (PROACTIVE_PROBABILITY) を通ったか
+#   7. 確率パス (PROACTIVE_PROBABILITY を関心 index の活性度で変調した実効確率) を通ったか
+#      ※実効確率は step7 内で「関心 index の活性度」に連動して上下する (固定→波)。
+#        活性度が高い日 (新鮮なスレッドが多い) = 乗ってる日 = 発火しやすく、
+#        decay で静かになると発火しにくくなる。波の生成は決定的 (index を 1 回引いて
+#        導く純関数、per-tick の追加乱数で静寂を作らない)。index が空 / 全 decay 済みなら
+#        base 確率 (従来挙動) に戻す (bootstrap-safe、persona 軸 4 拡張 (2)、TODO (2))。
 
 set -euo pipefail
 
@@ -41,6 +46,19 @@ PROACTIVE_PROBABILITY="${PROACTIVE_PROBABILITY:-0.7}" # 0.0〜1.0、種ありか
 PROACTIVE_DAILY_MAX="${PROACTIVE_DAILY_MAX:-2}"       # 同 JST 日の発火回数上限
 PROACTIVE_DORMANT_INTERVAL_DAYS="${PROACTIVE_DORMANT_INTERVAL_DAYS:-7}"  # 死蔵知識種の最短間隔 (日)
 PROACTIVE_DORMANT_MIN_AGE_DAYS="${PROACTIVE_DORMANT_MIN_AGE_DAYS:-30}"   # この日数より古い mtime のノートを死蔵候補とする
+
+# --- 不在の可変ケイデンス (関心 index 活性度 → step7 実効確率の変調、TODO (2)) -------
+# PROACTIVE_PROBABILITY を base とし、活性度 a∈[0,1] で
+#   P_eff = P_MOD_FLOOR + (P_MOD_CEIL - P_MOD_FLOOR) * a   (FLOOR<=P_eff<=CEIL)
+# に変調する。CEIL は base に張る (乗ってる日でも base 以上には出さない =「ほぼ毎日」上限を
+# 越えない)。FLOOR は静かな日の最低発火率。FRESHNESS_DAYS = 活性度を測る新鮮さ窓 (bot.py の
+# 滲ませ decay TTL=14 とは別概念、ケイデンス用)。MOD_FLOOR を base と等しくすれば変調幅 0 =
+# 従来の固定ケイデンスに戻る (env で戻せる経路)。
+INTERESTS_INDEX="${HOME}/companion/bot/sessions/companion_interests.json"
+BOT_DIR="${HOME}/companion/bot"
+PROACTIVE_CADENCE_FRESHNESS_DAYS="${PROACTIVE_CADENCE_FRESHNESS_DAYS:-5}"   # 活性度を測る新鮮さ窓 (日)
+PROACTIVE_PROBABILITY_FLOOR="${PROACTIVE_PROBABILITY_FLOOR:-0.25}"          # 静かな日 (活性度0) の実効確率の下限
+PROACTIVE_PROBABILITY_CEIL="${PROACTIVE_PROBABILITY_CEIL:-$PROACTIVE_PROBABILITY}"  # 乗ってる日 (活性度1) の上限 (既定=base)
 
 mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$OUR_LOG")"
 
@@ -200,13 +218,62 @@ if [[ -z "$dormant_hint" && -d "$VAULT_NOTES_DIR" ]]; then
     [[ -n "$vault_hint" ]] && seed_kind="recent_conversation+vault"
 fi
 
-# --- 7. 確率パス -----------------------------------------------------------------
-# awk で [0,1) 乱数を引き、PROBABILITY 未満なら発火。閾値は env 調整可。
+# --- 7. 確率パス (関心 index 活性度で変調した実効確率) ---------------------------
+# 関心 index を 1 回だけ読み、bot/interests.py の canonical な decay + activity_score で
+# 活性度 a∈[0,1] を算出する (decay の意味を script 側で別解釈にしない = DRY)。a から
+# 実効確率 eff_probability を変調する。波の生成は決定的: a は read-once の index から
+# 純粋に導かれ、ここで乱数を増やさない (最終ロール 1 個だけが乱数源)。
+#
+# bootstrap-safe (最重要): index 未生成 / 空 / 全 decay 済み (a=0) でも、実効確率を 0 に
+# 潰さず FLOOR 以上を保つ。さらに import 失敗・算出エラー時は base 確率 (従来挙動) に
+# フォールバックする = 「state が引けない」を 1 状態 (=従来の固定ケイデンス) に正規化する
+# (interests.py の load_interests と同じ思想、回復用の条件分岐ではない)。
+eff_probability=$(python3 -c '
+import sys
+from datetime import datetime
+from pathlib import Path
+
+index_path, bot_dir, freshness, floor, ceil, base = sys.argv[1:7]
+freshness = float(freshness); floor = float(floor)
+ceil = float(ceil); base = float(base)
+
+sys.path.insert(0, bot_dir)
+try:
+    import interests
+    data = interests.load_interests(Path(index_path))
+    now = datetime.now()
+    threads = data.get("threads") or []
+    if not threads:
+        # index 未生成 / 空 = まだ bootstrap 前。base (従来固定ケイデンス) を維持して
+        # 発火させ、index を seeding させる。ここを潰すと永久に bootstrap できない
+        # (「state が無い」= 従来挙動への正規化、interests.load_interests と同じ思想)。
+        # threads が 1 本でもあれば全 decay でも「静かな日 (FLOOR)」= 別状態。
+        eff = base
+    else:
+        data = interests.decay(data, now, ttl_days=freshness)
+        a = interests.activity_score(data, now, freshness_days=freshness)
+        eff = floor + (ceil - floor) * a
+        # 念のため [0,1] にクランプ (env の FLOOR/CEIL 設定ミス耐性)。
+        eff = max(0.0, min(1.0, eff))
+except Exception:
+    # import 失敗 / 算出エラー = state が引けない → base (従来固定ケイデンス) へ正規化。
+    eff = base
+print("%.4f" % eff)
+' "$INTERESTS_INDEX" "$BOT_DIR" "$PROACTIVE_CADENCE_FRESHNESS_DAYS" \
+    "$PROACTIVE_PROBABILITY_FLOOR" "$PROACTIVE_PROBABILITY_CEIL" "$PROACTIVE_PROBABILITY")
+
+# python3 が何も返さない (異常終了) 場合も base へ正規化 (bootstrap-safe の二重化ではなく、
+# 「実効確率が引けない」の 1 状態を base に倒す既定動作)。
+if [[ -z "$eff_probability" ]]; then
+    eff_probability="$PROACTIVE_PROBABILITY"
+fi
+
+# awk で [0,1) 乱数を引き、実効確率未満なら発火。
 roll=$(awk 'BEGIN { srand(); print rand() }')
-if awk -v r="$roll" -v p="$PROACTIVE_PROBABILITY" 'BEGIN { exit !(r < p) }'; then
+if awk -v r="$roll" -v p="$eff_probability" 'BEGIN { exit !(r < p) }'; then
     : # 発火
 else
-    log "skip: probability gate (roll=$roll >= p=$PROACTIVE_PROBABILITY)"
+    log "skip: probability gate (roll=$roll >= eff_p=$eff_probability, base=$PROACTIVE_PROBABILITY)"
     exit 0
 fi
 
@@ -257,7 +324,7 @@ if printf '%s' "$message" | nc -U -N "$SOCK"; then
         [[ -n "$dormant_last" ]] && printf 'dormant_last=%s\n' "$dormant_last" >> "$tmp"
     fi
     mv "$tmp" "$STATE_FILE"
-    log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', dormant_hint='${dormant_hint}', silence_hours=$silence_hours, roll=$roll)"
+    log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', dormant_hint='${dormant_hint}', silence_hours=$silence_hours, roll=$roll, eff_p=$eff_probability)"
 else
     log "send failed"
     exit 1

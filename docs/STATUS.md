@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-17
+最終更新: 2026-06-19 (proactive 不在の可変ケイデンス = step7 の固定確率を関心 index 活性度で変調、bootstrap-safe、bot/interests.py の activity_score を import。詳細は Done 同日)
 
 ## 設計メモ
 
@@ -33,6 +33,13 @@
 
 ## Done
 
+- 2026-06-19 proactive: 不在の可変ケイデンス = step7 の固定確率を関心 index 活性度で変調 (persona 軸 4 拡張 (2)、bot repo と対)
+  - **動機**: 自発発話が「ほぼ毎日 1〜2 回」の固定ケイデンスで不在感が薄い。数日静か / 乗ってる日の波を作る (persona STATUS 軸 4 拡張、方針 A = 活性度連動・確定済)
+  - **方式**: `PROACTIVE_PROBABILITY` を base とし、`bot/sessions/companion_interests.json` の活性度 a∈[0,1] で `P_eff = FLOOR + (CEIL - FLOOR) * a` に変調 (CEIL=base に張る = 上限を越えない)。a は `bot/interests.py` を inline python3 で import し canonical な decay + 新 `activity_score` で算出 (decay を script 側で別解釈にしない、DRY)。interests.py は stdlib のみで system python3 で import 可。判定順 1〜6 不変、変えたのは step7 の確率値の出し方のみ
+  - **新 env**: `PROACTIVE_CADENCE_FRESHNESS_DAYS=5` (活性度の新鮮さ窓、bot.py 滲ませ TTL=14 と別概念) / `PROACTIVE_PROBABILITY_FLOOR=0.25` / `PROACTIVE_PROBABILITY_CEIL=$PROACTIVE_PROBABILITY`。FLOOR=base で変調幅 0 = 従来固定に回帰 (戻せる経路)
+  - **bootstrap-safe**: index 未生成 / 空 (threads 0 本) → base 維持 (潰すと永久に bootstrap 不能 = 「state 無し」の従来挙動への正規化)。threads ありで全 decay → FLOOR (静かな日)。import / 算出失敗 → base へ正規化
+  - **2 周目ルール整合**: 波の生成は read-once index の決定的純関数 (per-tick 乱数は step7 最終ロール 1 個のみ、静寂をランダム生成しない)。確率の数値を場当たりにいじらず算出元を state に逃がした。state file 書き戻しに新キーは足さない (実効確率は毎 tick 算出する派生値)
+  - **検証**: bash -n OK、本番 python3 で import 疎通確認 (nonexistent/hot/corrupt index → 0.7/0.7/base)、変調マッピング再現確認。bot 側 activity_score は bot 212 tests で担保
 - 2026-06-17 claude-status: Claude サービス稼働状況の変化を #maintenance へ通知 (新規)
   - **動機**: status.claude.com (旧 status.anthropic.com、302 で改称) の障害 / 復旧を手動で見に行かず受動受信したい (OWNER 要望)
   - **方式**: 別 bot を立てず既存 bot の socket 通知インフラに相乗り。`scripts/notify-claude-status.py` (標準ライブラリのみ) を systemd user timer (`companion-claude-status.{service,timer}`、起動 2 分後 + 5 分間隔) で回し、Atlassian Statuspage API `/api/v2/summary.json` を `curl -4` で取得 (この網は IPv6 100% loss のため IPv4 強制)。socket 送信は notify.sh と同等 (AF_UNIX、送信成功後に state 確定)
