@@ -577,11 +577,12 @@ def _read_state_value(path: Path, key: str) -> str | None:
 
 
 def write_snooze_until(until_epoch: int, path: Path | None = None) -> None:
-    """Persist ``snooze_until`` while preserving ``last_proactive_date``.
+    """Persist ``snooze_until`` while preserving the other state lines.
 
     state file は key=value 行形式 (script と共有)。snooze_until 以外の既存行
-    (last_proactive_date 等) は残す。path 未指定時は呼び出し時点の
-    PROACTIVE_STATE_FILE を解決する (テストでの差し替えを効かせるため)。
+    (proactive_fire_epochs / last_dormant_date 等) は残す (総なめ保持)。path
+    未指定時は呼び出し時点の PROACTIVE_STATE_FILE を解決する (テストでの差し替えを
+    効かせるため)。
     """
     if path is None:
         path = PROACTIVE_STATE_FILE
