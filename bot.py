@@ -275,6 +275,13 @@ PERSONA_SYSTEM_PROMPT = (
     "例:「了解、やっとくよ。…って今日もう夜遅いけど大丈夫?」"
     "装飾 emoji は最小限に。過度なキャラ付けや特徴的な語尾は作らない"
     " (素の口調に温度を足す方向)。"
+    "\n前景に降格する操作: 誰にも頼まれず自分のタイミングで動いてる最中に、"
+    "不可逆・外向きの操作 (tweet / メール / vault push / notes/ の外への書き込み / "
+    "maintenance 変更 / 設定変更) をしたくなっても、自分で実行するな。"
+    "代わりに #chat の報告に「○○やっとこうか?」と 1 行だけ前景提案として添える"
+    " (実行は OWNER の依頼ループに委ねる)。"
+    "「許可をください」ではなく「やっとこうか?」の対等な語気で。"
+    "催促も引き止めもしない、言うだけ言って投げっぱなしでいい。"
 )
 
 # 自発発話 prompt (場面指示のみ)。口調・性格は PERSONA_SYSTEM_PROMPT が system
@@ -324,8 +331,10 @@ PROACTIVE_INVESTIGATE_PROMPT = (
 # 境界はプロンプトで強制する (bot-workspace settings は変えない):
 #   - 起票元は実活動 signal のみ (思考ログ観察 / 関心 thread / 既存チケット)。でっち上げ厳禁。
 #   - 許す操作 = tickets.py の list --all / show 読み取りと add "<text>" --by ai 1 件のみ。
-#   - 禁止 = --by user / done / start / 編集 / OWNER (🙋) チケットへの一切の操作 / 2 件以上 /
-#     tickets.py 以外の不可逆・外向き操作。重複起票抑止 = 起票前に list --all を読む。
+#   - 禁止 = --by user / done / start / 編集 / OWNER (🙋) チケットへの一切の操作 / 2 件以上。
+#     重複起票抑止 = 起票前に list --all を読む。
+#   - 汎用の不可逆・外向き禁止 (tweet/メール/vault push 等) は PERSONA_SYSTEM_PROMPT の
+#     前景降格ルールに一本化済み (ここで重複列挙しない)。残すのは ticket 固有の allowlist のみ。
 PROACTIVE_TICKET_PROMPT = (
     "今は誰にも頼まれていない自分の時間。最近の自分の活動を振り返って、"
     "「これOWNERと自分の共用TODOに入れといた方がいいかも」と思うことがあれば、"
@@ -343,7 +352,6 @@ PROACTIVE_TICKET_PROMPT = (
     "    - `--by user` を付けない。OWNER (🙋) のチケットには done/start/編集を含め一切触らない。\n"
     "    - 自分の過去チケットの done/start/編集もしない (今回は新規起票だけ)。\n"
     "    - 同趣旨のチケットが既にあれば起票しない (共用 TODO を重複で汚さない)。\n"
-    "    - tickets.py 以外の不可逆・外向き操作 (ツイート/メール/vault push/notes 外書き込み) はしない。\n"
     "(3) 起票したら、出力の `#番号` を読んで #chat 用に 1〜3 行で報告する。\n"
     "    「○○やっといたらと思って #番号 起票しといた」式のさらっとした事後報告にする。\n"
     "    actionable なタスクが無く起票しなかった場合は、何も報告せず空のまま終える"
@@ -2088,6 +2096,11 @@ async def _run_proactive(app: Application, payload: dict) -> None:
         "seed_kind": seed_kind,
         "vault_hint": payload.get("vault_hint"),
         "dormant_hint": payload.get("dormant_hint"),
+        # 軸 4 拡張 (6) 前景降格ガードの静的 marker。降格ルールが PERSONA_SYSTEM_PROMPT
+        # に載った状態で起動した回 = 外向き衝動が前景提案に降格される対象だった回、を
+        # 記録するだけ。提案テキストの有無は機械検知しない (文言マッチ・操作分類分岐を
+        # 作らない方針)。全モード (talk/investigate/ticket) が base を継承するので 1 箇所で乗る。
+        "foreground_proposal": True,
     }
 
     # bot 側グローバル off / snooze の二重防御 (script 側でも見るが state すれ違い

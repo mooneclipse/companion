@@ -757,6 +757,15 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
         rec = _json.loads(thoughts[0])
         self.assertIn("2026-04-01_old-topic", rec["observation"])
 
+        # 軸 4 拡張 (6): 前景降格 marker が talk 経路の ledger にも乗る (base 継承)。
+        ledger = [
+            _json.loads(l)
+            for l in self.bot.PROACTIVE_LEDGER_PATH.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        self.assertTrue(ledger[-1]["sent"])
+        self.assertTrue(ledger[-1]["foreground_proposal"])
+
     async def test_prompt_reads_prior_index_then_records_new(self) -> None:
         from datetime import datetime, timedelta
         from unittest import mock
@@ -921,6 +930,8 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rec["mode"], "investigate")
         self.assertEqual(rec["investigate_topic"], "ディスク管理")
         self.assertTrue(rec["sent"])
+        # 軸 4 拡張 (6): 前景降格 marker が investigate 経路の ledger に乗る。
+        self.assertTrue(rec["foreground_proposal"])
         # #chat session の last_prompt_at が更新された (4h 最低間隔保全)。
         meta = self.bot.sessions.load(self.bot.NOTIFY_CHAT_ID, self.bot.BOT_THREAD_ID_CHAT)
         self.assertIsNotNone(meta)
@@ -1190,6 +1201,8 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rec["mode"], "ticket")
         self.assertEqual(rec["ticket_signal"], "ディスク管理")
         self.assertTrue(rec["sent"])
+        # 軸 4 拡張 (6): 前景降格 marker が ticket 経路の ledger に乗る。
+        self.assertTrue(rec["foreground_proposal"])
         # #chat session の last_prompt_at が更新された (4h 最低間隔保全)。
         meta = self.bot.sessions.load(self.bot.NOTIFY_CHAT_ID, self.bot.BOT_THREAD_ID_CHAT)
         self.assertIsNotNone(meta)
@@ -1543,6 +1556,54 @@ class RunClaudePersonaWiringTest(unittest.IsolatedAsyncioTestCase):
             captured["options"].append_system_prompt,
             self.bot.PERSONA_SYSTEM_PROMPT,
         )
+
+
+class ForegroundDemotionRuleTest(unittest.TestCase):
+    """軸 4 拡張 (6): 前景降格ルールが PERSONA_SYSTEM_PROMPT に載ること。
+
+    不可逆/外向きの自動実行を解禁せず「やっとこうか?」と前景提案に降格させる方針を
+    全モード共通層 (PERSONA_SYSTEM_PROMPT、talk/investigate/ticket が共有) で 1 度だけ
+    定義する。降格ルールはこの定数に乗るので、個別タスクプロンプト側では汎用禁止を
+    重複列挙しない (二重定義整理)。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_demotion_keywords_present(self) -> None:
+        sp = self.bot.PERSONA_SYSTEM_PROMPT
+        # 対等な語気の前景提案 + 自動実行禁止のキー文言。
+        self.assertIn("やっとこうか", sp)
+        self.assertIn("自分で実行するな", sp)
+        # 「許可をください」ではなく対等に、を明示。
+        self.assertIn("許可をください", sp)
+        # 投げっぱなし (催促・引き止めしない)。
+        self.assertIn("催促も引き止めもしない", sp)
+
+    def test_irreversible_targets_enumerated(self) -> None:
+        sp = self.bot.PERSONA_SYSTEM_PROMPT
+        # 降格対象の不可逆/外向き操作が PERSONA 側に列挙される (一本化先)。
+        for kw in ("tweet", "メール", "vault push", "maintenance", "設定変更"):
+            self.assertIn(kw, sp)
+
+    def test_generic_prohibition_not_duplicated_in_ticket_prompt(self) -> None:
+        # 汎用「tweet/メール/vault push をやるな」列挙は PERSONA へ一本化済。
+        # ticket プロンプトには重複させない (タスク固有 allowlist は残す)。
+        prompt = self.bot.build_ticket_prompt("topic")
+        self.assertNotIn("ツイート/メール/vault push", prompt)
+        # タスク固有 allowlist は維持されている。
+        self.assertIn("--by ai", prompt)
+        self.assertIn("`--by user` を付けない", prompt)
+        self.assertIn("2 件以上は絶対に起票しない", prompt)
+
+    def test_investigate_prompt_keeps_notes_allowlist(self) -> None:
+        # investigate のタスク固有 allowlist (notes/ のみ・新規作成のみ・手書き不可触)
+        # は降格ルール一本化の影響を受けず残る。
+        prompt = self.bot.build_investigate_prompt("topic")
+        self.assertIn("新規作成", prompt)
+        self.assertIn("上書き", prompt)
+        self.assertIn("notes/ 以外", prompt)
 
 
 class SyndicationTokenTest(unittest.TestCase):
