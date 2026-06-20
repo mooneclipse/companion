@@ -1835,6 +1835,37 @@ let monsterPass = false;
     let f3 = 0; while (G.girls[0].state === "following" && f3 < 6) { act(0, 1); f3++; } // 自機の行動でモンスターが反応。
     o.girlAtkWorks = girlState0 === "following" && G.girls[0].state !== "following"; // following から外れた。
     o.girlLostNotRescued = G.rescued === rescuedBefore; // ロスト = 救出数は増えない(クリア条件と整合)。
+    // ロスト直後は hidden で原位置(origCol,origRow)へ戻っている(掘り直し/再侵入の起点)。
+    o.lostState = G.girls[0].state;
+    o.lostAtOrig = G.girls[0].col === G.girls[0].origCol && G.girls[0].row === G.girls[0].origRow;
+
+    // --- S5b ロスト→再侵入→following 復帰→地表で rescued 到達(再発見が原理的に達成可能) ---
+    // ロスト地点(origCol,origRow)は既に掘り抜き済み(NONE)=TILE.GIRL 掘削分岐を二度と通らない。
+    // 旧実装はここで詰んだ(hidden 固着→再発見不能→rescued が GIRL_COUNT に届かずクリア不能)。
+    // 修正後は自機がそのマスへ侵入した瞬間に再発見(state 側を引く tryRediscoverGirlAt)。
+    // テストは緑化が目的化しないよう「実挙動で following 復帰 → 連れ帰り → rescued 増加」まで踏む。
+    {
+      const g = G.girls[0];
+      const oc = g.origCol, orow = g.origRow; // この seed では (11,6)。
+      // 原位置まで一直線の縦坑を掘り抜き済みにする(自機が侵入できる帰り道)。
+      for (let r = 1; r <= orow; r++) G.dug.add(oc + "," + r);
+      const rescuedPre = G.rescued;
+      // 自機を女の子の 1 つ上へ置き、その後 origRow へ「侵入」して再発見(moveTo 経由)。
+      G.monsters = []; G.spawned = new Set(); // 再侵入の検証中は新規スポーンを排除(再発見の純検証)。
+      G.px = oc; G.py = orow - 1; G.stamina = 100; G.hp = 30;
+      moveTo(oc, orow, true); // origRow マスへ侵入 → tryRediscoverGirlAt が発火するはず。
+      o.rediscovered = g.state === "following"; // hidden → following へ復帰した。
+      // following 復帰後、縦坑を 1 マスずつ登って地表へ連れ帰り rescued を increment できる。
+      let f4 = 0;
+      for (let pr = orow - 1; pr >= 0 && f4 < 60; pr--) {
+        G.px = oc; G.py = pr;
+        advanceGirl();
+        f4++;
+        if (pr === 0) { surfaceReturn(); break; }
+      }
+      o.rescuedAfterRediscover = g.state === "rescued";
+      o.rescueCountIncreased = G.rescued === rescuedPre + 1; // 再発見→救出で救出数が実際に増える。
+    }
 
     // --- S6 非介入: monster レイヤーは既存決定論を変えない ---
     startDive();
@@ -1846,7 +1877,8 @@ let monsterPass = false;
   out("S1 空間スポーン", { count: r.spaceSpawnCount, 決定論: r.spaceSpawnDeterministic, NONE上: r.spaceOnNone });
   out("S2 埋没掘りスポーン", { 出現: r.burySpawned, 種: r.buryKey, 決定論: r.buryDeterministic });
   out("S3/S4 戦闘", { foeHP減: r.foeHpDropped, 二段ゲージ減: r.gaugeDrained, 撃破: r.killed, EXP: r.expGained, kills: r.killsCounted, drop決定論: r.dropDeterministic });
-  out("S5 GIRLATK", { 女の子ロスト: r.girlAtkWorks, 救出数不変: r.girlLostNotRescued });
+  out("S5 GIRLATK", { 女の子ロスト: r.girlAtkWorks, 救出数不変: r.girlLostNotRescued, ロスト時hidden: r.lostState === "hidden", 原位置復帰: r.lostAtOrig });
+  out("S5b ロスト→再侵入→再発見→救出到達", { 再発見_following復帰: r.rediscovered, 連れ帰り救出: r.rescuedAfterRediscover, 救出数増加: r.rescueCountIncreased });
   out("S6 非介入 girlPositions", r.girlPositions === EXPECTED_GIRLS);
   monsterPass =
     errors.length === 0 &&
@@ -1855,6 +1887,8 @@ let monsterPass = false;
     r.foeHpDropped === true && r.gaugeDrained === true && r.killed === true &&
     r.expGained === true && r.killsCounted === true && r.dropDeterministic === true &&
     r.girlAtkWorks === true && r.girlLostNotRescued === true &&
+    r.lostState === "hidden" && r.lostAtOrig === true &&
+    r.rediscovered === true && r.rescuedAfterRediscover === true && r.rescueCountIncreased === true &&
     r.girlPositions === EXPECTED_GIRLS;
   out("PASS(S: 空間/埋没スポーン決定論・戦闘で HP/SP 減・bump 撃破/EXP/ドロップ・GIRLATK ロスト・非介入)", monsterPass);
   await ctx.close();

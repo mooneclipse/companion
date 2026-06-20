@@ -823,9 +823,15 @@ function isAdjacent(ac, ar, bc, br) {
 }
 
 // 護衛中の女の子が HP 0 でロスト。following → hidden へ戻し、元の埋没位置(col, origRow)へ戻す。
-// 救出済みカウント(G.rescued)とは独立=未救出のまま盤面に残る。元の埋没マスへ戻すことで「掘り
-// 直して再発見 → 再誘導」が可能(discoverGirl は GIRL タイル掘り当てで発火するため、ロスト地点が
-// 掘った空洞だと再発見できず詰む。元位置へ戻せばクリア条件=全員救出が原理的に達成可能を保つ)。
+// 救出済みカウント(G.rescued)とは独立=未救出のまま盤面に残る。
+//
+// 再発見の責務(v0.5.0 修正): 初回発見は act の GIRL タイル掘り抜きで discoverGirl が発火するが、
+// 一度発見した元マスは掘り抜き時点で G.dug 入り(=tileAt が NONE)になっているため、二度と
+// TILE.GIRL 掘削分岐を通らない。よってロスト後の再発見は「掘り直し」では原理的に起こらず、
+// hidden の女の子がそのマスへ"戻る"だけでは詰む。再発見の真の条件は state(その人が hidden で
+// そのマスに居る)であって tile レイヤ(tileType=GIRL)ではないので、再発見は自機がそのマスへ
+// 侵入したとき(moveTo で確定する自機位置)に state 側を 1 回引いて発火させる(tryRediscoverGirlAt)。
+// loseGirl は state を hidden へ戻して原位置へ置くだけ(tile/dug は触らない=dug 不変条件を保つ)。
 // EXPECTED_GIRLS(初期配置)とも矛盾しない(原位置に戻るだけ、別マスへ移さない)。
 function loseGirl(g) {
   g.state = "hidden";
@@ -833,7 +839,21 @@ function loseGirl(g) {
   spawnPopupAt(g.col, g.row, "！", "warn");
   g.col = g.origCol !== undefined ? g.origCol : g.col;
   g.row = g.origRow;
-  showHint("女の子が傷つき、地中へ取り残された。掘り直して助け直そう", true);
+  showHint("女の子が傷つき、地中へ取り残された。もう一度その場所へ行って助け直そう", true);
+}
+
+// 自機が (col,row) へ侵入した瞬間の女の子再発見。元マスが既に掘り抜き済み(NONE)で TILE.GIRL 掘削
+// 分岐を通らなくなった hidden の女の子を、自機がそのマスを踏んだら再発見する(discoverGirl は
+// hidden を col/row で引くので、初回発見と同じ経路へ合流=following へ復帰)。発見条件を tile では
+// なく state(hidden の所在)に置くことで、ロスト→再侵入→再誘導が原理的に成立しクリア可能を保つ。
+function tryRediscoverGirlAt(col, row) {
+  if (!G.girls) return;
+  for (const g of G.girls) {
+    if (g.state === "hidden" && g.col === col && g.row === row) {
+      discoverGirl(col, row);
+      return;
+    }
+  }
 }
 
 // ---- 移動 + 重力解決 ---------------------------------------------------
@@ -848,6 +868,7 @@ function moveTo(col, row, costPaid, noGravity) {
   // ただし上移動(クライム)の 1 歩は引き戻さない(noGravity)。
   if (!noGravity) applyGravity();
   revealAround();
+  tryRediscoverGirlAt(G.px, G.py); // ロスト後 hidden の女の子が居るマスへ侵入したら再発見(following 復帰)。
   advanceGirl();
   if (G.py === 0) {
     surfaceReturn();
