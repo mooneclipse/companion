@@ -28,7 +28,13 @@
 // タイル掘削ゲート(SOIL1/HARD2/ROCK3、木で岩掘れず石/鉄/ダイヤで段階開放)、決定論 oreAt の
 // 鉱石ドロップ(深度帯=銅/鉄/金/ダイヤ)、クラフト 6 レシピ UI、アイテム使用(回復薬+50/
 // アンテナ透視/はしご)、HUD インベントリ。tileType/girlPositions には非介入(決定論 snapshot 不変)。
-const VERSION = "v0.4.1";
+// v0.5.0: モンスター/戦闘/GIRLATK/埋没掘りスポーンの第3増分(原作 monster.csv 忠実サブセット)。
+// 死の緊張(撤退判断の重み)を設計から出す本命。bump-to-attack 戦闘、被ダメは既存二段ゲージへ
+// 接続(SP を削り SP0 で HP=これで初めて死ねる)、撃破で EXP/素材ドロップ(verbatim/決定論)。
+// 空間スポーン(NONE マスへ決定論配置)+ 埋没掘りスポーン(SOIL/HARD 掘り抜き時 bury% で出現)。
+// GIRLATK=1 のモンスターは追従中の女の子も標的にしうる(誘導難度=死の緊張の核)。
+// tileType/girlPositions/oreAt・determinism snapshot には非介入(v0.4.0 oreAt 流儀)。
+const VERSION = "v0.5.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -50,6 +56,13 @@ const CONST = {
   // v0.4.0 アイテム系。
   POTION_HEAL: 50, // 回復薬の体力回復量(原作 HP+50。現 HP_MAX=30 なので min で頭打ち)。
   INIT_PICK: "WOOD", // 初期ツルハシ(木 power1、岩は掘れない)。
+  // v0.5.0 戦闘(CSV→実装の翻案。厳密式は原作資料に明記なし=忠実意図に沿わせた自前式)。
+  // 自機は原作の STR/DEF/PER_ATTACK/PER_DEFENCE を持たない(育成未実装)ため、所持ツルハシ
+  // power を戦力の代理にする。power1(木)→ATK2/DEF0、段が上がるほど攻防が増える(掘削と戦闘の
+  // 強化が一本=「強い道具で深く潜れる」原作の手触りに沿う)。
+  ATK_BASE: 1, // 自機攻撃力 = ATK_BASE + pickPower()。木=2 / 石=3 / 鉄=4 / ダイヤ=6。
+  DEF_BASE: 0, // 自機防御力 = DEF_BASE + floor((pickPower()-1)/2)。木=0 / 石=0 / 鉄=1 / ダイヤ=2。
+  GIRL_HP: 30, // 護衛中の女の子の HP(monster.csv GIRL 行 verbatim=30)。GIRLATK で削られる。
 };
 // 計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
@@ -210,6 +223,7 @@ const hudEl = document.getElementById("hud");
 const depthValEl = document.getElementById("depth-val");
 const rescueValEl = document.getElementById("rescue-val");
 const exploreValEl = document.getElementById("explore-val");
+const expValEl = document.getElementById("exp-val");
 const staminaFillEl = document.getElementById("stamina-fill");
 const staminaValEl = document.getElementById("stamina-val");
 const hpFillEl = document.getElementById("hp-fill");
@@ -319,6 +333,12 @@ const G = {
   ladders: 0, // はしご所持数(縦穴を登る移動補助。クラフトで増える)。
   potions: 0, // 回復薬所持数(使用で体力 +POTION_HEAL)。
   antenna: false, // アンテナ所持(女の子の位置を未発見でも透視)。
+  // ---- v0.5.0 モンスター系(ランごと初期化。fail/再挑戦でリセット = 既存スコープ境界踏襲) ----
+  monsters: null, // [{key,col,row,hp,kind}, ...] 出現中のモンスター。kind: "space"/"bury"。
+  spawned: null, // Set("col,row") 既に空間/埋没スポーンを解決したマス(二重スポーン防止)。
+  exp: 0, // 撃破で蓄積する EXP(育成未実装のため表示のみ)。
+  kills: 0, // 撃破数(参考表示)。
+  drops: null, // { 素材名: 個数 } 撃破ドロップ(表示のみ、商人/クラフト連携は次増分)。
 };
 window.G = G;
 
@@ -365,8 +385,10 @@ function startDive() {
   G.girls = girlPositions(G.seed).map((p) => ({
     col: p.col,
     row: p.row,
+    origCol: p.col, // v0.5.0: ロスト時に元の埋没位置へ戻すため保持(再発見可能性を担保)。
     origRow: p.row,
     state: "hidden",
+    hp: CONST.GIRL_HP, // v0.5.0: 護衛中に GIRLATK で削られうる(monster.csv GIRL=30)。
   }));
   G.rescued = 0;
   G.maxDepthThisDive = 0;
@@ -379,6 +401,14 @@ function startDive() {
   G.ladders = 0;
   G.potions = 0;
   G.antenna = false;
+  // v0.5.0 モンスター初期化。空間スポーンは盤面確定時に決定論で配置(NONE マス全走査)。
+  G.monsters = [];
+  G.spawned = new Set();
+  G.exp = 0;
+  G.kills = 0;
+  G.drops = {};
+  // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
+  spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
   G.screen = "dive";
   hideOverlay();
   hudEl.hidden = false;
@@ -448,6 +478,25 @@ function spendAction() {
   }
 }
 
+// ---- v0.5.0 被ダメージ = 既存二段ゲージへ接続(SP を削り、SP0 で HP を削る) ----
+// モンスターの反撃。dmg を SP から削り、SP が尽きたら残りを HP へ回す(既存の撤退構造と整合=
+// これで初めて死ねる)。SP_PER_ACTION とは別経路(行動消費でなく被弾)なので spendAction とは
+// 分離。HP 0 の力尽き判定は呼び出し側の checkFail に委ねる。
+function takeDamage(dmg) {
+  let d = Math.max(0, dmg | 0);
+  if (d <= 0) return;
+  if (G.stamina > 0) {
+    const absorbed = Math.min(G.stamina, d);
+    G.stamina -= absorbed;
+    d -= absorbed;
+    if (G.stamina === 0 && !G.enteredHpZone) {
+      G.enteredHpZone = true;
+      showHint(TEXT.cueHpZone, true);
+    }
+  }
+  if (d > 0) G.hp = Math.max(0, G.hp - d);
+}
+
 // ---- 入力 = 方向 1 つを解決(移動 or 掘り) ----------------------------
 // dc,dr は -1/0/1 のいずれか(上下左右の単位方向)。
 // ①空間 → そのマスへ移動(1 行動) ②土/硬土 → 1 手掘る(1 行動、規定手数で空間化し前進)
@@ -458,6 +507,14 @@ function act(dc, dr) {
   const row = G.py + dr;
   if (col < 0 || col >= CONST.GRID_COLS) return;
   if (row < 0) return; // 地表より上は無い。
+
+  // v0.5.0 bump-to-attack: 進もうとした先にモンスターが居れば、移動/掘りでなく攻撃(1 戦闘ターン)。
+  // 方向に関係なく(上下左右とも)成立。撃破するまでそのマスは塞がれ前進できない(死の緊張の核)。
+  const foe = monsterAt(col, row);
+  if (foe) {
+    attackMonster(foe);
+    return;
+  }
 
   // 上移動 = 掘った縦坑/階段を 1 マスよじ登る(「掘った跡が帰り道」の核)。真上が空間の時だけ。
   // 上掘りは不可(土を上へは掘れない=はしご未実装)。1 行動で 1 マスのみ(連続上昇不可)。
@@ -512,8 +569,21 @@ function act(dc, dr) {
   // 掘り抜けた → 空間化。
   G.digProgress.delete(key);
   G.dug.add(key);
+  let buried = null;
   if (t === TILE.GIRL) discoverGirl(col, row);
-  else collectOre(col, row); // v0.4.0 B: 掘り抜いたマスの鉱石を決定論で産出(GIRL は除外)。
+  else {
+    collectOre(col, row); // v0.4.0 B: 掘り抜いたマスの鉱石を決定論で産出(GIRL は除外)。
+    buried = trySpawnBuryMonster(col, row); // v0.5.0 埋没掘りスポーン(bury% で出現)。
+  }
+  // 埋没スポーンが起きたら、そのマスはモンスターが塞ぐ。前進せずその場に留まる
+  // (次の入力 = bump-to-attack で交戦)。掘りの行動コストは払い済み(spendAction)。
+  if (buried) {
+    revealAround();
+    monstersAct(); // この 1 行動に対し出現中のモンスターが反応(行動頻度は SPD で律速)。
+    renderHud();
+    checkFail();
+    return;
+  }
   // 横/下方向に掘ったらそのマスへ前進(原作: 土なら自動で掘って進む)。掘りで行動コストは
   // 払い済みなので、前進では二重に取らない(costPaid=true)。
   if (dr === 1 || dc !== 0) {
@@ -593,6 +663,179 @@ function usePotion() {
   return true;
 }
 
+// ---- v0.5.0 モンスター/戦闘/GIRLATK ------------------------------------
+// 設計(CSV→実装の翻案、STATUS に記録):
+//  - スポーン 2 系統: 空間スポーン(ダイブ開始時に元 NONE マスへ決定論配置)+ 埋没掘りスポーン
+//    (SOIL/HARD を掘り抜いた瞬間 bury% で出現)。配置/出現は tiles.js の決定論関数で確定。
+//  - 戦闘: bump-to-attack。1 ターンダメージ = max(1, 攻撃力 - 相手DEF)。自機攻撃力は
+//    ATK_BASE + pickPower()(ツルハシ段=戦力の代理、育成未実装の翻案)。被ダメは takeDamage で
+//    既存二段ゲージ(SP→HP)へ接続。SPD を行動頻度に反映(spd>=2 は毎ターン、spd1 は隔ターン)。
+//  - 撃破で EXP 蓄積(育成未実装=表示のみ)+ 素材ドロップ(monster.csv 表 verbatim・決定論)。
+//  - GIRLATK=1 のモンスターは隣接する追従中の女の子も標的にしうる(HP 0 でロスト=誘導難度)。
+
+// 自機の攻撃力/防御力(ツルハシ段=戦力の代理)。
+function playerAtk() { return CONST.ATK_BASE + pickPower(); }
+function playerDef() { return CONST.DEF_BASE + Math.floor((pickPower() - 1) / 2); }
+
+// (col,row) に居る出現中のモンスターを返す(無ければ null)。
+function monsterAt(col, row) {
+  if (!G.monsters) return null;
+  for (const m of G.monsters) {
+    if (m.col === col && m.row === row) return m;
+  }
+  return null;
+}
+
+// ダイブ開始時、元から空間(NONE)のマスへ決定論でモンスターを配置(掘る前の初期気配)。
+// 既に dug 済み/spawned 済みのマスは対象外。tileType が NONE のマスのみ(GIRL/oreは別レイヤー)。
+function spawnSpaceMonsters() {
+  if (!G.monsters || !G.spawned) return;
+  for (let row = 1; row <= CONST.DEPTH_ROWS; row++) {
+    for (let col = 0; col < CONST.GRID_COLS; col++) {
+      if (tileType(col, row, G.seed) !== TILE.NONE) continue; // 元から空間のマスだけ。
+      const key = col + "," + row;
+      if (G.spawned.has(key)) continue;
+      const sp = spaceMonsterAt(col, row, G.seed);
+      if (!sp) { G.spawned.add(key); continue; }
+      G.spawned.add(key);
+      addMonster(sp, col, row, "space");
+    }
+  }
+}
+
+// 掘り抜いたマス(col,row)に埋没掘りスポーンを試みる。出たら追加して種キーを返す、出なければ null。
+function trySpawnBuryMonster(col, row) {
+  if (!G.monsters || !G.spawned) return null;
+  const key = col + "," + row;
+  if (G.spawned.has(key)) return null; // 同マスで二重に出さない。
+  G.spawned.add(key);
+  const sp = buryMonsterAt(col, row, G.seed);
+  if (!sp) return null;
+  addMonster(sp, col, row, "bury");
+  spawnPopupAt(col, row, MONSTER[sp] ? MONSTER[sp].ico : "敵", "warn");
+  playSfx("blocked"); // 専用 SFX 無し=出現の警告音を流用。
+  showHint((MONSTER[sp] ? MONSTER[sp].name : "敵") + "が飛び出した", true);
+  return sp;
+}
+
+// モンスターを 1 体出現リストへ追加(HP は monster.csv verbatim)。
+function addMonster(key, col, row, kind) {
+  const meta = MONSTER[key];
+  if (!meta) return;
+  G.monsters.push({ key, col, row, hp: meta.hp, kind, cd: 0 });
+}
+
+// 自機が foe を攻撃する 1 戦闘ターン。撃破するまで前進できない(死の緊張の核)。
+function attackMonster(foe) {
+  const meta = MONSTER[foe.key];
+  if (!meta) return;
+  spendAction(); // 攻撃も 1 行動(SP/HP を 1 消費=既存の行動コスト)。
+  const dmg = Math.max(1, playerAtk() - meta.def);
+  foe.hp -= dmg;
+  spawnPopupAt(foe.col, foe.row, "-" + dmg);
+  playDig(); // 打撃音(専用 SFX 無し=掘削音を流用)。
+  if (foe.hp <= 0) {
+    killMonster(foe);
+  }
+  // 自機の 1 行動に対しモンスターが反応(生き残った foe の反撃含む)。
+  monstersAct();
+  renderHud();
+  checkFail();
+}
+
+// foe を撃破: リストから除去、EXP 蓄積、ドロップ(決定論)。
+function killMonster(foe) {
+  const meta = MONSTER[foe.key];
+  const i = G.monsters.indexOf(foe);
+  if (i >= 0) G.monsters.splice(i, 1);
+  if (meta) {
+    G.exp += meta.exp;
+    G.kills += 1;
+    const item = monsterDrop(foe.key, foe.col, foe.row, G.seed);
+    if (item) {
+      G.drops[item] = (G.drops[item] || 0) + 1;
+      spawnPopupAt(foe.col, foe.row, "+" + item, "cue");
+    }
+    spawnPopupAt(foe.col, foe.row, "×", "cue");
+  }
+  playSfx("found"); // 撃破の合図(専用 SFX 無し=発見音を流用)。
+}
+
+// 出現中の全モンスターが自機の 1 行動に反応(SPD で行動頻度を律速)。隣接していれば攻撃、
+// 隣接していなければ自機(または GIRLATK=1 なら隣接する女の子)へ 1 歩近づく(掘った空洞のみ移動可)。
+function monstersAct() {
+  if (!G.monsters || !G.monsters.length) return;
+  // splice 中の添字ズレを避けるためスナップショットを走査。撃破等での除去は indexOf で安全。
+  for (const m of G.monsters.slice()) {
+    if (G.monsters.indexOf(m) < 0) continue; // 既に除去済み。
+    const meta = MONSTER[m.key];
+    if (!meta) continue;
+    monsterStep(m, meta);
+    if (G.screen !== "dive") return; // 力尽き等で離脱。
+  }
+}
+
+// モンスター 1 体の行動: 隣接する標的(自機/護衛中の女の子)を攻撃、無ければ標的へ 1 歩寄る。
+// SPD は「追跡(移動)の頻度」を律速する(spd<=1 は隔ターンしか寄れない=逃げやすい)。一方
+// 隣接して交戦中の攻撃は毎ターン応酬する(殴り合いは常に危険=死の緊張の核)。原作 SPD=行動速度
+// の翻案として、攻撃の応酬は止めず、鈍足の差は「間合いを詰める速さ」に出す。
+function monsterStep(m, meta) {
+  // 標的候補: 常に自機。GIRLATK=1 なら隣接する追従中の女の子も(より近い方を狙う)。
+  const adjPlayer = isAdjacent(m.col, m.row, G.px, G.py);
+  let targetGirl = null;
+  if (meta.girlatk === 1 && G.girls) {
+    for (const g of G.girls) {
+      if (g.state !== "following") continue;
+      if (isAdjacent(m.col, m.row, g.col, g.row)) { targetGirl = g; break; }
+    }
+  }
+  if (targetGirl && !adjPlayer) {
+    // 隣接する女の子を攻撃(自機が隣接していなければ女の子優先=誘導難度)。毎ターン応酬。
+    const dmg = Math.max(1, meta.str); // 女の子は DEF を別に持たない(monster.csv GIRL DEF=1 は小)。
+    targetGirl.hp -= dmg;
+    spawnPopupAt(targetGirl.col, targetGirl.row, "-" + dmg, "warn");
+    if (targetGirl.hp <= 0) loseGirl(targetGirl);
+    return;
+  }
+  if (adjPlayer) {
+    // 自機を攻撃。1 ターンダメージ = max(1, STR - 自機DEF)。被ダメは二段ゲージへ。毎ターン応酬。
+    const dmg = Math.max(1, meta.str - playerDef());
+    takeDamage(dmg);
+    spawnPopupAt(G.px, G.py, "-" + dmg, "warn");
+    return;
+  }
+  // 隣接していなければ標的へ 1 歩寄る(掘った空洞=自機が通れる経路のみ)。追跡だけ SPD で律速:
+  // spd<=1 は隔ターン(cd)、spd>=2 は毎ターン寄れる。
+  if (meta.spd <= 1) {
+    m.cd = (m.cd + 1) % 2;
+    if (m.cd === 0) return; // この追跡ターンはスキップ(鈍足)。
+  }
+  const step = bfsStep(m.col, m.row, G.px, G.py);
+  if (step && !monsterAt(step[0], step[1])) {
+    m.col = step[0];
+    m.row = step[1];
+  }
+}
+
+// (a) と (b) が 4 近傍で隣接(上下左右いずれか 1 マス)か。
+function isAdjacent(ac, ar, bc, br) {
+  return Math.abs(ac - bc) + Math.abs(ar - br) === 1;
+}
+
+// 護衛中の女の子が HP 0 でロスト。following → hidden へ戻し、元の埋没位置(col, origRow)へ戻す。
+// 救出済みカウント(G.rescued)とは独立=未救出のまま盤面に残る。元の埋没マスへ戻すことで「掘り
+// 直して再発見 → 再誘導」が可能(discoverGirl は GIRL タイル掘り当てで発火するため、ロスト地点が
+// 掘った空洞だと再発見できず詰む。元位置へ戻せばクリア条件=全員救出が原理的に達成可能を保つ)。
+// EXPECTED_GIRLS(初期配置)とも矛盾しない(原位置に戻るだけ、別マスへ移さない)。
+function loseGirl(g) {
+  g.state = "hidden";
+  g.hp = CONST.GIRL_HP;
+  spawnPopupAt(g.col, g.row, "！", "warn");
+  g.col = g.origCol !== undefined ? g.origCol : g.col;
+  g.row = g.origRow;
+  showHint("女の子が傷つき、地中へ取り残された。掘り直して助け直そう", true);
+}
+
 // ---- 移動 + 重力解決 ---------------------------------------------------
 // 指定マスへ移動した後、重力で足元が空間の間 1 マスずつ落下する。
 // 落下も追従もまとめて 1 行動(掘り/移動)としてコストは呼び出し側で済んでいる前提だが、
@@ -611,6 +854,7 @@ function moveTo(col, row, costPaid, noGravity) {
     return;
   }
   if (G.py > G.maxDepthThisDive) G.maxDepthThisDive = G.py;
+  monstersAct(); // v0.5.0: 自機の 1 行動に対しモンスターが反応(追跡/攻撃、SPD で律速)。
   renderHud();
   checkFail();
 }
@@ -624,7 +868,8 @@ function applyGravity() {
     guard++;
     const below = G.py + 1;
     if (below > CONST.DEPTH_ROWS) break; // 底。
-    if (isSpace(G.px, below)) {
+    // v0.5.0: 真下にモンスターが居れば、その上で踏み止まる(モンスターはマスを塞ぐ)。
+    if (isSpace(G.px, below) && !monsterAt(G.px, below)) {
       G.py = below;
       if (G.py > G.maxDepthThisDive) G.maxDepthThisDive = G.py;
     } else break;
@@ -664,6 +909,9 @@ function advanceOneGirl(g) {
   // 自機の 1 つ手前(直前にいた経路上のマス)へ寄せる: BFS で自機までの最初の 1 歩。
   const next = bfsStep(g.col, g.row, G.px, G.py);
   if (next) {
+    // v0.5.0: 次の一歩にモンスターが居れば踏み込まず待機(モンスターがマスを塞ぐ)。
+    // 自機が交戦して退かすまで女の子はそこで足止め=GIRLATK で削られうる(誘導難度)。
+    if (monsterAt(next[0], next[1])) { showHint(TEXT.cueGirlBlocked, true); return; }
     const climbedUp = next[1] < g.row; // 自機へ向かう一歩が上向き = 縦坑のクライム。
     g.col = next[0];
     g.row = next[1];
@@ -677,8 +925,8 @@ function advanceOneGirl(g) {
         guard++;
         const below = g.row + 1;
         if (below > CONST.DEPTH_ROWS) break;
-        if (isSpace(g.col, below) && !(g.col === G.px && below === G.py)) {
-          // 自機の真上には乗らない(同じマスへ落ちない)。自機がいるなら止まる。
+        if (isSpace(g.col, below) && !(g.col === G.px && below === G.py) && !monsterAt(g.col, below)) {
+          // 自機の真上には乗らない(同じマスへ落ちない)。モンスターの上にも落ちない。
           g.row = below;
         } else break;
       }
@@ -920,6 +1168,7 @@ function renderHud() {
   depthValEl.textContent = TEXT.depthPrefix + G.py + TEXT.depthSuffix;
   rescueValEl.textContent = G.rescued + "/" + CONST.GIRL_COUNT;
   exploreValEl.textContent = Math.round(exploreRatio() * 100) + "%";
+  if (expValEl) expValEl.textContent = G.exp || 0; // v0.5.0 EXP 蓄積(育成未実装=表示のみ)。
   const spRatio = Math.max(0, Math.min(1, G.stamina / CONST.STAMINA_MAX));
   staminaFillEl.style.width = spRatio * 100 + "%";
   staminaValEl.textContent = Math.round(G.stamina);
@@ -1252,6 +1501,13 @@ function render() {
     }
   }
 
+  // v0.5.0 モンスター(可視マスのみ)。冷色の脅威色 + 名称頭文字 + HP バー。
+  if (G.monsters) {
+    for (const m of G.monsters) {
+      if (isVisible(m.col, m.row)) drawMonster(m);
+    }
+  }
+
   // 自機(暖色グロー + スプライト)。
   const cx = G.px * tile + tile / 2;
   const cy = (G.py - camY) * tile + tile / 2;
@@ -1301,6 +1557,41 @@ function drawGirl(g) {
     ctx.strokeStyle = "rgba(60,30,10,0.85)";
     ctx.lineWidth = 1;
     ctx.stroke();
+  }
+}
+
+// v0.5.0 モンスター描画(専用スプライト無し=冷色の脅威マーカー + 名称頭文字 + HP バー)。
+// 暖色の女の子/自機と画面上で明確に弁別できるよう寒色(青緑)に振る。
+function drawMonster(m) {
+  const mx = m.col * tile + tile / 2;
+  const my = (m.row - camY) * tile + tile / 2;
+  if (my < -tile || my > H + tile) return;
+  const meta = MONSTER[m.key];
+  const r = tile * 0.36;
+  // 寒色の本体(角丸の塊)。
+  ctx.fillStyle = "#3a6b78";
+  ctx.beginPath();
+  ctx.arc(mx, my, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(180,230,235,0.85)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // 名称頭文字(漢字 1 字、可読性の核は DOM だが識別用に小さく焼く)。
+  ctx.fillStyle = "#eaffff";
+  ctx.font = `${Math.round(tile * 0.42)}px serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(meta ? meta.ico : "敵", mx, my + tile * 0.02);
+  // HP バー(上辺に細く)。残 HP 比で朱→寒色。
+  if (meta && meta.hp > 0) {
+    const ratio = Math.max(0, Math.min(1, m.hp / meta.hp));
+    const bw = tile * 0.62;
+    const bx = mx - bw / 2;
+    const by = my - r - tile * 0.14;
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(bx, by, bw, tile * 0.08);
+    ctx.fillStyle = ratio > 0.4 ? "#7fd4a0" : "#d8392a";
+    ctx.fillRect(bx, by, bw * ratio, tile * 0.08);
   }
 }
 

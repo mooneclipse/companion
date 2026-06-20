@@ -248,7 +248,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.4.1" &&
+    version === "v0.5.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -274,7 +274,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.4.1)", corePass);
+  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.5.0)", corePass);
   await ctx.close();
 }
 
@@ -1063,6 +1063,63 @@ let e2ePass = false;
     return r.top === "scene";
   }
 
+  // v0.5.0: 真下へ 1 段進む(掘る/落ちる)。掘り抜きの埋没スポーンや空間モンスターが進路を塞いだら
+  // bump-attack で撃破してから進む。HARD(2手)も複数タップで掘り切る。実際に 1 段下がる/画面遷移
+  // するか、真に詰まる(真下が掘れない硬岩で敵も居ない)まで最大 12 タップ。allScene を巻き込む。
+  async function digDownStep() {
+    const before = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
+    for (let t = 0; t < 12; t++) {
+      if (!(await tapTile(0, 1))) allScene = false;
+      await page.waitForTimeout(40);
+      const now = await page.evaluate(() => {
+        const r = G.py + 1;
+        const inBounds = r <= CONST.DEPTH_ROWS;
+        const foeBelow = !!(G.monsters && G.monsters.some((m) => m.col === G.px && m.row === r));
+        const spaceBelow = inBounds && ((G.dug && G.dug.has(G.px + "," + r)) || tileType(G.px, r, G.seed) === TILE.NONE);
+        const digging = !!(G.digProgress && G.digProgress.has(G.px + "," + r)); // HARD 等の掘削途中。
+        // 真下が現在のツルハシで掘り抜けるか(req power ゲート)。
+        const t = inBounds ? (spaceBelow ? TILE.NONE : tileType(G.px, r, G.seed)) : TILE.ROCK;
+        const req = (typeof TILE_REQ_POWER !== "undefined") ? TILE_REQ_POWER[t] : undefined;
+        const pp = (typeof PICK !== "undefined" && PICK[G.pick]) ? PICK[G.pick].power : 1;
+        const diggable = req !== undefined && pp >= req;
+        return { py: G.py, scr: G.screen, foeBelow, spaceBelow, digging, diggable };
+      });
+      if (now.scr !== "dive") return true;
+      if (now.py > before.py) return true; // 1 段以上下がった。
+      // py 不動でも継続タップする条件: 敵が塞ぐ(撃破中) / 直下が空間(撃破直後で次タップで入れる) /
+      // 掘削途中(HARD 複数手) / 現ツルハシで掘り抜ける土。いずれも次タップで前進しうる。
+      if (now.foeBelow || now.spaceBelow || now.digging || now.diggable) continue;
+      // 上記いずれでもない = 掘れない硬岩で敵も居ない = 真に詰まり。
+      break;
+    }
+    const after = await page.evaluate(() => G.py);
+    return after > before.py;
+  }
+
+  // v0.5.0: 真上へ 1 段登る(掘った縦坑のクライム)。真上にモンスターが居れば bump-attack で
+  // 撃破してから登る(追跡してきた敵が帰路を塞ぐ=護衛中の死の緊張)。1 段登る/画面遷移/真に
+  // 詰まる(真上が空間でなく敵も居ない)まで最大 12 タップ。
+  async function climbUpStep() {
+    const before = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
+    for (let t = 0; t < 12; t++) {
+      if (!(await tapTile(0, -1))) allScene = false;
+      await page.waitForTimeout(40);
+      const now = await page.evaluate(() => {
+        const r = G.py - 1;
+        const foeAbove = !!(G.monsters && G.monsters.some((m) => m.col === G.px && m.row === r));
+        const spaceAbove = r <= 0 || (G.dug && G.dug.has(G.px + "," + r)) || tileType(G.px, r, G.seed) === TILE.NONE;
+        return { py: G.py, scr: G.screen, foeAbove, spaceAbove };
+      });
+      if (now.scr !== "dive") return true;
+      if (now.py < before.py) return true; // 1 段登れた。
+      // py 不動でも継続: 真上に敵(撃破中) or 真上が空間(撃破直後 or 元から空洞で次タップで登れる)。
+      if (now.foeAbove || now.spaceAbove) continue;
+      break; // 真上が空間でなく敵も居ない(上掘り不可)= 詰まり。
+    }
+    const after = await page.evaluate(() => G.py);
+    return after < before.py;
+  }
+
   await tapSelector(page, "#ov-action");
   await page.waitForTimeout(600);
   const startScreen = await page.evaluate(() => G.screen);
@@ -1100,31 +1157,24 @@ let e2ePass = false;
     if (!(await tapTile(px < shaftCol ? 1 : -1, 0))) allScene = false;
     await page.waitForTimeout(45);
   }
-  // 真下のみを掘って一直線の縦坑で潜行(py>=6 まで)。
+  // 真下のみを掘って一直線の縦坑で潜行(py>=6 まで)。v0.5.0: 進路を塞ぐモンスターは
+  // digDownStep が bump-attack で撃破してから進む(掘った跡が帰り道になる縦坑を保つ)。
   for (let k = 0; k < 30; k++) {
     const before = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
     if (before.scr !== "dive" || before.py >= 6) break;
-    if (!(await tapTile(0, 1))) allScene = false; // 真下のみ(縦坑を保つ)。
-    await page.waitForTimeout(45);
-    const afterPy = await page.evaluate(() => G.py);
-    if (afterPy === before.py) {
-      // HARD(2手)で 1 手目は py 不動 → もう一度真下を掘る(横へは折れない)。
-      if (!(await tapTile(0, 1))) allScene = false;
-      await page.waitForTimeout(45);
-      if ((await page.evaluate(() => G.py)) === before.py) break; // それでも不動なら停止。
-    }
+    if (!(await digDownStep())) break; // 真に詰まった(掘れない硬岩)なら停止。
   }
   const dived = await page.evaluate(() => ({ py: G.py, sp: G.stamina, px: G.px }));
-  // 縦坑を真上に登って帰還(掘った跡が帰り道)。真上 act で 1 マスずつ登る。
+  // 縦坑を真上に登って帰還(掘った跡が帰り道)。v0.5.0: 追跡してきた敵が縦坑を塞いだら
+  // climbUpStep が撃破してから登る。1 マスずつ登り、登れなければ詰み(帰り道不成立 = 欠陥)。
   const climbTrace = [];
   for (let k = 0; k < 20; k++) {
     const before = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
     if (before.scr !== "dive" || before.py <= 0) break;
-    if (!(await tapTile(0, -1))) allScene = false;
-    await page.waitForTimeout(45);
+    const climbed = await climbUpStep();
     const now = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
     climbTrace.push(now.py);
-    if (now.py === before.py) break; // 登れず詰み = 帰り道が成立しない(欠陥サイン)。
+    if (!climbed) break; // 登れず詰み = 帰り道が成立しない(欠陥サイン)。
     if (now.scr !== "dive" || now.py <= 0) break;
   }
   const recovered = await page.evaluate(() => ({ py: G.py, sp: G.stamina, hp: G.hp, scr: G.screen }));
@@ -1172,28 +1222,28 @@ let e2ePass = false;
     if (!(await tapTile(px < girl.col ? 1 : -1, 0))) allScene = false;
     await page.waitForTimeout(45);
   }
-  // 真下掘りで掘り当て(列を保ったまま。HARD は 2 手かかるので py 不動でも掘り続ける)。
+  // 真下掘りで掘り当て(列を保ったまま)。v0.5.0: 進路の空間/埋没モンスターは digDownStep が
+  // 撃破してから進む(col11 r5 の SLIME_HALF・r1 の埋没 WORM を倒して女の子へ到達)。
   let found = false;
   for (let k = 0; k < 40 && !found; k++) {
     const st = await page.evaluate(([gi]) => ({ scr: G.screen, gstate: G.girls[gi].state, py: G.py }), [girl.idx]);
     if (st.scr !== "dive") break;
     if (st.gstate === "following") { found = true; break; }
     if (st.py >= 15) break; // 底まで来たら詰み(到達不能 = 欠陥のサイン)。
-    if (!(await tapTile(0, 1))) allScene = false;
-    await page.waitForTimeout(45);
+    if (!(await digDownStep())) break;
   }
   const discovered = await page.evaluate(([gi]) => G.girls[gi].state, [girl.idx]);
   // 連れ帰り(掘った一直線の縦坑を真上 act で 1 マスずつ登る。女の子が追従)。
-  // 救出経路は同一列の縦坑なので真上が常に空間 = 登れる(横回避不要)。塞がれば即異常。
+  // 救出経路は同一列の縦坑。v0.5.0: 追跡してきた敵(col11 r5 から登ってきた SLIME_HALF 等)が
+  // 縦坑を塞いだら climbUpStep が撃破してから登る(護衛中の死の緊張)。塞がれて登れなければ異常。
   if (found) {
     for (let k = 0; k < 40; k++) {
       const st = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
       if (st.scr !== "dive" || st.py <= 0) break;
-      if (!(await tapTile(0, -1))) allScene = false;
-      await page.waitForTimeout(45);
-      const after = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
+      const climbed = await climbUpStep();
+      const after = await page.evaluate(() => ({ scr: G.screen }));
       if (after.scr !== "dive") break;
-      if (after.py === st.py) break; // 登れず詰み = 帰り道が成立しない(欠陥サイン)。
+      if (!climbed) break; // 登れず詰み = 帰り道が成立しない(欠陥サイン)。
     }
   }
   const rescueEnd = await page.evaluate(([gi]) => ({
@@ -1490,10 +1540,27 @@ let v040Pass = false;
     // 既知マス col7 r2 = SOIL(1) × COPPER(1)(BASE_SEED=41027 で実測、STATUS 行100 の col7 下方=S 系)。
     const c7r2tile = tileType(7, 2, CONST.BASE_SEED);
     const c7r2ore = oreAt(7, 2, CONST.BASE_SEED);
-    // WOOD で col7 を真下に r1,r2,r3 掘る(SOIL=power1 なので掘れる)。掘り抜きで COPPER が加算される。
+    // WOOD で col7 を真下に r1,r2 掘る(SOIL=power1 なので掘れる)。掘り抜きで COPPER が加算される。
+    // v0.5.0: 掘り抜き時に埋没モンスターが出て進路を塞ぎうる(col7 r1=WORM)。鉱石産出メカ自体は
+    // 不変(掘り抜いた瞬間 collectOre)だが、テストは r2 を掘り抜く必要があるので途中の敵を倒し進む。
+    // 1 段下がる/敵撃破直後で空間化したマスへ入る、を繰り返して r2 まで掘り進む。
     G.px = 7; G.py = 0; G.pick = "WOOD";
     const cu0 = G.ore.COPPER;
-    act(0, 1); act(0, 1); act(0, 1);
+    let guard = 0;
+    while (G.py < 2 && G.screen === "dive" && guard < 60) {
+      const pc = G.px, pr = G.py;
+      act(0, 1); guard++;
+      if (G.px === pc && G.py === pr) {
+        const below = G.py + 1;
+        const foe = G.monsters && G.monsters.some((m) => m.col === G.px && m.row === below);
+        const spaceBelow = (G.dug && G.dug.has(G.px + "," + below)) || tileType(G.px, below, G.seed) === TILE.NONE;
+        const digging = G.digProgress && G.digProgress.has(G.px + "," + below);
+        const t = spaceBelow ? TILE.NONE : tileType(G.px, below, G.seed);
+        const req = TILE_REQ_POWER[t];
+        const diggable = req !== undefined && (PICK[G.pick] ? PICK[G.pick].power : 1) >= req;
+        if (!foe && !spaceBelow && !digging && !diggable) break; // 真に詰まり(掘れない硬岩)。
+      }
+    }
     const cu1 = G.ore.COPPER;
     return { detSame, c7r2tile, c7r2ore, cu0, cu1 };
   });
@@ -1682,6 +1749,118 @@ let uiPolishPass = true;
 }
 
 // ============================================================================
+// (S) v0.5.0 モンスター/戦闘/GIRLATK/埋没掘りスポーン(死の緊張の本命増分)。
+//   S1 空間スポーン決定論: ダイブ開始で固定 seed の NONE マスへ verbatim 配置(2 回一致)。
+//   S2 埋没掘りスポーン: SOIL/HARD 掘り抜きで bury% 出現(col7 row1 = WORM を WOOD 掘りで確認)。
+//   S3 戦闘で HP/SP 減: bump-attack で foe HP 減・自機 SP→HP の二段ゲージが削られる。
+//   S4 bump-attack 撃破: foe HP 0 で除去 + EXP 蓄積 + ドロップ(決定論)。
+//   S5 GIRLATK: GIRLATK=1 のモンスター隣接で護衛中の女の子 HP 減 → 0 でロスト(救出数は不変)。
+//   S6 非介入: monster レイヤーは tileType/girlPositions/oreAt・EXPECTED_GIRLS を変えない。
+// ============================================================================
+let monsterPass = false;
+{
+  console.log("== (S) v0.5.0 モンスター/戦闘/GIRLATK/埋没掘りスポーン ==");
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(400);
+
+  const r = await page.evaluate(() => {
+    const o = {};
+    // --- S1 空間スポーン決定論(2 回 startDive で一致) ---
+    startDive();
+    const list1 = G.monsters.map((m) => `${m.key}@${m.col},${m.row}`).sort().join("|");
+    startDive();
+    const list2 = G.monsters.map((m) => `${m.key}@${m.col},${m.row}`).sort().join("|");
+    o.spaceSpawnCount = G.monsters.length;
+    o.spaceSpawnDeterministic = list1 === list2 && G.monsters.length > 0;
+    // 空間モンスターは元 NONE マスにのみ居る(tileType=NONE)。
+    o.spaceOnNone = G.monsters.every((m) => tileType(m.col, m.row, G.seed) === TILE.NONE);
+
+    // --- S2 埋没掘りスポーン(col7 を WOOD で掘り下げ、bury 出現を観測) ---
+    startDive();
+    function moveCol(c) { let g = 0; while (G.px !== c && g < 40) { act(G.px < c ? 1 : -1, 0); g++; } }
+    moveCol(7);
+    let buried = null;
+    let guard = 0;
+    while (!buried && G.py < 6 && G.screen === "dive" && guard < 20) {
+      const before = G.monsters.length;
+      const pc = G.px, pr = G.py;
+      act(0, 1);
+      guard++;
+      if (G.monsters.length > before) {
+        buried = G.monsters.find((m) => m.col === G.px && m.row === G.py + 1) || G.monsters[G.monsters.length - 1];
+      } else if (G.px === pc && G.py === pr) {
+        // 進めない(敵 or 岩)。敵なら倒して続行。
+        const foe = G.monsters.find((m) => m.col === G.px && m.row === G.py + 1);
+        if (!foe) break;
+        let f = 0; while (G.monsters.indexOf(foe) >= 0 && G.screen === "dive" && f < 30) { act(0, 1); f++; }
+      }
+    }
+    o.burySpawned = !!buried;
+    o.buryKey = buried ? buried.key : null;
+    // 埋没スポーンは決定論(同マスの buryMonsterAt が 2 回一致)。
+    if (buried) {
+      o.buryDeterministic = buryMonsterAt(buried.col, buried.row, G.seed) === buryMonsterAt(buried.col, buried.row, G.seed)
+        && buryMonsterAt(buried.col, buried.row, G.seed) === buried.key;
+    }
+
+    // --- S3/S4 戦闘で HP/SP 減 + bump-attack 撃破 + EXP/ドロップ ---
+    startDive();
+    // 既知の盤面に SNAKE を隣接配置(戦闘式と二段ゲージ接続の検証)。低 SP にして HP 減を観測。
+    G.px = 7; G.py = 5; G.stamina = 2; G.hp = 30; G.exp = 0; G.kills = 0; G.drops = {};
+    G.dug.add("8,5"); // 右を空洞化(モンスターを置けるよう)。
+    addMonster("SNAKE", 8, 5, "space");
+    const snake = G.monsters.find((m) => m.col === 8 && m.row === 5);
+    const foeHp0 = snake.hp, sp0 = G.stamina, hp0 = G.hp;
+    act(1, 0); // 1 回目の bump-attack(攻撃 + 反撃)。
+    o.foeHpDropped = snake.hp < foeHp0;
+    o.gaugeDrained = G.stamina < sp0 || G.hp < hp0; // 攻撃の行動消費 + 反撃で二段ゲージが減る。
+    // 撃破まで殴る(自機が死ぬ前に倒せるよう HP を満たし直す)。
+    G.hp = 30; G.stamina = 100;
+    let f2 = 0; while (G.monsters.indexOf(snake) >= 0 && G.screen === "dive" && f2 < 40) { act(1, 0); f2++; }
+    o.killed = G.monsters.indexOf(snake) < 0;
+    o.expGained = G.exp >= 6; // SNAKE EXP=6 verbatim。
+    o.killsCounted = G.kills >= 1;
+    // ドロップは決定論(monsterDrop が 2 回一致)。
+    o.dropDeterministic = monsterDrop("SNAKE", 8, 5, G.seed) === monsterDrop("SNAKE", 8, 5, G.seed);
+
+    // --- S5 GIRLATK: 護衛中の女の子が隣接モンスターに削られロスト(救出数は不変) ---
+    startDive();
+    const rescuedBefore = G.rescued;
+    G.girls[0].state = "following"; G.girls[0].col = 5; G.girls[0].row = 5; G.girls[0].hp = 4;
+    G.px = 0; G.py = 1; // 自機は遠い(女の子優先標的)。
+    G.dug.add("5,5"); G.dug.add("6,5"); G.dug.add("4,5");
+    addMonster("SNAKE", 6, 5, "space"); // SNAKE GIRLATK=1, STR=5 → 1 撃で 4HP の女の子を倒す。
+    const girlHp0 = G.girls[0].hp, girlState0 = G.girls[0].state;
+    let f3 = 0; while (G.girls[0].state === "following" && f3 < 6) { act(0, 1); f3++; } // 自機の行動でモンスターが反応。
+    o.girlAtkWorks = girlState0 === "following" && G.girls[0].state !== "following"; // following から外れた。
+    o.girlLostNotRescued = G.rescued === rescuedBefore; // ロスト = 救出数は増えない(クリア条件と整合)。
+
+    // --- S6 非介入: monster レイヤーは既存決定論を変えない ---
+    startDive();
+    o.girlPositions = G.girls.map((g) => `${g.col},${g.row}`).join("|");
+    return o;
+  });
+
+  const EXPECTED_GIRLS = "11,6|0,8|4,10|3,12|8,14";
+  out("S1 空間スポーン", { count: r.spaceSpawnCount, 決定論: r.spaceSpawnDeterministic, NONE上: r.spaceOnNone });
+  out("S2 埋没掘りスポーン", { 出現: r.burySpawned, 種: r.buryKey, 決定論: r.buryDeterministic });
+  out("S3/S4 戦闘", { foeHP減: r.foeHpDropped, 二段ゲージ減: r.gaugeDrained, 撃破: r.killed, EXP: r.expGained, kills: r.killsCounted, drop決定論: r.dropDeterministic });
+  out("S5 GIRLATK", { 女の子ロスト: r.girlAtkWorks, 救出数不変: r.girlLostNotRescued });
+  out("S6 非介入 girlPositions", r.girlPositions === EXPECTED_GIRLS);
+  monsterPass =
+    errors.length === 0 &&
+    r.spaceSpawnCount > 0 && r.spaceSpawnDeterministic === true && r.spaceOnNone === true &&
+    r.burySpawned === true && r.buryDeterministic === true &&
+    r.foeHpDropped === true && r.gaugeDrained === true && r.killed === true &&
+    r.expGained === true && r.killsCounted === true && r.dropDeterministic === true &&
+    r.girlAtkWorks === true && r.girlLostNotRescued === true &&
+    r.girlPositions === EXPECTED_GIRLS;
+  out("PASS(S: 空間/埋没スポーン決定論・戦闘で HP/SP 減・bump 撃破/EXP/ドロップ・GIRLATK ロスト・非介入)", monsterPass);
+  await ctx.close();
+}
+
+// ============================================================================
 // (I) determinism 静的検査(lead 必須): app.js/tiles.js に Math.random/Date.now/
 //     performance.now の実呼び出しが無い(コメント言及は可)。配信中のソースを取得して検査。
 // ============================================================================
@@ -1712,7 +1891,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.4.1 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.5.0 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -1722,6 +1901,7 @@ out("(O) v0.3.0 クリアゲート §7 忠実 / 旧1人=即クリア回帰防止
 out("(P) 複数女の子 2人救出 HUD 0/5→1/5→2/5", multiGirlPass);
 out("(Q) v0.4.0 クラフト UI 6 レシピ / インベントリ / 鉱石決定論加算 / power ゲート回帰", v040Pass);
 out("(R) v0.4.1 UI ポリッシュ: 地表被り解消 + 作る/薬ボタン拡大(PC/モバイル/短高)", uiPolishPass);
+out("(S) v0.5.0 モンスター/戦闘/GIRLATK/埋没掘りスポーン(死の緊張)", monsterPass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
@@ -1735,7 +1915,7 @@ if (overflowFails.length) {
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
   mechPass && girlFollowPass && clearGatePass && multiGirlPass &&
-  v040Pass && uiPolishPass && dpadPass && shortVpPass && regressionPass &&
+  v040Pass && uiPolishPass && monsterPass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);
