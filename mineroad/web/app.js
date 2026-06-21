@@ -34,7 +34,12 @@
 // 空間スポーン(NONE マスへ決定論配置)+ 埋没掘りスポーン(SOIL/HARD 掘り抜き時 bury% で出現)。
 // GIRLATK=1 のモンスターは追従中の女の子も標的にしうる(誘導難度=死の緊張の核)。
 // tileType/girlPositions/oreAt・determinism snapshot には非介入(v0.4.0 oreAt 流儀)。
-const VERSION = "v0.7.0";
+// v0.8.0: 商人(物々交換)の第6増分(原作 shop.csv 忠実翻案)。キノコ通貨の循環を開く=SOIL 掘り
+// 抜き時の決定論 `mushroomAt` でキノコ採取(oreAt 流儀の別レイヤー、非介入)、商人オーバーレイで
+// shop.csv 忠実サブセット(フルーツ←鉄鉱石2 / ツルハシ←キノコ10 / アンテナ←キノコ20 / 夢キノコ←
+// キノコ100)を物々交換。対価充足の行だけ実行可・不足は disabled、実行で対価減算+産物加算(決定論、
+// 状態遷移のみ)。アクセス導線は既存クラフトと同じ HUD ボタン+オーバーレイ流儀に寄せる(「商」ボタン)。
+const VERSION = "v0.8.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -75,6 +80,10 @@ const CONST = {
   // (支え木/落盤回避)増分が CAVEIN_MITIGATION を 1 点で割れるよう caveinDamage() ヘルパーへ切り出す。
   CAVEIN_DAMAGE: 8, // 落ちてきた不安定土に自機が埋まったときの被ダメージ(takeDamage 経路=二段ゲージへ)。
   CAVEIN_MITIGATION: 1.0, // 崩落軽減(未実装の別増分=ベースライン 1.0 固定、軽減なし=育成フック)。
+  // v0.8.0 商人(物々交換)。キノコ採取で得た商品(消耗品)の回復量。原作 item.csv の HP 値に寄せる
+  // (フルーツ HP25 / 夢キノコ HP10 だが本実装は HP_MAX=30 のため min で頭打ち=回復薬と同じ翻案)。
+  FRUIT_HEAL: 25, // フルーツの体力回復量(原作 HP+25、HP_MAX=30 で頭打ち)。
+  DREAM_HEAL: 30, // 夢キノコの体力回復量(高級回復=実質全回復、HP_MAX で頭打ち)。
 };
 // 計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
@@ -218,6 +227,7 @@ const TEXT = {
   cueRockHit: "硬岩は掘れない",
   cueWater: "水の中。泳げるがスタミナを激しく消耗する",
   cueMagma: "マグマの中。激しく消耗し、体力も削られる。長居は危険",
+  cueShop: "商人。キノコや鉱石を道具と交換できる",
   failTitle: "力尽きた",
   failSub: "地表へ戻れなかった",
   retry: "もういちど",
@@ -274,6 +284,13 @@ const btnCraftEl = document.getElementById("btn-craft");
 const craftOverlayEl = document.getElementById("craft-overlay");
 const craftListEl = document.getElementById("craft-list");
 const craftCloseEl = document.getElementById("craft-close");
+
+// v0.8.0 商人(物々交換)DOM 参照。クラフトと同じ工房オーバーレイにタブで同居(上部バーにボタンを
+// 増やさない=既存ボタン x 位置/地表タップ前提を壊さない)。商人タブ・キノコ通貨表示・消耗品を扱う。
+const mushValEl = document.getElementById("mush-val");
+const shopListEl = document.getElementById("shop-list");
+const tabCraftEl = document.getElementById("tab-craft");
+const tabShopEl = document.getElementById("tab-shop");
 
 // ---- canvas / 描画状態 -------------------------------------------------
 let DPR = 1;
@@ -358,6 +375,10 @@ const G = {
   // ---- v0.7.0 なだれ/落盤 崩落物理(掘削後に動的にタイル状態が変わる。初期生成系列には触れない) ----
   unstableDug: null, // Set("col,row") 掘り抜いた不安定土(なだれ土)マス。真下が空くと落下する候補。
   fallen: null, // Set("col,row") 崩落で塞がれた(土に戻った)マス。掘り直し可だが帰り道は消える。
+  // ---- v0.8.0 商人(物々交換)。キノコ通貨はランごと初期化(fail/再挑戦でリセット = 既存スコープ境界踏襲) ----
+  mushrooms: 0, // キノコ所持数(交換通貨。SOIL 掘り抜きで採取、商人で道具/夢キノコと交換)。
+  dreamMushrooms: 0, // 夢キノコ所持数(キノコ100→1 で統合した高額通貨/高級回復実)。
+  fruits: 0, // フルーツ所持数(商人で鉄鉱石2 と交換した回復消耗品)。
 };
 window.G = G;
 
@@ -429,6 +450,9 @@ function startDive() {
   G.lastHazard = HAZARD.NONE; // v0.6.0: 地表スタートは浸水なし。
   G.unstableDug = new Set(); // v0.7.0: 掘り抜いた不安定土(落下候補)。
   G.fallen = new Set(); // v0.7.0: 崩落で塞がれたマス。
+  G.mushrooms = 0; // v0.8.0: キノコ通貨(SOIL 掘り抜きで採取)。
+  G.dreamMushrooms = 0; // v0.8.0: 夢キノコ(キノコ100 から統合)。
+  G.fruits = 0; // v0.8.0: フルーツ(商人で鉄鉱石2 と交換)。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
   spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
   G.screen = "dive";
@@ -632,6 +656,7 @@ function act(dc, dr) {
     // v0.7.0: 掘り抜いたのが不安定土(なだれ土)なら落下候補として記録(真下が空くと崩れる)。
     if (t === TILE.SOIL && avalancheAt(col, row, G.seed)) markUnstableDug(col, row);
     collectOre(col, row); // v0.4.0 B: 掘り抜いたマスの鉱石を決定論で産出(GIRL は除外)。
+    if (t === TILE.SOIL) collectMushroom(col, row); // v0.8.0: SOIL 掘り抜きでキノコ通貨を採取(決定論)。
     buried = trySpawnBuryMonster(col, row); // v0.5.0 埋没掘りスポーン(bury% で出現)。
   }
   // 埋没スポーンが起きたら、そのマスはモンスターが塞ぐ。前進せずその場に留まる
@@ -676,6 +701,13 @@ function collectOre(col, row) {
   G.ore[meta.key] = (G.ore[meta.key] || 0) + 1;
   spawnPopupAt(col, row, "+" + meta.ico, "cue"); // 産出を暖色ポップで明示。
 }
+// v0.8.0: 掘り抜いた SOIL マスのキノコ通貨を決定論で採取しインベントリへ加算。GIRL/非 SOIL は呼び出し
+// 側で除外済み。oreAt と同じ別レイヤー(mushroomAt)で非介入(tileType/girlPositions 不変)。
+function collectMushroom(col, row) {
+  if (!mushroomAt(col, row, G.seed)) return;
+  G.mushrooms = (G.mushrooms || 0) + 1;
+  spawnPopupAt(col, row, "+茸", "cue"); // 採取を暖色ポップで明示(キノコ=茸)。
+}
 // クラフトレシピ rec の材料が現在のインベントリで足りているか。
 function canCraft(rec) {
   if (!G.ore) return false;
@@ -718,6 +750,61 @@ function usePotion() {
   G.hp = Math.min(CONST.HP_MAX, G.hp + CONST.POTION_HEAL);
   playSfx("heal");
   showHint("回復薬を使った", false);
+  renderHud();
+  return true;
+}
+
+// ---- v0.8.0 商人(物々交換) -------------------------------------------
+// 商人レシピ rec の対価(ore/drops/mushroom)が現在の所持で足りるか(tiles.js canTrade を G で評価)。
+function canTradeRec(rec) {
+  return canTrade(rec, G);
+}
+// 商人レシピを実行: 対価を消費し産物を付与。実行できたら true(不足/非 dive は false)。
+// 対価は ore=G.ore / item=G.drops / mushroom=G.mushrooms / dreamMushroom=G.dreamMushrooms を減算。
+// 産物は doCraft と同じ pick/tool/consumable 体系で付与(consumable は FRUIT/DREAM_MUSHROOM も扱う)。
+function doShopTrade(rec) {
+  if (G.screen !== "dive" || !canTradeRec(rec)) return false;
+  const c = rec.cost || {};
+  if (c.ore) for (const k of Object.keys(c.ore)) G.ore[k] -= c.ore[k];
+  if (c.item) for (const k of Object.keys(c.item)) G.drops[k] -= c.item[k];
+  if (c.mushroom) G.mushrooms -= c.mushroom;
+  if (c.dreamMushroom) G.dreamMushrooms -= c.dreamMushroom;
+  const r = rec.result;
+  if (r.type === "pick") {
+    if (pickRank(r.id) > pickRank(G.pick)) G.pick = r.id; // 弱い段にはダウングレードしない(doCraft 流儀)。
+  } else if (r.type === "tool") {
+    if (r.id === "ANTENNA") G.antenna = true;
+    else if (r.id === "LADDER") G.ladders += 1;
+  } else if (r.type === "consumable") {
+    if (r.id === "FRUIT") G.fruits += 1;
+    else if (r.id === "DREAM_MUSHROOM") G.dreamMushrooms += 1;
+    else if (r.id === "POTION") G.potions += 1;
+  }
+  playSfx("heal"); // 交換成立の合図(専用 SFX 無し、heal を流用=doCraft 流儀)。
+  showHint(rec.name + "を交換した", false);
+  renderHud();
+  renderShop(); // パネルの可否表示を更新。
+  return true;
+}
+// フルーツを使う(体力 +FRUIT_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
+function useFruit() {
+  if (G.screen !== "dive" || (G.fruits || 0) <= 0) return false;
+  if (G.hp >= CONST.HP_MAX) { showHint("体力は満タン", false); return false; }
+  G.fruits -= 1;
+  G.hp = Math.min(CONST.HP_MAX, G.hp + CONST.FRUIT_HEAL);
+  playSfx("heal");
+  showHint("フルーツを食べた", false);
+  renderHud();
+  return true;
+}
+// 夢キノコを食べる(体力 +DREAM_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
+function useDreamMushroom() {
+  if (G.screen !== "dive" || (G.dreamMushrooms || 0) <= 0) return false;
+  if (G.hp >= CONST.HP_MAX) { showHint("体力は満タン", false); return false; }
+  G.dreamMushrooms -= 1;
+  G.hp = Math.min(CONST.HP_MAX, G.hp + CONST.DREAM_HEAL);
+  playSfx("heal");
+  showHint("夢キノコを食べた", false);
   renderHud();
   return true;
 }
@@ -1362,14 +1449,19 @@ function renderInventory() {
     btnPotionEl.disabled = (G.potions || 0) <= 0;
     btnPotionEl.classList.toggle("disabled", (G.potions || 0) <= 0);
   }
+  // v0.8.0 商人通貨: キノコ所持数を HUD バーに表示(夢キノコ/フルーツは工房=商人タブで扱う)。
+  if (mushValEl) mushValEl.textContent = G.mushrooms || 0;
 }
 
-// ---- v0.4.0 クラフトオーバーレイ(C) ------------------------------------
-// craft.csv 6 レシピを表示。材料充足なら「つくる」可、不足は disabled。dive 中に開ける。
+// ---- v0.4.0 クラフト + v0.8.0 商人(工房オーバーレイ。タブで同居) -------
+// craft.csv 6 レシピ + shop.csv 物々交換を 1 パネルに同居。材料/対価充足なら実行可、不足は disabled。
+// dive 中に開ける。開いた直後は常にクラフトタブ(gate Q の #btn-craft→craft-list 検証を保つ)。
 let craftOpen = false;
+let workshopTab = "craft"; // "craft" | "shop"。開くたびクラフトへ戻す(既定)。
 function openCraft() {
   if (G.screen !== "dive") return;
   craftOpen = true;
+  setWorkshopTab("craft"); // 既定はクラフトタブ(gate Q 互換)。
   renderCraft();
   if (craftOverlayEl) {
     craftOverlayEl.hidden = false;
@@ -1382,6 +1474,16 @@ function closeCraft() {
     craftOverlayEl.classList.remove("visible");
     craftOverlayEl.hidden = true;
   }
+}
+// 工房タブ切り替え(クラフト/商人)。リスト表示とタブ active 状態を同期し、選んだ側を再描画。
+function setWorkshopTab(tab) {
+  workshopTab = tab === "shop" ? "shop" : "craft";
+  if (craftListEl) craftListEl.hidden = workshopTab !== "craft";
+  if (shopListEl) shopListEl.hidden = workshopTab !== "shop";
+  if (tabCraftEl) tabCraftEl.classList.toggle("active", workshopTab === "craft");
+  if (tabShopEl) tabShopEl.classList.toggle("active", workshopTab === "shop");
+  if (workshopTab === "shop") renderShop();
+  else renderCraft();
 }
 // 材料コストを「銅3」等の verbatim 文字列に。
 function costText(cost) {
@@ -1429,6 +1531,93 @@ function renderCraft() {
     row.appendChild(btn);
     craftListEl.appendChild(row);
   }
+}
+
+// ---- v0.8.0 商人オーバーレイ(物々交換) --------------------------------
+// shop.csv 忠実サブセット(SHOP_RECIPES)を表示。対価充足なら「交換」可、不足は disabled。dive 中に
+// 開ける。アクセス導線はクラフトと同じ「作る」ボタン→工房オーバーレイ→商人タブ(上部バーにボタンを
+// 増やさず既存の地表タップ/カメラ前提を壊さない)。
+// 商人レシピの対価を「鉄2 / 茸10」等の verbatim 文字列に(ore=アイコン1字、item=日本語名、mushroom=茸/夢)。
+function tradeCostText(cost) {
+  const parts = [];
+  if (cost.ore) {
+    for (const k of Object.keys(cost.ore)) {
+      let ico = "?";
+      for (const o of Object.keys(ORE_META)) {
+        if (ORE_META[o].key === k) { ico = ORE_META[o].ico; break; }
+      }
+      parts.push(ico + cost.ore[k]);
+    }
+  }
+  if (cost.item) for (const k of Object.keys(cost.item)) parts.push(k + cost.item[k]);
+  if (cost.mushroom) parts.push("茸" + cost.mushroom);
+  if (cost.dreamMushroom) parts.push("夢" + cost.dreamMushroom);
+  return parts.join(" ");
+}
+// 既に最強段のツルハシを持っている pick レシピは「所持済み」で実質無効化(クラフトと同じ混乱防止)。
+function tradeRedundant(rec) {
+  return rec.result.type === "pick" && pickRank(rec.result.id) <= pickRank(G.pick);
+}
+function renderShop() {
+  if (!shopListEl) return;
+  shopListEl.innerHTML = "";
+  for (const rec of SHOP_RECIPES) {
+    const row = document.createElement("div");
+    row.className = "craft-row"; // クラフトと同じ行スタイルを共用(CSS 追加を増やさない)。
+    const info = document.createElement("div");
+    info.className = "craft-info";
+    const nm = document.createElement("span");
+    nm.className = "craft-name";
+    nm.textContent = rec.desc ? rec.name + "（" + rec.desc + "）" : rec.name;
+    const cost = document.createElement("span");
+    cost.className = "craft-cost";
+    cost.textContent = tradeCostText(rec.cost);
+    info.appendChild(nm);
+    info.appendChild(cost);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "craft-make";
+    const redundant = tradeRedundant(rec);
+    const ok = canTradeRec(rec) && !redundant;
+    btn.textContent = redundant ? "所持済み" : "交換";
+    btn.disabled = !ok;
+    btn.classList.toggle("disabled", !ok);
+    btn.onclick = () => { doShopTrade(rec); };
+    row.appendChild(info);
+    row.appendChild(btn);
+    shopListEl.appendChild(row);
+  }
+  // 交換で得た消耗品(フルーツ/夢キノコ)を食べる行。所持している間だけ表示(HUD バーにボタンを
+  // 増やさずここから使う=上部バーの x 位置を動かさない設計)。回復薬は HUD の薬ボタンで使うため除外。
+  appendEatRow("フルーツ", G.fruits || 0, "体力+" + CONST.FRUIT_HEAL, useFruit);
+  appendEatRow("夢キノコ", G.dreamMushrooms || 0, "体力+" + CONST.DREAM_HEAL, useDreamMushroom);
+}
+// 所持消耗品 name を「食べる」行として shopList に足す(数が 0 なら何も追加しない)。
+function appendEatRow(name, count, desc, useFn) {
+  if (count <= 0 || !shopListEl) return;
+  const row = document.createElement("div");
+  row.className = "craft-row";
+  const info = document.createElement("div");
+  info.className = "craft-info";
+  const nm = document.createElement("span");
+  nm.className = "craft-name";
+  nm.textContent = name + "（" + desc + "）";
+  const c = document.createElement("span");
+  c.className = "craft-cost";
+  c.textContent = "所持 " + count;
+  info.appendChild(nm);
+  info.appendChild(c);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "craft-make";
+  btn.textContent = "食べる";
+  const ok = G.hp < CONST.HP_MAX;
+  btn.disabled = !ok;
+  btn.classList.toggle("disabled", !ok);
+  btn.onclick = () => { useFn(); renderShop(); };
+  row.appendChild(info);
+  row.appendChild(btn);
+  shopListEl.appendChild(row);
 }
 
 let hintTimer = null;
@@ -1524,6 +1713,10 @@ if (btnMuteEl) {
 if (btnCraftEl) btnCraftEl.addEventListener("click", () => openCraft());
 if (craftCloseEl) craftCloseEl.addEventListener("click", () => closeCraft());
 if (btnPotionEl) btnPotionEl.addEventListener("click", () => usePotion());
+// v0.8.0: 工房のタブ切り替え(クラフト / 商人)。商人は「作る」ボタン→工房→商人タブで開く
+// (上部バーに 3 つ目のボタンを足さない=既存ボタン x 位置/地表タップ前提を壊さない)。
+if (tabCraftEl) tabCraftEl.addEventListener("click", () => setWorkshopTab("craft"));
+if (tabShopEl) tabShopEl.addEventListener("click", () => setWorkshopTab("shop"));
 
 // ---- 描画(タイル粒度、per-pixel 禁止) --------------------------------
 function caveColor(row) {

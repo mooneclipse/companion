@@ -63,7 +63,10 @@
     <span class="inv-ore di"><span class="inv-ico">ダ</span><span id="ore-di">0</span></span>
     <span class="inv-tool pick"><span class="inv-ico">ツ</span><span id="pick-ico">木</span></span>
     <button id="btn-potion" class="inv-btn" type="button" aria-label="回復薬を使う">薬 <span id="potion-val">0</span></button>
-    <button id="btn-craft" class="inv-btn" type="button" aria-label="クラフトを開く">作る</button>
+    <button id="btn-craft" class="inv-btn" type="button" aria-label="クラフト／商人を開く">作る</button>
+    <!-- v0.8.0 商人通貨(キノコ)はボタンの後ろに置く(span は pointer 素通し&ボタンの x 位置を
+         動かさない=既存の地表タップ/カメラ前提を壊さない)。 -->
+    <span class="inv-ore mush"><span class="inv-ico">茸</span><span id="mush-val">0</span></span>
   </section>
 
   <!-- 下部ヒント(発見・スタミナ切れ・硬岩など)。 -->
@@ -81,12 +84,19 @@
   </section>
 </div>
 
-<!-- v0.4.0 クラフトオーバーレイ(craft.csv 6 レシピ)。dive 中に開ける。
-     短高 viewport で破綻しないよう 2 段 flex(スクロール領域 + 固定フッター)。 -->
+<!-- v0.4.0 クラフト + v0.8.0 商人オーバーレイ。1 つの「工房」パネルにタブ(クラフト/商人)で同居。
+     上部バーに 3 つ目のボタンを足さない(=既存ボタンの x 位置/地表タップ前提を壊さない)ため、商人は
+     クラフトと同じ「作る」ボタンから開きタブで切り替える。短高 viewport 対策の 2 段 flex は不変。 -->
 <div id="craft-overlay" class="craft-overlay" hidden>
   <div class="craft-panel">
-    <h2 class="craft-title">クラフト</h2>
+    <div class="craft-tabs">
+      <button id="tab-craft" class="craft-tab active" type="button">クラフト</button>
+      <button id="tab-shop" class="craft-tab" type="button">商人</button>
+    </div>
+    <!-- クラフトタブ(craft.csv 6 レシピ)。 -->
     <div id="craft-list" class="craft-list"></div>
+    <!-- 商人タブ(shop.csv 物々交換 + 所持消耗品を食べる)。既定は非表示。 -->
+    <div id="shop-list" class="craft-list" hidden></div>
     <button id="craft-close" class="craft-close" type="button">とじる</button>
   </div>
 </div>

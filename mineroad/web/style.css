@@ -269,6 +269,10 @@ body {
 .inv-tool.pick .inv-ico {
   color: #f4c878;
 }
+/* v0.8.0 商人通貨: キノコ(茸)= 淡赤茶。HUD バーのボタンより後ろに置く span(pointer 素通し)。 */
+.inv-ore.mush .inv-ico {
+  color: #c98a6a;
+}
 /* 回復薬 / 作る ボタン。d-pad と同じ Kenney チャンキー語彙(アンバー 3D)に統一 =
    操作系を 1 つの「触れる家族」として読ませ、PC でも縮まないタップ標的(min 2.2rem)にする。 */
 .inv-btn {
@@ -630,6 +634,35 @@ body {
   color: var(--ink);
   flex: 0 0 auto;
 }
+/* v0.8.0 工房タブ(クラフト / 商人)。1 パネルに同居させ、上部バーにボタンを増やさない。 */
+.craft-tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+.craft-tab {
+  flex: 1 1 0;
+  font-family: var(--mincho);
+  font-size: clamp(0.9rem, 4vw, 1.1rem);
+  letter-spacing: 0.1em;
+  color: rgba(244, 238, 226, 0.6);
+  background: rgba(244, 238, 226, 0.06);
+  border: 1px solid rgba(230, 178, 90, 0.3);
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.craft-tab.active {
+  color: var(--ink);
+  background: rgba(230, 178, 90, 0.2);
+  border-color: rgba(230, 178, 90, 0.6);
+}
+.craft-tab:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
 .craft-list {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -637,6 +670,9 @@ body {
   flex-direction: column;
   gap: 0.5rem;
   min-height: 0;
+}
+.craft-list[hidden] {
+  display: none !important;
 }
 .craft-row {
   display: flex;

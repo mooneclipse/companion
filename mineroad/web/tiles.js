@@ -387,6 +387,74 @@ function avalancheAt(col, row, seed) {
   return h < rate;
 }
 
+// ---- キノコ(交換通貨) — 原作忠実翻案(v0.8.0) -------------------------
+// 原作 item.csv: キノコ(ID31, type ITEM)=「かわいいキノコ。交換のための通貨として利用できる。
+// 食べることも可能」。原作では地中で採取/栽培(青いタネ←キノコ10)して集め、商人(shop.csv)で
+// 道具と交換する物々交換(バーター)の基軸通貨。本リメイクには未導入だったため、v0.8.0 で商人と
+// 同時に「キノコ通貨の循環」を開く。
+//
+// 採取の入口は oreAt(v0.4.0)と同じ「掘り抜いたマスの決定論ドロップ」別レイヤーとして実装する
+// (原作「地中で採取するキノコ」に忠実、かつ tileType/girlPositions/oreAt/monster/hazard/avalanche
+// に一切介入しない=非介入方針 v0.4.0〜v0.7.0 踏襲)。SOIL を掘り抜いた瞬間に mushroomAt を引き、
+// 含有ならインベントリへ加算。oreAt と同じく深度で控えめに分布(浅層も出る=序盤から通貨が貯まる)。
+// GIRL マスは出さない(救出対象)。同じ (col,row,seed) は常に同じ結果(決定論再挑戦)。
+//
+// 位相オフセット(既存5レイヤーと非衝突): oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・
+// buryMonster(+233/+617/+3001)・hazard(+1597/+2389/+7919)・avalanche(+2671/+3331/+9173)・
+// tileType(col,row,seed) と衝突しない新オフセット +4099/+5113/+2027 を採用。
+const MUSHROOM_RATE = 0.14; // 掘り抜いた SOIL のうちキノコを含む割合(控えめ、深度非依存=序盤から通貨化)。
+
+// ある (col,row) を掘り抜いたときキノコを 1 個産出するか(決定論・乱数禁止)。GIRL/地表/範囲外は false。
+function mushroomAt(col, row, seed) {
+  const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
+  if (row <= 0 || col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return false;
+  if (isGirlAt(col, row, seed)) return false; // 救出対象マスはキノコなし。
+  const h = hash3(col + 4099, row + 5113, seed + 2027); // 既存5レイヤー + tileType と非衝突。
+  return h < MUSHROOM_RATE;
+}
+
+// ---- 商人(物々交換) — 原作 shop.csv 忠実翻案(v0.8.0) -------------------
+// 原作 shop.csv は「作る品(craft ID/個数) ← 対価(SALE ITEM 名 + 個数、最大3対価)」の物々交換表。
+// 数値・設計意図のみ参照し、データは自前で書き起こす(原作テキスト/コードは転用しない)。
+//
+// 翻案判断(STATUS に記録): shop.csv のレシピは原作 item.csv の全アイテム(石炭/化石/鋼/種火/
+// バケツ/ロープ等)を対価/産物に使うが、本リメイクの経済系は現状 ① 鉱石 G.ore(COPPER/IRON/GOLD/
+// DIAMOND, v0.4.0 の抽象化)② モンスタードロップ G.drops(動物の血/生肉/ルビー/クモの糸/解毒薬等,
+// v0.5.0 verbatim)③ キノコ(本増分で採取を開く)の 3 系統しか存在しない。よって shop.csv の中から
+// 「対価が現経済系に実在し、かつ産物が既存メカに接続して dead-item にならない」行だけを忠実な
+// サブセットとして実装する(対価通貨が無い行=焼き肉←鋼/タネ←石炭/赤いタネ←化石、産物が使えない
+// 行=バケツ/ロープ/マジックハンド/木の杭/爆弾/種火/骨 は、支えるメカが未実装なので次以降に送る)。
+// 採用 5 行は ① 鉱石→消耗品(フルーツ←鉄鉱石2)で ore に商人サイドの sink を開き、② キノコ→道具
+// (ツルハシ←キノコ10/アンテナ←キノコ20)で原作の基軸=キノコ通貨を既存の power ゲート・透視へ接続、
+// ③ キノコ100→夢キノコ1 で原作の通貨統合(高額通貨化)を verbatim 再現する=「キノコ通貨の循環」を開く。
+//
+// レシピモデルは CRAFT_RECIPES に揃える。cost は通貨種別ごとに分けて持つ:
+//   ore:  ORE_META.key (COPPER/IRON/GOLD/DIAMOND) → 個数
+//   item: G.drops のキー(日本語アイテム名) → 個数(モンスタードロップを対価にできる行用)
+//   mushroom / dreamMushroom: キノコ / 夢キノコ → 個数
+// result: { type:"pick"|"tool"|"consumable", id, name }(doShopTrade が消費/付与を解決)。
+const SHOP_RECIPES = [
+  // フルーツ ← 鉄鉱石2(shop.csv 行2 の数値=鉄鉱石2。フルーツは item.csv HP25/SP200 の回復実=消耗品)。
+  { id: "shop_fruit", name: "フルーツ", desc: "体力+25", result: { type: "consumable", id: "FRUIT" }, cost: { ore: { IRON: 2 } } },
+  // ツルハシ ← キノコ10(shop.csv 行12)。原作の鋼ツルハシ(item27)= 本リメイクの IRON 段へ(power ゲート接続)。
+  { id: "shop_pick", name: "ツルハシ", desc: "鉄のツルハシ", result: { type: "pick", id: "IRON" }, cost: { mushroom: 10 } },
+  // アンテナ ← キノコ20(shop.csv 行15)。原作 item3=透視/力尽きロスト防止。本リメイクは位置透視を付与。
+  { id: "shop_antenna", name: "アンテナ", desc: "女の子を透視", result: { type: "tool", id: "ANTENNA" }, cost: { mushroom: 20 } },
+  // 夢キノコ ← キノコ100(shop.csv 行16)。原作の通貨統合(キノコ100→夢キノコ1)。夢キノコ=item32 の高額通貨/回復実。
+  { id: "shop_dream", name: "夢キノコ", desc: "体力+回復の高級キノコ", result: { type: "consumable", id: "DREAM_MUSHROOM" }, cost: { mushroom: 100 } },
+];
+
+// 商人レシピ rec の対価(ore/drops/mushroom)が現在の所持で足りるか。
+function canTrade(rec, G) {
+  if (!G) return false;
+  const c = rec.cost || {};
+  if (c.ore) for (const k of Object.keys(c.ore)) if (((G.ore && G.ore[k]) || 0) < c.ore[k]) return false;
+  if (c.item) for (const k of Object.keys(c.item)) if (((G.drops && G.drops[k]) || 0) < c.item[k]) return false;
+  if (c.mushroom && (G.mushrooms || 0) < c.mushroom) return false;
+  if (c.dreamMushroom && (G.dreamMushrooms || 0) < c.dreamMushroom) return false;
+  return true;
+}
+
 // 撃破ドロップ(決定論)。drops の per% を「累積しきい値で 1 種だけ落とす」抽選にする
 // (原作 PSUM=100 系=合計100の重み付き 1 抽選)。落ちなければ null。kill ごとに固有の位相。
 function monsterDrop(key, col, row, seed) {
@@ -441,6 +509,8 @@ const PALETTE = {
   magma: "#d8542a", // マグマの浸水(赤橙、特に危険)。
   // v0.7.0 なだれ/落盤(不安定土を SOIL 上に赤錆オーバーレイで示す=崩れそうの予兆)。
   avalanche: "#b5532a", // 不安定土(なだれ土)の赤錆色。掘ると崩れて道を塞ぐ。
+  // v0.8.0 商人(キノコ通貨。採取ポップ + HUD アイコンの色)。
+  mushroom: "#c98a6a", // キノコ(交換通貨)の淡赤茶。
 };
 
 if (typeof window !== "undefined") {
@@ -470,4 +540,8 @@ if (typeof window !== "undefined") {
   window.hazardAt = hazardAt;
   // v0.7.0 なだれ/落盤 崩落物理(別オーバーレイレイヤー、決定論)。
   window.avalancheAt = avalancheAt;
+  // v0.8.0 商人(キノコ採取の決定論ドロップ + 物々交換レシピ)。
+  window.mushroomAt = mushroomAt;
+  window.SHOP_RECIPES = SHOP_RECIPES;
+  window.canTrade = canTrade;
 }
