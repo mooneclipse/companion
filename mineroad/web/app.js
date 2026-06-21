@@ -34,7 +34,7 @@
 // 空間スポーン(NONE マスへ決定論配置)+ 埋没掘りスポーン(SOIL/HARD 掘り抜き時 bury% で出現)。
 // GIRLATK=1 のモンスターは追従中の女の子も標的にしうる(誘導難度=死の緊張の核)。
 // tileType/girlPositions/oreAt・determinism snapshot には非介入(v0.4.0 oreAt 流儀)。
-const VERSION = "v0.6.0";
+const VERSION = "v0.7.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -70,6 +70,11 @@ const CONST = {
   MAGMA_SP_MULT: 4, // マグマ中で行動したときの SP 消耗倍率(水より激しい)。
   MAGMA_HP_CHIP: 2, // マグマ中で行動するたび、SP 割増に「加えて」直接 chip する体力(takeDamage 経路)。
   SWIM_MITIGATION: 1.0, // SWIM 育成での消耗軽減(未実装の別増分=ベースライン 1.0 固定、軽減なし)。
+  // v0.7.0 なだれ/落盤 崩落物理(原作: なだれ土=支えを失うと崩れ落ちる不安定な土。落下で自機/女の子を
+  // 埋めてダメージ + 掘った道を塞ぐ)。崩落ダメージ係数は CONST 単一ブロックに集約し、将来の育成
+  // (支え木/落盤回避)増分が CAVEIN_MITIGATION を 1 点で割れるよう caveinDamage() ヘルパーへ切り出す。
+  CAVEIN_DAMAGE: 8, // 落ちてきた不安定土に自機が埋まったときの被ダメージ(takeDamage 経路=二段ゲージへ)。
+  CAVEIN_MITIGATION: 1.0, // 崩落軽減(未実装の別増分=ベースライン 1.0 固定、軽減なし=育成フック)。
 };
 // 計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
@@ -350,6 +355,9 @@ const G = {
   drops: null, // { 素材名: 個数 } 撃破ドロップ(表示のみ、商人/クラフト連携は次増分)。
   // ---- v0.6.0 浸水ハザード(自機が今いるマスの浸水種。種が変わった時だけヒントを 1 回出す) ----
   lastHazard: 0, // 直前の自機マスの HAZARD 種(HAZARD.NONE/WATER/MAGMA)。連続滞在でヒント連発を抑止。
+  // ---- v0.7.0 なだれ/落盤 崩落物理(掘削後に動的にタイル状態が変わる。初期生成系列には触れない) ----
+  unstableDug: null, // Set("col,row") 掘り抜いた不安定土(なだれ土)マス。真下が空くと落下する候補。
+  fallen: null, // Set("col,row") 崩落で塞がれた(土に戻った)マス。掘り直し可だが帰り道は消える。
 };
 window.G = G;
 
@@ -419,6 +427,8 @@ function startDive() {
   G.kills = 0;
   G.drops = {};
   G.lastHazard = HAZARD.NONE; // v0.6.0: 地表スタートは浸水なし。
+  G.unstableDug = new Set(); // v0.7.0: 掘り抜いた不安定土(落下候補)。
+  G.fallen = new Set(); // v0.7.0: 崩落で塞がれたマス。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
   spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
   G.screen = "dive";
@@ -434,6 +444,8 @@ function startDive() {
 function tileAt(col, row) {
   if (col < 0 || col >= CONST.GRID_COLS || row < 0) return TILE.ROCK; // 範囲外は壁。
   if (row > CONST.DEPTH_ROWS) return TILE.ROCK;
+  // v0.7.0: 崩落で塞がれたマスは(掘った跡でも)不安定土(SOIL)に戻っている=道が消える。dug より優先。
+  if (G.fallen && G.fallen.has(col + "," + row)) return TILE.SOIL;
   if (G.dug && G.dug.has(col + "," + row)) return TILE.NONE;
   return tileType(col, row, G.seed);
 }
@@ -617,6 +629,8 @@ function act(dc, dr) {
   let buried = null;
   if (t === TILE.GIRL) discoverGirl(col, row);
   else {
+    // v0.7.0: 掘り抜いたのが不安定土(なだれ土)なら落下候補として記録(真下が空くと崩れる)。
+    if (t === TILE.SOIL && avalancheAt(col, row, G.seed)) markUnstableDug(col, row);
     collectOre(col, row); // v0.4.0 B: 掘り抜いたマスの鉱石を決定論で産出(GIRL は除外)。
     buried = trySpawnBuryMonster(col, row); // v0.5.0 埋没掘りスポーン(bury% で出現)。
   }
@@ -913,6 +927,8 @@ function moveTo(col, row, costPaid, noGravity) {
   // ただし上移動(クライム)の 1 歩は引き戻さない(noGravity)。
   if (!noGravity) applyGravity();
   revealAround();
+  resolveCaveins(); // v0.7.0: 支えを失った不安定土(なだれ土)が崩れ落ちて道を塞ぎ、自機/女の子を埋める。
+  if (G.screen !== "dive") return; // 崩落の埋没ダメージで力尽きたら離脱。
   tryRediscoverGirlAt(G.px, G.py); // ロスト後 hidden の女の子が居るマスへ侵入したら再発見(following 復帰)。
   advanceGirl();
   if (G.py === 0) {
@@ -924,6 +940,78 @@ function moveTo(col, row, costPaid, noGravity) {
   monstersAct(); // v0.5.0: 自機の 1 行動に対しモンスターが反応(追跡/攻撃、SPD で律速)。
   renderHud();
   checkFail();
+}
+
+// ---- v0.7.0 なだれ/落盤 崩落物理 --------------------------------------
+// 崩落ダメージ係数を 1 箇所に集約(将来の育成=支え木/落盤回避が CAVEIN_MITIGATION を 1 点で割る)。
+function caveinDamage() {
+  return Math.max(0, Math.round(CONST.CAVEIN_DAMAGE / CONST.CAVEIN_MITIGATION));
+}
+
+// 掘り抜いたのが不安定土(なだれ土)なら落下候補として記録(真下が空くと崩れる)。
+function markUnstableDug(col, row) {
+  if (!G.unstableDug) return;
+  G.unstableDug.add(col + "," + row);
+}
+
+// 支えを失った不安定土(なだれ土)を崩落させる。掘り抜いた不安定土マス(unstableDug)の真下が空間に
+// なっていれば、緩んだ土塊がその列を落ちて第 1 の固体床の上へ積もる(=道を塞ぐ)。落ちてきたマスに
+// 自機/女の子が居れば埋没ダメージ。決定論(全 unstableDug を列・行で安定順走査、ランタイム乱数なし)。
+// 崩落しても soft-lock しない(掘り直せる・別ルートあり・撤退は続く)=非破壊の崩落圧。
+function resolveCaveins() {
+  if (!G.unstableDug || !G.unstableDug.size) return;
+  // 安定した決定論順(row 昇順 → col 昇順)で走査。落下の連鎖が起きてもこの 1 パスで列ごと解決する
+  // (上の不安定土から順に落とすので、下に積もった土の上へ更に上の土が乗る整合が取れる)。
+  const keys = [...G.unstableDug].map((k) => k.split(",").map(Number));
+  keys.sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+  for (const [col, srcRow] of keys) {
+    // 既に塞がれた/まだ空間でない元マスはスキップ(掘り直して再度不安定化したケースは別途記録される)。
+    if (G.fallen.has(col + "," + srcRow)) continue;
+    if (!isSpace(col, srcRow)) continue; // 元マスが空間でなければ落ちる土が無い。
+    // 真下が固体なら支えがある=崩れない。空間なら落ちる先(その列の第 1 固体床の直上)を探す。
+    let dest = srcRow;
+    let guard = 0;
+    while (guard < CONST.DEPTH_ROWS + 2) {
+      guard++;
+      const below = dest + 1;
+      if (below > CONST.DEPTH_ROWS) break; // 底=これ以上落ちない。
+      if (isSpace(col, below)) dest = below; // 真下が空間=さらに落ちる。
+      else break; // 真下が固体=ここで止まる。
+    }
+    if (dest === srcRow) continue; // 真下が固体で支えあり=崩れない。
+    // dest へ土塊が積もる(固体 SOIL に戻る=道を塞ぐ)。元マス srcRow は空のまま(緩んだ土が抜けた跡)。
+    G.fallen.add(col + "," + dest);
+    G.unstableDug.delete(col + "," + srcRow);
+    G.dug.delete(col + "," + dest); // 掘った跡だったマスが塞がれる(帰り道の消失)。
+    spawnPopupAt(col, dest, "▼", "warn"); // 崩落の視覚合図。
+    playSfx("blocked"); // 専用 SFX 無し=塞がりの警告音を流用。
+    // 埋没判定: 落ちてきたマスに自機/女の子が居れば埋まる。
+    buryUnitsAt(col, dest);
+    if (G.screen !== "dive") return; // 自機の埋没で力尽きたら離脱。
+  }
+}
+
+// 崩落したマス(col,row)に居る自機/女の子を埋める。自機は二段ゲージへ被ダメ、女の子はロスト(原位置復帰)。
+function buryUnitsAt(col, row) {
+  // 自機の埋没。
+  if (G.px === col && G.py === row) {
+    takeDamage(caveinDamage()); // 既存二段ゲージ(SP→HP)へ接続=独自 HP 経路を作らない。
+    showHint("なだれに巻き込まれた。土をどかして抜け出そう", true);
+    // 自機は土の上(直上)へ押し上げる(埋まったまま固体に閉じ込めない=soft-lock 回避)。
+    if (isSpace(col, row - 1) || row - 1 <= 0) G.py = Math.max(0, row - 1);
+    checkFail();
+    if (G.screen !== "dive") return;
+  }
+  // 女の子の埋没(GIRLATK のロストと同経路=原位置復帰で再発見可能性を保つ)。
+  if (G.girls) {
+    for (const g of G.girls) {
+      if (g.state === "following" && g.col === col && g.row === row) {
+        g.hp -= caveinDamage();
+        spawnPopupAt(col, row, "-" + caveinDamage(), "warn");
+        if (g.hp <= 0) loseGirl(g);
+      }
+    }
+  }
 }
 
 // v0.6.0: 自機が今いるマスの浸水種を見て、種が変わったとき(NONE→水/マグマ、水↔マグマ)だけ
@@ -1568,6 +1656,16 @@ function render() {
         // 深度暗化(明るいスプライトに「深い=暗い」を重ねる)。
         ctx.fillStyle = `rgba(0,0,0,${depthShade(row)})`;
         ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        // v0.7.0 なだれ/落盤: 不安定土(なだれ土) or 崩落で塞がったマスは赤錆オーバーレイで「崩れそう」を
+        // 示す(新規アセット無し=URL 不変)。SOIL のときだけ(硬土/硬岩は崩れない)。
+        const unstable =
+          t === TILE.SOIL &&
+          ((G.fallen && G.fallen.has(col + "," + row)) || avalancheAt(col, row, G.seed));
+        if (unstable) {
+          const av = hexToRgb(PALETTE.avalanche);
+          ctx.fillStyle = `rgba(${av[0]},${av[1]},${av[2]},0.4)`;
+          ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        }
       }
 
       // タイル境界の薄い格子(断面の読みやすさ。fog には引かない)。

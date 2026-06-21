@@ -355,6 +355,38 @@ function hazardAt(col, row, seed) {
   return kindH < HAZARD_MAGMA_FRAC ? HAZARD.MAGMA : HAZARD.WATER;
 }
 
+// ---- なだれ/落盤 崩落物理 — 原作忠実翻案(v0.7.0) ------------------------
+// 原作 dungeon.csv のブロック種分布に「なだれ土 SOIL_AVALANCHE_HARD」が実在し、深いほど分布が
+// 増える(裏庭0/防空壕floor10〜1/廃炭鉱floor40=6/埋没城跡floor40〜12)。崩落の詳細物理(崩れ方・
+// ダメージ・埋没判定)は一次資料に明記が無いため、忠実意図に沿った決定論翻案: なだれ土=支えを失うと
+// 崩れ落ちる不安定な土。掘り抜いた後、真下が空くと落下して掘った道を塞ぎ、自機/女の子を埋めて
+// ダメージ。tileType には混ぜない(既存 girlPositions・determinism snapshot・oreAt・monster・
+// hazard・タイル分布を一切変えないため)。SOIL マスに「これは不安定土(なだれ土)」という意味論を
+// 別オーバーレイで重ねるだけ(初期生成のハッシュ消費を増やさない)。崩落の動的 state は app.js 側の
+// ランタイム state(G.fallen 等)に持つ。同じ (col,row,seed) は常に同じ結果(決定論再挑戦)。
+//
+// 深度ゲート: 裏庭 ID0 は AVALANCHE=0(チュートリアルは安全)だが、v0.6.0 の水/マグマ同様
+// 「深いほど増える」忠実意図に沿った自前カーブで翻案。中層帯(row>=5)から出し、深いほど密度↑
+// (浅層 row1-4 は崩落なし=安全帯を保つ)。
+const AVALANCHE_MIN_ROW = 5; // 不安定土はこの row 以上の SOIL に出る(浅層 row1-4 は安定)。
+const AVALANCHE_RATE_MID = 0.16; // 中層(5-8)の SOIL が不安定土である割合。
+const AVALANCHE_RATE_DEEP = 0.28; // 深層(9-15)の SOIL が不安定土である割合(深いほど密度↑)。
+
+// ある (col,row) の SOIL が「不安定土(なだれ土)」か(決定論・乱数禁止)。SOIL でないマスは false
+// (呼び出し側で tileType==SOIL を保証 or ここで判定)。GIRL マス・地表・範囲外・浅層は false。
+// 別位相ハッシュ(+2671/+3331/+9173)。oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・
+// buryMonster(+233/+617/+3001)・hazard(+1597/+2389/+7919)・tileType(col,row,seed) と非衝突。
+function avalancheAt(col, row, seed) {
+  const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
+  if (row < AVALANCHE_MIN_ROW) return false; // 浅層帯は安定(崩落なし)。
+  if (col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return false;
+  if (isGirlAt(col, row, seed)) return false; // 救出対象マスは崩落させない。
+  if (tileType(col, row, seed) !== TILE.SOIL) return false; // 不安定なのは土だけ(硬土/硬岩/空間は対象外)。
+  const rate = row < 9 ? AVALANCHE_RATE_MID : AVALANCHE_RATE_DEEP;
+  const h = hash3(col + 2671, row + 3331, seed + 9173); // 既存4レイヤー + tileType と非衝突。
+  return h < rate;
+}
+
 // 撃破ドロップ(決定論)。drops の per% を「累積しきい値で 1 種だけ落とす」抽選にする
 // (原作 PSUM=100 系=合計100の重み付き 1 抽選)。落ちなければ null。kill ごとに固有の位相。
 function monsterDrop(key, col, row, seed) {
@@ -407,6 +439,8 @@ const PALETTE = {
   // v0.6.0 浸水ハザード(空洞の塗りに半透明で重ねる)。水=青系/マグマ=赤橙系。
   water: "#2f6fb0", // 水の浸水(青)。
   magma: "#d8542a", // マグマの浸水(赤橙、特に危険)。
+  // v0.7.0 なだれ/落盤(不安定土を SOIL 上に赤錆オーバーレイで示す=崩れそうの予兆)。
+  avalanche: "#b5532a", // 不安定土(なだれ土)の赤錆色。掘ると崩れて道を塞ぐ。
 };
 
 if (typeof window !== "undefined") {
@@ -434,4 +468,6 @@ if (typeof window !== "undefined") {
   // v0.6.0 水/マグマ 浸水ハザード(別オーバーレイレイヤー、決定論)。
   window.HAZARD = HAZARD;
   window.hazardAt = hazardAt;
+  // v0.7.0 なだれ/落盤 崩落物理(別オーバーレイレイヤー、決定論)。
+  window.avalancheAt = avalancheAt;
 }

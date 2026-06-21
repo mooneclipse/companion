@@ -13,6 +13,10 @@
 //  撤退判断をさらに重くするはず。bot は浸水を避ける専用回路は持たない(浸水マスを掘り進むと
 //  自然に消耗が増える)ので、深追い policy で力尽き率が上がるかを再計測する(数値の単独いじりでなく
 //  ハザードコンテンツで死の緊張がさらに出たかの裏取り)。
+// v0.7.0(なだれ/落盤 崩落物理増分): 掘り抜いた不安定土(なだれ土)が真下を空けると崩れ落ち、掘った道を
+//  塞ぎ・自機を埋めてダメージ(二段ゲージへ)。bot は崩落回避回路を持たない(不安定土を掘り進むと自然に
+//  巻き込まれる)ので、深く広く掘る policy ほど崩落埋没が累積するか再計測する(数値の単独いじりでなく
+//  崩落コンテンツで死の緊張がどう動いたかの裏取り。資源数値は一切変えない)。
 import { chromium } from "playwright";
 const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47860";
 const out = (k, v) => console.log(`  ${k}: ${JSON.stringify(v)}`);
@@ -180,7 +184,7 @@ const runs = await page.evaluate(() => {
 const byPolicy = {};
 for (const r of runs) (byPolicy[r.policy] ||= []).push(r);
 
-console.log("== 面白さ代理レポート v0.6.0(固定 seed=41027 決定論・policy 4種×5・モンスター戦闘あり) ==");
+console.log("== 面白さ代理レポート v0.7.0(固定 seed=41027 決定論・policy 4種×5・モンスター戦闘 + なだれ崩落あり) ==");
 console.log("   クリア条件 = 5人救出 + 最下層(15)到達 + 探索率 100% / 主指標 = 力尽き率(死の緊張)");
 for (const [p, arr] of Object.entries(byPolicy)) {
   const clear = arr.filter((r) => r.clear).length;
