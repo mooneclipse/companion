@@ -357,26 +357,68 @@ let spritePass = false;
     return { r, allReady };
   });
 
-  // dive へ入り、土を掘って断面を描かせる。soil スプライトが固体タイルとして描かれている領域の
-  // 平均色が「矩形 fallback の soilColor」ではなく、スプライト由来(複数色を含む)であることを補助的に確認。
+  // dive へ入り、自機を固定位置へ置く。soil スプライトが固体タイルとして描かれている領域の
+  // 色分散が「矩形 fallback の単色 soilColor」ではなくスプライト由来(複数色)であることを確認する。
+  //
+  // 旧実装は col=G.px, row=G.py+3(自機の真下)を固定サンプルしていたが、そのマスは
+  // VISIBLE_RADIUS=2 の開示範囲(py±2)の外なので fog(未開示=単色)になることがあり、
+  // variance≈0 で誤 FAIL する race だった。構造修正: サンプル対象を「決定論的に開示済み
+  // (isVisible)かつ固体 SOIL」のマスへ移し、camera lerp を収束させてから実描画フレームを
+  // 掴んでサンプルする。fog/非SOIL を掴んだら(=テスト設定の誤り)合格扱いにせず FAIL させる。
   await startToDive(page);
-  await page.evaluate(() => { startDive(); G.py = 2; revealAround && revealAround(); });
-  await page.waitForTimeout(300);
-  // canvas 上で固体タイルが占める帯(自機より下の土行)の色分散をサンプル。スプライトは
-  // 矩形単色 fallback と違い、テクスチャがあるので色のばらつき(分散)が大きく出る。
-  const texture = await page.evaluate(() => {
+  // 自機を中段固定 → 周囲 VISIBLE_RADIUS を開示 → 開示範囲内の固体 SOIL マスを決定論選択。
+  const target = await page.evaluate(() => {
+    startDive();
+    G.px = 7; G.py = 5;
+    G.seen = new Set();
+    revealAround(); // 自機周囲 py±2 / px±2 を seen に入れる(fog を晴らす)。
+    // 走査順を固定(col 昇順 → row 昇順)し、開示済み(isVisible)かつ固体 SOIL の最初のマスを採る。
+    // 自機マス自身は自機スプライトが乗るため除外。hazardAt の浸水オーバーレイは render の
+    // TILE.NONE(空間)分岐でのみ描かれ、固体 SOIL タイルには乗らないので分散の意味は不変。
+    let pick = null;
+    for (let c = 0; c < CONST.GRID_COLS && !pick; c++) {
+      for (let r = 1; r <= CONST.DEPTH_ROWS && !pick; r++) {
+        if (c === G.px && r === G.py) continue;
+        if (!isVisible(c, r)) continue;
+        if (tileType(c, r, G.seed) !== TILE.SOIL) continue;
+        pick = { c, r };
+      }
+    }
+    return pick;
+  });
+  // camera lerp(camY += (target-camY)*0.2 毎フレーム)を収束させる。__camY が連続フレームで
+  // ほぼ動かなくなったら確定し、さらに 2 フレーム回して実描画を確定(固定 waitForTimeout に依存しない)。
+  await page.evaluate(async () => {
+    const raf = () => new Promise((res) => requestAnimationFrame(res));
+    let prev = window.__camY || 0;
+    let stable = 0;
+    for (let i = 0; i < 120; i++) {
+      await raf();
+      const cur = window.__camY || 0;
+      if (Math.abs(cur - prev) < 0.01) { if (++stable >= 3) break; }
+      else stable = 0;
+      prev = cur;
+    }
+    await raf();
+    await raf();
+  });
+  // 確定した lit + SOIL マスの canvas 領域をサンプル。スプライトはテクスチャがあるので
+  // 色のばらつき(分散)が大きく出る(単色矩形 fallback なら分散 ≈ 0)。
+  // litSoil=false(fog や非SOIL を掴んだ)なら PASS 条件側で FAIL させる(空洞合格にしない)。
+  const texture = await page.evaluate(([col, row]) => {
+    if (col == null || row == null) return { sampled: false, litSoil: false, reason: "no-target" };
     const c = document.getElementById("scene");
     const g = c.getContext("2d");
     const t = tile;
-    // 自機の真下(掘っていない固体土)の 1 マス分の領域をサンプル。
+    // サンプル直前に対象マスが確実に開示済み・固体 SOIL であることを再確認(fog なら誤設定)。
+    const litSoil = isVisible(col, row) && tileType(col, row, G.seed) === TILE.SOIL;
     const camY = window.__camY || 0;
-    const col = G.px;
-    const row = G.py + 3; // 自機より下 = 固体土(可視外なら fog なので可視内に寄せる)
     const sx = Math.round(col * t * (c.width / window.innerWidth));
     const sy = Math.round((row - camY) * t * (c.height / window.innerHeight));
     const sw = Math.max(4, Math.round(t * 0.6 * (c.width / window.innerWidth)));
     const sh = sw;
-    if (sx < 0 || sy < 0 || sx + sw > c.width || sy + sh > c.height) return { sampled: false };
+    if (sx < 0 || sy < 0 || sx + sw > c.width || sy + sh > c.height)
+      return { sampled: false, litSoil, col, row, reason: "offscreen" };
     const d = g.getImageData(sx, sy, sw, sh).data;
     // 分散(R チャンネル)。単色 fallback ≈ 0、テクスチャあり > 0。
     let sum = 0, n = 0;
@@ -386,8 +428,8 @@ let spritePass = false;
     let varc = 0;
     for (const v of rs) varc += (v - mean) * (v - mean);
     varc /= n;
-    return { sampled: true, mean: +mean.toFixed(1), variance: +varc.toFixed(1) };
-  });
+    return { sampled: true, litSoil, col, row, mean: +mean.toFixed(1), variance: +varc.toFixed(1) };
+  }, [target ? target.c : null, target ? target.r : null]);
 
   // v0.2.2: キャラを Kenney Roguelike Characters(リング無しのピクセル人型)へ差し替え。
   // 切り出しは 16px セル → 64px(point) なので miner/girl とも 64x64 正方形になる。
@@ -420,12 +462,15 @@ let spritePass = false;
   out("broken assets(0 であるべき)", broken);
   out("スプライト complete & naturalWidth", sprites.r);
   out("全スプライト ready", sprites.allReady);
-  out("固体土サンプルの色分散(テクスチャ>0)", texture);
+  out("サンプル対象マス(決定論 lit+SOIL)", target);
+  out("固体土サンプルの色分散(lit SOIL でテクスチャ>5)", texture);
   out("miner スプライト(64x64 正方形=Roguelike 差し替え/平均色)", minerColor);
 
-  // テクスチャ分散の合格条件(初回基準): Kenney soil タイルは陰影/粒状があり分散 > 0 が確実に出る。
-  // 単色矩形 fallback なら分散 ≈ 0。閾値は実測で確認(soil タイルは粒状テクスチャありなので
-  // 余裕を持って variance > 5 を基準とする)。
+  // テクスチャ分散の合格条件: Kenney soil タイルは陰影/粒状があり、開示済み(lit)の固体 SOIL を
+  // 掴めば分散 > 5 が確実に出る。単色矩形 fallback なら分散 ≈ 0、fog(未開示=単色)も分散 ≈ 0。
+  // 構造修正: サンプル前に対象が litSoil(開示済み + 固体 SOIL)であることを page 内で確認し、
+  // それが満たされない(fog/非SOIL/対象なし)場合は合格扱いにせず FAIL させる(空洞合格の禁止)。
+  // camera lerp は収束待ち + 実描画フレーム待ちで race を消したので variance は決定論的に出る。
   // miner 差し替え判定: Roguelike 切り出しは 64x64 正方形(旧 alien 46x64 と区別)。
   spritePass =
     errors.length === 0 &&
@@ -433,7 +478,9 @@ let spritePass = false;
     sprites.allReady === true &&
     minerColor.ok === true &&
     minerColor.isSquarePixelChar === true &&
-    (texture.sampled === false || texture.variance > 5);
+    texture.sampled === true &&
+    texture.litSoil === true &&
+    texture.variance > 5;
   out("PASS(スプライト実読込/broken なし/miner 64x64 差し替え/テクスチャ描画)", spritePass);
   await ctx.close();
 }
