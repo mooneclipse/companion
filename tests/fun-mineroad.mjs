@@ -9,6 +9,10 @@
 // v0.5.0(モンスター増分): 死の緊張を測る主指標 = 力尽き率。bot を戦闘対応に更新
 //  (進路を塞ぐモンスターは bump-to-attack で交戦)。policy 別に「無策/深追いは敵で死にうる /
 //  慎重撤退は生き延びる」を出す。数値の単独いじりでなく敵コンテンツで死の緊張を出せたかの裏取り。
+// v0.6.0(水/マグマ 浸水ハザード増分): 深層の浸水(水=SP 激消耗 / マグマ=SP 激消耗 + HP chip)が
+//  撤退判断をさらに重くするはず。bot は浸水を避ける専用回路は持たない(浸水マスを掘り進むと
+//  自然に消耗が増える)ので、深追い policy で力尽き率が上がるかを再計測する(数値の単独いじりでなく
+//  ハザードコンテンツで死の緊張がさらに出たかの裏取り)。
 import { chromium } from "playwright";
 const BASE = process.env.GAMES_BASE || "http://127.0.0.1:47860";
 const out = (k, v) => console.log(`  ${k}: ${JSON.stringify(v)}`);
@@ -176,7 +180,7 @@ const runs = await page.evaluate(() => {
 const byPolicy = {};
 for (const r of runs) (byPolicy[r.policy] ||= []).push(r);
 
-console.log("== 面白さ代理レポート v0.5.0(固定 seed=41027 決定論・policy 4種×5・モンスター戦闘あり) ==");
+console.log("== 面白さ代理レポート v0.6.0(固定 seed=41027 決定論・policy 4種×5・モンスター戦闘あり) ==");
 console.log("   クリア条件 = 5人救出 + 最下層(15)到達 + 探索率 100% / 主指標 = 力尽き率(死の緊張)");
 for (const [p, arr] of Object.entries(byPolicy)) {
   const clear = arr.filter((r) => r.clear).length;

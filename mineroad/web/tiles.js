@@ -308,6 +308,53 @@ function buryMonsterAt(col, row, seed) {
   return h < m.bury / 100 ? key : null;
 }
 
+// ---- 水/マグマ 浸水ハザード — 原作忠実(v0.6.0) -------------------------
+// 原作仕様(MINE_ROAD_仕様まとめ 行34/104): 水中・マグマ中は泳げる(移動できる)がスタミナを
+// 激しく消耗。マグマは特に危険。深く潜るほど水/マグマが増える難度カーブ。
+//
+// tileType には混ぜない(既存 girlPositions・determinism snapshot・oreAt・monster レイヤー・
+// タイル分布を一切変えないため)。水/マグマは「空間(NONE=元空間 or 掘った跡)に被さる浸水フラグ」
+// として別オーバーレイレイヤーで持つ(固体土の中は浸水しない=掘り抜いて初めて現れる)。自機/女の子は
+// その空間に入れるが浸水ペナルティを受ける(原作「泳げるが激消耗」)。GIRL マス・地表(row0)・範囲外は
+// NONE を返す(救出対象/帰還地点には浸水させない)。同じ (col,row,seed) は常に同じ結果(力尽き →
+// 同盤面で同じ浸水配置が再現)。
+const HAZARD = {
+  NONE: 0,
+  WATER: 1, // 水。中にいて行動するとスタミナ消耗が割増(WATER_SP_MULT)。中層帯(row>=5)から。
+  MAGMA: 2, // マグマ。水より危険=激消耗 + 滞在で体力を直接 chip(MAGMA_HP_CHIP)。深層帯(row>=9)から。
+};
+
+// 深度ゲート(原作 行104 の難度カーブに忠実。v0.4.0 oreAt の深度4等分帯=浅1-4/中5-8/深9-12/最深
+// 13-15 に揃える)。水は中層帯(row>=5)から、マグマは深層帯(row>=9)から。深いほど密度↑・マグマ比率↑。
+const HAZARD_WATER_MIN_ROW = 5; // 水はこの row 以上に出る(浅層 row1-4 は安全)。
+const HAZARD_MAGMA_MIN_ROW = 9; // マグマはこの row 以上に出る(深層帯から、特に危険)。
+// 浸水存在率(NONE 空間がハザードで満たされる割合)。深いほど上げる(難度カーブ)。
+const HAZARD_RATE_MID = 0.18; // 中層(5-8): 水のみ、控えめ。
+const HAZARD_RATE_DEEP = 0.3; // 深層(9-15): 水+マグマ合算でこの割合(深いほど密度↑)。
+// 深層でハザードが在るとき、マグマである確率(残りは水)。深いほどマグマ寄りに。
+const HAZARD_MAGMA_FRAC = 0.45; // 深層帯のハザードのうちこの割合がマグマ(残りは水)。
+
+// ある (col,row) の浸水ハザード種を返す(決定論・乱数禁止)。浸水しないなら HAZARD.NONE。
+// tileType=NONE のマス("空間")にのみ意味を持つ(呼び出し側 hazardOf が isSpace で律速)。
+// GIRL マス・地表・範囲外は NONE。tileType/oreAt/monster と別位相のハッシュ(+1597/+2389/+7919)。
+function hazardAt(col, row, seed) {
+  const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
+  if (row < HAZARD_WATER_MIN_ROW) return HAZARD.NONE; // 浅層帯は安全(水も出ない)。
+  if (col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return HAZARD.NONE;
+  if (isGirlAt(col, row, seed)) return HAZARD.NONE; // 救出対象マスは浸水させない。
+  // 存在判定(別位相ハッシュ。既存 oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・
+  // buryMonster(+233/+617/+3001)・tileType(col,row,seed) と非衝突)。
+  const presence = hash3(col + 1597, row + 2389, seed + 7919);
+  if (row < HAZARD_MAGMA_MIN_ROW) {
+    // 中層帯(5-8): 水のみ。
+    return presence < HAZARD_RATE_MID ? HAZARD.WATER : HAZARD.NONE;
+  }
+  // 深層帯(9-15): 水+マグマ。在るときに種別を別ハッシュで分ける(マグマ比率は深層で固定)。
+  if (presence >= HAZARD_RATE_DEEP) return HAZARD.NONE;
+  const kindH = hash3(col + 2389, row + 7919, seed + 1597); // 種別用(存在ハッシュと別位相)。
+  return kindH < HAZARD_MAGMA_FRAC ? HAZARD.MAGMA : HAZARD.WATER;
+}
+
 // 撃破ドロップ(決定論)。drops の per% を「累積しきい値で 1 種だけ落とす」抽選にする
 // (原作 PSUM=100 系=合計100の重み付き 1 抽選)。落ちなければ null。kill ごとに固有の位相。
 function monsterDrop(key, col, row, seed) {
@@ -357,6 +404,9 @@ const PALETTE = {
   stamina: "#e6b25a",
   // 暁の光(救出 → 地表の勝利演出)。
   dawn: "#e7b98a",
+  // v0.6.0 浸水ハザード(空洞の塗りに半透明で重ねる)。水=青系/マグマ=赤橙系。
+  water: "#2f6fb0", // 水の浸水(青)。
+  magma: "#d8542a", // マグマの浸水(赤橙、特に危険)。
 };
 
 if (typeof window !== "undefined") {
@@ -381,4 +431,7 @@ if (typeof window !== "undefined") {
   window.spaceMonsterAt = spaceMonsterAt;
   window.buryMonsterAt = buryMonsterAt;
   window.monsterDrop = monsterDrop;
+  // v0.6.0 水/マグマ 浸水ハザード(別オーバーレイレイヤー、決定論)。
+  window.HAZARD = HAZARD;
+  window.hazardAt = hazardAt;
 }

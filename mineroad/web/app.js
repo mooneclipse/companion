@@ -34,7 +34,7 @@
 // 空間スポーン(NONE マスへ決定論配置)+ 埋没掘りスポーン(SOIL/HARD 掘り抜き時 bury% で出現)。
 // GIRLATK=1 のモンスターは追従中の女の子も標的にしうる(誘導難度=死の緊張の核)。
 // tileType/girlPositions/oreAt・determinism snapshot には非介入(v0.4.0 oreAt 流儀)。
-const VERSION = "v0.5.0";
+const VERSION = "v0.6.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -63,6 +63,13 @@ const CONST = {
   ATK_BASE: 1, // 自機攻撃力 = ATK_BASE + pickPower()。木=2 / 石=3 / 鉄=4 / ダイヤ=6。
   DEF_BASE: 0, // 自機防御力 = DEF_BASE + floor((pickPower()-1)/2)。木=0 / 石=0 / 鉄=1 / ダイヤ=2。
   GIRL_HP: 30, // 護衛中の女の子の HP(monster.csv GIRL 行 verbatim=30)。GIRLATK で削られる。
+  // v0.6.0 水/マグマ 浸水ハザード(原作: 泳げるが激消耗、マグマは特に危険。SWIM で軽減)。消耗倍率
+  // と HP chip 量は CONST 単一ブロックに集約し、将来の育成(PER_SWIM)増分が SWIM_MITIGATION を
+  // 1 点で割れるよう hazardSpMult()/hazardHpChip() ヘルパーへ切り出す(ハードコードを散らさない)。
+  WATER_SP_MULT: 3, // 水中で行動したときの SP 消耗倍率(SP_PER_ACTION × これ)。
+  MAGMA_SP_MULT: 4, // マグマ中で行動したときの SP 消耗倍率(水より激しい)。
+  MAGMA_HP_CHIP: 2, // マグマ中で行動するたび、SP 割増に「加えて」直接 chip する体力(takeDamage 経路)。
+  SWIM_MITIGATION: 1.0, // SWIM 育成での消耗軽減(未実装の別増分=ベースライン 1.0 固定、軽減なし)。
 };
 // 計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
@@ -204,6 +211,8 @@ const TEXT = {
   cueHpZone: "スタミナ切れ。ここから体力が減る",
   cueSurface: "地表。全回復した",
   cueRockHit: "硬岩は掘れない",
+  cueWater: "水の中。泳げるがスタミナを激しく消耗する",
+  cueMagma: "マグマの中。激しく消耗し、体力も削られる。長居は危険",
   failTitle: "力尽きた",
   failSub: "地表へ戻れなかった",
   retry: "もういちど",
@@ -339,6 +348,8 @@ const G = {
   exp: 0, // 撃破で蓄積する EXP(育成未実装のため表示のみ)。
   kills: 0, // 撃破数(参考表示)。
   drops: null, // { 素材名: 個数 } 撃破ドロップ(表示のみ、商人/クラフト連携は次増分)。
+  // ---- v0.6.0 浸水ハザード(自機が今いるマスの浸水種。種が変わった時だけヒントを 1 回出す) ----
+  lastHazard: 0, // 直前の自機マスの HAZARD 種(HAZARD.NONE/WATER/MAGMA)。連続滞在でヒント連発を抑止。
 };
 window.G = G;
 
@@ -407,6 +418,7 @@ function startDive() {
   G.exp = 0;
   G.kills = 0;
   G.drops = {};
+  G.lastHazard = HAZARD.NONE; // v0.6.0: 地表スタートは浸水なし。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
   spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
   G.screen = "dive";
@@ -463,19 +475,52 @@ function exploreRatio() {
   return Math.min(1, G.seen.size / G.totalTiles);
 }
 
+// ---- v0.6.0 水/マグマ 浸水ハザード ヘルパー(係数を 1 箇所に集約) --------
+// 浸水判定: あるマスが空間(NONE=元空間 or 掘った跡)で、かつ hazardAt が浸水を示すか。
+// 固体土の中は浸水しない(掘り抜いて初めて水/マグマが現れる)。地表/範囲外/GIRL は NONE。
+function hazardOf(col, row) {
+  if (!isSpace(col, row)) return HAZARD.NONE; // 空間でなければ浸水しない。
+  return hazardAt(col, row, G.seed);
+}
+// 自機が今いるマスの SP 消耗倍率(浸水なら割増)。SWIM_MITIGATION で将来の育成軽減を 1 点で割る。
+// SWIM はベースライン 1.0 固定(育成未実装)なので現状は素の倍率がそのまま出る。
+function hazardSpMult() {
+  const h = hazardOf(G.px, G.py);
+  let mult = 1;
+  if (h === HAZARD.WATER) mult = CONST.WATER_SP_MULT;
+  else if (h === HAZARD.MAGMA) mult = CONST.MAGMA_SP_MULT;
+  if (mult <= 1) return 1;
+  // 軽減: 倍率の「割増ぶん」を SWIM_MITIGATION で割る(1.0=軽減なし)。最低 1 倍は保証。
+  return Math.max(1, 1 + (mult - 1) / CONST.SWIM_MITIGATION);
+}
+// 自機が今いるマスがマグマなら 1 行動あたりの直接 HP chip 量(水/通常は 0)。SWIM で軽減。
+function hazardHpChip() {
+  if (hazardOf(G.px, G.py) !== HAZARD.MAGMA) return 0;
+  return Math.max(0, Math.round(CONST.MAGMA_HP_CHIP / CONST.SWIM_MITIGATION));
+}
+
 // ---- 行動 1 回ぶんのコスト(スタミナ → 体力の二段) --------------------
-// SP がある間は SP を 1 減らす。SP が 0 なら HP を 1 減らす(二段ゲージの核)。
-// HP が 0 になったら力尽き。
+// SP がある間は SP を減らす。SP が 0 なら HP を減らす(二段ゲージの核)。HP が 0 になったら力尽き。
+// v0.6.0: 自機が浸水マス(水/マグマ)で行動するなら SP 消耗を hazardSpMult() 倍に割増し(原作
+// 「泳げるが激消耗」)、マグマなら更に hazardHpChip() を takeDamage 経路で直接 chip(「マグマは
+// 特に危険」)。いずれも新ゲージを作らず既存二段ゲージ(SP→HP カスケード)へ接続する。
 function spendAction() {
+  const cost = Math.max(1, Math.round(CONST.SP_PER_ACTION * hazardSpMult()));
   if (G.stamina > 0) {
-    G.stamina = Math.max(0, G.stamina - CONST.SP_PER_ACTION);
+    const absorbed = Math.min(G.stamina, cost);
+    G.stamina = Math.max(0, G.stamina - absorbed);
+    const rest = cost - absorbed; // SP で吸収しきれない割増ぶんは HP へ(二段ゲージのカスケード)。
     if (G.stamina === 0 && !G.enteredHpZone) {
       G.enteredHpZone = true;
       showHint(TEXT.cueHpZone, true);
     }
+    if (rest > 0) G.hp = Math.max(0, G.hp - rest);
   } else {
-    G.hp = Math.max(0, G.hp - CONST.SP_PER_ACTION);
+    G.hp = Math.max(0, G.hp - cost);
   }
+  // マグマの直接 chip(SP 残があれば SP から、尽きていれば HP から=takeDamage が二段ゲージへ接続)。
+  const chip = hazardHpChip();
+  if (chip > 0) takeDamage(chip);
 }
 
 // ---- v0.5.0 被ダメージ = 既存二段ゲージへ接続(SP を削り、SP0 で HP を削る) ----
@@ -875,9 +920,20 @@ function moveTo(col, row, costPaid, noGravity) {
     return;
   }
   if (G.py > G.maxDepthThisDive) G.maxDepthThisDive = G.py;
+  noteHazardEntry(); // v0.6.0: 浸水マス(水/マグマ)へ入った瞬間に 1 回だけヒントを出す。
   monstersAct(); // v0.5.0: 自機の 1 行動に対しモンスターが反応(追跡/攻撃、SPD で律速)。
   renderHud();
   checkFail();
+}
+
+// v0.6.0: 自機が今いるマスの浸水種を見て、種が変わったとき(NONE→水/マグマ、水↔マグマ)だけ
+// 1 回ヒントを出す(連続滞在でヒント連発しないよう lastHazard と比較)。地表へ戻ると NONE に戻る。
+function noteHazardEntry() {
+  const h = hazardOf(G.px, G.py);
+  if (h === G.lastHazard) return;
+  G.lastHazard = h;
+  if (h === HAZARD.WATER) showHint(TEXT.cueWater, true);
+  else if (h === HAZARD.MAGMA) showHint(TEXT.cueMagma, true);
 }
 
 // 自機の重力落下(足元が空間の間、底まで落ちる)。落下はコスト無し(原作の落下と同様)。
@@ -1493,6 +1549,14 @@ function render() {
         const cc = caveColor(row);
         ctx.fillStyle = `rgb(${cc[0]},${cc[1]},${cc[2]})`;
         ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        // v0.6.0 浸水ハザード: 空間が水/マグマで満たされていれば半透明オーバーレイ(新規アセット無し)。
+        // 水=青系/マグマ=赤橙系。矩形塗りの上に rgba を重ねる(タイル分布/既存色には触れない)。
+        const hz = hazardAt(col, row, G.seed);
+        if (hz !== HAZARD.NONE) {
+          const hc = hexToRgb(hz === HAZARD.MAGMA ? PALETTE.magma : PALETTE.water);
+          ctx.fillStyle = `rgba(${hc[0]},${hc[1]},${hc[2]},${hz === HAZARD.MAGMA ? 0.55 : 0.45})`;
+          ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        }
       } else {
         // 固体タイル = スプライト(SOIL/HARD/ROCK、女の子マスは soil で描き上に重ねる)。
         const key = t === TILE.HARD ? "hard" : t === TILE.ROCK ? "rock" : "soil";
