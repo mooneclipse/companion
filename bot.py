@@ -288,7 +288,7 @@ PERSONA_SYSTEM_PROMPT = (
     "口調の基準: あなたはこのユーザーの「対等な相方」としてタメ口ベースで短く話す。"
     "です・ます調 (敬語) は使わない。会話履歴が敬語でも引きずられず、この口調を維持する。"
     "時々さりげない気遣いや軽口を一言添える。急かさない、旅の道連れのような距離感。"
-    "例:「了解、やっとくよ。…って今日もう夜遅いけど大丈夫?」"
+    "例:「了解、やっとくよ。…って根詰めすぎてない? 大丈夫?」"
     "装飾 emoji は最小限に。過度なキャラ付けや特徴的な語尾は作らない"
     " (素の口調に温度を足す方向)。"
     "\n前景に降格する操作: 誰にも頼まれず自分のタイミングで動いてる最中に、"
@@ -630,13 +630,38 @@ def parse_proactive_payload(text: str) -> dict | None:
     return obj
 
 
-def build_proactive_prompt(payload: dict, interest_topics: list[str] | None = None) -> str:
+def _jst_time_band(hour: int) -> str:
+    """Map a JST hour (0-23) to a coarse 時間帯ラベル. Pure → unit-testable.
+
+    時刻という state を呼び出し側で 1 回確定し、その hour からラベルを引くだけ
+    (LLM 側の時間帯推測に依存させない)。境界は常識的な区分で固定する。
+    """
+    if 5 <= hour < 11:
+        return "朝"
+    if 11 <= hour < 14:
+        return "昼"
+    if 14 <= hour < 18:
+        return "夕方"
+    if 18 <= hour < 23:
+        return "夜"
+    return "深夜"
+
+
+def build_proactive_prompt(
+    payload: dict,
+    interest_topics: list[str] | None = None,
+    now: datetime | None = None,
+) -> str:
     """Compose the claude prompt for a proactive utterance from persona + seed.
 
     Pure function → unit-testable. payload は parse_proactive_payload の戻り。
     interest_topics は呼び出し側 (build_interest_context) が関心 index から読んだ
     「最近気にしてるスレッドの topic」リスト。純関数に保つため file IO は呼び出し側で
     済ませ、ここには bounded な文字列リストだけを渡す。
+    now は呼び出し側が確定した現在時刻 (JST aware datetime)。これを渡すことで
+    「今が何時か」を prompt に明示注入し、LLM が時間帯を推測 (= 夜固定の例文に
+    引っ張られる) のを根から断つ。now を渡さない呼び出し (一部 unit-test) では
+    時刻文を省くだけで、フォールバック分岐や file IO は作らない (純関数性を維持)。
 
     注入防止: prompt に展開してよいのは bounded/サニタイズ済みフィールドのみ
     (現状 vault_hint / dormant_hint = script 側で basename 化したノート名、
@@ -646,6 +671,16 @@ def build_proactive_prompt(payload: dict, interest_topics: list[str] | None = No
     ときもこの境界を守る。
     """
     parts = [PROACTIVE_SCENE_PROMPT]
+    # 現在時刻 (JST) を明示注入する。PROACTIVE_SCENE_PROMPT が「時間帯に合う一言」を
+    # 要求する一方、ここに時刻が無いと LLM は今が何時かを知り得ず、例文の夜固定表現に
+    # 引っ張られる (--resume 履歴で自己強化)。時刻という state を 1 回渡して根を断つ。
+    # now は payload 由来でなく呼び出し側 (_run_proactive) が確定した値なので、
+    # 注入防止対象ではなく None 判定で足りる (型 import を mock する test とも干渉しない)。
+    if now is not None:
+        parts.append(
+            f"今は JST で約 {now.hour} 時頃 ({_jst_time_band(now.hour)})。"
+            "この時間帯に合う一言にする (経過時間ではなく今の時刻を基準に)。"
+        )
     # 関心 state を滲ませる (機構 1 の私的版): 全部に触れず「1 つだけ軽く」。
     # str のみ展開し、空は省く (非文字列は展開しないだけ、フォールバック分岐は作らない)。
     if interest_topics:
@@ -2301,7 +2336,7 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     # prompt 構築時に読む関心 index は「前回までに溜まった分」(今回の種の touch は
     # 送信後)。今喋る内容は過去の関心から滲ませ、今の種は新たな接触として後で記録する。
     interest_topics = build_interest_context(now)
-    prompt = build_proactive_prompt(payload, interest_topics=interest_topics)
+    prompt = build_proactive_prompt(payload, interest_topics=interest_topics, now=now)
     # run_claude は guard を通り、#chat の session を resume して claude を起動する。
     output = await run_claude(prompt, chat_id, thread_id)
     if not output or not output.strip():

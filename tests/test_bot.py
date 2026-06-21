@@ -551,6 +551,34 @@ class BuildProactivePromptTest(unittest.TestCase):
         )
         self.assertNotIn("最近あなたが気にしてること", prompt)
 
+    def test_current_time_injected_when_now_given(self) -> None:
+        # 現在時刻 (JST) を渡すと「今が何時か」が prompt に乗り、時間帯ラベルも付く
+        # (LLM 側の時間帯推測 = 夜固定の例文への引っ張られを根から断つ)。
+        from datetime import datetime
+
+        now = datetime(2026, 6, 21, 8, 0, 0, tzinfo=self.bot.quota.JST)
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation"}, now=now
+        )
+        self.assertIn("今は JST で約 8 時頃", prompt)
+        self.assertIn("朝", prompt)
+
+    def test_current_time_omitted_when_now_absent(self) -> None:
+        # now を渡さない呼び出しでは時刻文を省くだけ (フォールバック分岐は作らない)。
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("今は JST で約", prompt)
+
+    def test_jst_time_band_boundaries(self) -> None:
+        # 境界値の時間帯ラベル割り当て (純関数)。
+        cases = {
+            4: "深夜", 5: "朝", 10: "朝", 11: "昼", 13: "昼",
+            14: "夕方", 17: "夕方", 18: "夜", 22: "夜", 23: "深夜", 0: "深夜",
+        }
+        for hour, band in cases.items():
+            self.assertEqual(
+                self.bot._jst_time_band(hour), band, msg=f"hour={hour}"
+            )
+
 
 class SnoozeTest(unittest.TestCase):
     """/snooze の日数→snooze_until 計算と state 読み書き、snooze 中判定。"""
