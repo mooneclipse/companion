@@ -34,13 +34,14 @@ workspace 直下は **(C) ローカル git のみ（remote なし、rollback 専
 
 ## vault / logs 読み取りガード (PreToolUse hook)
 
-手元セッション (CWD = workspace) が `~/companion/vault` と `~/companion/logs` の **中身** をコンテキストに読み込むと指示・口調が歪むため、`.claude/hooks/guard-companion-read.sh` を PreToolUse hook (matcher: `Bash|Read|Grep|Glob`) で噛ませている。
+手元セッション (CWD = workspace) が persona/会話プローズを **中身** ごとコンテキストに読み込むと指示・口調が歪むため、`.claude/hooks/guard-companion-read.sh` を PreToolUse hook (matcher: `Bash|Read|Grep|Glob`) で噛ませている。
 
-- **読み取り** (Read / Grep / Glob、Bash の `cat`/`grep`/`head`/`tail` 等の出力系コマンド) が vault/logs を対象にすると `ask` (承認待ち) に落ちる。→ 勝手読みは止まり、**検索を指示したときだけ承認して読む**。
+- **読み取り** (Read / Grep / Glob、Bash の `cat`/`grep`/`head`/`tail` 等の出力系コマンド) のゲート対象は **`vault` 全体 + `logs` の機械出力 allowlist 以外すべて**。該当すると `ask` (承認待ち) に落ちる。→ 勝手読みは止まり、**検索を指示したときだけ承認して読む**。
+- **logs は fail-safe allowlist 方式** (2026-06-22 変更)。`logs` の機械出力 (playtester `mr_*` / probe `lid_*` / `*.png` / `*-verify-server.log` / `vault-sync.log` / `maintenance` の `machine-audit-*`・`notify-system-report.log`・`notify-unattended-upgrades.log`・`trends-weekly.log`・`usb-backup-*`) は **素通り** (auto mode の承認摩擦を除去)。persona プローズを含むログ (`bot.log` 会話 / `maintenance/proactive-companion.log` 先回り発話 / `notify-claude-status.log`) と **将来の未知ログは既定でゲート** = 漏れの方向に倒れない。allowlist を増やすより未知は既定ゲートが原則 (fail-open にしない)。
 - **書き込み** (Write、Bash の `cp`/リダイレクト/`node`/`bash script.sh` 等) は素通り。playtester・probe の logs 出力を壊さない。
 - **判断目的で vault/logs を読むときは foreground サブエージェント経由**で読み、結論だけ受け取る (中身をこのセッションのコンテキストに入れない)。**非同期 (background) サブは `ask` が auto-deny される**ため、読ませるなら同期起動。
 - `additionalDirectories` から vault/logs は外した (メインの作業ディレクトリ扱いを解除)。書き込みは `permissions.allow` の `Write(...)` ルールで維持。bot 経由セッション (`bot-workspace`) は別 settings なので無関係。
-- **不採用案の記録**: sandbox は network 全 deny / write が CWD+tmp のみ / docker・Chromium・systemctl 非互換と副作用が甚大なため見送り。permission の Bash パス deny は引数順序・オプション挿入・パイプ迂回で抜ける (公式が "fragile" と明記) ため不採用。hook でパスを正規化判定する方式を採った (公式が deny の代替として推奨)。残る穴は意図的な難読化のみ (自セッションで自分を騙す動機がないため実用上ゼロ)。
+- **不採用案の記録**: sandbox は network 全 deny / write が CWD+tmp のみ / docker・Chromium・systemctl 非互換と副作用が甚大なため見送り。permission の Bash パス deny は引数順序・オプション挿入・パイプ迂回で抜ける (公式が "fragile" と明記) ため不採用。hook でパスを正規化判定する方式を採った (公式が deny の代替として推奨)。残る穴は (1) 意図的な難読化、(2) 1 つの Bash 読みコマンドが機械出力ログと persona ログを同時参照した場合のみ allowlist 側にマッチして素通り — いずれも自セッションでの意図的構成のみで実用上ゼロ。
 
 ## Task Workflow
 
