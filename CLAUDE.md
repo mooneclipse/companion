@@ -4,56 +4,21 @@
 
 開発ワークフローは `~/companion/workspace/.claude/skills/newgame/SKILL.md`（新規ゲーム制作の固定工程）が正本。**例外: Mine Road リメイクは `/newgame` 不使用の仕様駆動**（発散・critic 工程が忠実再現を歪めるため。根拠と工程は `docs/STATUS.md`「Mine Road リメイク」セクション）。本ファイルは「どの工程でも踏み外してはいけない games 固有の暗黙知」を明文化する。台帳の正本は `~/companion/games/docs/STATUS.md`。
 
-## 配信境界（厳守）
+## パス別ルール（`.claude/rules/`）
 
-- サーバ（`server/app.py`）は **127.0.0.1 のみに bind**。`0.0.0.0` / tailnet IP への bind は厳禁。
-- 外向きは **`tailscale serve`（HTTPS 前段リバースプロキシ）経由のみ**。Tailnet 内からしか到達しない。
-- 認証は tailscale 境界に委任（単一ユーザー、API 無し）。`/healthz` のみ無認証の生存確認。
-- ポートは env `GAMES_PORT`（default 47825）。
-- 配信は固定 allowlist 方式（`STATIC` dict）。FS への URL 連結禁止・ディレクトリリスティング無し・Content-Type 明示・generic エラー・no-store を維持する。
+ファイル単位で効く詳細制約は、該当パスのファイルをコンテキストに入れたときだけ自動ロードされる Rules に切り出した（context 節約 + 発見性）。常時ロードはこの CLAUDE.md、パス局所な詳細は各 rule が持つ。
 
-## 純静的 PWA（budget-guard 境界回避）
+- `server/**` を触るとき → `.claude/rules/delivery-boundary.md`（配信境界: 127.0.0.1 bind / tailscale serve / STATIC allowlist / GAMES_PORT）
+- `<game>/web/**` を触るとき → `.claude/rules/game-web.md`（純静的 PWA / 断章 verbatim / 前景視認性 / SW 運用 / VERSION bump）
+- `tests/**` を触るとき → `.claude/rules/playtest.md`（Playwright 実機検証 / 画面座標ヒットテスト / 本番ポート 47825 非接触）
 
-- ゲームはランタイムで claude / 外部 API を **一切呼ばない**。配信時は素朴なファイルサーブに徹する（budget-guard 境界に踏み込まない）。
-- 唯一許す外部依存は和文フォントの **Google Fonts CDN のみ**（CSP で `fonts.googleapis.com` / `fonts.gstatic.com` の 2 ドメインだけ許可）。取得失敗時は CSS の serif フォールバックで成立させる。
-- 音源など新たな外部取得を足す場合は index.html の CSP（`connect-src` / `media-src`）更新が必須。同一オリジン同梱なら CSP 変更不要。
-
-## 断章は verbatim 静的データ
-
-- 断章テキストは `<game>/web/fragments.js` に **verbatim 静的データ** として置く。**実装側で創作・改変しない**（lead が美学確定の工程で書き切ったものをそのまま入れる）。progress 閾値 + text の構造、改行は保持。
-
-## 実機検証必須（Playwright + Chromium）
-
-- 構文 OK / 200 応答だけで「動く」と言わない。`tests/debug-<game>.mjs` を Chromium（headless）で回し PASS を取ってから報告・配信する。
-- **画面座標ヒットテスト経由**で検証する（`page.mouse` を画面座標へ）。**canvas へ直接 dispatch しない**＝画面全体を覆う透明 overlay を飛び越えるとみちゆきの真因（overlay が pointer を食う）を見逃す。`elementFromPoint` で最前面要素を assert する。
-- **既存作の回帰も同一起動サーバで通す**（既存 URL が不変＝壊していない証明）。
-- 実行: **本番ポート 47825 は使わず**、別ポート（例 `GAMES_PORT=47826`）で検証用サーバを自前起動した状態で `node tests/debug-<game>.mjs`。検証後は検証サーバのみ PID 直指定で kill し、本番 `companion-games`（47825）には一切触れない（あかり検証で本番 kill→復帰忘れ 502 の事故）。`playwright` は `devDependencies`、ブラウザ本体は `~/.cache/ms-playwright`（git 外）。
-- 計測しきい値（画面差分の `th` / 変化率合格条件）は PALETTE の明暗で成立域が変わるため、新ゲームごとに初回基準を実測で定めてよい（同一バグへの 2 周目ではない）。同じ計測を 2 度目に動かすときは 2 周目ルールを先に発動させる。
-
-## 前景視認性の原則
-
-- 前景（プレイヤー／触れる対象）は背景の明度変化に追従し、**常にコントラストを確保**する（暗背景では明るめ・明背景では暗めへ相対的にずらす + ごく細い 1px 縁取り程度）。**初手から設計に入れる**（v1 みちゆきでは後から気づいた教訓）。「景色が主役・人は気配」を保ち、強い縁取りで目立たせない＝「ほとんど見えない」を「言われれば気づく」へ。
-
-## 一次資料パス
-
-新規ゲームの判断軸（継承資産・課題）は次から引く。**第 4 作あかり以降は Steam 実プレイ嗜好を主・願望ポエムメモを従**とする（3 作連続ポエム収束の真因＝願望メモ過固定の対策。詳細は STATUS「第 4 作 方向転換」）:
-
-- **主**: `~/companion/games/docs/steam-library-2026-06-02.json`（ユーザー提示の Steam ライブラリ実データ＝行動の証拠。owned 289、`playtime_forever`/`playtime_2weeks`/`rtime_last_played`/collections。これを毎回フレッシュに再分析する＝過去の解釈に引きずられない）
-- 従: vault `aidiary/2026-04-11_games-i-want-to-try.md`（願望ポエムメモ。願望であって行動ではない点に注意。詩・静歩きに過収束させない）
-- vault `notes/*-review.md`（各作の感想、例 `notes/2026-06-02_michiyuki-review.md`）
-- `~/companion/games/docs/STATUS.md` の感想・設計起点メモ・方向転換記録
-
-## 配信導線（新ゲーム追加時の 3 点 + VERSION）
+## 配信導線（新ゲーム追加時の 3 点）
 
 1. `server/app.py` の `STATIC` dict に新ゲームの prefix エントリを追加（`/<game>/...` 絶対パス、rel は `<game>/web/...`）。既存作の URL は完全不変に保つ。
 2. remote 側 `~/companion/remote/web/app.js` の `GAMES` 配列に 1 行追加 + SW cache bump。
 3. `tailscale serve` 状態を確認（同一サーバ・同一ポートのため systemd unit は変更不要）。
-4. **VERSION bump**: ゲーム本体（`<game>/web/*`）に手を入れるたびに **必ず** VERSION を上げる（app.js 内定数を単一真実源に opening へ薄く表示）。上げ忘れると実機キャッシュ残存と検証不足の切り分けが効かない（人手依存の残存リスク）。
 
-## SW（Service Worker）運用
-
-- **開発フェーズは Service Worker を使わない**。cache-first SW が壊れた中間状態の古い shell を返し続ける罠（killer SW で自浄）を踏むため。再導入はプレイ感が固まってから。
-- SW を使う局面では cache 名 bump を規律として守る（ただし bump の積み増しは 2 周目になりうる。同じ境界の修正が 2 度目なら一段引いて設計を見直す）。
+ゲーム本体（`<game>/web/*`）編集時の VERSION bump は `.claude/rules/game-web.md` に集約。
 
 ## 複数ゲーム配信
 
@@ -69,3 +34,12 @@
 ## 対象ユーザー
 
 miho 個人のみ（完全個人利用、外部公開なし）。スコア / マルチプレイ / 課金は不要。発注趣旨は「要望を聞かず AI が判断して作る」＝感想の解釈・次手の判断は AI 側で確定する（ユーザーは管理を委任済み）。
+
+## 一次資料パス
+
+新規ゲームの判断軸（継承資産・課題）は次から引く。**第 4 作あかり以降は Steam 実プレイ嗜好を主・願望ポエムメモを従**とする（3 作連続ポエム収束の真因＝願望メモ過固定の対策。詳細は STATUS「第 4 作 方向転換」）:
+
+- **主**: `~/companion/games/docs/steam-library-2026-06-02.json`（ユーザー提示の Steam ライブラリ実データ＝行動の証拠。owned 289、`playtime_forever`/`playtime_2weeks`/`rtime_last_played`/collections。これを毎回フレッシュに再分析する＝過去の解釈に引きずられない）
+- 従: vault `aidiary/2026-04-11_games-i-want-to-try.md`（願望ポエムメモ。願望であって行動ではない点に注意。詩・静歩きに過収束させない）
+- vault `notes/*-review.md`（各作の感想、例 `notes/2026-06-02_michiyuki-review.md`）
+- `~/companion/games/docs/STATUS.md` の感想・設計起点メモ・方向転換記録
