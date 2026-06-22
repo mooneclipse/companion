@@ -39,7 +39,13 @@
 // shop.csv 忠実サブセット(フルーツ←鉄鉱石2 / ツルハシ←キノコ10 / アンテナ←キノコ20 / 夢キノコ←
 // キノコ100)を物々交換。対価充足の行だけ実行可・不足は disabled、実行で対価減算+産物加算(決定論、
 // 状態遷移のみ)。アクセス導線は既存クラフトと同じ HUD ボタン+オーバーレイ流儀に寄せる(「商」ボタン)。
-const VERSION = "v0.8.0";
+// v0.9.0: 育成(原作 §4 キャラクター育成=パラメータのレベルアップ制)。救出した女の子の「情報」と撃破
+// EXP をボーナスポイント(BP)に変換し、PER_*(HP/ST/DIG/ATTACK/DEFENCE/SWIM)をレベルアップする。
+// 裏庭=BP100%(dungeon_info ID0)に忠実に BP 単一通貨路を開く。レベルは既に切り出し済みの育成フック
+// (HP_MAX/STAMINA_MAX/掘削手数/ATK_BASE/DEF_BASE/SWIM_MITIGATION)の有効値を effXxx ヘルパー経由で動かす
+// (新たな分岐を散らさずフックの消費先を開く)。UI は工房オーバーレイに第3タブ「育成」を足す(上部バーの
+// ボタンは増やさない=gate G の地表タップ前提を壊さない)。tileType/girlPositions・determinism には非介入。
+const VERSION = "v0.9.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -292,6 +298,11 @@ const shopListEl = document.getElementById("shop-list");
 const tabCraftEl = document.getElementById("tab-craft");
 const tabShopEl = document.getElementById("tab-shop");
 
+// v0.9.0 育成(Lv.UP)DOM 参照。工房オーバーレイの第3タブに同居(上部バーのボタンは増やさない)。
+const infoValEl = document.getElementById("info-val");
+const growListEl = document.getElementById("grow-list");
+const tabGrowEl = document.getElementById("tab-grow");
+
 // ---- canvas / 描画状態 -------------------------------------------------
 let DPR = 1;
 let W = 0;
@@ -379,6 +390,10 @@ const G = {
   mushrooms: 0, // キノコ所持数(交換通貨。SOIL 掘り抜きで採取、商人で道具/夢キノコと交換)。
   dreamMushrooms: 0, // 夢キノコ所持数(キノコ100→1 で統合した高額通貨/高級回復実)。
   fruits: 0, // フルーツ所持数(商人で鉄鉱石2 と交換した回復消耗品)。
+  // ---- v0.9.0 育成(PER_* レベルアップ。ランごと初期化=セーブ永続は §2-5 番の別増分) ----
+  info: 0, // 救出した女の子の「情報」ストック(救出成立で +1、BP へ変換すると消費)。
+  bp: 0, // ボーナスポイント(裏庭=BP100% に忠実な汎用ポイント。情報/EXP から変換、PER_* に振る)。
+  per: null, // { HP, ST, DIG, ATTACK, DEFENCE, SWIM } 各 PER の現レベル(0 始まり)。effXxx が参照。
 };
 window.G = G;
 
@@ -417,8 +432,14 @@ function startDive() {
   G.seed = CONST.BASE_SEED; // 縦切りは固定(決定論再挑戦)。
   G.px = Math.floor(CONST.GRID_COLS / 2);
   G.py = 0;
-  G.stamina = CONST.STAMINA_MAX;
-  G.hp = CONST.HP_MAX;
+  // v0.9.0 育成初期化(ランごと。fail/再挑戦でリセット=既存スコープ境界踏襲、save モデルは次増分)。
+  // hp/stamina の満タン充填より先に per を 0 へ戻し、effHpMax/effStaminaMax が素の CONST を返すように
+  // する(育成前=既存挙動に完全一致。全 PER レベル 0 で既存ゲート A〜Y が不変)。
+  G.info = 0;
+  G.bp = 0;
+  G.per = { HP: 0, ST: 0, DIG: 0, ATTACK: 0, DEFENCE: 0, SWIM: 0 };
+  G.stamina = effStaminaMax();
+  G.hp = effHpMax();
   G.dug = new Set();
   G.digProgress = new Map();
   G.seen = new Set();
@@ -526,13 +547,13 @@ function hazardSpMult() {
   if (h === HAZARD.WATER) mult = CONST.WATER_SP_MULT;
   else if (h === HAZARD.MAGMA) mult = CONST.MAGMA_SP_MULT;
   if (mult <= 1) return 1;
-  // 軽減: 倍率の「割増ぶん」を SWIM_MITIGATION で割る(1.0=軽減なし)。最低 1 倍は保証。
-  return Math.max(1, 1 + (mult - 1) / CONST.SWIM_MITIGATION);
+  // 軽減: 倍率の「割増ぶん」を SWIM 軽減係数で割る(v0.9.0 PER_SWIM レベルで増える=消耗軽減)。最低 1 倍は保証。
+  return Math.max(1, 1 + (mult - 1) / effSwimMitigation());
 }
 // 自機が今いるマスがマグマなら 1 行動あたりの直接 HP chip 量(水/通常は 0)。SWIM で軽減。
 function hazardHpChip() {
   if (hazardOf(G.px, G.py) !== HAZARD.MAGMA) return 0;
-  return Math.max(0, Math.round(CONST.MAGMA_HP_CHIP / CONST.SWIM_MITIGATION));
+  return Math.max(0, Math.round(CONST.MAGMA_HP_CHIP / effSwimMitigation())); // v0.9.0 PER_SWIM で chip も軽減。
 }
 
 // ---- 行動 1 回ぶんのコスト(スタミナ → 体力の二段) --------------------
@@ -682,7 +703,40 @@ function act(dc, dr) {
 
 function digTaps(t) {
   const k = TILE_DIG_KEY[t];
-  return CONST.DIG_TAPS[k] || 1;
+  const base = CONST.DIG_TAPS[k] || 1;
+  // v0.9.0 PER_DIG: 掘削手数を Lv × DIG_PER_LV ぶん減らす(最低 1 で頭打ち=掘削力レベルアップ)。
+  // レベル 0 では base そのまま=既存の掘削決定論(remain 初期値)が不変。
+  return Math.max(1, base - perLv("DIG") * PER_GAIN.DIG_PER_LV);
+}
+
+// ---- v0.9.0 育成 実効値ヘルパー(PER レベルで既存フックの有効値を動かす) -----
+// 既存の育成フック(HP_MAX/STAMINA_MAX/掘削手数/ATK_BASE/DEF_BASE/SWIM_MITIGATION)を、各 PER の
+// 現レベル ×PER_GAIN で押し上げた「実効値」へ通す。これが本増分の核=既に CONST/ヘルパー1点に切り出して
+// あったフックの「消費先を開く」(新たな if/elif や閾値積み増しをせず、フックを使う)。
+// per が未初期化(タイトル前など)でも 0 扱いで素の CONST を返す=育成前は既存挙動に完全一致。
+function perLv(key) {
+  return (G.per && G.per[key]) || 0;
+}
+// PER_HP: HP 最大値 = HP_MAX + Lv × HP_PER_LV。
+function effHpMax() {
+  return CONST.HP_MAX + perLv("HP") * PER_GAIN.HP_PER_LV;
+}
+// PER_ST: スタミナ最大値 = STAMINA_MAX + Lv × ST_PER_LV。
+function effStaminaMax() {
+  return CONST.STAMINA_MAX + perLv("ST") * PER_GAIN.ST_PER_LV;
+}
+// PER_ATTACK: 攻撃基礎値 = ATK_BASE + Lv × ATK_PER_LV(playerAtk が pickPower と合算)。
+function effAtkBase() {
+  return CONST.ATK_BASE + perLv("ATTACK") * PER_GAIN.ATK_PER_LV;
+}
+// PER_DEFENCE: 防御基礎値 = DEF_BASE + Lv × DEF_PER_LV(playerDef が pickPower 由来と合算)。
+function effDefBase() {
+  return CONST.DEF_BASE + perLv("DEFENCE") * PER_GAIN.DEF_PER_LV;
+}
+// PER_SWIM: 浸水軽減係数 = SWIM_MITIGATION(1.0) + Lv × SWIM_PER_LV。hazardSpMult/hazardHpChip が
+// この値で割る(レベルが上がるほど水/マグマ消耗が軽くなる=原作「SWIM で軽減」)。
+function effSwimMitigation() {
+  return CONST.SWIM_MITIGATION + perLv("SWIM") * PER_GAIN.SWIM_PER_LV;
 }
 
 // ---- v0.4.0 アイテム/クラフト系ヘルパー --------------------------------
@@ -742,12 +796,12 @@ function doCraft(rec) {
 // 回復薬を使う(体力 +POTION_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
 function usePotion() {
   if (G.screen !== "dive" || G.potions <= 0) return false;
-  if (G.hp >= CONST.HP_MAX) {
+  if (G.hp >= effHpMax()) { // v0.9.0: PER_HP で上がった実効最大値で満タン判定。
     showHint("体力は満タン", false);
     return false;
   }
   G.potions -= 1;
-  G.hp = Math.min(CONST.HP_MAX, G.hp + CONST.POTION_HEAL);
+  G.hp = Math.min(effHpMax(), G.hp + CONST.POTION_HEAL);
   playSfx("heal");
   showHint("回復薬を使った", false);
   renderHud();
@@ -789,9 +843,9 @@ function doShopTrade(rec) {
 // フルーツを使う(体力 +FRUIT_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
 function useFruit() {
   if (G.screen !== "dive" || (G.fruits || 0) <= 0) return false;
-  if (G.hp >= CONST.HP_MAX) { showHint("体力は満タン", false); return false; }
+  if (G.hp >= effHpMax()) { showHint("体力は満タン", false); return false; }
   G.fruits -= 1;
-  G.hp = Math.min(CONST.HP_MAX, G.hp + CONST.FRUIT_HEAL);
+  G.hp = Math.min(effHpMax(), G.hp + CONST.FRUIT_HEAL);
   playSfx("heal");
   showHint("フルーツを食べた", false);
   renderHud();
@@ -800,12 +854,61 @@ function useFruit() {
 // 夢キノコを食べる(体力 +DREAM_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
 function useDreamMushroom() {
   if (G.screen !== "dive" || (G.dreamMushrooms || 0) <= 0) return false;
-  if (G.hp >= CONST.HP_MAX) { showHint("体力は満タン", false); return false; }
+  if (G.hp >= effHpMax()) { showHint("体力は満タン", false); return false; }
   G.dreamMushrooms -= 1;
-  G.hp = Math.min(CONST.HP_MAX, G.hp + CONST.DREAM_HEAL);
+  G.hp = Math.min(effHpMax(), G.hp + CONST.DREAM_HEAL);
   playSfx("heal");
   showHint("夢キノコを食べた", false);
   renderHud();
+  return true;
+}
+
+// ---- v0.9.0 育成(情報/EXP → BP → PER_* レベルアップ) -------------------
+// 原作 §4: 救出した女の子の「情報」を変換して BP/スキルポイントを得る(変換すると情報は消費)。
+// 裏庭=BP100%(dungeon_info ID0)に忠実に BP 単一通貨路を開く。EXP(v0.5.0 で蓄積のみ)も BP へ変換し
+// 自機育成に使う(仲間同行は対象外=EXP の行き先を自機育成とする翻案)。決定論=状態遷移のみ。
+// 情報を 1 消費して BP を INFO_TO_BP 得る。情報が無ければ false。
+function convertInfoToBp() {
+  if (G.screen !== "dive" || (G.info || 0) <= 0) return false;
+  G.info -= 1;
+  G.bp = (G.bp || 0) + GROW_RATE.INFO_TO_BP;
+  playSfx("heal");
+  showHint("情報を変換して BP +" + GROW_RATE.INFO_TO_BP, false);
+  renderHud();
+  renderGrow();
+  return true;
+}
+// EXP を EXP_TO_BP 消費して BP を +1 得る。EXP が足りなければ false。
+function convertExpToBp() {
+  if (G.screen !== "dive" || (G.exp || 0) < GROW_RATE.EXP_TO_BP) return false;
+  G.exp -= GROW_RATE.EXP_TO_BP;
+  G.bp = (G.bp || 0) + 1;
+  playSfx("heal");
+  showHint("経験値を変換して BP +1", false);
+  renderHud();
+  renderGrow();
+  return true;
+}
+// PER perKey を 1 レベル上げる。BP が逓増コスト(bpCostFor)に足り、上限未満なら実行(BP 消費)。
+// レベルアップで effXxx ヘルパー経由の有効値(HP_MAX/STAMINA_MAX/掘削手数/ATK/DEF/SWIM)が即時上がる。
+// PER_HP/PER_ST のレベルアップ時は現ゲージも実効最大まで底上げする(育成の手触りを即時に出す)。
+function levelUpPer(perKey) {
+  if (G.screen !== "dive" || !G.per || !(perKey in G.per)) return false;
+  const def = PER_DEFS.find((d) => d.key === perKey);
+  if (!def) return false;
+  const lvl = G.per[perKey];
+  if (lvl >= def.max) { showHint(def.label + "は最大レベル", false); return false; }
+  const cost = bpCostFor(perKey, lvl);
+  if ((G.bp || 0) < cost) { showHint("ボーナスポイントが足りない", true); return false; }
+  G.bp -= cost;
+  G.per[perKey] = lvl + 1;
+  // 最大値が増える PER は現ゲージを実効最大へ底上げ(レベルアップの効果を即体感させる)。
+  if (perKey === "HP") G.hp = effHpMax();
+  else if (perKey === "ST") G.stamina = effStaminaMax();
+  playSfx("heal");
+  showHint(def.label + " を Lv." + (lvl + 1) + " に強化した", false);
+  renderHud();
+  renderGrow();
   return true;
 }
 
@@ -820,8 +923,10 @@ function useDreamMushroom() {
 //  - GIRLATK=1 のモンスターは隣接する追従中の女の子も標的にしうる(HP 0 でロスト=誘導難度)。
 
 // 自機の攻撃力/防御力(ツルハシ段=戦力の代理)。
-function playerAtk() { return CONST.ATK_BASE + pickPower(); }
-function playerDef() { return CONST.DEF_BASE + Math.floor((pickPower() - 1) / 2); }
+// v0.9.0: ATK_BASE/DEF_BASE は PER_ATTACK/PER_DEFENCE レベルで押し上げた実効基礎値を使う
+// (effAtkBase/effDefBase。レベル 0 では素の CONST と一致=既存挙動不変)。
+function playerAtk() { return effAtkBase() + pickPower(); }
+function playerDef() { return effDefBase() + Math.floor((pickPower() - 1) / 2); }
 
 // (col,row) に居る出現中のモンスターを返す(無ければ null)。
 function monsterAt(col, row) {
@@ -1239,6 +1344,7 @@ function rescueGirl(g) {
   if (g.state === "rescued") return;
   g.state = "rescued";
   G.rescued += 1;
+  G.info = (G.info || 0) + 1; // v0.9.0: 救出成立で「情報」を +1(育成資源。Lv.UP 画面で BP へ変換=消費)。
   setInt(RESCUE_KEY, getInt(RESCUE_KEY) + 1); // 生涯救出数(タイトル表示)。各人 1 回だけ加算。
 }
 
@@ -1287,8 +1393,9 @@ function surfaceReturn() {
     return;
   }
   // 未クリアの撤退 = 全回復して継続(救出済み・掘った跡・探索率・最深度はランで保持)。
-  G.stamina = CONST.STAMINA_MAX;
-  G.hp = CONST.HP_MAX;
+  // v0.9.0: PER_HP/PER_ST で上がった実効最大値まで回復(育成前は素の CONST と一致)。
+  G.stamina = effStaminaMax();
+  G.hp = effHpMax();
   G.enteredHpZone = false;
   showHint(surfaceProgressText(), false);
   playSfx("heal");
@@ -1421,10 +1528,10 @@ function renderHud() {
   rescueValEl.textContent = G.rescued + "/" + CONST.GIRL_COUNT;
   exploreValEl.textContent = Math.round(exploreRatio() * 100) + "%";
   if (expValEl) expValEl.textContent = G.exp || 0; // v0.5.0 EXP 蓄積(育成未実装=表示のみ)。
-  const spRatio = Math.max(0, Math.min(1, G.stamina / CONST.STAMINA_MAX));
+  const spRatio = Math.max(0, Math.min(1, G.stamina / effStaminaMax())); // v0.9.0: 実効最大値でバー比率。
   staminaFillEl.style.width = spRatio * 100 + "%";
   staminaValEl.textContent = Math.round(G.stamina);
-  const hpRatio = Math.max(0, Math.min(1, G.hp / CONST.HP_MAX));
+  const hpRatio = Math.max(0, Math.min(1, G.hp / effHpMax()));
   hpFillEl.style.width = hpRatio * 100 + "%";
   hpValEl.textContent = Math.round(G.hp);
   // スタミナ切れ(体力ゾーン)で警告色。
@@ -1451,6 +1558,8 @@ function renderInventory() {
   }
   // v0.8.0 商人通貨: キノコ所持数を HUD バーに表示(夢キノコ/フルーツは工房=商人タブで扱う)。
   if (mushValEl) mushValEl.textContent = G.mushrooms || 0;
+  // v0.9.0 育成: 救出した女の子の「情報」ストックを HUD バーに表示(BP/PER 操作は工房=育成タブ)。
+  if (infoValEl) infoValEl.textContent = G.info || 0;
 }
 
 // ---- v0.4.0 クラフト + v0.8.0 商人(工房オーバーレイ。タブで同居) -------
@@ -1475,14 +1584,18 @@ function closeCraft() {
     craftOverlayEl.hidden = true;
   }
 }
-// 工房タブ切り替え(クラフト/商人)。リスト表示とタブ active 状態を同期し、選んだ側を再描画。
+// 工房タブ切り替え(クラフト/商人/育成)。リスト表示とタブ active 状態を同期し、選んだ側を再描画。
+// v0.9.0: 育成タブを第3タブとして追加(上部バーのボタンは増やさない=工房内タブ同居=gate G 非退行)。
 function setWorkshopTab(tab) {
-  workshopTab = tab === "shop" ? "shop" : "craft";
+  workshopTab = tab === "shop" ? "shop" : tab === "grow" ? "grow" : "craft";
   if (craftListEl) craftListEl.hidden = workshopTab !== "craft";
   if (shopListEl) shopListEl.hidden = workshopTab !== "shop";
+  if (growListEl) growListEl.hidden = workshopTab !== "grow";
   if (tabCraftEl) tabCraftEl.classList.toggle("active", workshopTab === "craft");
   if (tabShopEl) tabShopEl.classList.toggle("active", workshopTab === "shop");
+  if (tabGrowEl) tabGrowEl.classList.toggle("active", workshopTab === "grow");
   if (workshopTab === "shop") renderShop();
+  else if (workshopTab === "grow") renderGrow();
   else renderCraft();
 }
 // 材料コストを「銅3」等の verbatim 文字列に。
@@ -1611,13 +1724,78 @@ function appendEatRow(name, count, desc, useFn) {
   btn.type = "button";
   btn.className = "craft-make";
   btn.textContent = "食べる";
-  const ok = G.hp < CONST.HP_MAX;
+  const ok = G.hp < effHpMax(); // v0.9.0: 実効最大値で満タン判定。
   btn.disabled = !ok;
   btn.classList.toggle("disabled", !ok);
   btn.onclick = () => { useFn(); renderShop(); };
   row.appendChild(info);
   row.appendChild(btn);
   shopListEl.appendChild(row);
+}
+
+// ---- v0.9.0 育成タブ(Lv.UP 画面) -------------------------------------
+// 原作 BAG「Lv.UP」画面に相当。工房オーバーレイ第3タブ。①情報/EXP→BP 変換行、②各 PER の
+// 現レベル/コスト/Lv.UP ボタン。クラフト/商人と同じ .craft-row スタイルを共用(CSS を増やさない)。
+// 1 行ぶんの DOM(名前+サブ説明 / ボタン)を生成して growList に足す共通ヘルパー。
+function appendGrowRow(name, sub, btnLabel, enabled, onClick) {
+  if (!growListEl) return;
+  const row = document.createElement("div");
+  row.className = "craft-row";
+  const info = document.createElement("div");
+  info.className = "craft-info";
+  const nm = document.createElement("span");
+  nm.className = "craft-name";
+  nm.textContent = name;
+  const c = document.createElement("span");
+  c.className = "craft-cost";
+  c.textContent = sub;
+  info.appendChild(nm);
+  info.appendChild(c);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "craft-make";
+  btn.textContent = btnLabel;
+  btn.disabled = !enabled;
+  btn.classList.toggle("disabled", !enabled);
+  btn.onclick = () => { onClick(); };
+  row.appendChild(info);
+  row.appendChild(btn);
+  growListEl.appendChild(row);
+}
+function renderGrow() {
+  if (!growListEl) return;
+  growListEl.innerHTML = "";
+  // 変換行: 情報→BP / EXP→BP。所持の数とレートを明示。BP 残高もここで見せる。
+  appendGrowRow(
+    "情報 → BP（所持 " + (G.info || 0) + "・BP " + (G.bp || 0) + "）",
+    "情報1 → ボーナスポイント" + GROW_RATE.INFO_TO_BP,
+    "変換",
+    (G.info || 0) > 0,
+    () => { convertInfoToBp(); },
+  );
+  appendGrowRow(
+    "経験値 → BP（経験値 " + (G.exp || 0) + "）",
+    "経験値" + GROW_RATE.EXP_TO_BP + " → ボーナスポイント1",
+    "変換",
+    (G.exp || 0) >= GROW_RATE.EXP_TO_BP,
+    () => { convertExpToBp(); },
+  );
+  // 各 PER のレベルアップ行。現レベル/上限/次レベルの BP コストを出す。
+  for (const def of PER_DEFS) {
+    const lvl = (G.per && G.per[def.key]) || 0;
+    const maxed = lvl >= def.max;
+    const cost = bpCostFor(def.key, lvl);
+    const sub = maxed
+      ? "Lv." + lvl + " / " + def.max + "（最大・" + def.effect + "）"
+      : "Lv." + lvl + " / " + def.max + "（" + def.effect + "・次 BP" + cost + "）";
+    appendGrowRow(
+      def.label,
+      sub,
+      maxed ? "最大" : "Lv.UP",
+      !maxed && (G.bp || 0) >= cost,
+      () => { levelUpPer(def.key); },
+    );
+  }
 }
 
 let hintTimer = null;
@@ -1717,6 +1895,7 @@ if (btnPotionEl) btnPotionEl.addEventListener("click", () => usePotion());
 // (上部バーに 3 つ目のボタンを足さない=既存ボタン x 位置/地表タップ前提を壊さない)。
 if (tabCraftEl) tabCraftEl.addEventListener("click", () => setWorkshopTab("craft"));
 if (tabShopEl) tabShopEl.addEventListener("click", () => setWorkshopTab("shop"));
+if (tabGrowEl) tabGrowEl.addEventListener("click", () => setWorkshopTab("grow")); // v0.9.0 育成タブ。
 
 // ---- 描画(タイル粒度、per-pixel 禁止) --------------------------------
 function caveColor(row) {

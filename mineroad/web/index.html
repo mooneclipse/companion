@@ -67,6 +67,8 @@
     <!-- v0.8.0 商人通貨(キノコ)はボタンの後ろに置く(span は pointer 素通し&ボタンの x 位置を
          動かさない=既存の地表タップ/カメラ前提を壊さない)。 -->
     <span class="inv-ore mush"><span class="inv-ico">茸</span><span id="mush-val">0</span></span>
+    <!-- v0.9.0 育成資源(救出した女の子の情報)。同じくボタンの後ろの素通し span(x 位置不変)。 -->
+    <span class="inv-ore info"><span class="inv-ico">情</span><span id="info-val">0</span></span>
   </section>
 
   <!-- 下部ヒント(発見・スタミナ切れ・硬岩など)。 -->
@@ -92,11 +94,15 @@
     <div class="craft-tabs">
       <button id="tab-craft" class="craft-tab active" type="button">クラフト</button>
       <button id="tab-shop" class="craft-tab" type="button">商人</button>
+      <!-- v0.9.0 育成(Lv.UP)タブ。上部バーにボタンを増やさず工房パネル内タブで同居。 -->
+      <button id="tab-grow" class="craft-tab" type="button">育成</button>
     </div>
     <!-- クラフトタブ(craft.csv 6 レシピ)。 -->
     <div id="craft-list" class="craft-list"></div>
     <!-- 商人タブ(shop.csv 物々交換 + 所持消耗品を食べる)。既定は非表示。 -->
     <div id="shop-list" class="craft-list" hidden></div>
+    <!-- v0.9.0 育成タブ(情報/経験値→BP 変換 + 各 PER_* のレベルアップ)。既定は非表示。 -->
+    <div id="grow-list" class="craft-list" hidden></div>
     <button id="craft-close" class="craft-close" type="button">とじる</button>
   </div>
 </div>

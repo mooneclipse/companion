@@ -273,6 +273,10 @@ body {
 .inv-ore.mush .inv-ico {
   color: #c98a6a;
 }
+/* v0.9.0 育成資源: 救出した女の子の情報(情)= 朱寄りの暖橙。同じくボタン後ろの素通し span。 */
+.inv-ore.info .inv-ico {
+  color: #e8a05a;
+}
 /* 回復薬 / 作る ボタン。d-pad と同じ Kenney チャンキー語彙(アンバー 3D)に統一 =
    操作系を 1 つの「触れる家族」として読ませ、PC でも縮まないタップ標的(min 2.2rem)にする。 */
 .inv-btn {

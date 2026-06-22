@@ -455,6 +455,42 @@ function canTrade(rec, G) {
   return true;
 }
 
+// ---- 育成(PER_*) — 原作 §4「キャラクター育成＝パラメータのレベルアップ制」忠実(v0.9.0) ----
+// 原作の強化対象パラメータ enum(ab.a)。本リメイクでは裏庭=BP100%(dungeon_info ID0)に忠実に、
+// 救出した女の子の「情報」→ボーナスポイント(BP)→各 PER_* レベルアップへ消費する単一通貨路を開く。
+// レベルが上がると既存の育成フック(HP_MAX/STAMINA_MAX/掘削手数/ATK_BASE/DEF_BASE/SWIM_MITIGATION)の
+// 有効値が動く(app.js の effXxx ヘルパーがレベルを掛ける=フックの消費先を開く)。
+//   PER_ARROW は原作も「矢=遠距離攻撃が本リメイク未実装」のため対象外(原作 §4 にも未実装機能と注記)。
+//   PER_BP(ボーナスポイント枠)は「振れる通貨そのもの」なので独立 PER としては育てず通貨 G.bp で表す。
+// 各エントリ: key(内部名) / label(表示) / per(レベルあたりの効果増分の説明) / max(レベル上限)。
+const PER_DEFS = [
+  { key: "HP", label: "体力", effect: "+5 / Lv", max: 5 }, // PER_HP → HP_MAX を +HP_PER_LV ずつ。
+  { key: "ST", label: "スタミナ", effect: "+20 / Lv", max: 5 }, // PER_ST → STAMINA_MAX を +ST_PER_LV ずつ。
+  { key: "DIG", label: "掘削", effect: "手数 -1 / Lv", max: 2 }, // PER_DIG → 掘削手数を -1(最低 1 で頭打ち)。
+  { key: "ATTACK", label: "攻撃", effect: "+1 / Lv", max: 5 }, // PER_ATTACK → ATK_BASE を +1 ずつ。
+  { key: "DEFENCE", label: "防御", effect: "+1 / Lv", max: 5 }, // PER_DEFENCE → DEF_BASE を +1 ずつ。
+  { key: "SWIM", label: "水泳", effect: "浸水軽減 / Lv", max: 4 }, // PER_SWIM → SWIM_MITIGATION を段階増(消耗軽減)。
+];
+// PER 別のレベルあたり効果量(app.js の effXxx ヘルパーが参照。単一ブロックに集約=対症療法回避)。
+const PER_GAIN = {
+  HP_PER_LV: 5, // PER_HP 1 レベルで HP_MAX が +5。
+  ST_PER_LV: 20, // PER_ST 1 レベルで STAMINA_MAX が +20。
+  DIG_PER_LV: 1, // PER_DIG 1 レベルで掘削手数 -1(effDigTaps で最低 1 に clamp)。
+  ATK_PER_LV: 1, // PER_ATTACK 1 レベルで ATK_BASE が +1。
+  DEF_PER_LV: 1, // PER_DEFENCE 1 レベルで DEF_BASE が +1。
+  SWIM_PER_LV: 0.5, // PER_SWIM 1 レベルで SWIM_MITIGATION が +0.5(hazardSpMult/hazardHpChip がこれで割る)。
+};
+// 育成通貨の換算(原作「情報→BP/スキルポイント、変換すると情報は消費」/ EXP 用途を自機育成へ開く)。
+const GROW_RATE = {
+  INFO_TO_BP: 3, // 情報 1(救出した女の子の情報)→ ボーナスポイント 3。
+  EXP_TO_BP: 20, // EXP 20(撃破で蓄積)→ ボーナスポイント 1(v0.5.0 で死蔵していた EXP の用途を開く)。
+};
+// PER をレベル lvl から lvl+1 へ上げるのに要る BP(現レベルに応じ逓増。1 箇所に集約=閾値を散らさない)。
+// コスト式: 基本 2 BP + 現レベル ×1(Lv0→1=2 / Lv1→2=3 / Lv2→3=4 …)。決定論(乱数なし)。
+function bpCostFor(perKey, lvl) {
+  return 2 + lvl; // perKey は将来 PER 別単価に拡張できるよう引数に残す(現状は共通式)。
+}
+
 // 撃破ドロップ(決定論)。drops の per% を「累積しきい値で 1 種だけ落とす」抽選にする
 // (原作 PSUM=100 系=合計100の重み付き 1 抽選)。落ちなければ null。kill ごとに固有の位相。
 function monsterDrop(key, col, row, seed) {
@@ -544,4 +580,9 @@ if (typeof window !== "undefined") {
   window.mushroomAt = mushroomAt;
   window.SHOP_RECIPES = SHOP_RECIPES;
   window.canTrade = canTrade;
+  // v0.9.0 育成(PER_* レベルアップ。データ + コスト式。実効値ヘルパーは app.js 側)。
+  window.PER_DEFS = PER_DEFS;
+  window.PER_GAIN = PER_GAIN;
+  window.GROW_RATE = GROW_RATE;
+  window.bpCostFor = bpCostFor;
 }
