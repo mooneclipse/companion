@@ -990,3 +990,7 @@ remote 側 RV-11 (TVer 再生対応、実エピソード 3 本 `-J` 検証済 = 
   - 2 件目発生時に取る行動: Stop フックでパッチ (`git pull --rebase` 追加 / `--ff-only` 先行試行) を直接当てず、**一段引いて「vault 同期の責務分担」(claude session 内の pull 励行 vs Stop フック側の責務拡張 vs 諦め線) を `bot/docs/STATUS.md` か別途設計議論 (agent teams 含む) で再設計**してから着手する
   - 監視は ledger 化せず、次回 reject を人間 (or Discord 上のエラー文面) が気付いた時点で本ルールを引いて判断する
   - 失敗種別の数え方: web/docs/STATUS.md「失敗リカバリ手順 #1」(non-fast-forward reject) のみカウント。#2 (`git pull --ff-only` 落ち) や #3 (frontmatter 規約違反) は別系統の問題なので本ルール対象外
+
+## CLAUDE.md + パススコープ Rules 新設 (2026-06-22)
+
+CWD=bot 起動時の **本体コード開発** 用に CLAUDE.md を新設。bot は `bot.py` 集中型で機能別 paths 分割が効かないため、恒常制約 (認可4段 / 秘密管理 / claude 起動 / 前景降格 / budget 単一 gate / git) を CLAUDE.md に集約し、`.claude/rules/` 6 本に切り出した: bot-py (cmd/proactive/socket/chunk 境界)・sessions・interests・quota+voice_status・voice・claude-runner。`bot-workspace/CLAUDE.md` (実行時セッション CWD=bot-workspace) との責務分担を冒頭に明記。全制約は実コードに照合、code-reviewer 修正必須なし。companion 横断の指示整備 (games/photos と同方式、claude.com steering 記事 + 公式 memory.md) の一環。
