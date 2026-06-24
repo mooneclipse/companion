@@ -36,6 +36,11 @@ set -euo pipefail
 STATE_FILE="${HOME}/companion/maintenance/.state/proactive"
 OUR_LOG="${HOME}/companion/logs/maintenance/proactive-companion.log"
 
+# 5:30 の朝報 (dashboard-notify-ren-quotes.py が /quotes を取得して書く) の構造化
+# データ。当日分の天気を先回り発話の材料に渡す唯一の経路 (helper は 09:00 停止で
+# ライブ取得不可、チケット #36)。当日 (JST) と一致する場合のみ天気を抽出する。
+MORNING_REPORT_FILE="${HOME}/companion/dashboard/.state/morning-report.json"
+
 SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/companion-bot.sock"
 SESSIONS_DIR="${HOME}/companion/bot/sessions/topics"
 VAULT_NOTES_DIR="${HOME}/companion/vault/notes"
@@ -346,21 +351,73 @@ if [[ ! -S "$SOCK" ]]; then
     exit 0
 fi
 
+# --- 今朝の朝報 (天気) を当日分だけ拾う (チケット #36) -----------------------------
+# 5:30 の朝報 JSON を 1 回だけ読み、`date` が当日 (JST) と一致する場合のみ天気行と
+# 占い・ニュース見出しを取り出す。判定は state (JSON) を 1 回引いて確定する
+# (2 周目ルール: 文言マッチ / 場当たりリトライ / 条件分岐の積み増しを使わない)。
+# ファイル不在・日付が古い (前日以前)・天気配列が空、のいずれかなら空文字を返し、
+# 後段でフィールドを **付けない** (古い天気を絶対に渡さない)。python3 で JSON を読むのは
+# このスクリプトの既存慣習 (payload 構築・session JSON 読みもすべて python3)。
+# 出力は天気行を改行区切りで 1 つ目に、占い・ニュース見出しを軽い補助に整形する。
+morning_weather=$(python3 -c '
+import json, sys
+path, today = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as fh:
+        d = json.load(fh)
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict) or d.get("date") != today:
+    sys.exit(0)
+weather = [w for w in (d.get("weather") or []) if isinstance(w, str) and w]
+if not weather:
+    sys.exit(0)
+print("\n".join(weather))
+' "$MORNING_REPORT_FILE" "$today_jst" 2>/dev/null) || morning_weather=""
+
+morning_hint=$(python3 -c '
+import json, sys
+path, today = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as fh:
+        d = json.load(fh)
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict) or d.get("date") != today:
+    sys.exit(0)
+# 天気が空なら朝報そのものを無効扱い (morning_weather と同じ判定でそろえる)。
+weather = [w for w in (d.get("weather") or []) if isinstance(w, str) and w]
+if not weather:
+    sys.exit(0)
+parts = []
+fortune = d.get("fortune")
+if isinstance(fortune, str) and fortune:
+    parts.append(fortune)
+news = [n for n in (d.get("news") or []) if isinstance(n, str) and n]
+parts.extend(news)
+if parts:
+    print("\n".join(parts))
+' "$MORNING_REPORT_FILE" "$today_jst" 2>/dev/null) || morning_hint=""
+
 # --- 自発発話依頼を構造化メッセージで送る -----------------------------------------
 # [[proactive-v1]] 行マーカー + JSON。bot 側の socket 接続ハンドラがこのマーカーを
 # 検出して proactive 経路へ振り分ける (既存の素通し通知 = 文字列 forward 経路には
 # 触れない)。JSON は seed ヒントを bot 側 prompt に足すための材料。
 payload=$(python3 -c '
 import json, sys
-seed_kind, vault_hint, dormant_hint, silence_hours = sys.argv[1:5]
+seed_kind, vault_hint, dormant_hint, silence_hours, morning_weather, morning_hint = sys.argv[1:7]
 obj = {"kind": "proactive", "version": 1, "seed_kind": seed_kind,
        "silence_hours": int(silence_hours)}
 if vault_hint:
     obj["vault_hint"] = vault_hint
 if dormant_hint:
     obj["dormant_hint"] = dormant_hint
+if morning_weather:
+    obj["morning_weather"] = morning_weather
+if morning_hint:
+    obj["morning_hint"] = morning_hint
 print(json.dumps(obj, ensure_ascii=False))
-' "$seed_kind" "$vault_hint" "$dormant_hint" "$silence_hours")
+' "$seed_kind" "$vault_hint" "$dormant_hint" "$silence_hours" "$morning_weather" "$morning_hint")
 
 message=$(printf '[[proactive-v1]]\n%s' "$payload")
 
