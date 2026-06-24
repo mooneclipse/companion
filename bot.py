@@ -668,7 +668,10 @@ def build_proactive_prompt(
     silence_hours = 数値検証済みの非負 int、interest_topics = 関心 index の
     topic = 過去の種由来で basename 相当)。socket payload の任意文字列フィールド
     (seed_kind 等) は prompt に流さない (ledger 記録専用)。将来フィールドを足す
-    ときもこの境界を守る。
+    ときもこの境界を守る。例外: morning_weather / morning_hint は basename ではない
+    自由文だが、出どころが dashboard helper の機械生成テキスト (Open-Meteo 天気行 /
+    deterministic 占い / NHK RSS 見出し) でユーザー入力ではないため、信頼できる当日
+    朝報として展開する (チケット #36)。ユーザー由来の自由文をここに流す経路は依然禁止。
     """
     parts = [PROACTIVE_SCENE_PROMPT]
     # 現在時刻 (JST) を明示注入する。PROACTIVE_SCENE_PROMPT が「時間帯に合う一言」を
@@ -699,6 +702,30 @@ def build_proactive_prompt(
     silence_hours = payload.get("silence_hours")
     if isinstance(silence_hours, int) and not isinstance(silence_hours, bool) and silence_hours >= 0:
         parts.append(f"最後の会話から約 {silence_hours} 時間経っている。")
+    # 今朝の朝報 (天気) を「既に知っている前提」で滲ませる (チケット #36)。
+    # morning_weather / morning_hint は script 側が当日 (JST) の朝報 JSON
+    # (dashboard/.state/morning-report.json) から当日分だけ抽出した文字列。
+    # 出どころは dashboard helper の機械生成テキスト (Open-Meteo の天気行 /
+    # deterministic な占い / NHK RSS 見出し) でユーザー入力ではないため、注入防止の
+    # 対象 (任意ユーザー文字列) ではなく、信頼できる当日朝報として展開する。
+    # 古い天気を渡さない当日判定は script 側で済んでいる (date == 今日 JST のときだけ
+    # フィールドが付く) ので、bot 側は文字列が来たら素直に展開する。
+    # 天気を主、占い・ニュースは軽い補助コンテキストとして扱う。
+    morning_weather = payload.get("morning_weather")
+    if isinstance(morning_weather, str) and morning_weather:
+        msg = (
+            "これは今朝ユーザーに届けた朝報の天気で、あなた (声かけ役) は既に知っている"
+            "前提:\n" + morning_weather + "\n"
+            "改めて読み上げたり全文を復唱したりはしない。天気についてユーザーに聞き返さない"
+            "(もう知っている)。必要なときだけ自然に踏まえる (雨予報なら出かけの一言、など)。"
+        )
+        morning_hint = payload.get("morning_hint")
+        if isinstance(morning_hint, str) and morning_hint:
+            msg += (
+                "\n参考までに今朝の占い・ニュース見出し (軽い補助、無理に触れない):\n"
+                + morning_hint
+            )
+        parts.append(msg)
     vault_hint = payload.get("vault_hint")
     if vault_hint:
         parts.append(
