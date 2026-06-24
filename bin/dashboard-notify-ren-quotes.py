@@ -44,6 +44,12 @@ DASH_DIR = os.path.expanduser("~/companion/dashboard")
 CONFIG_JS = os.path.join(DASH_DIR, "web", "dashboard-config.js")
 STATE_DIR = os.path.join(DASH_DIR, ".state")
 LAST_NOTIFY_FILE = os.path.join(STATE_DIR, "last-notify-date")
+# 朝報の構造化データ（/quotes の返り値をほぼそのまま）を置く。日中の先回り発話
+# (maintenance/scripts/proactive-companion.sh) が当日分だけ読んで「今朝届けた天気を
+# 既に知っている前提」で踏まえる。helper は 09:00 に停止するため先回り側からの
+# ライブ取得は不可で、5:30 に取得済みの内容をここに永続化して渡す唯一の経路。
+# .state/ は .gitignore 済みなので新ファイルもコミット対象に入らない。
+MORNING_REPORT_FILE = os.path.join(STATE_DIR, "morning-report.json")
 
 # helper /quotes の fetch timeout（helper は in-memory cache なので 2 回目以降は即返。
 # 初回 build 時に Open-Meteo + NHK RSS + Anthropic news を直列 fetch するため、helper 側の
@@ -101,6 +107,35 @@ def fetch_quotes():
         return None
 
 
+# ─── 朝報の構造化データを先回り発話用に永続化 ──────────────────────
+def save_morning_report(payload):
+    """/quotes の返り値 dict を .state/morning-report.json に書き出す。
+
+    日中の先回り発話 (proactive-companion.sh) が当日分だけ読み、今朝届けた天気を
+    踏まえる材料にする。payload には helper が決めた JST 当日の `date` が含まれる
+    ので、それをそのまま保存して先回り側の当日判定 (date == 今日 JST) に使わせる。
+    保存内容は date / weather / fortune / news（anthropic も含めて素直に丸ごと）。
+
+    書き込み失敗は朝報送信や dashboard 起動を倒さないよう握り潰す（既存の例外方針に
+    合わせ、最上位 except とは別にここでも OSError を握って続行する）。
+    """
+    try:
+        report = {
+            "date": payload.get("date"),
+            "weather": payload.get("weather") or [],
+            "fortune": payload.get("fortune") or "",
+            "news": payload.get("news") or [],
+            "anthropic": payload.get("anthropic") or [],
+        }
+        os.makedirs(STATE_DIR, exist_ok=True)
+        tmp = MORNING_REPORT_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False)
+        os.replace(tmp, MORNING_REPORT_FILE)
+    except OSError as e:
+        print(f"dashboard-notify: failed to save morning report: {e}", file=sys.stderr)
+
+
 # ─── 通知本文の組み立て ──────────────────────────────────────────
 def build_message(now):
     """5:30 起動時の「今朝の ren セリフ集」を 1 通分のテキストに組む。
@@ -112,6 +147,9 @@ def build_message(now):
     payload = fetch_quotes()
     if not isinstance(payload, dict):
         return None
+    # 朝報の構造化データを先回り発話用に永続化する。失敗は朝報送信を倒さない
+    # (build_message の後段・送信は continue)。
+    save_morning_report(payload)
     header_date = now.strftime("%Y-%m-%d (%a) %H:%M")
     lines = []
     weather = payload.get("weather") or []
