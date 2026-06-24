@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-24 (proactive 朝報天気注入 todo#36 の code-review 軽微 2 件を反映 — morning-report.json の 2 回 open を payload 構築 python3 への単一読み取り + 単一判定に統合 (挙動同一を旧実装との JSON 等価比較で実証)、morning_hint の news 見出しは外部フィード (NHK RSS) 由来の出自境界メモを Done に追記。詳細は Done 先頭 entry)
+最終更新: 2026-06-24 (trends-weekly: ウィークリーレポートの土曜配信が無音化する不具合を修正 — 生成の冪等と配信の冪等を別 state に分離。前倒し生成でノートが既存でも未通知の週なら土曜発火で notify を送る。詳細は Done 先頭 entry)
 
 ## 設計メモ
 
@@ -33,6 +33,13 @@
 
 ## Done
 
+- 2026-06-24 trends-weekly: ウィークリーレポートの土曜配信が無音化する不具合を修正 (生成冪等と配信冪等の分離)
+  - **事象**: W24 が予算超過で失敗 (2026-06-13) → 6/15(月) に手動リカバリ実行 → ISO 週は既に W25 で `2026-W25 AIトレンド.md` が月曜に前倒し生成され通知もこの時点で送信済み。6/20(土) の定期発火時は同じ W25 のノートが既存のため冪等ゲートで `exit 0` → `notify sent` に到達せず無音化。timer (`OnCalendar=Sat 08:00`) は正常発火しており、届かない真因は配信ステップ未到達
+  - **真因**: 生成と配信が一体設計だった。冪等ゲート (`scripts/trends-weekly.sh`) が「その ISO 週のノートが既存なら通知ごと exit 0」で、前倒し生成があると土曜の配信が巻き添えでスキップされる
+  - **修正方針 (生成冪等と配信冪等の分離)**: 生成の冪等 (ノート再生成しない / seen-urls dedup) は現状維持。配信の冪等を別 state で持つ。新 state `.state/last-notified-trends-week` に「最後に Telegram 通知した ISO 週」を 1 行で記録 (命名は `notify-system-report.sh` / `notify-unattended-upgrades.sh` の `last-notified-*` 慣習に寄せた、git 管理外)
+  - **実装**: 通知を `notify_week()` 関数に切り出し、冪等ゲート (ノート既存で exit する直前) と末尾 (新規生成後) の両方から呼ぶ。判定は NOTIFY_STATE を 1 回引いて確定 — 同週通知済みなら skip、socket 不在/送信失敗なら state を進めず (次回発火で再試行)、実際に送れたときだけ当該週に更新。socket 在席時のみ best-effort の既存設計は維持
+  - **2 周目ルール整合**: 配信済み判定は state を持つ側 (NOTIFY_STATE) を 1 回引いて確定 (stderr 文言マッチ / 場当たりリトライで組まない)。生成失敗パス (exit 1) は配信内容が無いので notify しないまま (真因と整合)
+  - **検証**: `bash -n` OK。`notify_week` のロジックを切り出し nc モックで 5 ケース実証 — (1) socket 不在+未通知→skip+state 据え置き、(2) socket 在席+未通知+送信成功→sent+state 更新、(3) 同週通知済み→skip (二重通知しない)、(4) 別週+送信失敗→state 据え置き (再試行可)、(5) 別週+送信成功→更新。実 socket への送信は bot 稼働前提のため未走
 - 2026-06-24 proactive: 当日の朝報天気を payload に注入 (helper 停止後も 5:30 取得分を共有、todo#36) + code-review 軽微 2 件反映
   - **本体 (commit 552124b)**: helper は 09:00 停止でライブ天気取得不可。5:30 の朝報 JSON (`dashboard/.state/morning-report.json`、`date` が当日 JST 一致時のみ) から天気行 + 占い + ニュース見出しを抽出し、`[[proactive-v1]]` payload に `morning_weather` / `morning_hint` として乗せて bot 側 `build_proactive_prompt` で「既に知っている前提」として滲ませる。古い天気を渡さない当日判定は script 側で確定。bot 側 (commit 979a7b1) は文字列が来たら素直に展開
   - **注入境界 (出自メモ)**: payload に流す `morning_hint` のうち **ニュース見出しは外部フィード (NHK RSS) 由来のパススルー文字列** であり、helper が deterministic に自己生成したものではない (天気 = Open-Meteo 機械データ、占い = 日付 seed 決定生成はほぼ自己生成だが news は外部見出し)。ユーザー入力ではないので注入経路は新設していない (bot 側 `build_proactive_prompt` docstring の「dashboard helper の機械生成テキスト = ユーザー入力ではない」契約と整合) が、**今後 hint に別ソースを足す際は出自を必ず確認する** (ユーザー由来の自由文を hint に流す経路は依然禁止)
@@ -119,7 +126,7 @@
     - `config/trends-sources.yaml` … 手編集する収集ソース設定 (keywords / lookback_days=8 / feeds)。シード feed = Zenn AI・Zenn LLM・Qiita 生成AI (filter:false)。企業ブログは 2026-06-04 に `curl -w "%{http_code}"` で 200 確認したもの (OpenAI News `/news/rss.xml`・Google DeepMind・Hugging Face Blog) のみ採用。Anthropic は公開 RSS 未提供 (404) のためコメントで明示、旧 OpenAI Blog `/blog/rss.xml` は 307 でコメント残置。将来 SQLite 等への差し替え点 (`lib/trends_fetch.py` の `load_config`) を冒頭コメントに明記
     - `lib/trends_fetch.py` … RSS2.0 (channel/item) + Atom (feed/entry) を Python stdlib のみ (+pyyaml) でパース (feedparser 不使用)。UA=Mozilla/5.0・timeout 15s。feed 単位 try/except で部分失敗許容 (失敗ソース名を `failed_sources` に載せる)、HTML タグ除去 + 300 字切り詰め、lookback_days 日付フィルタ (パース不能は採用)、filter:true は keyword 一致のみ採用、seen-urls.json で dedup。**state は読むだけで書き換えない** (冪等性は shell が成功後に更新)。Qiita のような非 ASCII パス URL は path/query を percent-encode して取得
     - `.claude/skills/trends-report/SKILL.md` … `new-items.json` を Read → テーマ別クラスタリングで日本語要約 → `report.md` を Write する skill。featured 最大 12〜15 件 + 残りは「他 N 件」、frontmatter `tags:[ai-trends]`/`week`/`created`、`## 今週のまとめ` (俯瞰) + `## 主なトピック` (テーマ別)。Web 取得・長時間処理なし
-    - `scripts/trends-weekly.sh` … オーケストレーション (set -euo pipefail)。CLAUDE_BIN 解決 (node バージョン非ハードコード)、ISO 週ラベル `date +%G-W%V`、対象 vault ノート既存なら no-op の冪等ゲート、0 件時は claude を呼ばず shell が最小ノートを直接書く (budget 節約)、1 件以上は `timeout 600 claude -p "/trends-report ..." --output-format json --permission-mode acceptEdits --allowedTools "Read Write Edit" --max-budget-usd 1.0`。rc 判定は 1 回で確定 (失敗時 state 未更新で exit 1 = 冪等、CLAUDE.md 2 周目ルール準拠で stderr 文言マッチ/場当たりリトライをしない)。vault 配置は shell が一元管理 (claude に vault 権限を渡さない = 書き込み境界遵守)。state 更新は成功後のみ + 26 週より古いエントリを prune (一時ファイル + mv で原子的)。Discord 通知は socket 在席時のみ best-effort (不在/送信失敗でも本体は成功扱い)
+    - `scripts/trends-weekly.sh` … オーケストレーション (set -euo pipefail)。CLAUDE_BIN 解決 (node バージョン非ハードコード)、ISO 週ラベル `date +%G-W%V`、対象 vault ノート既存なら**再生成しない**生成冪等ゲート (ただし配信は別軸 = 後述)、0 件時は claude を呼ばず shell が最小ノートを直接書く (budget 節約)、1 件以上は `timeout 600 claude -p "/trends-report ..." --output-format json --permission-mode acceptEdits --allowedTools "Read Write Edit" --max-budget-usd 1.0`。rc 判定は 1 回で確定 (失敗時 state 未更新で exit 1 = 冪等、CLAUDE.md 2 周目ルール準拠で stderr 文言マッチ/場当たりリトライをしない)。vault 配置は shell が一元管理 (claude に vault 権限を渡さない = 書き込み境界遵守)。seen-urls state 更新は成功後のみ + 26 週より古いエントリを prune (一時ファイル + mv で原子的)。**通知は生成と別軸の配信冪等** (`notify_week()`): 配信済みの週は `.state/last-notified-trends-week` (最後に通知した ISO 週を 1 行) で判定し、未通知の週なら**ノートが前倒し生成済みでも**土曜発火で送る。socket 在席時のみ best-effort で、実際に送れたときだけ state を進める (不在/送信失敗は据え置きで次回再試行、本体は成功扱い)
     - `systemd/companion-trends.service` (oneshot, `After=companion-bot.service`、Wants/Requires なし) + `.timer` (`OnCalendar=Sat 08:00:00`, `Persistent=true`, `RandomizedDelaySec=15min`)
   - 実弾テスト OK: `python3 lib/trends_fetch.py` で実 RSS から total_new=66・failed_sources 空を確認 (Zenn AI 20 / Zenn LLM 15 / Qiita 4 / OpenAI 20 / HF 7。DeepMind は直近 8 日に新着なしで 0)。dedup は seen 投入で 66→36 に減ることを確認。`bash -n` 構文 OK (shellcheck 未インストール)。実機 dry-run でフル経路成功 (fetch → claude -p → vault に `2026-W23 AIトレンド.md` 生成 → state 66 件記録 → 通知送信)。生成ノートは 4 クラスタ + featured 14 件 + 「他 52 件」で書式どおり。再実行は冪等ゲートで no-op (claude 非再呼出)。0 件分岐の最小ノート生成と failed_sources 注記、26 週 prune を単体検証で確認。claude -p 1 回のコストは実測 $0.40 (Opus)、`--max-budget-usd 1.0` で bound
   - **claude -p 消費は Anthropic subscription の usage limit から引かれる** (2026-06-15 予定の `claude -p` / Agent SDK 月次クレジット枠分離は公式に pause、当面サブスク消費前提)。週 1・要約 1 回・`--max-budget-usd 1.0` で 1 回 bound 済みで影響軽微。bot の ledger.jsonl とは別経路で集計は合流しない (将来クレジット枠が確定したら共有プール扱いを再検討)

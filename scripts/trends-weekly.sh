@@ -23,6 +23,13 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 CONFIG="${REPO}/config/trends-sources.yaml"
 STATE="${REPO}/.state/trends-seen-urls.json"
+# 配信冪等の state: 最後に Telegram 通知した ISO 週を 1 行で持つ。
+# ノート生成の冪等 (trends-seen-urls.json / ノート存在) とは別軸。
+# 前倒し生成 (予算超過リカバリ等) でノートが既にあっても、その週を
+# まだ通知していなければ土曜発火で配信する判定に使う。
+# 命名は notify-system-report.sh / notify-unattended-upgrades.sh の
+# last-notified-* 慣習に寄せた。
+NOTIFY_STATE="${REPO}/.state/last-notified-trends-week"
 WORKDIR="${REPO}/.state/trends-work"
 FETCH_PY="${REPO}/lib/trends_fetch.py"
 OUR_LOG="${HOME}/companion/logs/maintenance/trends-weekly.log"
@@ -44,6 +51,34 @@ log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$OUR_LOG"
 }
 
+# --- 配信 (best-effort、配信冪等は NOTIFY_STATE で確定) ----------------------------
+# 引数の ISO 週をまだ通知していなければ socket 経由で 1 回だけ通知する。
+# 配信済みか否かは NOTIFY_STATE を 1 回引いて確定する (state を持つ側で判定。
+# stderr 文言マッチや場当たりリトライで分岐しない = CLAUDE.md 対症療法ルール準拠)。
+#   - 既に同じ週を通知済み → skip (二重通知しない)。
+#   - socket 不在 / 送信失敗 → state を更新しない (次回発火で再試行できる)。
+#   - 実際に送れたときだけ NOTIFY_STATE を当該週に更新する。
+notify_week() {
+    local week="$1"
+    local last=""
+    [[ -f "$NOTIFY_STATE" ]] && last="$(cat "$NOTIFY_STATE")"
+    if [[ "$last" == "$week" ]]; then
+        log "notify skip: already notified (${week})"
+        return 0
+    fi
+    if [[ ! -S "$SOCK" ]]; then
+        log "notify skip: socket not present (${SOCK})"
+        return 0
+    fi
+    local body="今週の AI トレンドレポートできたよ: ${week}"
+    if printf '%s' "$body" | nc -U -N "$SOCK"; then
+        printf '%s' "$week" > "$NOTIFY_STATE"
+        log "notify sent (${week})"
+    else
+        log "notify send failed (best-effort, 無視)"
+    fi
+}
+
 # --- claude バイナリ解決 (node バージョンをハードコードしない) -------------------
 CLAUDE_BIN="$(command -v claude || true)"
 if [[ -z "$CLAUDE_BIN" ]]; then
@@ -59,9 +94,14 @@ isoweek="$(date +%G-W%V)"          # 例 2026-W23
 note_name="${isoweek} AIトレンド.md"
 note_path="${VAULT_DIR}/${note_name}"
 
-# --- 冪等ゲート: 対象ノートが既存なら no-op -------------------------------------
+# --- 生成の冪等ゲート: 対象ノートが既存なら再生成しない -------------------------
+# ただし配信は別軸。前倒し生成 (予算超過リカバリ等) で土曜より前にノートが
+# 生成済みでも、その週をまだ通知していなければここで配信してから抜ける
+# (生成の冪等は維持、配信の取りこぼしを塞ぐ)。配信済み判定は notify_week が
+# NOTIFY_STATE を引いて確定する。
 if [[ -f "$note_path" ]]; then
-    log "skip: note already exists for ${isoweek} (${note_path})"
+    log "skip generate: note already exists for ${isoweek} (${note_path})"
+    notify_week "$isoweek"
     exit 0
 fi
 
@@ -196,18 +236,11 @@ else
     log "warn: state 更新失敗 (ノートは生成済み、次回 dedup が効かない可能性)"
 fi
 
-# --- Discord 通知 (best-effort) -------------------------------------------------
+# --- 通知 (best-effort) ---------------------------------------------------------
 # socket 在席時のみ送る。不在 / 送信失敗でも本体は成功扱い (bot 停止時も成功)。
-if [[ -S "$SOCK" ]]; then
-    body="今週の AI トレンドレポートできたよ: ${isoweek}"
-    if printf '%s' "$body" | nc -U -N "$SOCK"; then
-        log "notify sent (${isoweek})"
-    else
-        log "notify send failed (best-effort, 無視)"
-    fi
-else
-    log "notify skip: socket not present (${SOCK})"
-fi
+# 配信冪等は notify_week が NOTIFY_STATE で確定する (新規生成パスでも、未通知
+# なら 1 回だけ送り、送れたときだけ state を進める)。
+notify_week "$isoweek"
 
 # WORKDIR のクリーンアップは EXIT trap (冒頭) が一元実施する。
 log "done (${isoweek})"
