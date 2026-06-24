@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-24 (trends-weekly: ウィークリーレポートの土曜配信が無音化する不具合を修正 — 生成の冪等と配信の冪等を別 state に分離。前倒し生成でノートが既存でも未通知の週なら土曜発火で notify を送る。詳細は Done 先頭 entry)
+最終更新: 2026-06-24 (trends-weekly: 生成失敗時も bot に理由付きで通知が飛ぶよう修正 — fetch/claude -p/report空/claudeバイナリ不在 の各 exit 1 直前に notify_failure を追加。失敗冪等は成功冪等と別 state `.state/last-failed-trends-week`。詳細は Done 先頭 entry)
 
 ## 設計メモ
 
@@ -33,6 +33,13 @@
 
 ## Done
 
+- 2026-06-24 trends-weekly: 生成失敗時も bot に理由付きで通知が飛ぶよう修正 (失敗通知の追加 + 失敗冪等の独立 state)
+  - **事象/動機**: 直前の配信冪等修正 (下の entry) は生成**成功**パスのみを扱っていた。生成**失敗**パス (各 `exit 1`) は OUR_LOG と systemd journal にだけ残り Telegram には無音。今回の発端だった W24 の予算超過 (`--max-budget-usd` 超過 = `claude -p` 失敗) もこの無音失敗だった。OWNER 要望「生成の結果はかならず bot に通知してほしい」= 成功だけでなく失敗も理由付きで土曜に届くようにする
+  - **修正**: `notify_failure()` を `notify_week()` と対称の best-effort 送信として追加。引数で失敗段階の短い理由を受け、本文 `今週の AI トレンドレポート生成に失敗: <理由> (<isoweek>)` を socket 経由で 1 回送る。4 つの失敗 exit 直前に呼ぶ — `claudeバイナリ不在` (L138付近) / `fetch失敗` (`trends_fetch.py` 失敗) / `claude -p失敗(予算超過/timeout含む)` / `report空`。L235 の state 更新失敗はノート生成済み=成功扱いなので対象外 (真因と整合)
+  - **isoweek 前出し**: `notify_failure` が常に週を添えられるよう、ISO 週ラベル算出 (`date +%G-W%V`) を claude バイナリ解決より前に移動。バイナリ不在パスでも isoweek 確定済み (set -u 下の未定義参照を回避)
+  - **失敗冪等は成功冪等と別 state**: 新 state `.state/last-failed-trends-week` に「最後に失敗通知した ISO 週」を 1 行で記録 (命名は `last-notified-*` 慣習に寄せた、git 管理外)。`notify_failure` は 2 state を 1 回ずつ引いて確定 — (a) 同週が成功通知済み (NOTIFY_STATE 一致) なら失敗通知を送らない (前倒し成功済みの週に遅れて失敗が来ても矛盾通知しない)、(b) 同週が失敗通知済みなら skip (timer Persistent catch-up の連投防止)、(c) socket 不在/送信失敗は state を進めず次回再試行、(d) 送れたときだけ FAILED_NOTIFY_STATE を更新。**失敗→修正→成功の週で成功通知 (notify_week) は NOTIFY_STATE 側で独立判定されるため抑止されない**
+  - **2 周目ルール整合**: 既存の失敗判定 (`if rc != 0` / report 空チェック) の条件は増やしていない。各 `exit 1` 直前に「通知を 1 回送る」副作用を足しただけで失敗判定ロジックは不変。失敗冪等は state を持つ側を 1 回引いて確定 (stderr 文言マッチ / 場当たりリトライで組まない)。`notify_failure` は内部で全 return 0 = best-effort で、socket 不在/送信失敗でも元の `exit 1` を巻き込まない (成功扱いに化けない)
+  - **検証**: `bash -n` OK。本体の `notify_failure` 定義を抽出し検証ハーネスの転記と `diff` で完全一致を確認した上で nc モックで 6 ケース実証 — (1) socket 在席+初回失敗→1 回送信+FAILED state 更新+理由/週含む、(2) 同週再発火→連投しない、(3) 同週別理由→連投しない (週単位冪等)、(4) 失敗通知済みでも成功通知 state は未設定 (成功通知は出せる)、(5) 同週成功通知済み→失敗通知を送らない+FAILED state 据え置き、(6) socket 不在→送らず state 据え置き+rc 0。実 socket への送信は bot 稼働前提のため未走
 - 2026-06-24 trends-weekly: ウィークリーレポートの土曜配信が無音化する不具合を修正 (生成冪等と配信冪等の分離)
   - **事象**: W24 が予算超過で失敗 (2026-06-13) → 6/15(月) に手動リカバリ実行 → ISO 週は既に W25 で `2026-W25 AIトレンド.md` が月曜に前倒し生成され通知もこの時点で送信済み。6/20(土) の定期発火時は同じ W25 のノートが既存のため冪等ゲートで `exit 0` → `notify sent` に到達せず無音化。timer (`OnCalendar=Sat 08:00`) は正常発火しており、届かない真因は配信ステップ未到達
   - **真因**: 生成と配信が一体設計だった。冪等ゲート (`scripts/trends-weekly.sh`) が「その ISO 週のノートが既存なら通知ごと exit 0」で、前倒し生成があると土曜の配信が巻き添えでスキップされる

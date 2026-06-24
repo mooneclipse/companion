@@ -30,6 +30,12 @@ STATE="${REPO}/.state/trends-seen-urls.json"
 # 命名は notify-system-report.sh / notify-unattended-upgrades.sh の
 # last-notified-* 慣習に寄せた。
 NOTIFY_STATE="${REPO}/.state/last-notified-trends-week"
+# 失敗通知の冪等 state: 最後に「失敗」を Telegram 通知した ISO 週を 1 行で持つ。
+# 成功通知 (NOTIFY_STATE) とは別軸に分ける。同じ週で失敗→修正→成功した場合に
+# 成功通知が抑止されないよう、state を混ぜない (失敗通知済みでも成功通知は
+# NOTIFY_STATE 側で独立に判定される)。timer の Persistent catch-up で同じ週の
+# 失敗が連続発火しても、この state を 1 回引いて二重送信を抑える。
+FAILED_NOTIFY_STATE="${REPO}/.state/last-failed-trends-week"
 WORKDIR="${REPO}/.state/trends-work"
 FETCH_PY="${REPO}/lib/trends_fetch.py"
 OUR_LOG="${HOME}/companion/logs/maintenance/trends-weekly.log"
@@ -79,20 +85,61 @@ notify_week() {
     fi
 }
 
+# --- ISO 週ラベルとノートパスを確定 ----------------------------------------------
+# claude バイナリ解決より前に算出する。失敗通知 (notify_failure) が常に week を
+# 添えて送れるようにするため (バイナリ不在パスもこの時点で isoweek が確定済み)。
+isoweek="$(date +%G-W%V)"          # 例 2026-W23
+note_name="${isoweek} AIトレンド.md"
+note_path="${VAULT_DIR}/${note_name}"
+
+# --- 失敗通知 (best-effort、失敗冪等は FAILED_NOTIFY_STATE で確定) -----------------
+# 生成が失敗した段階で、その週をまだ「失敗通知」していなければ socket 経由で
+# 1 回だけ理由付きで通知する。冪等は FAILED_NOTIFY_STATE を 1 回引いて確定する
+# (state を持つ側で判定。stderr 文言マッチや場当たりリトライで分岐しない)。
+#   - 同じ週で既に成功通知済み (NOTIFY_STATE 一致) → 失敗通知は送らない
+#     (前倒し生成で成功済みの週に遅れて失敗が来ても矛盾通知を出さない)。
+#   - 同じ週で既に失敗通知済み → skip (catch-up 連続発火で連投しない)。
+#   - socket 不在 / 送信失敗 → state を更新しない (次回発火で再試行できる)。
+#   - 実際に送れたときだけ FAILED_NOTIFY_STATE を当該週に更新する。
+# notify_week と同じく内部で rc を握り、set -e 下でも本体の exit 1 を巻き込まない。
+notify_failure() {
+    local reason="$1"
+    local week="$isoweek"
+    local notified="" failed_last=""
+    [[ -f "$NOTIFY_STATE" ]] && notified="$(cat "$NOTIFY_STATE")"
+    if [[ "$notified" == "$week" ]]; then
+        log "notify-fail skip: week already notified as success (${week})"
+        return 0
+    fi
+    [[ -f "$FAILED_NOTIFY_STATE" ]] && failed_last="$(cat "$FAILED_NOTIFY_STATE")"
+    if [[ "$failed_last" == "$week" ]]; then
+        log "notify-fail skip: already notified failure (${week})"
+        return 0
+    fi
+    if [[ ! -S "$SOCK" ]]; then
+        log "notify-fail skip: socket not present (${SOCK})"
+        return 0
+    fi
+    local body="今週の AI トレンドレポート生成に失敗: ${reason} (${week})"
+    if printf '%s' "$body" | nc -U -N "$SOCK"; then
+        printf '%s' "$week" > "$FAILED_NOTIFY_STATE"
+        log "notify-fail sent: ${reason} (${week})"
+    else
+        log "notify-fail send failed (best-effort, 無視)"
+    fi
+    return 0
+}
+
 # --- claude バイナリ解決 (node バージョンをハードコードしない) -------------------
 CLAUDE_BIN="$(command -v claude || true)"
 if [[ -z "$CLAUDE_BIN" ]]; then
     CLAUDE_BIN="$(ls "$HOME"/.nvm/versions/node/*/bin/claude 2>/dev/null | head -1 || true)"
 fi
 if [[ -z "$CLAUDE_BIN" ]]; then
+    notify_failure "claudeバイナリ不在"
     log "abort: claude バイナリが見つからない"
     exit 1
 fi
-
-# --- ISO 週ラベルとノートパスを確定 ----------------------------------------------
-isoweek="$(date +%G-W%V)"          # 例 2026-W23
-note_name="${isoweek} AIトレンド.md"
-note_path="${VAULT_DIR}/${note_name}"
 
 # --- 生成の冪等ゲート: 対象ノートが既存なら再生成しない -------------------------
 # ただし配信は別軸。前倒し生成 (予算超過リカバリ等) で土曜より前にノートが
@@ -114,6 +161,7 @@ report="${WORKDIR}/report.md"
 # --- RSS 収集 -------------------------------------------------------------------
 log "fetch start (isoweek=${isoweek})"
 if ! python3 "$FETCH_PY" "$CONFIG" "$STATE" "$new_items" 2>>"$OUR_LOG"; then
+    notify_failure "fetch失敗"
     log "abort: trends_fetch.py 失敗 (state 未更新)"
     exit 1
 fi
@@ -166,10 +214,12 @@ else
             --model claude-sonnet-4-6 \
             --max-budget-usd 1.0 \
             < /dev/null ) >> "$OUR_LOG" 2>&1; then
+        notify_failure "claude -p失敗(予算超過/timeout含む)"
         log "abort: claude -p 失敗 (state 未更新)"
         exit 1
     fi
     if [[ ! -s "$report" ]]; then
+        notify_failure "report空"
         log "abort: report.md が空または未生成 (state 未更新)"
         exit 1
     fi
