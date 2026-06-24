@@ -351,73 +351,56 @@ if [[ ! -S "$SOCK" ]]; then
     exit 0
 fi
 
-# --- 今朝の朝報 (天気) を当日分だけ拾う (チケット #36) -----------------------------
-# 5:30 の朝報 JSON を 1 回だけ読み、`date` が当日 (JST) と一致する場合のみ天気行と
-# 占い・ニュース見出しを取り出す。判定は state (JSON) を 1 回引いて確定する
-# (2 周目ルール: 文言マッチ / 場当たりリトライ / 条件分岐の積み増しを使わない)。
-# ファイル不在・日付が古い (前日以前)・天気配列が空、のいずれかなら空文字を返し、
-# 後段でフィールドを **付けない** (古い天気を絶対に渡さない)。python3 で JSON を読むのは
-# このスクリプトの既存慣習 (payload 構築・session JSON 読みもすべて python3)。
-# 出力は天気行を改行区切りで 1 つ目に、占い・ニュース見出しを軽い補助に整形する。
-morning_weather=$(python3 -c '
-import json, sys
-path, today = sys.argv[1], sys.argv[2]
-try:
-    with open(path, encoding="utf-8") as fh:
-        d = json.load(fh)
-except Exception:
-    sys.exit(0)
-if not isinstance(d, dict) or d.get("date") != today:
-    sys.exit(0)
-weather = [w for w in (d.get("weather") or []) if isinstance(w, str) and w]
-if not weather:
-    sys.exit(0)
-print("\n".join(weather))
-' "$MORNING_REPORT_FILE" "$today_jst" 2>/dev/null) || morning_weather=""
-
-morning_hint=$(python3 -c '
-import json, sys
-path, today = sys.argv[1], sys.argv[2]
-try:
-    with open(path, encoding="utf-8") as fh:
-        d = json.load(fh)
-except Exception:
-    sys.exit(0)
-if not isinstance(d, dict) or d.get("date") != today:
-    sys.exit(0)
-# 天気が空なら朝報そのものを無効扱い (morning_weather と同じ判定でそろえる)。
-weather = [w for w in (d.get("weather") or []) if isinstance(w, str) and w]
-if not weather:
-    sys.exit(0)
-parts = []
-fortune = d.get("fortune")
-if isinstance(fortune, str) and fortune:
-    parts.append(fortune)
-news = [n for n in (d.get("news") or []) if isinstance(n, str) and n]
-parts.extend(news)
-if parts:
-    print("\n".join(parts))
-' "$MORNING_REPORT_FILE" "$today_jst" 2>/dev/null) || morning_hint=""
-
 # --- 自発発話依頼を構造化メッセージで送る -----------------------------------------
 # [[proactive-v1]] 行マーカー + JSON。bot 側の socket 接続ハンドラがこのマーカーを
 # 検出して proactive 経路へ振り分ける (既存の素通し通知 = 文字列 forward 経路には
 # 触れない)。JSON は seed ヒントを bot 側 prompt に足すための材料。
+#
+# 今朝の朝報 (天気) も当日分だけこの payload 構築 python3 の中で 1 回読み取り・1 回
+# 判定して obj に足す (チケット #36)。5:30 の朝報 JSON
+# (dashboard/.state/morning-report.json) を **1 回だけ** open し、`date` が当日 (JST)
+# と一致しかつ天気配列が空でない場合のみ morning_weather (天気行を改行区切り) と
+# morning_hint (占い + ニュース見出しを改行区切り) を obj に付ける。判定は state (JSON)
+# を 1 回引いて確定する (2 周目ルール: 文言マッチ / 場当たりリトライ / 条件分岐の
+# 積み増しを使わない)。ファイル不在・JSON 壊れ・日付が古い (前日以前)・天気配列が空、
+# のいずれかなら morning_weather / morning_hint とも obj に **付けない** (古い天気を
+# 絶対に渡さない)。hint は weather が有効なときだけ出す (weather 空なら hint も無効、の
+# 結合を維持)。python3 で JSON を読むのはこのスクリプトの既存慣習 (session JSON 読みも
+# すべて python3)。多行値をシェル変数経由で渡すと改行と衝突するため、朝報の読み取りは
+# この payload 構築 python3 に MORNING_REPORT_FILE と today_jst を渡して内部で完結させる。
 payload=$(python3 -c '
 import json, sys
-seed_kind, vault_hint, dormant_hint, silence_hours, morning_weather, morning_hint = sys.argv[1:7]
+(seed_kind, vault_hint, dormant_hint, silence_hours,
+ morning_report_file, today) = sys.argv[1:7]
 obj = {"kind": "proactive", "version": 1, "seed_kind": seed_kind,
        "silence_hours": int(silence_hours)}
 if vault_hint:
     obj["vault_hint"] = vault_hint
 if dormant_hint:
     obj["dormant_hint"] = dormant_hint
-if morning_weather:
-    obj["morning_weather"] = morning_weather
-if morning_hint:
-    obj["morning_hint"] = morning_hint
+# 朝報 JSON を 1 回だけ open し、当日 (JST) かつ天気ありのときだけ
+# morning_weather / morning_hint を足す。読めない / 古い / 天気空はすべて
+# 「朝報なし」の 1 状態に倒し、フィールドを付けない (古い天気を渡さない)。
+try:
+    with open(morning_report_file, encoding="utf-8") as fh:
+        report = json.load(fh)
+except Exception:
+    report = None
+if isinstance(report, dict) and report.get("date") == today:
+    weather = [w for w in (report.get("weather") or []) if isinstance(w, str) and w]
+    if weather:
+        obj["morning_weather"] = "\n".join(weather)
+        hint_parts = []
+        fortune = report.get("fortune")
+        if isinstance(fortune, str) and fortune:
+            hint_parts.append(fortune)
+        hint_parts.extend(
+            n for n in (report.get("news") or []) if isinstance(n, str) and n
+        )
+        if hint_parts:
+            obj["morning_hint"] = "\n".join(hint_parts)
 print(json.dumps(obj, ensure_ascii=False))
-' "$seed_kind" "$vault_hint" "$dormant_hint" "$silence_hours" "$morning_weather" "$morning_hint")
+' "$seed_kind" "$vault_hint" "$dormant_hint" "$silence_hours" "$MORNING_REPORT_FILE" "$today_jst")
 
 message=$(printf '[[proactive-v1]]\n%s' "$payload")
 

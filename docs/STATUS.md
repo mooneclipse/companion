@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-19 (proactive 確率変調 CEIL を base に張る設計を撤回 → PROACTIVE_PROBABILITY_CEIL の既定を 0.92 に引き上げ。日次上限 → 週ローリング総量 (前 entry) に移したことで乗ってる日の山を硬い日次天井で頭打ちにする必要が無くなり、波の振幅を出すため base 超を許可。鬱陶しさの安全弁は週総量 PROACTIVE_WEEKLY_MAX 側に役割分担。詳細は Done 同日先頭 entry)
+最終更新: 2026-06-24 (proactive 朝報天気注入 todo#36 の code-review 軽微 2 件を反映 — morning-report.json の 2 回 open を payload 構築 python3 への単一読み取り + 単一判定に統合 (挙動同一を旧実装との JSON 等価比較で実証)、morning_hint の news 見出しは外部フィード (NHK RSS) 由来の出自境界メモを Done に追記。詳細は Done 先頭 entry)
 
 ## 設計メモ
 
@@ -33,6 +33,12 @@
 
 ## Done
 
+- 2026-06-24 proactive: 当日の朝報天気を payload に注入 (helper 停止後も 5:30 取得分を共有、todo#36) + code-review 軽微 2 件反映
+  - **本体 (commit 552124b)**: helper は 09:00 停止でライブ天気取得不可。5:30 の朝報 JSON (`dashboard/.state/morning-report.json`、`date` が当日 JST 一致時のみ) から天気行 + 占い + ニュース見出しを抽出し、`[[proactive-v1]]` payload に `morning_weather` / `morning_hint` として乗せて bot 側 `build_proactive_prompt` で「既に知っている前提」として滲ませる。古い天気を渡さない当日判定は script 側で確定。bot 側 (commit 979a7b1) は文字列が来たら素直に展開
+  - **注入境界 (出自メモ)**: payload に流す `morning_hint` のうち **ニュース見出しは外部フィード (NHK RSS) 由来のパススルー文字列** であり、helper が deterministic に自己生成したものではない (天気 = Open-Meteo 機械データ、占い = 日付 seed 決定生成はほぼ自己生成だが news は外部見出し)。ユーザー入力ではないので注入経路は新設していない (bot 側 `build_proactive_prompt` docstring の「dashboard helper の機械生成テキスト = ユーザー入力ではない」契約と整合) が、**今後 hint に別ソースを足す際は出自を必ず確認する** (ユーザー由来の自由文を hint に流す経路は依然禁止)
+  - **refactor (code-review #2)**: `morning_weather` / `morning_hint` が同じ `morning-report.json` を 2 回 open し当日判定 + 天気空判定を二重実装していたのを **1 回読み取り + 1 回判定** に統合。後段の payload 構築 python3 に `MORNING_REPORT_FILE` と `today_jst` を渡し、その中で 1 回 open → 判定 → `obj` に直接付与する方式 (中間シェル変数 + 先行 2 ブロックを削除)。多行値をシェル経由 split しない (改行衝突回避)。条件分岐・閾値・文言マッチは増やさず重複ロジックを 1 本化しただけ (2 周目ルール: state を 1 回引いて確定する設計に整合)
+  - **不変条件 (挙動同一)**: ファイル不在 / JSON 壊れ / `date != today_jst` / 天気空 のいずれでも weather・hint とも obj に付けない (古い天気を絶対に渡さない)。hint は weather 有効時のみ (weather 空 → hint も無効の結合維持)
+  - **検証 (実測)**: `bash -n` OK。ダミー JSON 7 種 (当日+天気あり / 当日+天気空 / 前日 / ファイル不在 / JSON 壊れ / 占い欠落 / ニュースのみ) で payload のフィールド付与・非付与・多行値を 15 アサート全 PASS。特に「前日 (古い日付) で hint が漏れない」「天気空で hint が出ない」を確認。さらに統合前 (旧 2 ブロック) と統合後を全 8 ケースで JSON 等価比較 → ALL EQUIVALENT (`set -euo pipefail` 下で空時も落ちない)
 - 2026-06-19 proactive: 確率変調 CEIL を base に張る設計を撤回 → 既定 CEIL=0.92 に引き上げ (週ローリング化に伴う引き直し、OWNER 確定)
   - **動機 / 設計引き直し**: 直前 entry で step5 を日次上限 → 週ローリング総量 (`PROACTIVE_WEEKLY_MAX`) に移したことで、step7 の確率変調を「CEIL=base に張る (乗ってる日でも base 以上に出さない =『ほぼ毎日』上限を越えない)」とした旧設計の前提が崩れた。硬い日次天井が無くなり、乗ってる日の山を頭打ちにする役割は週総量側が担うようになったため、CEIL を base に張る必要が消えた。OWNER 方針「日々の波は活性度に任せ、鬱陶しさを抑える安全弁は週の総量で縛る」に沿い CEIL を base 超に開放
   - **変更**: `PROACTIVE_PROBABILITY_CEIL` の既定を `$PROACTIVE_PROBABILITY` (=base 0.7) から **0.92** に引き上げ。`P_eff = FLOOR + (CEIL - FLOOR) * a` の式・clamp[0,1]・bootstrap-safe (空/欠落 index → base) は不変。step7 の判定ロジック自体は触らず env 既定値 1 本 + 該当コメントのみ変更。SILENCE_HOURS は据え置き (まず週上限 + CEIL で様子見、最小変更)
