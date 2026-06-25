@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-24 (trends-weekly: 生成失敗時も bot に理由付きで通知が飛ぶよう修正 — fetch/claude -p/report空/claudeバイナリ不在 の各 exit 1 直前に notify_failure を追加。失敗冪等は成功冪等と別 state `.state/last-failed-trends-week`。詳細は Done 先頭 entry)
+最終更新: 2026-06-25 (claude-status: Telegram 通知本文の状態ラベル enum (component status / incident status / impact) のみ日本語化、Anthropic の自由文 name/latest_body は英語原文維持。todo#38。詳細は Done 先頭 entry)
 
 ## 設計メモ
 
@@ -33,6 +33,12 @@
 
 ## Done
 
+- 2026-06-25 claude-status: Telegram 通知の状態ラベル enum を日本語化 (todo#38、自由文は英語原文維持)
+  - **動機**: 共用 TODO #38「claude state のアラートを可能なら日本語訳してほしい」。Statuspage 仕様で値が固定の状態ラベルだけを日本語化し、Anthropic が書く自由文 (incident の `name` / `latest_body`) は機械翻訳でニュアンスが変わるのを避けて英語原文のまま維持する (OWNER が原文維持を明示選択)
+  - **対象**: `diff_lines()` が組み立てる本文行の enum 3 種のみ — (1) component status (`{name}: {o} → {n}`)、(2) incident status、(3) impact。enum→日本語の辞書 (`COMPONENT_STATUS_JA` / `INCIDENT_STATUS_JA` / `IMPACT_JA`) を定義し helper `ja(table, value)` で引く。訳語は OWNER プレビュー準拠 (operational=稼働中 / major_outage=大規模障害 / investigating=調査中 / major=重大 ほか)
+  - **fail-safe**: `ja()` は `dict.get(value, value)` で未知 enum を原文フォールバック (Statuspage が将来値を増やしても KeyError で落とさず原文表示)。enum 値で if/elif 分岐する自動回復は組まず、表示専用の辞書引き 1 段に閉じる
+  - **不変条件 (禁止事項遵守)**: `CRITICAL_PREFIX = "[critical] "` は bot.py と完全一致のまま無変更 (grep で一致確認)。critical 判定 (`CRITICAL_IMPACTS` / `CRITICAL_COMPONENT_STATUSES`) は localization 前の生値で比較するため無影響。`inc['name']` / `latest_body` は触らず英語原文、タグ `新規`/`更新`/`解決` と header `Claude status 変化` も無変更、`log()` も無変更
+  - **検証 (実測)**: `py_compile` OK。ダミー old/current を渡して `diff_lines()` を手動実行 (本番 socket 非接触、`send()` 不呼び) — component enum 2 種が日本語化、incident 行が `[更新] {英語name} (重大, 原因特定)` / `[新規] {英語name} (致命的, 調査中)` 形に、解決行も localize、自由文 2 件が英語原文のまま、未知 enum (`weird_impact`/`some_future_status`) が原文フォールバック、critical=True、CRITICAL_PREFIX 無傷 を 10 アサート全 PASS
 - 2026-06-24 trends-weekly: 生成失敗時も bot に理由付きで通知が飛ぶよう修正 (失敗通知の追加 + 失敗冪等の独立 state)
   - **事象/動機**: 直前の配信冪等修正 (下の entry) は生成**成功**パスのみを扱っていた。生成**失敗**パス (各 `exit 1`) は OUR_LOG と systemd journal にだけ残り Telegram には無音。今回の発端だった W24 の予算超過 (`--max-budget-usd` 超過 = `claude -p` 失敗) もこの無音失敗だった。OWNER 要望「生成の結果はかならず bot に通知してほしい」= 成功だけでなく失敗も理由付きで土曜に届くようにする
   - **修正**: `notify_failure()` を `notify_week()` と対称の best-effort 送信として追加。引数で失敗段階の短い理由を受け、本文 `今週の AI トレンドレポート生成に失敗: <理由> (<isoweek>)` を socket 経由で 1 回送る。4 つの失敗 exit 直前に呼ぶ — `claudeバイナリ不在` (L138付近) / `fetch失敗` (`trends_fetch.py` 失敗) / `claude -p失敗(予算超過/timeout含む)` / `report空`。L235 の state 更新失敗はノート生成済み=成功扱いなので対象外 (真因と整合)

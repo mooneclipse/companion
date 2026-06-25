@@ -38,6 +38,37 @@ CRITICAL_PREFIX = "[critical] "
 CRITICAL_IMPACTS = {"major", "critical"}
 CRITICAL_COMPONENT_STATUSES = {"major_outage"}
 
+# Statuspage の状態ラベル (値が enum で固定) のみ日本語化する。Anthropic が書く
+# 自由文 (incident の name / latest_body) は機械翻訳でニュアンスが変わるのを避け、
+# 英語原文のまま維持する (OWNER 選択、todo#38)。未知の値は dict.get で原文フォールバック
+# (Statuspage が将来値を増やしても KeyError で落とさない fail-safe)。
+COMPONENT_STATUS_JA = {
+    "operational": "稼働中",
+    "under_maintenance": "メンテナンス中",
+    "degraded_performance": "性能低下",
+    "partial_outage": "一部障害",
+    "major_outage": "大規模障害",
+}
+INCIDENT_STATUS_JA = {
+    "investigating": "調査中",
+    "identified": "原因特定",
+    "monitoring": "経過観察",
+    "resolved": "解決済み",
+    "postmortem": "事後検証",
+}
+IMPACT_JA = {
+    "none": "影響なし",
+    "minor": "軽微",
+    "major": "重大",
+    "critical": "致命的",
+    "maintenance": "メンテナンス",
+}
+
+
+def ja(table: dict, value) -> str:
+    """enum 値を日本語化。未知の値は原文をそのまま返す (fail-safe)。"""
+    return table.get(value, value)
+
 HOME = os.path.expanduser("~")
 STATE_FILE = os.path.join(HOME, "companion/maintenance/.state/claude-status.json")
 LOG_FILE = os.path.join(HOME, "companion/logs/maintenance/notify-claude-status.log")
@@ -136,7 +167,7 @@ def diff_lines(old, current):
         o = old_comp.get(cid)
         n = cur_comp.get(cid)
         if n is not None and o is not None and o != n:
-            lines.append(f"{name}: {o} → {n}")
+            lines.append(f"{name}: {ja(COMPONENT_STATUS_JA, o)} → {ja(COMPONENT_STATUS_JA, n)}")
             if n in CRITICAL_COMPONENT_STATUSES:
                 critical = True
 
@@ -150,7 +181,10 @@ def diff_lines(old, current):
             tag = "更新"
         else:
             continue  # 変化なし
-        lines.append(f"[{tag}] {inc['name']} ({inc['impact']}, {inc['status']})")
+        lines.append(
+            f"[{tag}] {inc['name']} "
+            f"({ja(IMPACT_JA, inc['impact'])}, {ja(INCIDENT_STATUS_JA, inc['status'])})"
+        )
         if inc["latest_body"]:
             lines.append(f"  {inc['latest_body']}")
         if inc["impact"] in CRITICAL_IMPACTS:
