@@ -1,7 +1,12 @@
-// マインロード v0.9.0 実機相当デバッグ + 既存 6 作回帰(gate A〜Z)。
+// マインロード v0.10.0 実機相当デバッグ + 既存 6 作回帰(gate A〜AA)。
+// v0.10.0 増分 = 仲間同行: following 中(護衛中)の女の子1人を G.companion に指定して一緒に潜る。
+// 同行中の撃破 EXP を companion.cexp に並走で貯め、地表帰還(rescueGirl)で cexp→level に清算して別れる。
+// レベルが上がると effCompanionAtk() で自機攻撃力へ援護が乗る。UI は工房オーバーレイ第4タブ「仲間」に同居。
+// → gate (AA) を追加(仲間タブ往復・同行指定の画面操作・同行中 EXP 蓄積・帰還で別れて Lv 反映・援護攻撃・
+//    境界・決定論・非介入・可読性)。
 // v0.9.0 増分 = 育成(Lv.UP): 救出した女の子の「情報」+ 撃破 EXP → ボーナスポイント(BP)→
 // PER_*(HP/ST/DIG/ATTACK/DEFENCE/SWIM)レベルアップ。工房オーバーレイ第3タブ「育成」に同居。
-// → gate (Z) を追加(育成タブ往復・情報/EXP→BP→PER の画面操作・実効値変化・境界・決定論・非介入・可読性)。
+// → gate (Z)(育成タブ往復・情報/EXP→BP→PER の画面操作・実効値変化・境界・決定論・非介入・可読性)。
 // Mine Road 忠実リメイク。自由掘削サイドビュー探索 × スタミナ→体力の二段ゲージ ×
 // 地上全回復の撤退判断 × 女の子救出誘導。文字・数値・ゲージ・十字キーは全て DOM、
 // canvas にはタイル矩形 + fog + 自機 + 女の子のみ。
@@ -151,6 +156,8 @@ async function overflowReport(page, label, vw = VW, vh = VH) {
       "#info-val", ".inv-ore.info", ".inv-ore.info *",
       ".craft-tabs", ".craft-tab",
       "#grow-list", "#grow-list .craft-row", "#grow-list .craft-name", "#grow-list .craft-cost", "#grow-list .craft-make",
+      // v0.10.0: 工房第4タブ「仲間」+ companion-list 行(同行状態・Lv・経験値・援護)のはみ出しも検査。
+      "#tab-companion", "#companion-list", "#companion-list .craft-row", "#companion-list .craft-name", "#companion-list .craft-cost", "#companion-list .craft-make",
     ];
     const bad = [];
     const seen = new Set();
@@ -255,7 +262,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.9.0" &&
+    version === "v0.10.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -281,7 +288,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.9.0)", corePass);
+  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.10.0)", corePass);
   await ctx.close();
 }
 
@@ -2579,6 +2586,286 @@ let growthPass = false;
 }
 
 // ============================================================================
+// (AA) v0.10.0 仲間同行(§2-4): 女の子救出(following)→同行開始→同行中の撃破で EXP 蓄積→
+//      地表帰還で別れてレベル反映、の一連を「画面座標ヒットテスト」+ 状態 API で実観測する。
+//   AA1 工房第4タブ「仲間」存在 + 4タブ往復(クラフト/商人/育成 ⇄ 仲間。タブ切替で gate 退行しない)。
+//       上部バーのボタンは増えていない(#btn-craft で開く=gate G/Q/Y/Z 非退行)。
+//   AA2 同行候補の表示: following 中の女の子が居ないと「同行できる仲間がいない」、居ると 1 行/人。
+//   AA3 同行指定が「画面操作」(仲間タブ該当行の「同行」ボタンを画面座標タップ、overlay 飛び越えなし)で
+//       動く: G.companion がその girl を指し、ボタン表記が「同行」→「やめる」へ、再タップで解除。
+//   AA4 同行中の撃破で companion.cexp と自機プール G.exp が同額並走(v0.9.0 BP 路は不変=二面両立)。
+//       同行 0 人での撃破は cexp 加算 no-op(自機 exp のみ)。
+//   AA5 援護攻撃: companion レベルに応じ playerAtk が effCompanionAtk()=level*COMPANION_ATK_PER_LV ぶん増。
+//       レベル0/未同行で +0=既存挙動に完全一致。
+//   AA6 地表帰還(rescueGirl)で cexp→level に清算・companion 解除・端数 cexp 繰越(原作「別れてレベルアップ」)。
+//       清算は仲間タブ表示にも反映(Lv 表示が上がり、companion 解除で「やめる」→「同行」に戻る)。
+//   AA7 境界: 同行 0 人で帰還は settle no-op(クラッシュなし)/複数 following でも companion は1人だけ(上書き)。
+//   AA8 決定論: 同一操作列(同行→固定 key 撃破列→帰還)を 3 回連続で cexp/level/exp/girlPositions が完全一致。
+//   AA9 非介入: 同行系は girlPositions(EXPECTED_GIRLS)/oreAt/tileType/hazard を変えない(別 state レイヤー)。
+//   AA10 仲間タブ可読性: 仲間タブを開いた状態(following 1 人)で全行テキストのはみ出し 0(412x915)。
+//   ※ 画面操作は「仲間タブの該当行ボタンの bounding rect 中心へ page.mouse でタップ」。タップ前に
+//     elementFromPoint で最前面がそのボタンであることを assert(overlay 飛び越えの否定=みちゆき真因)。
+//     canvas へ直接 dispatch しない。
+// ============================================================================
+let companionPass = false;
+{
+  console.log("== (AA) v0.10.0 仲間同行: 救出→同行→同行中EXP蓄積→帰還で別れてLv反映 ==");
+
+  // 仲間タブを開く共通ヘルパー(作る → 工房 → 仲間タブ。最前面ヒットテスト経由)。
+  async function openCompanionTab(page) {
+    await tapSelector(page, "#btn-craft");
+    await page.waitForTimeout(200);
+    await tapSelector(page, "#tab-companion");
+    await page.waitForTimeout(120);
+  }
+
+  // 仲間タブの n 行目の「同行/やめる」ボタンを画面座標タップ。タップ前に最前面=そのボタンを assert。
+  // 返り値: { tapped, wasTopBtn, label, rect }。
+  async function tapCompanionRowBtn(page, rowIdx) {
+    const box = await page.evaluate((n) => {
+      const rows = document.querySelectorAll("#companion-list .craft-row");
+      const row = rows[n];
+      if (!row) return null;
+      const btn = row.querySelector(".craft-make");
+      if (!btn) return null;
+      const r = btn.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, t: +r.top.toFixed(1), b: +r.bottom.toFixed(1), label: btn.textContent };
+    }, rowIdx);
+    if (!box) return { tapped: false, wasTopBtn: false, label: null, rect: null };
+    const wasTopBtn = await page.evaluate(([n, px, py]) => {
+      const rows = document.querySelectorAll("#companion-list .craft-row");
+      const btn = rows[n] && rows[n].querySelector(".craft-make");
+      const top = document.elementFromPoint(px, py);
+      return !!btn && !!top && (top === btn || btn.contains(top) || top.contains(btn));
+    }, [rowIdx, box.x, box.y]);
+    await page.mouse.move(box.x, box.y);
+    await page.mouse.click(box.x, box.y);
+    await page.waitForTimeout(80);
+    return { tapped: true, wasTopBtn, label: box.label, rect: { t: box.t, b: box.b } };
+  }
+
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(400);
+  await startToDive(page);
+  const diveScr = await page.evaluate(() => G.screen);
+
+  // --- AA1 仲間タブ存在 + 4タブ往復(クラフト/商人/育成 ⇄ 仲間、gate 退行なし) ---
+  const tabExists = await page.evaluate(() => !!document.getElementById("tab-companion"));
+  await tapSelector(page, "#btn-craft");
+  await page.waitForTimeout(150);
+  const tabCycle = await page.evaluate(() => {
+    const seq = [];
+    const snap = () => ({
+      craft: !document.getElementById("craft-list").hidden,
+      shop: !document.getElementById("shop-list").hidden,
+      grow: !document.getElementById("grow-list").hidden,
+      companion: !document.getElementById("companion-list").hidden,
+    });
+    seq.push({ at: "open-default", ...snap() }); // 既定=クラフト
+    setWorkshopTab("companion"); seq.push({ at: "companion", ...snap() }); // 仲間へ
+    setWorkshopTab("grow"); seq.push({ at: "grow", ...snap() }); // 育成へ(退行なし)
+    setWorkshopTab("companion"); seq.push({ at: "companion2", ...snap() }); // 仲間へ戻る
+    setWorkshopTab("shop"); seq.push({ at: "shop", ...snap() }); // 商人へ(退行なし)
+    setWorkshopTab("craft"); seq.push({ at: "craft", ...snap() }); // クラフトへ戻る(gate Q 互換)
+    return seq;
+  });
+  // 各タブで対象 list だけが見える(排他)ことを確認。
+  const tabCycleOk =
+    tabCycle.length === 6 &&
+    tabCycle[0].craft && !tabCycle[0].companion &&
+    tabCycle[1].companion && !tabCycle[1].craft && !tabCycle[1].grow && !tabCycle[1].shop &&
+    tabCycle[2].grow && !tabCycle[2].companion &&
+    tabCycle[3].companion && !tabCycle[3].grow &&
+    tabCycle[4].shop && !tabCycle[4].companion &&
+    tabCycle[5].craft && !tabCycle[5].companion; // クラフトへ戻れる(gate Q が見る既定状態へ復帰)
+  await tapSelector(page, "#craft-close");
+  await page.waitForTimeout(100);
+
+  // --- AA2 同行候補表示: following 0 人 → 案内行 / following 1 人 → 1 行(画面操作で開く) ---
+  const candEmpty = await page.evaluate(() => {
+    startDive(); // following を作らない。
+    openCraft(); setWorkshopTab("companion");
+    const rows = document.querySelectorAll("#companion-list .craft-row").length;
+    const text = (document.querySelector("#companion-list .craft-name") || {}).textContent;
+    const btn = document.querySelector("#companion-list .craft-make");
+    closeCraft();
+    return { rows, text, btnDisabledOrAbsent: !btn || btn.disabled };
+  });
+  // following 1 人を作って仲間タブを画面操作で開く。
+  await page.evaluate(() => { startDive(); G.girls[0].state = "following"; });
+  await openCompanionTab(page);
+  const candOne = await page.evaluate(() => ({
+    rows: document.querySelectorAll("#companion-list .craft-row").length,
+    compOpen: !document.getElementById("companion-list").hidden,
+    btnLabel: (document.querySelector("#companion-list .craft-make") || {}).textContent,
+  }));
+  const aa10Overflow = await overflowReport(page, "companion-tab");
+  if (aa10Overflow.overflowCount > 0) overflowFails.push(aa10Overflow);
+
+  // --- AA3 同行指定(画面座標タップ、飛び越えなし): 「同行」→companion 指定→「やめる」表記、再タップで解除 ---
+  const compBefore = await page.evaluate(() => G.companion);
+  const aa3tap1 = await tapCompanionRowBtn(page, 0); // 「同行」を押す。
+  const aa3afterSet = await page.evaluate(() => ({
+    companionIsG0: G.companion === G.girls[0],
+    btnLabel: (document.querySelector("#companion-list .craft-make") || {}).textContent,
+  }));
+  const aa3tap2 = await tapCompanionRowBtn(page, 0); // 「やめる」を押す=解除。
+  const aa3afterUnset = await page.evaluate(() => ({
+    companionNull: G.companion === null,
+    btnLabel: (document.querySelector("#companion-list .craft-make") || {}).textContent,
+  }));
+  await tapSelector(page, "#craft-close");
+  await page.waitForTimeout(80);
+  const aa3Ok =
+    compBefore === null &&
+    aa3tap1.tapped && aa3tap1.wasTopBtn && aa3tap1.label === "同行" &&
+    aa3afterSet.companionIsG0 === true && aa3afterSet.btnLabel === "やめる" &&
+    aa3tap2.tapped && aa3tap2.wasTopBtn && aa3tap2.label === "やめる" &&
+    aa3afterUnset.companionNull === true && aa3afterUnset.btnLabel === "同行";
+
+  // --- AA4 同行中の撃破で cexp と自機 exp が並走 / 同行0人で撃破は cexp no-op ---
+  const aa4 = await page.evaluate(() => {
+    startDive();
+    // 同行 0 人での撃破: 自機 exp のみ、companion=null。
+    const e0 = G.exp;
+    const foe0 = { key: "BAT", col: 1, row: 1, hp: 0 }; // BAT exp=2。
+    G.monsters = [foe0]; killMonster(foe0);
+    const selfOnly = { exp: G.exp - e0, companion: G.companion };
+    // following 1 人を同行 → 撃破で cexp と exp が同額。
+    const g = G.girls[0]; g.state = "following"; g.col = G.px; g.row = G.py;
+    setCompanion(g);
+    const e1 = G.exp; const c1 = g.cexp || 0;
+    const foe1 = { key: "SNAKE", col: 1, row: 1, hp: 0 }; // SNAKE exp=6。
+    G.monsters = [foe1]; killMonster(foe1);
+    return {
+      selfExpGained0: selfOnly.exp, companionNull0: selfOnly.companion === null,
+      cexpGained: (g.cexp || 0) - c1, selfExpGained: G.exp - e1,
+    };
+  });
+  const aa4Ok = aa4.selfExpGained0 === 2 && aa4.companionNull0 === true && aa4.cexpGained === 6 && aa4.selfExpGained === 6;
+
+  // --- AA5 援護攻撃: companion レベルで playerAtk が effCompanionAtk ぶん増。未同行で +0 ---
+  const aa5 = await page.evaluate(() => {
+    startDive();
+    const baseAtk = playerAtk(); // 未同行=援護0。
+    const compAtk0 = effCompanionAtk();
+    const g = G.girls[0]; g.state = "following"; setCompanion(g);
+    g.level = 3; // 援護 +3(COMPANION_ATK_PER_LV=1)。
+    const atkWith = playerAtk();
+    return { baseAtk, compAtk0, companionAtk: effCompanionAtk(), atkWith, perLv: CONST.COMPANION_ATK_PER_LV };
+  });
+  const aa5Ok =
+    aa5.compAtk0 === 0 && aa5.companionAtk === 3 * aa5.perLv &&
+    aa5.atkWith === aa5.baseAtk + aa5.companionAtk;
+
+  // --- AA6 地表帰還で別れてレベルアップ + companion 解除 + 端数繰越 + 仲間タブ表示反映 ---
+  const aa6 = await page.evaluate(() => {
+    startDive();
+    const g = G.girls[0]; g.state = "following"; setCompanion(g);
+    g.cexp = 25; g.level = 0; // EXP_PER_LV=10 → +2 レベル、端数 5。
+    g.col = G.px; g.row = 0; // 地表へ。
+    rescueGirl(g);
+    return {
+      level: g.level, cexp: g.cexp, companionCleared: G.companion === null,
+      rescuedState: g.state, info: G.info, perLv: CONST.COMPANION_EXP_PER_LV, lvMax: CONST.COMPANION_LV_MAX,
+    };
+  });
+  const aa6Ok =
+    aa6.level === 2 && aa6.cexp === 5 && aa6.companionCleared === true &&
+    aa6.rescuedState === "rescued" && aa6.info >= 1;
+
+  // --- AA7 境界: 同行 0 人で帰還 no-op / 複数 following でも companion は1人だけ(上書き) ---
+  const aa7 = await page.evaluate(() => {
+    startDive();
+    const ga = G.girls[0]; ga.state = "following"; ga.col = G.px; ga.row = 0;
+    rescueGirl(ga); // companion=null のまま=settle no-op(クラッシュなし)。
+    const noCrash = G.companion === null;
+    startDive();
+    const g1 = G.girls[0]; const g2 = G.girls[1];
+    g1.state = "following"; g2.state = "following";
+    setCompanion(g1); const firstSet = G.companion === g1;
+    setCompanion(g2); const onlyOne = G.companion === g2 && G.companion !== g1;
+    return { noCrash, firstSet, onlyOne };
+  });
+  const aa7Ok = aa7.noCrash && aa7.firstSet && aa7.onlyOne;
+
+  // --- AA8 決定論: 同一操作列(同行→固定 key 撃破列→帰還)を 3 回連続で完全一致 ---
+  const detRuns = [];
+  for (let i = 0; i < 3; i++) {
+    const snap = await page.evaluate(() => {
+      startDive();
+      const g = G.girls[2]; g.state = "following"; g.col = G.px; g.row = G.py;
+      setCompanion(g);
+      const e0 = G.exp;
+      for (const key of ["BAT", "SNAKE", "SPIDER"]) {
+        const foe = { key, col: 1, row: 1, hp: 0 };
+        G.monsters = [foe]; killMonster(foe);
+      }
+      const cexpDive = g.cexp;
+      g.col = G.px; g.row = 0; rescueGirl(g); // 帰還で清算。
+      const gp = girlPositions(G.seed).map((p) => p.col + "," + p.row).join("|");
+      return { cexpDive, levelAfter: g.level, cexpAfter: g.cexp, expGained: G.exp - e0, gp };
+    });
+    detRuns.push(snap);
+  }
+  const detEqual = detRuns.every((r) =>
+    r.cexpDive === detRuns[0].cexpDive && r.levelAfter === detRuns[0].levelAfter &&
+    r.cexpAfter === detRuns[0].cexpAfter && r.expGained === detRuns[0].expGained && r.gp === detRuns[0].gp);
+
+  // --- AA9 非介入: 同行操作後も girlPositions/oreAt/tileType/hazard が不変 ---
+  const EXPECTED_GIRLS = "11,6|0,8|4,10|3,12|8,14";
+  const aa9 = await page.evaluate((expected) => {
+    startDive();
+    const SEED = G.seed;
+    const gp = girlPositions(SEED).map((p) => p.col + "," + p.row).join("|");
+    const g = G.girls[0]; g.state = "following"; setCompanion(g);
+    const foe = { key: "SNAKE", col: 1, row: 1, hp: 0 }; G.monsters = [foe]; killMonster(foe);
+    g.col = G.px; g.row = 0; rescueGirl(g);
+    const gp2 = girlPositions(SEED).map((p) => p.col + "," + p.row).join("|");
+    return {
+      gp, gp2, expected,
+      oreUnchanged: oreAt(7, 2, SEED) === oreAt(7, 2, SEED) && oreAt(7, 2, SEED) === 1,
+      tileUnchanged: tileType(7, 2, SEED) === TILE.SOIL,
+      hazardUnchanged: hazardAt(11, 5, SEED) === 1,
+    };
+  }, EXPECTED_GIRLS);
+  const aa9Ok =
+    aa9.gp === EXPECTED_GIRLS && aa9.gp2 === EXPECTED_GIRLS &&
+    aa9.oreUnchanged && aa9.tileUnchanged && aa9.hazardUnchanged;
+
+  out("pageerrors", errors);
+  out("dive 遷移", diveScr);
+  out("AA1 仲間タブ存在 / 4タブ往復(gate退行なし)", { tabExists, tabCycle, tabCycleOk });
+  out("AA2 同行候補(0人=案内行 / 1人=1行)", { candEmpty, candOne });
+  out("AA3 同行指定(画面操作・飛び越えなし)同行→やめる→解除", { compBefore, aa3tap1, aa3afterSet, aa3tap2, aa3afterUnset, aa3Ok });
+  out("AA4 同行中撃破で cexp/自機exp 並走(同行0人=cexp no-op)", { aa4, aa4Ok });
+  out("AA5 援護攻撃(companion Lv→playerAtk +)", { aa5, aa5Ok });
+  out("AA6 帰還で別れてLv反映(cexp25→Lv2,端数5,解除,情報+1)", { aa6, aa6Ok });
+  out("AA7 境界(0人帰還no-op / 複数でも1人だけ)", { aa7, aa7Ok });
+  out("AA8 決定論3回連続一致(cexp/level/exp/girlPositions)", { same: detEqual, sample: detRuns[0] });
+  out("AA9 非介入 girlPositions/ore/tile/hazard 不変", { aa9, aa9Ok });
+  out("AA10 仲間タブ可読性(はみ出し0)", aa10Overflow);
+
+  companionPass =
+    errors.length === 0 &&
+    diveScr === "dive" &&
+    tabExists === true && tabCycleOk === true &&
+    candEmpty.rows === 1 && candEmpty.btnDisabledOrAbsent === true &&
+    candOne.compOpen === true && candOne.rows === 1 && candOne.btnLabel === "同行" &&
+    aa3Ok === true &&
+    aa4Ok === true &&
+    aa5Ok === true &&
+    aa6Ok === true &&
+    aa7Ok === true &&
+    detEqual === true &&
+    aa9Ok === true &&
+    aa10Overflow.overflowCount === 0;
+  out("PASS(AA: 仲間タブ往復/同行指定 画面操作/同行中EXP蓄積/帰還で別れてLv反映/援護/境界/決定論/非介入/可読性)", companionPass);
+  await ctx.close();
+}
+
+// ============================================================================
 // (I) determinism 静的検査(lead 必須): app.js/tiles.js に Math.random/Date.now/
 //     performance.now の実呼び出しが無い(コメント言及は可)。配信中のソースを取得して検査。
 // ============================================================================
@@ -2609,7 +2896,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.9.0 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.10.0 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -2624,6 +2911,7 @@ out("(W) v0.6.0 水/マグマ 浸水ハザード(消耗割増 + マグマ HP chi
 out("(X) v0.7.0 なだれ/落盤 崩落物理(落下で道塞ぎ + 埋没ダメージ)", caveinPass);
 out("(Y) v0.8.0 商人(キノコ採取/物々交換/商人タブ UI/非介入)", merchantPass);
 out("(Z) v0.9.0 育成(情報/EXP→BP→PER Lv.UP/実効値変化/育成タブ往復/決定論/非介入)", growthPass);
+out("(AA) v0.10.0 仲間同行(仲間タブ往復/同行指定 画面操作/同行中EXP蓄積/帰還で別れてLv反映/援護/決定論/非介入)", companionPass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
@@ -2637,7 +2925,7 @@ if (overflowFails.length) {
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
   mechPass && girlFollowPass && clearGatePass && multiGirlPass &&
-  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && dpadPass && shortVpPass && regressionPass &&
+  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);
