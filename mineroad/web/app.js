@@ -45,7 +45,13 @@
 // (HP_MAX/STAMINA_MAX/掘削手数/ATK_BASE/DEF_BASE/SWIM_MITIGATION)の有効値を effXxx ヘルパー経由で動かす
 // (新たな分岐を散らさずフックの消費先を開く)。UI は工房オーバーレイに第3タブ「育成」を足す(上部バーの
 // ボタンは増やさない=gate G の地表タップ前提を壊さない)。tileType/girlPositions・determinism には非介入。
-const VERSION = "v0.9.0";
+// v0.10.0: 仲間同行(原作 §5「1人だけ仲間として連れて潜れる→一緒に戦い EXP 蓄積→地上で別れてレベルアップ
+// →別れると再び情報としてストック」)。following 中(護衛中)の女の子1人を G.companion に指定する翻案=新
+// state を作らず既存 following の追従/重力/GIRLATK/ロスト物理を非介入で再利用。撃破 EXP を companion.cexp に
+// 並走で貯め(自機プール G.exp=v0.9.0 BP 路は不変=二面両立)、地表帰還(rescueGirl)で cexp→level に反映して
+// 別れる。companion レベルで playerAtk に援護(effCompanionAtk)が乗る(原作「一緒に戦う」)。UI は工房第4タブ
+// 「仲間」(上部バーのボタンは増やさない=gate G 非退行)。tileType/girlPositions・determinism には非介入。
+const VERSION = "v0.10.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -90,6 +96,12 @@ const CONST = {
   // (フルーツ HP25 / 夢キノコ HP10 だが本実装は HP_MAX=30 のため min で頭打ち=回復薬と同じ翻案)。
   FRUIT_HEAL: 25, // フルーツの体力回復量(原作 HP+25、HP_MAX=30 で頭打ち)。
   DREAM_HEAL: 30, // 夢キノコの体力回復量(高級回復=実質全回復、HP_MAX で頭打ち)。
+  // v0.10.0 仲間同行(原作 §5: 一緒に戦い EXP 蓄積→地上で別れて EXP に応じてレベルアップ)。同行 EXP の
+  // レベル換算・援護攻撃力・レベル上限を CONST 単一ブロックに集約し、将来増分(永続/別ダンジョン)が
+  // 1 点で動かせるよう effCompanionAtk()/companionLevelGain() のヘルパーへ切り出す(ハードコードを散らさない)。
+  COMPANION_EXP_PER_LV: 10, // 同行中に貯めた経験値 10 ごとに仲間が 1 レベル上がる(地表で別れた瞬間に清算)。
+  COMPANION_ATK_PER_LV: 1, // 同行中の仲間レベル 1 につき自機攻撃力へ +1 援護(原作「一緒に戦う」=戦力になる)。
+  COMPANION_LV_MAX: 9, // 仲間レベルの上限(ランごとリセット=save 永続は §2-5 番の別増分)。
 };
 // 計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
@@ -303,6 +315,10 @@ const infoValEl = document.getElementById("info-val");
 const growListEl = document.getElementById("grow-list");
 const tabGrowEl = document.getElementById("tab-grow");
 
+// v0.10.0 仲間同行 DOM 参照。工房オーバーレイの第4タブに同居(上部バーのボタンは増やさない=gate G 非退行)。
+const companionListEl = document.getElementById("companion-list");
+const tabCompanionEl = document.getElementById("tab-companion");
+
 // ---- canvas / 描画状態 -------------------------------------------------
 let DPR = 1;
 let W = 0;
@@ -394,6 +410,11 @@ const G = {
   info: 0, // 救出した女の子の「情報」ストック(救出成立で +1、BP へ変換すると消費)。
   bp: 0, // ボーナスポイント(裏庭=BP100% に忠実な汎用ポイント。情報/EXP から変換、PER_* に振る)。
   per: null, // { HP, ST, DIG, ATTACK, DEFENCE, SWIM } 各 PER の現レベル(0 始まり)。effXxx が参照。
+  // ---- v0.10.0 仲間同行(ランごと初期化=セーブ永続は §2-5 番の別増分) ----
+  // companion は following 中の女の子1人への参照(1人だけ=原作忠実)。EXP の帰属先 + 帰還清算対象を
+  // 指すだけで、移動/戦闘巻き込まれ/ロストの物理は既存 following レイヤーがそのまま担う(非介入)。
+  // 各 girl は level(同行レベル)/cexp(同行中に貯めた経験値) を持つ(startDive 初期化)。
+  companion: null, // 同行中の女の子(G.girls の要素を指す)。未指定なら null=既存挙動に完全一致。
 };
 window.G = G;
 
@@ -450,6 +471,8 @@ function startDive() {
     origRow: p.row,
     state: "hidden",
     hp: CONST.GIRL_HP, // v0.5.0: 護衛中に GIRLATK で削られうる(monster.csv GIRL=30)。
+    level: 0, // v0.10.0: 同行レベル(地表で別れた瞬間 cexp から清算。ランごとリセット)。
+    cexp: 0, // v0.10.0: 同行中に貯めた経験値(撃破ごとに加算、帰還で level へ変換)。
   }));
   G.rescued = 0;
   G.maxDepthThisDive = 0;
@@ -474,6 +497,7 @@ function startDive() {
   G.mushrooms = 0; // v0.8.0: キノコ通貨(SOIL 掘り抜きで採取)。
   G.dreamMushrooms = 0; // v0.8.0: 夢キノコ(キノコ100 から統合)。
   G.fruits = 0; // v0.8.0: フルーツ(商人で鉄鉱石2 と交換)。
+  G.companion = null; // v0.10.0: 同行指定はランごとリセット(level/cexp は girls 配列の初期化で 0 へ)。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
   spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
   G.screen = "dive";
@@ -738,6 +762,13 @@ function effDefBase() {
 function effSwimMitigation() {
   return CONST.SWIM_MITIGATION + perLv("SWIM") * PER_GAIN.SWIM_PER_LV;
 }
+// v0.10.0 仲間同行: 同行中の仲間がレベルに応じて自機攻撃力へ乗せる援護(原作「一緒に戦う」=戦力になる)。
+// 同行が following 中(=実際に隣で戦える)ときだけ効く。未指定/ロスト/帰還後は 0=既存挙動に完全一致。
+function effCompanionAtk() {
+  const c = G.companion;
+  if (!c || c.state !== "following") return 0;
+  return (c.level || 0) * CONST.COMPANION_ATK_PER_LV;
+}
 
 // ---- v0.4.0 アイテム/クラフト系ヘルパー --------------------------------
 // 所持する最強ツルハシの power(掘削ゲート A の判定値)。
@@ -925,7 +956,8 @@ function levelUpPer(perKey) {
 // 自機の攻撃力/防御力(ツルハシ段=戦力の代理)。
 // v0.9.0: ATK_BASE/DEF_BASE は PER_ATTACK/PER_DEFENCE レベルで押し上げた実効基礎値を使う
 // (effAtkBase/effDefBase。レベル 0 では素の CONST と一致=既存挙動不変)。
-function playerAtk() { return effAtkBase() + pickPower(); }
+// v0.10.0: 同行中の仲間レベルに応じた援護(effCompanionAtk)を上乗せ(レベル0/未同行で +0=既存一致)。
+function playerAtk() { return effAtkBase() + pickPower() + effCompanionAtk(); }
 function playerDef() { return effDefBase() + Math.floor((pickPower() - 1) / 2); }
 
 // (col,row) に居る出現中のモンスターを返す(無ければ null)。
@@ -1000,7 +1032,12 @@ function killMonster(foe) {
   const i = G.monsters.indexOf(foe);
   if (i >= 0) G.monsters.splice(i, 1);
   if (meta) {
-    G.exp += meta.exp;
+    G.exp += meta.exp; // 自機プール(v0.9.0 BP 路)。仲間と並走で太る=差し引かない(二面両立)。
+    // v0.10.0: 同行中(following)の仲間が居れば、同じ撃破 EXP を仲間の cexp にも貯める(原作「一緒に
+    // 戦い EXP 蓄積」)。帰還(rescueGirl)で cexp→level に清算する。同行 0 人なら no-op=既存挙動一致。
+    if (G.companion && G.companion.state === "following") {
+      G.companion.cexp = (G.companion.cexp || 0) + meta.exp;
+    }
     G.kills += 1;
     const item = monsterDrop(foe.key, foe.col, foe.row, G.seed);
     if (item) {
@@ -1090,6 +1127,9 @@ function loseGirl(g) {
   spawnPopupAt(g.col, g.row, "！", "warn");
   g.col = g.origCol !== undefined ? g.origCol : g.col;
   g.row = g.origRow;
+  // v0.10.0: 同行中の仲間がロストしたら同行も解除(地表で別れていない=清算しない)。貯めた cexp/level は
+  // girl に残るので、再発見→再同行で続きから戦える(原作の「護衛中も狙われる」誘導難度=死の緊張の二面)。
+  if (G.companion === g) G.companion = null;
   showHint("女の子が傷つき、地中へ取り残された。もう一度その場所へ行って助け直そう", true);
 }
 
@@ -1346,6 +1386,25 @@ function rescueGirl(g) {
   G.rescued += 1;
   G.info = (G.info || 0) + 1; // v0.9.0: 救出成立で「情報」を +1(育成資源。Lv.UP 画面で BP へ変換=消費)。
   setInt(RESCUE_KEY, getInt(RESCUE_KEY) + 1); // 生涯救出数(タイトル表示)。各人 1 回だけ加算。
+  // v0.10.0: この女の子が同行中(companion)なら、地表帰還の瞬間に「別れてレベルアップ」する(原作 §5)。
+  // 貯めた cexp を COMPANION_EXP_PER_LV ごとに level へ繰り上げ(端数は cexp に残す)、companion を解除。
+  // rescueGirl の情報 +1(救出図鑑)は別軸=不変(原作「別れると再び情報としてストック」と整合)。
+  if (G.companion === g) settleCompanion(g);
+}
+
+// 同行中の仲間が地表へ帰還した瞬間の清算: cexp→level へ変換し、companion を解除(別れる)。
+// 端数 cexp は繰り越し残す(次の同行で続きから貯まる)。レベルは上限 COMPANION_LV_MAX で頭打ち。
+function settleCompanion(g) {
+  const gain = companionLevelGain(g.cexp, CONST.COMPANION_EXP_PER_LV, CONST.COMPANION_LV_MAX, g.level || 0);
+  if (gain > 0) {
+    g.level = (g.level || 0) + gain;
+    g.cexp -= gain * CONST.COMPANION_EXP_PER_LV;
+    showHint("仲間と地上で別れた。レベルが " + g.level + " に上がった", false);
+    playSfx("heal");
+  } else {
+    showHint("仲間と地上で別れた", false);
+  }
+  G.companion = null;
 }
 
 // クリア判定(§7 忠実): 全員救出 かつ 最下層到達 かつ 探索率がしきい値以上。
@@ -1566,7 +1625,7 @@ function renderInventory() {
 // craft.csv 6 レシピ + shop.csv 物々交換を 1 パネルに同居。材料/対価充足なら実行可、不足は disabled。
 // dive 中に開ける。開いた直後は常にクラフトタブ(gate Q の #btn-craft→craft-list 検証を保つ)。
 let craftOpen = false;
-let workshopTab = "craft"; // "craft" | "shop"。開くたびクラフトへ戻す(既定)。
+let workshopTab = "craft"; // "craft" | "shop" | "grow" | "companion"。開くたびクラフトへ戻す(既定)。
 function openCraft() {
   if (G.screen !== "dive") return;
   craftOpen = true;
@@ -1587,15 +1646,18 @@ function closeCraft() {
 // 工房タブ切り替え(クラフト/商人/育成)。リスト表示とタブ active 状態を同期し、選んだ側を再描画。
 // v0.9.0: 育成タブを第3タブとして追加(上部バーのボタンは増やさない=工房内タブ同居=gate G 非退行)。
 function setWorkshopTab(tab) {
-  workshopTab = tab === "shop" ? "shop" : tab === "grow" ? "grow" : "craft";
+  workshopTab = tab === "shop" ? "shop" : tab === "grow" ? "grow" : tab === "companion" ? "companion" : "craft";
   if (craftListEl) craftListEl.hidden = workshopTab !== "craft";
   if (shopListEl) shopListEl.hidden = workshopTab !== "shop";
   if (growListEl) growListEl.hidden = workshopTab !== "grow";
+  if (companionListEl) companionListEl.hidden = workshopTab !== "companion";
   if (tabCraftEl) tabCraftEl.classList.toggle("active", workshopTab === "craft");
   if (tabShopEl) tabShopEl.classList.toggle("active", workshopTab === "shop");
   if (tabGrowEl) tabGrowEl.classList.toggle("active", workshopTab === "grow");
+  if (tabCompanionEl) tabCompanionEl.classList.toggle("active", workshopTab === "companion");
   if (workshopTab === "shop") renderShop();
   else if (workshopTab === "grow") renderGrow();
+  else if (workshopTab === "companion") renderCompanion();
   else renderCraft();
 }
 // 材料コストを「銅3」等の verbatim 文字列に。
@@ -1798,6 +1860,84 @@ function renderGrow() {
   }
 }
 
+// ---- v0.10.0 仲間同行(工房オーバーレイの第4タブ。following 中の女の子1人を同行に指定) -------
+// 同行指定: following 中(護衛しながら一緒に進む)の女の子を 1 人だけ companion にする(原作「1人だけ
+// 仲間として連れて潜れる」)。既に同行中の女の子をもう一度押すと解除(別れずに手放す=清算しない)。
+function setCompanion(g) {
+  if (G.screen !== "dive" || !g) return false;
+  if (g.state !== "following") { showHint("護衛中の女の子だけ同行できる", true); return false; }
+  if (G.companion === g) {
+    G.companion = null; // 同じ仲間を再選択 = 同行を解除(別れではない=清算しない)。
+    showHint("同行をやめた", false);
+  } else {
+    G.companion = g; // 1人だけ=他の同行は上書きで自動解除(原作「1人だけ」)。
+    showHint("仲間と一緒に潜る。地上で別れるとレベルが上がる", false);
+  }
+  playSfx("heal");
+  renderCompanion();
+  return true;
+}
+function appendCompanionRow(name, sub, btnLabel, enabled, onClick) {
+  if (!companionListEl) return;
+  const row = document.createElement("div");
+  row.className = "craft-row";
+  const info = document.createElement("div");
+  info.className = "craft-info";
+  const nm = document.createElement("span");
+  nm.className = "craft-name";
+  nm.textContent = name;
+  const c = document.createElement("span");
+  c.className = "craft-cost";
+  c.textContent = sub;
+  info.appendChild(nm);
+  info.appendChild(c);
+  row.appendChild(info);
+  if (btnLabel) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "craft-make";
+    btn.textContent = btnLabel;
+    btn.disabled = !enabled;
+    btn.classList.toggle("disabled", !enabled);
+    btn.onclick = () => { onClick(); };
+    row.appendChild(btn);
+  }
+  companionListEl.appendChild(row);
+}
+function renderCompanion() {
+  if (!companionListEl) return;
+  companionListEl.innerHTML = "";
+  // following 中(護衛中)の女の子=同行候補。発見してまだ地表へ着いていない子だけ連れていける。
+  const escorting = (G.girls || []).filter((g) => g.state === "following");
+  if (!escorting.length) {
+    appendCompanionRow(
+      "同行できる仲間がいない",
+      "地中で女の子を見つけて護衛中だと同行できる",
+      "",
+      false,
+      () => {},
+    );
+    return;
+  }
+  let idx = 0;
+  for (const g of escorting) {
+    idx++;
+    const isCompanion = G.companion === g;
+    const lvl = g.level || 0;
+    const cexp = g.cexp || 0;
+    const sub = isCompanion
+      ? "同行中・Lv." + lvl + "（経験値 " + cexp + "・援護 +" + (lvl * CONST.COMPANION_ATK_PER_LV) + "）"
+      : "Lv." + lvl + "（同行で +" + ((lvl) * CONST.COMPANION_ATK_PER_LV || 0) + " 援護・経験値 " + cexp + "）";
+    appendCompanionRow(
+      "女の子 " + idx,
+      sub,
+      isCompanion ? "やめる" : "同行",
+      true,
+      () => { setCompanion(g); },
+    );
+  }
+}
+
 let hintTimer = null;
 function showHint(text, warn) {
   hudHintEl.textContent = text;
@@ -1896,6 +2036,7 @@ if (btnPotionEl) btnPotionEl.addEventListener("click", () => usePotion());
 if (tabCraftEl) tabCraftEl.addEventListener("click", () => setWorkshopTab("craft"));
 if (tabShopEl) tabShopEl.addEventListener("click", () => setWorkshopTab("shop"));
 if (tabGrowEl) tabGrowEl.addEventListener("click", () => setWorkshopTab("grow")); // v0.9.0 育成タブ。
+if (tabCompanionEl) tabCompanionEl.addEventListener("click", () => setWorkshopTab("companion")); // v0.10.0 仲間タブ。
 
 // ---- 描画(タイル粒度、per-pixel 禁止) --------------------------------
 function caveColor(row) {

@@ -491,6 +491,26 @@ function bpCostFor(perKey, lvl) {
   return 2 + lvl; // perKey は将来 PER 別単価に拡張できるよう引数に残す(現状は共通式)。
 }
 
+// ---- 仲間同行(原作 §5「1人だけ仲間として連れて潜れる→一緒に戦い EXP 蓄積→地上で別れて ---
+// レベルアップ→別れると再び情報としてストック」忠実、v0.10.0) -----------------------------
+// 同行は「following 中(護衛しながら一緒に進む)女の子1人を G.companion に指定」する翻案(新 state を
+// 作らず既存 following の追従/重力/GIRLATK/ロスト物理を非介入で再利用)。撃破 EXP を companion.cexp に
+// 並走で貯め(自機プール G.exp=v0.9.0 BP 路は不変=二面両立)、地表帰還(rescueGirl)で cexp→level に
+// 反映して別れる。レベルが上がると effCompanionAtk() で自機攻撃力に援護が乗る(原作「一緒に戦う」)。
+// 各エントリは UI 説明用(実効値・コストは app.js の CONST/ヘルパー側)。
+const COMPANION_DEFS = {
+  // 同行で得られる二面: 護衛の難度(GIRLATK でロストしうる)× 育てた仲間が戦力(援護)になる報酬。
+  note: "同行中は一緒に戦い経験値を貯め、地上で別れるとレベルが上がる(次の同行が強くなる)。",
+};
+// 貯めた同行 EXP(cexp)から「上げられるレベル数」を返す決定論換算。EXP perLevel ごとに 1 レベル。
+// 端数は呼び出し側(rescueGirl)が cexp に繰り越し残す。乱数なし(状態遷移のみ)。
+function companionLevelGain(cexp, perLevel, lvMax, curLevel) {
+  if (perLevel <= 0) return 0;
+  const raw = Math.floor((cexp || 0) / perLevel);
+  const room = Math.max(0, lvMax - (curLevel || 0)); // レベル上限を越えない。
+  return Math.min(raw, room);
+}
+
 // 撃破ドロップ(決定論)。drops の per% を「累積しきい値で 1 種だけ落とす」抽選にする
 // (原作 PSUM=100 系=合計100の重み付き 1 抽選)。落ちなければ null。kill ごとに固有の位相。
 function monsterDrop(key, col, row, seed) {
@@ -585,4 +605,7 @@ if (typeof window !== "undefined") {
   window.PER_GAIN = PER_GAIN;
   window.GROW_RATE = GROW_RATE;
   window.bpCostFor = bpCostFor;
+  // v0.10.0 仲間同行(同行 EXP→レベル換算 + 説明データ。実効値ヘルパーは app.js 側)。
+  window.COMPANION_DEFS = COMPANION_DEFS;
+  window.companionLevelGain = companionLevelGain;
 }
