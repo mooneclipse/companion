@@ -1129,7 +1129,7 @@ function loseGirl(g) {
   g.row = g.origRow;
   // v0.10.0: 同行中の仲間がロストしたら同行も解除(地表で別れていない=清算しない)。貯めた cexp/level は
   // girl に残るので、再発見→再同行で続きから戦える(原作の「護衛中も狙われる」誘導難度=死の緊張の二面)。
-  if (G.companion === g) G.companion = null;
+  detachCompanion(g);
   showHint("女の子が傷つき、地中へ取り残された。もう一度その場所へ行って助け直そう", true);
 }
 
@@ -1392,6 +1392,13 @@ function rescueGirl(g) {
   if (G.companion === g) settleCompanion(g);
 }
 
+// 清算なしの同行解除(地表で別れていない経路): cexp→level の繰り上げをせずに companion を手放す。
+// 呼び出し側で g === G.companion を確認してから渡す。loseGirl(ロスト)/surfaceReturn(帰れず地中残留)が使う。
+// settleCompanion(地表帰還の清算) とは別系統=援護持ち越しの抜け道を作らないため、解除の 1 点集約として置く。
+function detachCompanion(g) {
+  if (G.companion === g) G.companion = null;
+}
+
 // 同行中の仲間が地表へ帰還した瞬間の清算: cexp→level へ変換し、companion を解除(別れる)。
 // 端数 cexp は繰り越し残す(次の同行で続きから貯まる)。レベルは上限 COMPANION_LV_MAX で頭打ち。
 function settleCompanion(g) {
@@ -1442,6 +1449,10 @@ function surfaceReturn() {
         g.row = next[1];
         if (g.row === 0) rescueGirl(g);
       }
+      // 上がりきれず地中に残った同行者は地表で別れていない = 同行解除(清算しない)。これを欠くと
+      // companion が地中残留 following を指したまま全回復→継続し、次の潜行で援護(effCompanionAtk)が乗り
+      // cexp が再加算される抜け道になる(rescueGirl 成立時は settleCompanion で解除済=ここは no-op)。
+      if (g.state === "following") detachCompanion(g);
     }
   }
   // best 記録。
@@ -1927,7 +1938,7 @@ function renderCompanion() {
     const cexp = g.cexp || 0;
     const sub = isCompanion
       ? "同行中・Lv." + lvl + "（経験値 " + cexp + "・援護 +" + (lvl * CONST.COMPANION_ATK_PER_LV) + "）"
-      : "Lv." + lvl + "（同行で +" + ((lvl) * CONST.COMPANION_ATK_PER_LV || 0) + " 援護・経験値 " + cexp + "）";
+      : "Lv." + lvl + "（同行で +" + (lvl * CONST.COMPANION_ATK_PER_LV) + " 援護・経験値 " + cexp + "）";
     appendCompanionRow(
       "女の子 " + idx,
       sub,
