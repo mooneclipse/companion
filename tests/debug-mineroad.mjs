@@ -1,8 +1,13 @@
-// マインロード v0.10.0 実機相当デバッグ + 既存 6 作回帰(gate A〜AA)。
+// マインロード v0.11.0 実機相当デバッグ + 既存 6 作回帰(gate A〜AA)。
+// v0.11.0 = 中核作り直し(実機 FB で中核破綻が判明)。①女の子追従を「自機足跡履歴(G.playerTrail)を
+// 1手ずつ消化する snake 追従」へ引き直し(旧 bfsStep+独立重力の底張り付きを設計から消す)→ gate C/N/P を
+// 「状態注入/ワープ/縦坑先掘りなしの実プレイ経路(act でジグザグ掘削→足跡追従→地表救出)」へ作り直し。
+// ②仲間モデルを「救出済みストック(rescued)を地表で1人選び次の潜行へ同行(deployed=following)→帰還で別れて
+// Lv→ストックへ」へ作り直し → gate AA を新仕様へ作り直し。③崩落で塞がれたマス再掘の soft-lock 修正。
 // v0.10.0 増分 = 仲間同行: following 中(護衛中)の女の子1人を G.companion に指定して一緒に潜る。
 // 同行中の撃破 EXP を companion.cexp に並走で貯め、地表帰還(rescueGirl)で cexp→level に清算して別れる。
 // レベルが上がると effCompanionAtk() で自機攻撃力へ援護が乗る。UI は工房オーバーレイ第4タブ「仲間」に同居。
-// → gate (AA) を追加(仲間タブ往復・同行指定の画面操作・同行中 EXP 蓄積・帰還で別れて Lv 反映・援護攻撃・
+// → gate (AA)(仲間タブ往復・同行指定の画面操作・同行中 EXP 蓄積・帰還で別れて Lv 反映・援護攻撃・
 //    境界・決定論・非介入・可読性)。
 // v0.9.0 増分 = 育成(Lv.UP): 救出した女の子の「情報」+ 撃破 EXP → ボーナスポイント(BP)→
 // PER_*(HP/ST/DIG/ATTACK/DEFENCE/SWIM)レベルアップ。工房オーバーレイ第3タブ「育成」に同居。
@@ -144,6 +149,60 @@ async function startToDive(page) {
   await page.waitForTimeout(700);
 }
 
+// v0.11.0: 実プレイ経路ドライバ(page 側 純 JS。act() だけで自機を動かす=状態注入/ワープ/縦坑先掘りなし)。
+// 旧 gate C/N/P/S は g.state="following" を直接代入し自機を女の子の真上にワープして縦坑を先掘りする
+// 理想経路だけを通し、足跡追従(①)の破綻をすり抜けた。この driver は act() で実際にジグザグ掘削し、
+// 女の子を足跡追従で連れ帰る=作り直した追従を実経路で検証する。eval(MR_DRIVER) で各 evaluate に注入。
+const MR_DRIVER = `
+  function mrStep(dc, dr) {
+    const bx = G.px, by = G.py;
+    let guard = 0;
+    while (G.screen === "dive" && G.px === bx && G.py === by && guard < 8) { act(dc, dr); guard++; }
+    return { px: G.px, py: G.py };
+  }
+  // (tcol,trow) まで掘り進む: 横へ寄せ→下へ掘る を交互(=ジグザグ経路)。各 act 後の実位置で適応。
+  function mrDigTowards(tcol, trow) {
+    let guard = 0;
+    while (G.screen === "dive" && (G.px !== tcol || G.py !== trow) && guard < 200) {
+      guard++;
+      if (G.px < tcol) { mrStep(1, 0); continue; }
+      if (G.px > tcol) { mrStep(-1, 0); continue; }
+      if (G.py < trow) { mrStep(0, 1); continue; }
+      if (G.py > trow) { mrStep(0, -1); continue; }
+    }
+    return { px: G.px, py: G.py };
+  }
+  // 自機を地表へ実 climb(足跡=自機が通った空洞を上へ/横へ act で辿る。縦坑先掘りに頼らない)。
+  function mrClimbToSurface(maxGuard) {
+    let guard = 0;
+    while (G.screen === "dive" && G.py > 0 && guard < (maxGuard || 400)) {
+      guard++;
+      const bx = G.px, by = G.py;
+      if (isSpace(G.px, G.py - 1)) act(0, -1);
+      else if (isSpace(G.px - 1, G.py)) act(-1, 0);
+      else if (isSpace(G.px + 1, G.py)) act(1, 0);
+      else break;
+      if (G.px === bx && G.py === by) break;
+    }
+    return { px: G.px, py: G.py };
+  }
+  // 実プレイで (tcol,trow) の女の子を掘り当て→追従→地表まで連れ帰り救出。戻り値は救出後の girl state。
+  // power ゲート/モンスター妨害のノイズは除去(追従の検証が目的=power/戦闘は別ゲートで担保)。
+  function mrRescueGirlAt(tcol, trow) {
+    G.pick = "DIAMOND";
+    G.monsters = []; G.spawned = new Set();
+    mrDigTowards(tcol, trow - 1); // 女の子の 1 つ上まで掘る。
+    G.monsters = [];
+    const g = G.girls.find((x) => x.origCol === tcol && x.origRow === trow);
+    const gi = G.girls.indexOf(g);
+    let guard = 0;
+    while (G.girls[gi].state === "hidden" && guard < 8) { act(0, 1); guard++; } // 真下=女の子マスを掘り当て。
+    G.monsters = [];
+    mrClimbToSurface(); // 実 climb=各手で moveTo→advanceGirl が走り女の子が足跡を追う。
+    return { gi, state: G.girls[gi].state };
+  }
+`;
+
 async function overflowReport(page, label, vw = VW, vh = VH) {
   return page.evaluate(([lbl, vw, vh]) => {
     const sels = [
@@ -262,7 +321,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.10.0" &&
+    version === "v0.11.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -288,7 +347,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.10.0)", corePass);
+  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.11.0)", corePass);
   await ctx.close();
 }
 
@@ -692,33 +751,32 @@ let mechPass = false;
   // --- (C) 女の子: 縦シャフトを掘って発見→追従→地表で救出。v0.3.0 は 1 人救出では clear に
   //     ならない(全員 + 最下層 + 探索率)。ここでは最寄りの 1 人を発見→追従→地表帰還し、
   //     その人だけ rescued になり、HUD が 0/5→1/5、かつ screen が dive のまま(全回復継続)であることを確認。---
-  const rescue = await page.evaluate(() => {
+  const rescue = await page.evaluate((driver) => {
+    eval(driver);
     startDive();
-    // 最寄り(自機 col7 から右下)= (11,6)。その人を発見→追従→連れ帰る。
-    const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
-    for (let r = 1; r <= g.row; r++) G.dug.add(g.col + "," + r);
-    G.px = g.col; G.py = g.row;
-    discoverGirl(g.col, g.row);
-    const discovered = g.state;
-    const hudAfterFound = document.getElementById("rescue-val").textContent;
-    // 上へ 1 マスずつ戻る(掘った跡が帰り道)。女の子が追従して一緒に地表へ。
+    // v0.11.0: 実プレイ経路で最寄り(11,6)を掘り当て→足跡追従→地表救出(ワープ/縦坑先掘りなし)。
+    G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
+    const target = girlPositions(G.seed).find((p) => p.col === 11 && p.row === 6) || girlPositions(G.seed)[0];
+    mrDigTowards(target.col, target.row - 1);
+    G.monsters = [];
+    const g = G.girls.find((x) => x.origCol === target.col && x.origRow === target.row);
+    const gi = G.girls.indexOf(g);
     let guard = 0;
-    for (let r = g.row - 1; r >= 0 && guard < 60; r--) {
-      G.px = g.col; G.py = r;
-      advanceGirl();
-      guard++;
-      if (r === 0) { surfaceReturn(); break; }
-    }
+    while (G.girls[gi].state === "hidden" && guard < 8) { act(0, 1); guard++; }
+    const discovered = G.girls[gi].state; // following(実掘り当て)。
+    const hudAfterFound = document.getElementById("rescue-val").textContent; // 発見だけでは 0/5。
+    G.monsters = [];
+    mrClimbToSurface(); // 実 climb=足跡追従で地表へ。
     return {
       discovered,
       hudAfterFound,
-      girlState: g.state,
+      girlState: G.girls[gi].state,
       rescued: G.rescued,
       hudAfterRescue: document.getElementById("rescue-val").textContent,
       screen: G.screen, // dive のまま(1 人=clear ではない)
       ovTitle: document.getElementById("ov-title").textContent,
     };
-  });
+  }, MR_DRIVER);
 
   // --- (C2) 実経路で女の子を掘り当てた直後、誤って「はぐれた」警告(cueGirlBlocked)が出ない。---
   // バグ再現経路: act で女の子マスを掘り抜く → discoverGirl が following + cueGirlFound →
@@ -861,54 +919,58 @@ let girlFollowPass = false;
   await page.waitForTimeout(300);
   await startToDive(page);
 
-  const trace = await page.evaluate(() => {
+  const trace = await page.evaluate((driver) => {
+    eval(driver);
     startDive();
     const seed = G.seed;
-    // 最深の 1 人(8,14)で追従トレース(縦坑が一番長い = 底張り付きが最も出やすい)。
-    const g = G.girls.find((x) => x.col === 8 && x.row === 14) || G.girls[G.girls.length - 1];
+    // v0.11.0 作り直し検証: 最深の 1 人(8,14)を「実プレイ経路」で掘り当て→足跡追従→地表救出。
+    // 旧テストは自機を女の子マスへワープし一直線の縦坑を先掘りして全ステップ上向きで追わせ、横ずれの
+    // 重力落とし戻し(=底張り付き)を構造的にすり抜けた。ここは act() だけでジグザグ掘削+実 climb し、
+    // 女の子 row が底へ落ち戻らず単調に減って地表へ着くことを実測する(底張り付きの否定を実経路で証明)。
+    G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
+    const target = girlPositions(seed).find((p) => p.col === 8 && p.row === 14) || girlPositions(seed)[girlPositions(seed).length - 1];
+    const startRow = target.row, col = target.col;
+    mrDigTowards(col, startRow - 1); // 女の子の 1 つ上まで実掘り(ジグザグ)。
+    G.monsters = [];
+    const g = G.girls.find((x) => x.origCol === col && x.origRow === startRow);
     const gi = G.girls.indexOf(g);
-    const startRow = g.row, col = g.col;
-    // 女の子の列に地表(row0)から女の子の行まで一直線の縦坑を掘る(帰り道)。
-    for (let r = 1; r <= startRow; r++) G.dug.add(col + "," + r);
-    // 自機を女の子マスへ置いて発見させる。
-    G.px = col; G.py = startRow;
-    discoverGirl(col, startRow);
+    let dg = 0;
+    while (G.girls[gi].state === "hidden" && dg < 8) { act(0, 1); dg++; } // 真下=女の子マスを掘り当て。
     const discovered = G.girls[gi].state;
-    // 発見直後に女の子が即底へ張り付いていないこと(=バグ症状)を記録。
     const girlRowAfterDiscover = G.girls[gi].state === "rescued" ? 0 : G.girls[gi].row;
 
-    // 自機を 1 マスずつ上へ登らせ、各手で advanceGirl を呼ぶ。女の子 row が
-    // 自機 row へ追従して減少するかをトレースする(底に張り付くなら row が減らない)。
+    // 実 climb(act で上/横へ)。各手で moveTo→advanceGirl が走り女の子が足跡を追う。
+    // 女の子 row を毎手記録し、底へ落ち戻り(前手より row が増える)が起きないことを見る。
+    G.monsters = [];
     const steps = [];
     let stuck = false;
     let prevGirlRow = G.girls[gi].row;
-    for (let pr = startRow - 1; pr >= 0; pr--) {
-      G.px = col; G.py = pr; // 自機が縦坑を 1 マス登った。
-      advanceGirl();
+    let cg = 0;
+    while (G.screen === "dive" && G.py > 0 && cg < 400) {
+      cg++;
+      const bx = G.px, by = G.py;
+      if (isSpace(G.px, G.py - 1)) act(0, -1);
+      else if (isSpace(G.px - 1, G.py)) act(-1, 0);
+      else if (isSpace(G.px + 1, G.py)) act(1, 0);
+      else break;
       const gr = G.girls[gi].state === "rescued" ? 0 : G.girls[gi].row;
-      steps.push({ playerRow: pr, girlRow: gr, girlState: G.girls[gi].state });
-      // 女の子 row が「前手より増えた(底へ落ち戻った)」ら張り付きバグ。
-      if (G.girls[gi].state !== "rescued" && gr > prevGirlRow) stuck = true;
+      steps.push({ playerRow: G.py, girlRow: gr, girlState: G.girls[gi].state });
+      if (G.girls[gi].state !== "rescued" && gr > prevGirlRow) stuck = true; // 底へ落ち戻り=張り付き。
       prevGirlRow = gr;
       if (G.girls[gi].state === "rescued") break;
+      if (G.px === bx && G.py === by) break;
     }
-    // 女の子が地表(row0)へ追従しきって rescued になった後、自機も地表(py0)に居るので
-    // surfaceReturn が走る。v0.3.0 は 1 人救出では clear にならず全回復継続(screen=dive)。
-    if (G.girls[gi].state === "rescued" && G.py === 0) surfaceReturn();
 
-    // 追従の単調減少(rescue 到達まで girlRow は概ね減っていく)を判定。
     const girlRows = steps.map((s) => s.girlRow);
     const lastState = G.girls[gi].state;
     return {
       seed, col, startRow, discovered, girlRowAfterDiscover,
       steps, girlRows, stuck, lastState, rescued: G.rescued,
       hud: document.getElementById("rescue-val").textContent,
-      // 女の子が startRow から地表(0)まで row を縮められたか。
       reachedSurface: lastState === "rescued",
-      // 最終 girlRow が startRow より小さい = 追従して上がった(底張り付きの否定)。
       followedUp: girlRows.length > 0 && Math.min(...girlRows) < startRow,
     };
-  });
+  }, MR_DRIVER);
 
   // 1 人救出後の最終確認(v0.3.0 = clear ではなく dive 継続)。
   const finalScreen = await page.evaluate(() => ({
@@ -1474,36 +1536,38 @@ let multiGirlPass = false;
   await page.waitForTimeout(300);
   await startToDive(page);
 
-  const multi = await page.evaluate(() => {
+  const multi = await page.evaluate((driver) => {
+    eval(driver);
     startDive();
     const hud0 = document.getElementById("rescue-val").textContent; // 0/5
-    const log = [];
-    // 1 人目: (11,6)。列に縦坑を掘って発見→追従→地表帰還で救出。
+    // v0.11.0: 2 人を「実プレイ経路」で順に掘り当て→足跡追従→地表救出(ワープ/縦坑先掘りなし)。
+    // power/モンスターのノイズを除去し、発見直後の following(掘り当て成立)と地表 climb 後の rescued を観測。
     function rescueOne(col, row) {
-      for (let r = 1; r <= row; r++) G.dug.add(col + "," + r);
-      G.px = col; G.py = row;
-      discoverGirl(col, row);
-      const found = G.girls.find((g) => g.col === col && g.origRow === row);
-      const st1 = found ? found.state : "?";
-      for (let r = row - 1; r >= 0; r--) { G.px = col; G.py = r; advanceGirl(); if (r === 0) { surfaceReturn(); break; } }
-      const after = G.girls.find((g) => g.origRow === row && g.col === col);
-      return { foundState: st1, finalState: after ? after.state : "?" };
+      G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
+      const found = G.girls.find((g) => g.origCol === col && g.origRow === row);
+      const gi = G.girls.indexOf(found);
+      mrDigTowards(col, row - 1); // 女の子の 1 つ上まで実掘り。
+      G.monsters = [];
+      let dg = 0;
+      while (G.girls[gi].state === "hidden" && dg < 8) { act(0, 1); dg++; } // 真下=女の子マスを掘り当て。
+      const foundState = G.girls[gi].state; // following(掘り当て成立)。
+      G.monsters = [];
+      mrClimbToSurface(); // 足跡追従で地表へ。
+      return { foundState, finalState: G.girls[gi].state };
     }
     const g1 = rescueOne(11, 6);
     const hud1 = document.getElementById("rescue-val").textContent; // 1/5
-    log.push({ girl: "11,6", g1, hud1 });
     const g2 = rescueOne(0, 8);
     const hud2 = document.getElementById("rescue-val").textContent; // 2/5
-    log.push({ girl: "0,8", g2, hud2 });
 
     return {
       hud0, hud1, hud2,
       rescued: G.rescued,
       screen: G.screen, // 2 人では未達 = dive 継続
-      states: G.girls.map((g) => `${g.col},${g.origRow}:${g.state}`),
+      states: G.girls.map((g) => `${g.origCol},${g.origRow}:${g.state}`),
       g1, g2,
     };
-  });
+  }, MR_DRIVER);
 
   console.log("== (P) 複数女の子 2人救出で HUD 0/5→1/5→2/5 ==");
   out("pageerrors", errors);
@@ -1825,7 +1889,8 @@ let monsterPass = false;
   await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(400);
 
-  const r = await page.evaluate(() => {
+  const r = await page.evaluate((driver) => {
+    eval(driver);
     const o = {};
     // --- S1 空間スポーン決定論(2 回 startDive で一致) ---
     startDive();
@@ -1889,6 +1954,9 @@ let monsterPass = false;
     startDive();
     const rescuedBefore = G.rescued;
     G.girls[0].state = "following"; G.girls[0].col = 5; G.girls[0].row = 5; G.girls[0].hp = 4;
+    // v0.11.0: 護衛中の検証なので追従(足跡消化)で女の子をその場から動かさないよう trailIdx を末尾へ
+    // 合わせる(advanceOneGirl が「もう自機の真後ろまで来ている」と判断して移動しない=GIRLATK の純検証)。
+    G.girls[0].trailIdx = (G.playerTrail || []).length;
     G.px = 0; G.py = 1; // 自機は遠い(女の子優先標的)。
     G.dug.add("5,5"); G.dug.add("6,5"); G.dug.add("4,5");
     addMonster("SNAKE", 6, 5, "space"); // SNAKE GIRLATK=1, STR=5 → 1 撃で 4HP の女の子を倒す。
@@ -1916,14 +1984,10 @@ let monsterPass = false;
       G.px = oc; G.py = orow - 1; G.stamina = 100; G.hp = 30;
       moveTo(oc, orow, true); // origRow マスへ侵入 → tryRediscoverGirlAt が発火するはず。
       o.rediscovered = g.state === "following"; // hidden → following へ復帰した。
-      // following 復帰後、縦坑を 1 マスずつ登って地表へ連れ帰り rescued を increment できる。
-      let f4 = 0;
-      for (let pr = orow - 1; pr >= 0 && f4 < 60; pr--) {
-        G.px = oc; G.py = pr;
-        advanceGirl();
-        f4++;
-        if (pr === 0) { surfaceReturn(); break; }
-      }
+      // v0.11.0: following 復帰後、実 climb(act で上へ)で地表へ連れ帰り rescued を increment できる。
+      // moveTo が足跡を記録し advanceGirl が女の子を足跡追従させる(縦坑先掘り済みの空洞を上る実経路)。
+      G.monsters = [];
+      mrClimbToSurface();
       o.rescuedAfterRediscover = g.state === "rescued";
       o.rescueCountIncreased = G.rescued === rescuedPre + 1; // 再発見→救出で救出数が実際に増える。
     }
@@ -1932,7 +1996,7 @@ let monsterPass = false;
     startDive();
     o.girlPositions = G.girls.map((g) => `${g.col},${g.row}`).join("|");
     return o;
-  });
+  }, MR_DRIVER);
 
   const EXPECTED_GIRLS = "11,6|0,8|4,10|3,12|8,14";
   out("S1 空間スポーン", { count: r.spaceSpawnCount, 決定論: r.spaceSpawnDeterministic, NONE上: r.spaceOnNone });
@@ -2392,18 +2456,15 @@ let growthPass = false;
     tabCycle[3].grow && !tabCycle[3].shop &&
     tabCycle[4].craft && !tabCycle[4].grow; // クラフトへ戻れる(gate Q が見る既定状態へ復帰)
 
-  // --- Z2 救出で情報 +1(育成資源の供給路。内部状態で 1 人救出→info 0→1) ---
-  const infoSupply = await page.evaluate(() => {
+  // --- Z2 救出で情報 +1(育成資源の供給路。実プレイ経路で 1 人救出→info 0→1) ---
+  const infoSupply = await page.evaluate((driver) => {
+    eval(driver);
     startDive();
     const info0 = G.info || 0;
-    // 最寄り(11,6)を縦坑で発見→追従→地表帰還で救出(gate C と同型の単体経路)。
-    const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
-    for (let r = 1; r <= g.row; r++) G.dug.add(g.col + "," + r);
-    G.px = g.col; G.py = g.row;
-    discoverGirl(g.col, g.row);
-    for (let r = g.row - 1; r >= 0; r--) { G.px = g.col; G.py = r; advanceGirl(); if (r === 0) { surfaceReturn(); break; } }
+    // v0.11.0: 最寄り(11,6)を実プレイ経路(掘り当て→足跡追従→地表救出)で救出(gate C と同型)。
+    mrRescueGirlAt(11, 6);
     return { info0, info1: G.info, rescued: G.rescued, infoHud: (document.getElementById("info-val") || {}).textContent };
-  });
+  }, MR_DRIVER);
 
   // --- Z3 情報→BP 変換(画面操作: 育成タブ行0 のボタン=「変換」を画面座標タップ) ---
   // 情報を 2 付与して育成タブを開き、行0(情報→BP)のボタンを 1 タップ。
@@ -2508,17 +2569,14 @@ let growthPass = false;
     z7.maxedLabel === "最大" && z7.maxedDisabled === true;
 
   // --- Z8 決定論: 同一操作列(救出→情報変換→PER_HP×2)を 3 回連続で完全同結果 ---
-  const detRuns = await page.evaluate(() => {
+  const detRuns = await page.evaluate((driver) => {
+    eval(driver);
     function run() {
       startDive();
-      G.info = 0; G.bp = 0; G.exp = 0;
+      // v0.11.0: 1 人を実プレイ経路(掘り当て→足跡追従→地表救出)で救出して情報 +1。
+      mrRescueGirlAt(11, 6);
+      G.bp = 0; G.exp = 0;
       G.per = { HP: 0, ST: 0, DIG: 0, ATTACK: 0, DEFENCE: 0, SWIM: 0 };
-      // 1 人救出して情報 +1。
-      const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
-      for (let r = 1; r <= g.row; r++) G.dug.add(g.col + "," + r);
-      G.px = g.col; G.py = g.row;
-      discoverGirl(g.col, g.row);
-      for (let r = g.row - 1; r >= 0; r--) { G.px = g.col; G.py = r; advanceGirl(); if (r === 0) { surfaceReturn(); break; } }
       // 情報をありったけ BP へ、加えて十分な BP を積んで PER_HP を 2 回上げる。
       G.info = 5; while (convertInfoToBp()) {}
       G.bp += 50;
@@ -2527,7 +2585,7 @@ let growthPass = false;
     }
     const a = run(), b = run(), c = run();
     return { a, b, c, same: a === b && b === c };
-  });
+  }, MR_DRIVER);
 
   // --- Z9 非介入: per/bp/info レイヤーは tileType/girlPositions/oreAt を変えない ---
   const z9 = await page.evaluate(() => {
@@ -2586,13 +2644,15 @@ let growthPass = false;
 }
 
 // ============================================================================
-// (AA) v0.10.0 仲間同行(§2-4): 女の子救出(following)→同行開始→同行中の撃破で EXP 蓄積→
-//      地表帰還で別れてレベル反映、の一連を「画面座標ヒットテスト」+ 状態 API で実観測する。
+// (AA) v0.11.0 仲間同行(§2-4、作り直し): 救出済みストック(rescued)を地表で1人選んで次の潜行へ同行→
+//      同行中の撃破で EXP 蓄積→地表帰還で別れてレベル反映→ストックへ戻る、を「画面座標ヒットテスト」+
+//      状態 API で実観測する(v0.10.0 の following 同行モデルを廃した新仕様)。
 //   AA1 工房第4タブ「仲間」存在 + 4タブ往復(クラフト/商人/育成 ⇄ 仲間。タブ切替で gate 退行しない)。
 //       上部バーのボタンは増えていない(#btn-craft で開く=gate G/Q/Y/Z 非退行)。
-//   AA2 同行候補の表示: following 中の女の子が居ないと「同行できる仲間がいない」、居ると 1 行/人。
+//   AA2 同行候補の表示: 救出済みストックが居ないと「同行できる仲間がいない」、居ると 1 行/人。
 //   AA3 同行指定が「画面操作」(仲間タブ該当行の「同行」ボタンを画面座標タップ、overlay 飛び越えなし)で
-//       動く: G.companion がその girl を指し、ボタン表記が「同行」→「やめる」へ、再タップで解除。
+//       動く: rescued の子が deployed=following になり G.companion がその girl を指し、ボタン表記が
+//       「同行」→「やめる」へ、再タップでストックへ戻す(地表でのみ編成可)。
 //   AA4 同行中の撃破で companion.cexp と自機プール G.exp が同額並走(v0.9.0 BP 路は不変=二面両立)。
 //       同行 0 人での撃破は cexp 加算 no-op(自機 exp のみ)。
 //   AA5 援護攻撃: companion レベルに応じ playerAtk が effCompanionAtk()=level*COMPANION_ATK_PER_LV ぶん増。
@@ -2609,7 +2669,7 @@ let growthPass = false;
 // ============================================================================
 let companionPass = false;
 {
-  console.log("== (AA) v0.10.0 仲間同行: 救出→同行→同行中EXP蓄積→帰還で別れてLv反映 ==");
+  console.log("== (AA) v0.11.0 仲間同行(作り直し): 救出ストック→地表で同行→潜行で EXP→帰還で別れて Lv→ストックへ ==");
 
   // 仲間タブを開く共通ヘルパー(作る → 工房 → 仲間タブ。最前面ヒットテスト経由)。
   async function openCompanionTab(page) {
@@ -2682,9 +2742,9 @@ let companionPass = false;
   await tapSelector(page, "#craft-close");
   await page.waitForTimeout(100);
 
-  // --- AA2 同行候補表示: following 0 人 → 案内行 / following 1 人 → 1 行(画面操作で開く) ---
+  // --- AA2 同行候補表示(v0.11.0 作り直し): 救出済みストック 0 人 → 案内行 / 1 人 → 1 行(画面操作で開く) ---
   const candEmpty = await page.evaluate(() => {
-    startDive(); // following を作らない。
+    startDive(); // 救出ストックを作らない。
     openCraft(); setWorkshopTab("companion");
     const rows = document.querySelectorAll("#companion-list .craft-row").length;
     const text = (document.querySelector("#companion-list .craft-name") || {}).textContent;
@@ -2692,8 +2752,8 @@ let companionPass = false;
     closeCraft();
     return { rows, text, btnDisabledOrAbsent: !btn || btn.disabled };
   });
-  // following 1 人を作って仲間タブを画面操作で開く。
-  await page.evaluate(() => { startDive(); G.girls[0].state = "following"; });
+  // 救出済みストックの子を 1 人作り(地表で同行候補に出る)、仲間タブを画面操作で開く。
+  await page.evaluate(() => { startDive(); G.girls[0].state = "rescued"; G.px = 7; G.py = 0; });
   await openCompanionTab(page);
   const candOne = await page.evaluate(() => ({
     rows: document.querySelectorAll("#companion-list .craft-row").length,
@@ -2703,16 +2763,16 @@ let companionPass = false;
   const aa10Overflow = await overflowReport(page, "companion-tab");
   if (aa10Overflow.overflowCount > 0) overflowFails.push(aa10Overflow);
 
-  // --- AA3 同行指定(画面座標タップ、飛び越えなし): 「同行」→companion 指定→「やめる」表記、再タップで解除 ---
+  // --- AA3 同行指定(画面座標タップ、飛び越えなし): 「同行」→deploy+companion 指定→「やめる」表記、再タップで解除 ---
   const compBefore = await page.evaluate(() => G.companion);
-  const aa3tap1 = await tapCompanionRowBtn(page, 0); // 「同行」を押す。
+  const aa3tap1 = await tapCompanionRowBtn(page, 0); // 「同行」を押す(地表なので有効)。
   const aa3afterSet = await page.evaluate(() => ({
-    companionIsG0: G.companion === G.girls[0],
+    companionIsG0: G.companion === G.girls[0] && G.girls[0].deployed && G.girls[0].state === "following",
     btnLabel: (document.querySelector("#companion-list .craft-make") || {}).textContent,
   }));
-  const aa3tap2 = await tapCompanionRowBtn(page, 0); // 「やめる」を押す=解除。
+  const aa3tap2 = await tapCompanionRowBtn(page, 0); // 「やめる」を押す=同行取り消し(ストックへ戻す)。
   const aa3afterUnset = await page.evaluate(() => ({
-    companionNull: G.companion === null,
+    companionNull: G.companion === null && G.girls[0].state === "rescued" && !G.girls[0].deployed,
     btnLabel: (document.querySelector("#companion-list .craft-make") || {}).textContent,
   }));
   await tapSelector(page, "#craft-close");
@@ -2724,7 +2784,7 @@ let companionPass = false;
     aa3tap2.tapped && aa3tap2.wasTopBtn && aa3tap2.label === "やめる" &&
     aa3afterUnset.companionNull === true && aa3afterUnset.btnLabel === "同行";
 
-  // --- AA4 同行中の撃破で cexp と自機 exp が並走 / 同行0人で撃破は cexp no-op ---
+  // --- AA4 同行中の撃破で cexp と自機 exp が並走 / 同行0人で撃破は cexp no-op(v0.11.0: 救出ストックを地表で同行) ---
   const aa4 = await page.evaluate(() => {
     startDive();
     // 同行 0 人での撃破: 自機 exp のみ、companion=null。
@@ -2732,25 +2792,27 @@ let companionPass = false;
     const foe0 = { key: "BAT", col: 1, row: 1, hp: 0 }; // BAT exp=2。
     G.monsters = [foe0]; killMonster(foe0);
     const selfOnly = { exp: G.exp - e0, companion: G.companion };
-    // following 1 人を同行 → 撃破で cexp と exp が同額。
-    const g = G.girls[0]; g.state = "following"; g.col = G.px; g.row = G.py;
+    // 救出済みストックの子を地表で同行に出す(deployed=following)→ 撃破で cexp と exp が同額。
+    const g = G.girls[0]; g.state = "rescued"; G.px = 7; G.py = 0;
     setCompanion(g);
+    const deployed = (G.companion === g && g.deployed && g.state === "following");
     const e1 = G.exp; const c1 = g.cexp || 0;
     const foe1 = { key: "SNAKE", col: 1, row: 1, hp: 0 }; // SNAKE exp=6。
     G.monsters = [foe1]; killMonster(foe1);
     return {
-      selfExpGained0: selfOnly.exp, companionNull0: selfOnly.companion === null,
+      selfExpGained0: selfOnly.exp, companionNull0: selfOnly.companion === null, deployed,
       cexpGained: (g.cexp || 0) - c1, selfExpGained: G.exp - e1,
     };
   });
-  const aa4Ok = aa4.selfExpGained0 === 2 && aa4.companionNull0 === true && aa4.cexpGained === 6 && aa4.selfExpGained === 6;
+  const aa4Ok = aa4.selfExpGained0 === 2 && aa4.companionNull0 === true && aa4.deployed === true &&
+    aa4.cexpGained === 6 && aa4.selfExpGained === 6;
 
   // --- AA5 援護攻撃: companion レベルで playerAtk が effCompanionAtk ぶん増。未同行で +0 ---
   const aa5 = await page.evaluate(() => {
     startDive();
     const baseAtk = playerAtk(); // 未同行=援護0。
     const compAtk0 = effCompanionAtk();
-    const g = G.girls[0]; g.state = "following"; setCompanion(g);
+    const g = G.girls[0]; g.state = "rescued"; G.px = 7; G.py = 0; setCompanion(g);
     g.level = 3; // 援護 +3(COMPANION_ATK_PER_LV=1)。
     const atkWith = playerAtk();
     return { baseAtk, compAtk0, companionAtk: effCompanionAtk(), atkWith, perLv: CONST.COMPANION_ATK_PER_LV };
@@ -2759,43 +2821,47 @@ let companionPass = false;
     aa5.compAtk0 === 0 && aa5.companionAtk === 3 * aa5.perLv &&
     aa5.atkWith === aa5.baseAtk + aa5.companionAtk;
 
-  // --- AA6 地表帰還で別れてレベルアップ + companion 解除 + 端数繰越 + 仲間タブ表示反映 ---
+  // --- AA6 地表帰還で別れてレベルアップ + companion 解除 + 端数繰越 + ストックへ戻る ---
+  //   v0.11.0: deployed companion の帰還=別れて Lv→rescued ストックへ。情報は二重計上しない(初回救出で計上済)。
   const aa6 = await page.evaluate(() => {
     startDive();
-    const g = G.girls[0]; g.state = "following"; setCompanion(g);
+    const g = G.girls[0]; g.state = "rescued"; G.px = 7; G.py = 0; setCompanion(g);
     g.cexp = 25; g.level = 0; // EXP_PER_LV=10 → +2 レベル、端数 5。
+    const infoBefore = G.info || 0;
     g.col = G.px; g.row = 0; // 地表へ。
-    rescueGirl(g);
+    rescueGirl(g); // deployed branch=settle+restock。
     return {
       level: g.level, cexp: g.cexp, companionCleared: G.companion === null,
-      rescuedState: g.state, info: G.info, perLv: CONST.COMPANION_EXP_PER_LV, lvMax: CONST.COMPANION_LV_MAX,
+      backToStock: g.state === "rescued" && !g.deployed, infoBefore, info: G.info,
+      perLv: CONST.COMPANION_EXP_PER_LV, lvMax: CONST.COMPANION_LV_MAX,
     };
   });
   const aa6Ok =
     aa6.level === 2 && aa6.cexp === 5 && aa6.companionCleared === true &&
-    aa6.rescuedState === "rescued" && aa6.info >= 1;
+    aa6.backToStock === true && aa6.info === aa6.infoBefore; // 情報は二重計上しない。
 
-  // --- AA7 境界: 同行 0 人で帰還 no-op / 複数 following でも companion は1人だけ(上書き) ---
+  // --- AA7 境界: 同行 0 人で帰還 no-op / 複数ストックでも companion は1人だけ(上書きで前のはストックへ戻る) ---
   const aa7 = await page.evaluate(() => {
     startDive();
-    const ga = G.girls[0]; ga.state = "following"; ga.col = G.px; ga.row = 0;
-    rescueGirl(ga); // companion=null のまま=settle no-op(クラッシュなし)。
+    const ga = G.girls[0]; ga.state = "rescued"; ga.col = G.px; ga.row = 0;
+    rescueGirl(ga); // 既に rescued=早期 return(settle no-op、クラッシュなし)。
     const noCrash = G.companion === null;
     startDive();
     const g1 = G.girls[0]; const g2 = G.girls[1];
-    g1.state = "following"; g2.state = "following";
-    setCompanion(g1); const firstSet = G.companion === g1;
-    setCompanion(g2); const onlyOne = G.companion === g2 && G.companion !== g1;
+    g1.state = "rescued"; g2.state = "rescued"; G.px = 7; G.py = 0;
+    setCompanion(g1); const firstSet = G.companion === g1 && g1.deployed;
+    setCompanion(g2); // 2人目を同行=1人目はストックへ戻る。
+    const onlyOne = G.companion === g2 && g2.deployed && G.companion !== g1 && !g1.deployed && g1.state === "rescued";
     return { noCrash, firstSet, onlyOne };
   });
   const aa7Ok = aa7.noCrash && aa7.firstSet && aa7.onlyOne;
 
-  // --- AA8 決定論: 同一操作列(同行→固定 key 撃破列→帰還)を 3 回連続で完全一致 ---
+  // --- AA8 決定論: 同一操作列(救出ストック同行→固定 key 撃破列→帰還)を 3 回連続で完全一致 ---
   const detRuns = [];
   for (let i = 0; i < 3; i++) {
     const snap = await page.evaluate(() => {
       startDive();
-      const g = G.girls[2]; g.state = "following"; g.col = G.px; g.row = G.py;
+      const g = G.girls[2]; g.state = "rescued"; G.px = 7; G.py = 0;
       setCompanion(g);
       const e0 = G.exp;
       for (const key of ["BAT", "SNAKE", "SPIDER"]) {
@@ -2803,7 +2869,7 @@ let companionPass = false;
         G.monsters = [foe]; killMonster(foe);
       }
       const cexpDive = g.cexp;
-      g.col = G.px; g.row = 0; rescueGirl(g); // 帰還で清算。
+      g.col = G.px; g.row = 0; rescueGirl(g); // 帰還で清算→ストックへ。
       const gp = girlPositions(G.seed).map((p) => p.col + "," + p.row).join("|");
       return { cexpDive, levelAfter: g.level, cexpAfter: g.cexp, expGained: G.exp - e0, gp };
     });
@@ -2819,7 +2885,7 @@ let companionPass = false;
     startDive();
     const SEED = G.seed;
     const gp = girlPositions(SEED).map((p) => p.col + "," + p.row).join("|");
-    const g = G.girls[0]; g.state = "following"; setCompanion(g);
+    const g = G.girls[0]; g.state = "rescued"; G.px = 7; G.py = 0; setCompanion(g);
     const foe = { key: "SNAKE", col: 1, row: 1, hp: 0 }; G.monsters = [foe]; killMonster(foe);
     g.col = G.px; g.row = 0; rescueGirl(g);
     const gp2 = girlPositions(SEED).map((p) => p.col + "," + p.row).join("|");
@@ -2896,7 +2962,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.10.0 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.11.0 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -2911,7 +2977,7 @@ out("(W) v0.6.0 水/マグマ 浸水ハザード(消耗割増 + マグマ HP chi
 out("(X) v0.7.0 なだれ/落盤 崩落物理(落下で道塞ぎ + 埋没ダメージ)", caveinPass);
 out("(Y) v0.8.0 商人(キノコ採取/物々交換/商人タブ UI/非介入)", merchantPass);
 out("(Z) v0.9.0 育成(情報/EXP→BP→PER Lv.UP/実効値変化/育成タブ往復/決定論/非介入)", growthPass);
-out("(AA) v0.10.0 仲間同行(仲間タブ往復/同行指定 画面操作/同行中EXP蓄積/帰還で別れてLv反映/援護/決定論/非介入)", companionPass);
+out("(AA) v0.11.0 仲間同行(救出ストック→地表で同行→潜行で EXP→帰還で別れて Lv→ストックへ/タブ往復/画面操作/決定論/非介入)", companionPass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
