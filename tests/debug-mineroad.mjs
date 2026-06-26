@@ -99,6 +99,28 @@ async function tapSelector(page, selector, nth = 0) {
   return true;
 }
 
+// 画面座標タップ(D-pad 等のボタン)。タップ前に elementFromPoint で最前面=そのボタンを取り、
+// overlay を飛び越えていないことを証跡として返す(tapSelector は最前面でないと tap せず false を
+// 返すが、N2 の地表静止救出は「全タップが最前面=ボタン」を毎手 assert したいので wasTop を返す)。
+async function tapBtnTop(page, selector) {
+  const box = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }, selector);
+  if (!box) return { tapped: false, wasTop: false };
+  const wasTop = await page.evaluate(([sel, px, py]) => {
+    const el = document.querySelector(sel);
+    const top = document.elementFromPoint(px, py);
+    return !!el && !!top && (el === top || el.contains(top) || top.contains(el));
+  }, [selector, box.x, box.y]);
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.click(box.x, box.y);
+  await page.waitForTimeout(12);
+  return { tapped: true, wasTop };
+}
+
 async function buttonHittable(page, selector, nth = 0) {
   return page.evaluate(([sel, n]) => {
     const el = document.querySelectorAll(sel)[n];
@@ -1002,6 +1024,155 @@ let girlFollowPass = false;
     trace.hud === "1/5" && // HUD 1/5
     finalScreen.screen === "dive"; // v0.3.0: 1 人救出では clear にならず dive 継続
   out("PASS(女の子 縦坑追従: 底張り付きなし→地表救出/1人=dive継続)", girlFollowPass);
+  await ctx.close();
+}
+
+// ============================================================================
+// (N2) v0.11.0 ②救出の「地表静止」バグ 実機相当再検証(前回 FAIL の再現確認)。
+//   前回 FAIL = 女の子を地表(py=0)まで足跡追従させても、自機が地表で静止していると女の子が
+//   自機の 1 マス後ろ(row1)で止まり row0 に乗れず救出されない(仲間タブのストックが空のまま)。
+//   修正 = caughtUpAtSurface(g): 自機 py=0 + 追従中の女の子が足跡を消化しきって追いついた
+//   (trailIdx>=末尾-1)なら、女の子が物理的に row0 に乗っていなくても救出成立。
+//   ここでは N gate と違い「自機を地表に着けた時点で女の子がまだ row>=1 に残っている」状況を作り、
+//   その手で(=自機静止のまま)救出が成立し HUD/仲間タブのストックに並ぶことを 画面座標タップ で観測する。
+//   操作は全て D-pad/工房ボタンの画面座標タップ(canvas 直 dispatch せず、各タップで最前面=ボタンを assert)。
+//   power ゲート/モンスター妨害のノイズは除去(追従・救出の核検証=power/戦闘は別ゲートで担保)。
+// ============================================================================
+let staticRescuePass = false;
+{
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(400);
+  await startToDive(page);
+  const diveScr = await page.evaluate(() => G.screen);
+
+  // ノイズ除去(状態注入ではない=ピック強化と戦闘無効化のみ。自機位置/女の子 state は一切いじらない)。
+  await page.evaluate(() => { G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set(); });
+  await page.waitForTimeout(40);
+
+  let allTopOk = true; // 全タップで最前面=ボタン(overlay 飛び越えなし)。
+  const tgt = await page.evaluate(() => {
+    const p = girlPositions(G.seed).find((p) => p.col === 11 && p.row === 6);
+    return { col: p.col, row: p.row };
+  });
+
+  // (1) 画面座標タップで女の子の 1 つ上(11,5)へジグザグ掘削(横寄せ→下掘り)。
+  async function digToTap(tcol, trow) {
+    for (let i = 0; i < 300; i++) {
+      const s = await page.evaluate(() => ({ px: G.px, py: G.py, scr: G.screen }));
+      if (s.scr !== "dive" || (s.px === tcol && s.py === trow)) break;
+      let sel;
+      if (s.px < tcol) sel = "#btn-right";
+      else if (s.px > tcol) sel = "#btn-left";
+      else if (s.py < trow) sel = "#btn-down";
+      else sel = "#btn-up";
+      const r = await tapBtnTop(page, sel);
+      if (!r.wasTop) allTopOk = false;
+      await page.evaluate(() => { G.monsters = []; }); // 戦闘ノイズを毎手除去(追従の純検証)。
+    }
+  }
+  await digToTap(tgt.col, tgt.row - 1);
+  const afterDig = await page.evaluate(() => ({ px: G.px, py: G.py }));
+
+  // (2) 真下(女の子マス)を btn-down タップで掘り当て → following。
+  let discovered = "hidden";
+  for (let i = 0; i < 8; i++) {
+    const r = await tapBtnTop(page, "#btn-down");
+    if (!r.wasTop) allTopOk = false;
+    await page.evaluate(() => { G.monsters = []; });
+    discovered = await page.evaluate(([tc, tr]) => {
+      const g = G.girls.find((x) => x.origCol === tc && x.origRow === tr);
+      return g ? g.state : "none";
+    }, [tgt.col, tgt.row]);
+    if (discovered === "following") break;
+  }
+
+  // (3) 自機を py=1 まで btn-up/横タップで climb(地表 row0 には上げない)。
+  //     この時点で女の子が「自機より下(row>=1)に残っている=追いついていない」ことを確認(FAIL 真因の局面)。
+  for (let i = 0; i < 200; i++) {
+    const s = await page.evaluate(() => ({ py: G.py, scr: G.screen }));
+    if (s.scr !== "dive" || s.py <= 1) break;
+    const dir = await page.evaluate(() => {
+      if (G.py - 1 >= 1 && isSpace(G.px, G.py - 1)) return "up";
+      if (isSpace(G.px - 1, G.py)) return "left";
+      if (isSpace(G.px + 1, G.py)) return "right";
+      return "none";
+    });
+    if (dir === "none") break;
+    const sel = dir === "up" ? "#btn-up" : dir === "left" ? "#btn-left" : "#btn-right";
+    const r = await tapBtnTop(page, sel);
+    if (!r.wasTop) allTopOk = false;
+    await page.evaluate(() => { G.monsters = []; });
+  }
+  const atPy1 = await page.evaluate(([tc, tr]) => {
+    const g = G.girls.find((x) => x.origCol === tc && x.origRow === tr);
+    return { py: G.py, gState: g.state, gRow: g.state === "rescued" ? -9 : g.row, rescued: G.rescued, hud: document.getElementById("rescue-val").textContent };
+  }, [tgt.col, tgt.row]);
+
+  // (4) 自機を地表 row0 へ btn-up タップ 1 手(surfaceReturn 発火)。女の子が row>=1 に残ったまま
+  //     (=自機静止のまま追いつき)でも救出成立し HUD が 1/5 になることを観測(前回 FAIL の直接解消)。
+  const rUp = await tapBtnTop(page, "#btn-up");
+  if (!rUp.wasTop) allTopOk = false;
+  const afterSurface = await page.evaluate(([tc, tr]) => {
+    const g = G.girls.find((x) => x.origCol === tc && x.origRow === tr);
+    return { py: G.py, gState: g.state, rescued: G.rescued, hud: document.getElementById("rescue-val").textContent, screen: G.screen };
+  }, [tgt.col, tgt.row]);
+
+  // (5) 地表で「静止」=横歩きを 3 手(潜行しない)。救出が保持され dive 継続することを確認。
+  for (let i = 0; i < 3; i++) {
+    const dir = await page.evaluate(() => (isSpace(G.px + 1, 0) ? "right" : isSpace(G.px - 1, 0) ? "left" : "none"));
+    if (dir === "none") break;
+    const r = await tapBtnTop(page, dir === "right" ? "#btn-right" : "#btn-left");
+    if (!r.wasTop) allTopOk = false;
+  }
+  const afterIdle = await page.evaluate(() => ({ rescued: G.rescued, screen: G.screen, py: G.py, hud: document.getElementById("rescue-val").textContent }));
+
+  // (6) 仲間タブ(救出ストック)に並ぶか: 作る → 仲間タブを画面座標タップで開く。
+  await tapBtnTop(page, "#btn-craft");
+  await page.waitForTimeout(150);
+  await tapBtnTop(page, "#tab-companion");
+  await page.waitForTimeout(120);
+  const stock = await page.evaluate(() => {
+    const list = document.getElementById("companion-list");
+    const rows = list.querySelectorAll(".craft-row");
+    return {
+      compOpen: !list.hidden,
+      rowCount: rows.length,
+      btnLabel: (list.querySelector(".craft-make") || {}).textContent,
+    };
+  });
+  const stockOverflow = await overflowReport(page, "n2-companion-stock");
+  if (stockOverflow.overflowCount > 0) overflowFails.push(stockOverflow);
+  await tapSelector(page, "#craft-close");
+
+  console.log("== (N2) v0.11.0 ②地表静止救出 実機相当(前回 FAIL 再現確認・画面座標タップ) ==");
+  out("pageerrors", errors);
+  out("dive 遷移", diveScr);
+  out("掘り進み到達(11,5)", afterDig);
+  out("掘り当て discovered(following)", discovered);
+  out("自機 py=1 静止時点(女の子 row>=1 で残り・未救出)", atPy1);
+  out("地表へ btn-up 1手後(自機静止のまま救出?)", afterSurface);
+  out("地表で横歩き静止後(救出保持/dive継続)", afterIdle);
+  out("仲間タブ 救出ストック(画面操作で開く)", stock);
+  out("ストック行 可読性(はみ出し0)", stockOverflow);
+  out("全タップ最前面=ボタン(overlay飛び越えなし)", allTopOk);
+
+  staticRescuePass =
+    errors.length === 0 &&
+    diveScr === "dive" &&
+    discovered === "following" &&
+    // FAIL 真因の局面が成立: 自機 py=1 で女の子はまだ row>=1 に残り未救出。
+    atPy1.py === 1 && atPy1.gState === "following" && atPy1.gRow >= 1 && atPy1.rescued === 0 && atPy1.hud === "0/5" &&
+    // 修正の核: 自機を地表に着けた 1 手で(女の子が row>=1 残りでも)救出成立 + HUD 1/5。
+    afterSurface.py === 0 && afterSurface.gState === "rescued" && afterSurface.rescued === 1 && afterSurface.hud === "1/5" &&
+    afterSurface.screen === "dive" &&
+    // 地表で静止しても救出は保持・dive 継続。
+    afterIdle.rescued === 1 && afterIdle.screen === "dive" && afterIdle.hud === "1/5" &&
+    // 仲間タブ(救出ストック)に 1 人並び、同行ボタンが出る。
+    stock.compOpen === true && stock.rowCount === 1 && stock.btnLabel === "同行" &&
+    stockOverflow.overflowCount === 0 &&
+    allTopOk === true;
+  out("PASS(②地表静止救出: 自機静止のまま row>=1 残りでも救出→HUD1/5→仲間タブ ストックに並ぶ/画面操作/飛び越えなし)", staticRescuePass);
   await ctx.close();
 }
 
@@ -2968,6 +3139,7 @@ out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画"
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
 out("(B/C/D) 二段ゲージ/撤退/1人救出(HUD 1/5,dive継続)/重力/探索率/決定論[内部関数]", mechPass);
 out("(N) 女の子 縦坑追従 row トレース(底張り付きなし→地表救出/1人=dive継続)", girlFollowPass);
+out("(N2) ②地表静止救出 実機相当(自機静止のまま row>=1 残りでも救出→HUD1/5→仲間タブ ストック/画面操作)", staticRescuePass);
 out("(O) v0.3.0 クリアゲート §7 忠実 / 旧1人=即クリア回帰防止 / 全達成で制覇", clearGatePass);
 out("(P) 複数女の子 2人救出 HUD 0/5→1/5→2/5", multiGirlPass);
 out("(Q) v0.4.0 クラフト UI 6 レシピ / インベントリ / 鉱石決定論加算 / power ゲート回帰", v040Pass);
@@ -2990,7 +3162,7 @@ if (overflowFails.length) {
 }
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
-  mechPass && girlFollowPass && clearGatePass && multiGirlPass &&
+  mechPass && girlFollowPass && staticRescuePass && clearGatePass && multiGirlPass &&
   v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
