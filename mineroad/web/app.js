@@ -1312,6 +1312,36 @@ function recordPlayerStep() {
   const last = G.playerTrail[G.playerTrail.length - 1];
   if (last && last[0] === G.px && last[1] === G.py) return; // 同セルは積まない。
   G.playerTrail.push([G.px, G.py]);
+  gcPlayerTrail();
+}
+
+// v0.11.0 (A) 足跡キューの GC(リングバッファ的切り詰め): 長い潜行で playerTrail が際限なく伸びるのを
+// 防ぐ。全 following 中の女の子の min(trailIdx) より前の古い足跡はもう誰も消化しないので切り捨て、
+// 切った分(cut)だけ playerTrail を前詰めし全 girl の trailIdx を -cut 補正する(trailIdx の意味=
+// 「その girl が今どこまで消化したか」が切り詰め後もずれない)。following が 0 人なら現在の自機セル
+// 1 点へ畳む(誰も追っていないので履歴不要)。決定論=状態遷移のみ(乱数なし)。
+function gcPlayerTrail() {
+  const trail = G.playerTrail;
+  if (!trail || trail.length === 0) return;
+  const followers = (G.girls || []).filter((g) => g.state === "following");
+  if (followers.length === 0) {
+    // 追従者ゼロ: 末尾(現在の自機セル)1 点だけ残す。次の発見/同行は startFollowing で trailIdx を
+    // この末尾(length)に合わせるので整合する。
+    if (trail.length > 1) G.playerTrail = [trail[trail.length - 1]];
+    return;
+  }
+  // 全追従者がまだ消化していない最小インデックス。これより前は誰も参照しないので捨てられる。
+  let cut = trail.length;
+  for (const g of followers) {
+    const idx = g.trailIdx === undefined ? trail.length : g.trailIdx;
+    if (idx < cut) cut = idx;
+  }
+  if (cut <= 0) return; // 切れる余地なし。
+  G.playerTrail = trail.slice(cut); // 前 cut 件を捨てて前詰め。
+  for (const g of G.girls) {
+    if (g.trailIdx === undefined) continue;
+    g.trailIdx = Math.max(0, g.trailIdx - cut); // 切った分だけ全 girl の参照位置を補正。
+  }
 }
 
 // 女の子を「自機の足跡を追う」状態へ入れる(発見/再発見/再同行の共通入口)。
@@ -1343,6 +1373,18 @@ function advanceGirl() {
   }
 }
 
+// v0.11.0 ②境界修正: 救出の発火を「女の子自身が row0 セルに乗る」依存から外す。
+// 自機が地表(py=0)に居て、追従中の女の子が足跡を消化しきって自機の直後まで来ている
+// (trailIdx が末尾-1 以上=snake 追従でこれ以上前へ詰められない位置)なら、その子は地表帰還=救出成立。
+// これが無いと「自機が地表で静止していると女の子が 1 マス後ろ(row1)で止まり救出されない」(実機 FB)。
+// advanceOneGirl(通常の追従)と surfaceReturn(帰還ドレイン)の両合流点でこの 1 つの述語に集約する。
+function caughtUpAtSurface(g) {
+  if (G.py !== 0) return false; // 自機が地表に居るときだけ(撤退の報酬は地表帰還が条件)。
+  const trail = G.playerTrail || [];
+  // 末尾-1 まで消化済み = 自機の 1 マス後ろまで詰めている(snake 追従の限界)= 追いついた。
+  return g.trailIdx >= trail.length - 1;
+}
+
 // 追従中の女の子 1 人を、自機の足跡履歴(G.playerTrail)に沿って 1 マス前進させる。
 // 足跡末尾(自機の最新セル)の 1 つ手前まで追う = 自機に重ならず 1 マス後ろを保つ(snake 追従)。
 // 足跡セルは自機が実際に通った空洞なので必ず通行可 = 経路探索失敗も独立重力も無い(底張り付き解消)。
@@ -1352,7 +1394,11 @@ function advanceOneGirl(g) {
   if (g.trailIdx === undefined) g.trailIdx = trail.length;
   // 自機の最新セル(末尾)は自機が居るので、その手前(length-1)まで消化して 1 マス後ろに付く。
   const target = trail.length - 1;
-  if (g.trailIdx >= target) return; // もう自機の真後ろまで来ている = これ以上寄せない。
+  if (g.trailIdx >= target) {
+    // これ以上前へは詰められない。自機が地表に居て追いついていれば救出成立(row1 で止まらせない)。
+    if (caughtUpAtSurface(g)) rescueGirl(g);
+    return;
+  }
   const next = trail[g.trailIdx];
   if (!next) { g.trailIdx++; return; }
   // モンスターが足跡上に居れば踏み込まず待機(交戦で退くまで足止め=誘導難度)。trailIdx は進めない。
@@ -1360,7 +1406,7 @@ function advanceOneGirl(g) {
   g.col = next[0];
   g.row = next[1];
   g.trailIdx++;
-  if (g.row === 0) rescueGirl(g);
+  if (g.row === 0 || caughtUpAtSurface(g)) rescueGirl(g);
 }
 
 // 掘った空間(+地表)を辿って (sc,sr) から (tc,tr) へ 1 歩進む BFS。最初の 1 歩を返す。
@@ -1485,7 +1531,7 @@ function surfaceReturn() {
       if (g.trailIdx === undefined) g.trailIdx = trail.length;
       let guard = 0;
       // 残りの足跡(末尾=自機の地表セルを含む)を順に消化する。モンスターが足跡上に居れば
-      // そこで足止め(地中残留=掘り直し)。最後まで消化しきれば row0 に着いて rescueGirl/settle。
+      // そこで足止め(地中残留=掘り直し)。消化しきって自機に追いつけば救出(row0 到達 or 追いつき)。
       while (g.state === "following" && g.trailIdx < trail.length && guard < trail.length + 4) {
         guard++;
         const next = trail[g.trailIdx];
@@ -1496,6 +1542,9 @@ function surfaceReturn() {
         g.trailIdx++;
         if (g.row === 0) { rescueGirl(g); break; }
       }
+      // v0.11.0 ②境界修正: 自機が地表で、足跡を消化しきって追いついた(末尾-1 以上)子は、row0 セルに
+      // 物理的に乗っていなくても地表帰還=救出成立(自機が地表に戻りさえすれば追従しきった子は救出)。
+      if (g.state === "following" && caughtUpAtSurface(g)) rescueGirl(g);
       // 上がりきれず地中に残った同行者は地表で別れていない = 同行解除(清算しない)。これを欠くと
       // companion が地中残留 following を指したまま全回復→継続し、次の潜行で援護(effCompanionAtk)が乗り
       // cexp が再加算される抜け道になる(rescueGirl 成立時は settleCompanion で解除済=ここは no-op)。
@@ -1951,6 +2000,9 @@ function setCompanion(g) {
   g.col = G.px;
   g.row = G.py; // 自機(地表)位置から足跡を追って潜る。
   g.trailIdx = (G.playerTrail || []).length; // 以降に自機が刻む足跡を消化する起点。
+  // v0.11.0 (C): g.cexp/g.level はここでリセットしない(意図的=端数繰り越し)。前回の地表帰還清算
+  // (settleCompanion)で cexp→level に繰り上げた残りの端数 cexp はこの子に残り、再同行で続きから貯まる
+  // (原作「レベルアップは積み上がる」=同じ子を育て続けられる)。level も累積で援護が強くなる。
   showHint("仲間と一緒に潜る。地上で別れるとレベルが上がる", false);
   playSfx("heal");
   renderCompanion();
