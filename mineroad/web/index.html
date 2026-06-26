@@ -96,7 +96,8 @@
       <button id="tab-shop" class="craft-tab" type="button">商人</button>
       <!-- v0.9.0 育成(Lv.UP)タブ。上部バーにボタンを増やさず工房パネル内タブで同居。 -->
       <button id="tab-grow" class="craft-tab" type="button">育成</button>
-      <!-- v0.10.0 仲間(同行)タブ。上部バーにボタンを増やさず工房パネル内タブで同居。 -->
+      <!-- v0.10.0 仲間(同行)タブ。上部バーにボタンを増やさず工房パネル内タブで同居。
+           v0.11.0: 同行候補を「救出済みストック(rescued)を地表で1人選んで次の潜行へ連れていく」へ作り直し。 -->
       <button id="tab-companion" class="craft-tab" type="button">仲間</button>
     </div>
     <!-- クラフトタブ(craft.csv 6 レシピ)。 -->
@@ -105,7 +106,7 @@
     <div id="shop-list" class="craft-list" hidden></div>
     <!-- v0.9.0 育成タブ(情報/経験値→BP 変換 + 各 PER_* のレベルアップ)。既定は非表示。 -->
     <div id="grow-list" class="craft-list" hidden></div>
-    <!-- v0.10.0 仲間タブ(following 中の女の子を 1 人だけ同行に指定/解除)。既定は非表示。 -->
+    <!-- v0.11.0 仲間タブ(救出済みストックから 1 人を地表で同行に指定/解除→次の潜行に追従)。既定は非表示。 -->
     <div id="companion-list" class="craft-list" hidden></div>
     <button id="craft-close" class="craft-close" type="button">とじる</button>
   </div>

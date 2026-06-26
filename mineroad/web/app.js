@@ -51,7 +51,13 @@
 // 並走で貯め(自機プール G.exp=v0.9.0 BP 路は不変=二面両立)、地表帰還(rescueGirl)で cexp→level に反映して
 // 別れる。companion レベルで playerAtk に援護(effCompanionAtk)が乗る(原作「一緒に戦う」)。UI は工房第4タブ
 // 「仲間」(上部バーのボタンは増やさない=gate G 非退行)。tileType/girlPositions・determinism には非介入。
-const VERSION = "v0.10.0";
+// v0.11.0: 中核の作り直し(実機 FB で中核破綻が判明)。①女の子追従を「自機足跡履歴(G.playerTrail)を
+// 1手ずつ消化する snake 追従」へ引き直し(旧 bfsStep+独立重力の底張り付きを設計から消す)。②仲間モデルを
+// 「救出済みストック(rescued)を地表で1人選び次の潜行へ同行(deployed=following)→帰還で別れて Lv→ストックへ」
+// へ作り直し(旧 following 同行モデルを廃止)。③崩落で塞がれた(G.fallen)マスを再掘で空間へ戻す
+// soft-lock 修正(act の掘り抜きで G.fallen.delete)。tileType/girlPositions/oreAt/monster/hazard/avalanche の
+// ワールドレイヤーには引き続き非介入。
+const VERSION = "v0.11.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -473,6 +479,7 @@ function startDive() {
     hp: CONST.GIRL_HP, // v0.5.0: 護衛中に GIRLATK で削られうる(monster.csv GIRL=30)。
     level: 0, // v0.10.0: 同行レベル(地表で別れた瞬間 cexp から清算。ランごとリセット)。
     cexp: 0, // v0.10.0: 同行中に貯めた経験値(撃破ごとに加算、帰還で level へ変換)。
+    trailIdx: 0, // v0.11.0: 追従中に消化した自機足跡履歴のインデックス。
   }));
   G.rescued = 0;
   G.maxDepthThisDive = 0;
@@ -498,6 +505,7 @@ function startDive() {
   G.dreamMushrooms = 0; // v0.8.0: 夢キノコ(キノコ100 から統合)。
   G.fruits = 0; // v0.8.0: フルーツ(商人で鉄鉱石2 と交換)。
   G.companion = null; // v0.10.0: 同行指定はランごとリセット(level/cexp は girls 配列の初期化で 0 へ)。
+  G.playerTrail = [[G.px, G.py]]; // v0.11.0: 自機足跡履歴(追従の正本)。地表スタート位置を起点に。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
   spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
   G.screen = "dive";
@@ -695,6 +703,11 @@ function act(dc, dr) {
   // 掘り抜けた → 空間化。
   G.digProgress.delete(key);
   G.dug.add(key);
+  // v0.11.0 ③ 崩落ソフトロック修正: 崩落で塞がれた(G.fallen 入り)マスを再掘削した場合、tileAt は
+  // G.fallen を G.dug より先に評価して SOIL を返すため、G.dug.add だけでは永久に SOIL のまま通れず
+  // 地表へ戻れなかった(詰みの核)。掘り抜き成立で G.fallen から外し、再掘した跡が空間に戻る
+  // (plan §2「塞がれた SOIL は再掘可・soft-lock しない」の前提を実装で守る)。
+  G.fallen.delete(key);
   let buried = null;
   if (t === TILE.GIRL) discoverGirl(col, row);
   else {
@@ -1122,14 +1135,23 @@ function isAdjacent(ac, ar, bc, br) {
 // loseGirl は state を hidden へ戻して原位置へ置くだけ(tile/dug は触らない=dug 不変条件を保つ)。
 // EXPECTED_GIRLS(初期配置)とも矛盾しない(原位置に戻るだけ、別マスへ移さない)。
 function loseGirl(g) {
-  g.state = "hidden";
   g.hp = CONST.GIRL_HP;
   spawnPopupAt(g.col, g.row, "！", "warn");
+  // v0.10.0: 同行中の仲間がロストしたら同行も解除(地表で別れていない=清算しない)。貯めた cexp/level は
+  // girl に残るので、再発見/再同行で続きから戦える(原作の「護衛中も狙われる」誘導難度=死の緊張の二面)。
+  detachCompanion(g);
+  if (g.deployed) {
+    // v0.11.0 ②: 救出済みストックから同行に出した子がロスト = 同行が崩れただけ。ストック(rescued)へ
+    // 戻す(既に救出済みなので地中に hidden で再配置はしない=世界の女の子に戻さない)。cexp/level は残す。
+    g.deployed = false;
+    g.state = "rescued";
+    showHint("仲間が傷つき、同行を解いた。地上の仲間に戻った", true);
+    return;
+  }
+  // 初回発見の子がロスト: hidden へ戻し原位置へ置く(tile/dug は触らない=dug 不変条件・再発見を保つ)。
+  g.state = "hidden";
   g.col = g.origCol !== undefined ? g.origCol : g.col;
   g.row = g.origRow;
-  // v0.10.0: 同行中の仲間がロストしたら同行も解除(地表で別れていない=清算しない)。貯めた cexp/level は
-  // girl に残るので、再発見→再同行で続きから戦える(原作の「護衛中も狙われる」誘導難度=死の緊張の二面)。
-  detachCompanion(g);
   showHint("女の子が傷つき、地中へ取り残された。もう一度その場所へ行って助け直そう", true);
 }
 
@@ -1161,6 +1183,7 @@ function moveTo(col, row, costPaid, noGravity) {
   revealAround();
   resolveCaveins(); // v0.7.0: 支えを失った不安定土(なだれ土)が崩れ落ちて道を塞ぎ、自機/女の子を埋める。
   if (G.screen !== "dive") return; // 崩落の埋没ダメージで力尽きたら離脱。
+  recordPlayerStep(); // v0.11.0 ①: 重力で落ち着いた自機セルを足跡履歴へ記録(追従の single source of truth)。
   tryRediscoverGirlAt(G.px, G.py); // ロスト後 hidden の女の子が居るマスへ侵入したら再発見(following 復帰)。
   advanceGirl();
   if (G.py === 0) {
@@ -1273,12 +1296,37 @@ function applyGravity() {
   }
 }
 
-// ---- 女の子: 発見と追従 ------------------------------------------------
+// ---- 女の子: 発見と追従(v0.11.0 足跡キュー方式へ作り直し) ----------------
+// 【作り直しの核】旧 advanceOneGirl は bfsStep(女の子→自機の最初の1歩)+ 独立重力で追従を組んでおり、
+// ジグザグ掘削で女の子が自機を追うのに横移動が要るとき、その横一歩が上向きでないため毎手 重力で
+// 縦坑の底へ落とし戻され「発見後ずっと底に張り付く」破綻があった(実機 FB で確定)。重力条件いじり
+// /bfs guard 追加は同一原因への 2 周目になるため、追従の責務を「自機が実際に通った足跡履歴」という
+// single source of truth へ引き直す: 自機が掘って通った経路は必ず空洞なので、その履歴を 1 手ずつ
+// 消化する追従は経路探索失敗も横移動での重力落とし戻しも原理的に発火しない(底張り付き同時消滅)。
+// → 女の子は独立に落下しない(足跡が空洞である保証で重力責務を足跡記録側へ移す)。
+
+// 自機の足跡履歴 G.playerTrail へ「重力で落ち着いた現在セル」を 1 件追記(連続重複は畳む)。
+// この履歴を following 中の女の子が g.trailIdx を進めながら消化して追う(追従の正本)。
+function recordPlayerStep() {
+  if (!G.playerTrail) G.playerTrail = [];
+  const last = G.playerTrail[G.playerTrail.length - 1];
+  if (last && last[0] === G.px && last[1] === G.py) return; // 同セルは積まない。
+  G.playerTrail.push([G.px, G.py]);
+}
+
+// 女の子を「自機の足跡を追う」状態へ入れる(発見/再発見/再同行の共通入口)。
+// trailIdx は現在の足跡末尾に合わせる = 以降に自機が刻む足跡を順に消化して付いてくる。
+function startFollowing(g) {
+  g.state = "following";
+  if (!G.playerTrail) G.playerTrail = [];
+  g.trailIdx = G.playerTrail.length; // 発見時点では自機と同セル(掘り当て直後)=ここから後ろを追う。
+}
+
 function discoverGirl(col, row) {
   if (!G.girls) return;
   for (const g of G.girls) {
     if (g.state === "hidden" && g.col === col && g.row === row) {
-      g.state = "following";
+      startFollowing(g);
       showHint(TEXT.cueGirlFound, false);
       spawnPopupAt(col, row, "！", "cue");
       playSfx("found");
@@ -1287,8 +1335,7 @@ function discoverGirl(col, row) {
   }
 }
 
-// 追従中の女の子を全員 1 歩ずつ自機へ近づける。経路が無ければ(道が塞がれた)その場で
-// 待機し、掘り直しを促す(per-girl は advanceOneGirl)。
+// 追従中の女の子を全員 1 歩ずつ自機の足跡に沿って進める(per-girl は advanceOneGirl)。
 function advanceGirl() {
   if (!G.girls) return;
   for (const g of G.girls) {
@@ -1296,42 +1343,24 @@ function advanceGirl() {
   }
 }
 
-// 追従中の女の子 1 人を 1 歩、自機へ近づける(掘った空洞を BFS で辿る)→ そのあと重力で落とす。
-// 複数人が追従すると見た目上は自機マス付近で重なる(プロトタイプ簡略化、STATUS line64 別件)。
+// 追従中の女の子 1 人を、自機の足跡履歴(G.playerTrail)に沿って 1 マス前進させる。
+// 足跡末尾(自機の最新セル)の 1 つ手前まで追う = 自機に重ならず 1 マス後ろを保つ(snake 追従)。
+// 足跡セルは自機が実際に通った空洞なので必ず通行可 = 経路探索失敗も独立重力も無い(底張り付き解消)。
+// 次の足跡セルにモンスターが居れば踏み込まず待機(GIRLATK で削られうる誘導難度=既存仕様を保つ)。
 function advanceOneGirl(g) {
-  // 自機と同マス(発見直後など)はまだ寄せる必要がない。bfsStep が同点 null を返すのを
-  // 「はぐれた(経路なし)」と取り違えて cueGirlBlocked を出すのを抑止する(発見演出の直後に
-  // 矛盾警告で上書きしない)。
-  if (g.col === G.px && g.row === G.py) return;
-  // 自機の 1 つ手前(直前にいた経路上のマス)へ寄せる: BFS で自機までの最初の 1 歩。
-  const next = bfsStep(g.col, g.row, G.px, G.py);
-  if (next) {
-    // v0.5.0: 次の一歩にモンスターが居れば踏み込まず待機(モンスターがマスを塞ぐ)。
-    // 自機が交戦して退かすまで女の子はそこで足止め=GIRLATK で削られうる(誘導難度)。
-    if (monsterAt(next[0], next[1])) { showHint(TEXT.cueGirlBlocked, true); return; }
-    const climbedUp = next[1] < g.row; // 自機へ向かう一歩が上向き = 縦坑のクライム。
-    g.col = next[0];
-    g.row = next[1];
-    // 女の子にも重力(足元が空間なら落ちる)。ただし自機を追って縦坑を登る一歩は
-    // 「掘った空洞を辿って一緒に地上へ」(原作仕様)の意図的クライムなので引き戻さない
-    // (自機の上移動が noGravity なのと同じ責務)。これが無いと中空の縦坑で毎手 gr が
-    // 落ち戻り、女の子が地表まで追従できない(発見後ずっと底に張り付く)。
-    if (!climbedUp) {
-      let guard = 0;
-      while (guard < CONST.DEPTH_ROWS + 2) {
-        guard++;
-        const below = g.row + 1;
-        if (below > CONST.DEPTH_ROWS) break;
-        if (isSpace(g.col, below) && !(g.col === G.px && below === G.py) && !monsterAt(g.col, below)) {
-          // 自機の真上には乗らない(同じマスへ落ちない)。モンスターの上にも落ちない。
-          g.row = below;
-        } else break;
-      }
-    }
-    if (g.row === 0) rescueGirl(g);
-  } else {
-    showHint(TEXT.cueGirlBlocked, true);
-  }
+  const trail = G.playerTrail || [];
+  if (g.trailIdx === undefined) g.trailIdx = trail.length;
+  // 自機の最新セル(末尾)は自機が居るので、その手前(length-1)まで消化して 1 マス後ろに付く。
+  const target = trail.length - 1;
+  if (g.trailIdx >= target) return; // もう自機の真後ろまで来ている = これ以上寄せない。
+  const next = trail[g.trailIdx];
+  if (!next) { g.trailIdx++; return; }
+  // モンスターが足跡上に居れば踏み込まず待機(交戦で退くまで足止め=誘導難度)。trailIdx は進めない。
+  if (monsterAt(next[0], next[1])) { showHint(TEXT.cueGirlBlocked, true); return; }
+  g.col = next[0];
+  g.row = next[1];
+  g.trailIdx++;
+  if (g.row === 0) rescueGirl(g);
 }
 
 // 掘った空間(+地表)を辿って (sc,sr) から (tc,tr) へ 1 歩進む BFS。最初の 1 歩を返す。
@@ -1380,15 +1409,26 @@ function bfsStep(sc, sr, tc, tr) {
   return step.split(",").map(Number);
 }
 
+// 追従中の女の子が地表(row0)へ到達したときの処理(advanceOneGirl / surfaceReturn の合流点)。
+// v0.11.0 ②: 2 経路に分かれる。
+//   (a) 救出済みストックから同行に出した子(deployed)が帰還 = 「別れてレベルアップ→ストックへ戻る」
+//       (原作 §5)。rescued/info は二重計上しない(初回救出で計上済み)、settleCompanion で清算し
+//       state を rescued へ戻す。
+//   (b) 地中で初めて発見した子が帰還 = 初回救出。rescued/info を +1 してストック入り(rescued)。
 function rescueGirl(g) {
   if (g.state === "rescued") return;
+  if (g.deployed) {
+    // (a) 同行に出した救出済みの子が地表へ戻った = 別れてレベルアップ→ストックへ。
+    g.deployed = false;
+    g.state = "rescued";
+    if (G.companion === g) settleCompanion(g); // cexp→level 清算 + companion 解除。
+    return;
+  }
+  // (b) 初回救出。
   g.state = "rescued";
   G.rescued += 1;
   G.info = (G.info || 0) + 1; // v0.9.0: 救出成立で「情報」を +1(育成資源。Lv.UP 画面で BP へ変換=消費)。
   setInt(RESCUE_KEY, getInt(RESCUE_KEY) + 1); // 生涯救出数(タイトル表示)。各人 1 回だけ加算。
-  // v0.10.0: この女の子が同行中(companion)なら、地表帰還の瞬間に「別れてレベルアップ」する(原作 §5)。
-  // 貯めた cexp を COMPANION_EXP_PER_LV ごとに level へ繰り上げ(端数は cexp に残す)、companion を解除。
-  // rescueGirl の情報 +1(救出図鑑)は別軸=不変(原作「別れると再び情報としてストック」と整合)。
   if (G.companion === g) settleCompanion(g);
 }
 
@@ -1435,19 +1475,26 @@ function surfaceProgressText() {
 
 // ---- 地表帰還 = 全回復(撤退の報酬) -----------------------------------
 function surfaceReturn() {
-  // 追従中の女の子は自機の後ろを辿っている。自機が地表に着いたら、追従中の全員が
-  // 残りの帰り道を歩いて地表へ上がりきる(掘った縦坑を 1 歩ずつ詰める)。
+  // 追従中の女の子は自機の足跡を 1 マス後ろから辿っている。自機が地表に着いたら、残った足跡
+  // (末尾=地表の自機セルまで)を一気に消化して全員が地表へ上がりきる(v0.11.0: bfsStep でなく
+  // 足跡履歴を最後まで消化する=追従の正本に一貫させる。足跡は自機が実際に通った空洞なので必ず到達可)。
+  const trail = G.playerTrail || [];
   if (G.girls) {
     for (const g of G.girls) {
       if (g.state !== "following") continue;
+      if (g.trailIdx === undefined) g.trailIdx = trail.length;
       let guard = 0;
-      while (g.state === "following" && g.row > 0 && guard < CONST.DEPTH_ROWS + 4) {
+      // 残りの足跡(末尾=自機の地表セルを含む)を順に消化する。モンスターが足跡上に居れば
+      // そこで足止め(地中残留=掘り直し)。最後まで消化しきれば row0 に着いて rescueGirl/settle。
+      while (g.state === "following" && g.trailIdx < trail.length && guard < trail.length + 4) {
         guard++;
-        const next = bfsStep(g.col, g.row, G.px, G.py);
-        if (!next) break; // 道が塞がれていて上がれない(地中に残る = 掘り直し)。
+        const next = trail[g.trailIdx];
+        if (!next) { g.trailIdx++; continue; }
+        if (monsterAt(next[0], next[1])) break; // 足跡上の敵で足止め(地中残留)。
         g.col = next[0];
         g.row = next[1];
-        if (g.row === 0) rescueGirl(g);
+        g.trailIdx++;
+        if (g.row === 0) { rescueGirl(g); break; }
       }
       // 上がりきれず地中に残った同行者は地表で別れていない = 同行解除(清算しない)。これを欠くと
       // companion が地中残留 following を指したまま全回復→継続し、次の潜行で援護(effCompanionAtk)が乗り
@@ -1871,19 +1918,40 @@ function renderGrow() {
   }
 }
 
-// ---- v0.10.0 仲間同行(工房オーバーレイの第4タブ。following 中の女の子1人を同行に指定) -------
-// 同行指定: following 中(護衛しながら一緒に進む)の女の子を 1 人だけ companion にする(原作「1人だけ
-// 仲間として連れて潜れる」)。既に同行中の女の子をもう一度押すと解除(別れずに手放す=清算しない)。
+// ---- v0.11.0 仲間同行(作り直し: 救出済みストック→地表で1人を同行選択→次の潜行に追従) -------
+// 【作り直し】v0.10.0 は「地中で護衛中(following)の子を同行指定」だったが、ユーザー確定方針で
+// 「救出して地表に持ち帰った子(rescued=ストック)を地表で1人選んで次の潜行に連れていく→一緒に戦い
+// EXP 蓄積→地表帰還で別れてレベルアップ→再びストックへ戻る」(原作 §5)へ作り直す。
+// 同行候補 = 救出済み(rescued)の子。選ぶと deployed=true + state="following" で自機(地表)位置へ
+// 配置し、足跡を追って一緒に潜る。同行中の子を再選択すると同行を取り消し(ストックへ戻す、清算なし)。
 function setCompanion(g) {
   if (G.screen !== "dive" || !g) return false;
-  if (g.state !== "following") { showHint("護衛中の女の子だけ同行できる", true); return false; }
-  if (G.companion === g) {
-    G.companion = null; // 同じ仲間を再選択 = 同行を解除(別れではない=清算しない)。
-    showHint("同行をやめた", false);
-  } else {
-    G.companion = g; // 1人だけ=他の同行は上書きで自動解除(原作「1人だけ」)。
-    showHint("仲間と一緒に潜る。地上で別れるとレベルが上がる", false);
+  // 既に同行に出している子(deployed companion)を再選択 = 同行取り消し(ストックへ戻す、清算しない)。
+  if (G.companion === g && g.deployed) {
+    g.deployed = false;
+    g.state = "rescued";
+    G.companion = null;
+    showHint("同行をやめた。仲間は地上に戻った", false);
+    playSfx("heal");
+    renderCompanion();
+    return true;
   }
+  // 同行候補は救出済みストックの子のみ(原作「別れると再び情報としてストック→また連れられる」)。
+  if (g.state !== "rescued") { showHint("地上に連れ帰った仲間だけ同行できる", true); return false; }
+  // 地表に居るときだけ新しい潜行へ同行を編成できる(地中で編成すると追従の起点が定まらない)。
+  if (G.py !== 0) { showHint("地表で仲間を選んでから潜ろう", true); return false; }
+  // 既に別の子を同行に出していたらストックへ戻す(1人だけ=原作忠実)。
+  if (G.companion && G.companion !== g && G.companion.deployed) {
+    G.companion.deployed = false;
+    G.companion.state = "rescued";
+  }
+  G.companion = g;
+  g.deployed = true;
+  g.state = "following"; // 救出済みの子を同行のため追従状態へ(deployed フラグで初回救出と区別)。
+  g.col = G.px;
+  g.row = G.py; // 自機(地表)位置から足跡を追って潜る。
+  g.trailIdx = (G.playerTrail || []).length; // 以降に自機が刻む足跡を消化する起点。
+  showHint("仲間と一緒に潜る。地上で別れるとレベルが上がる", false);
   playSfx("heal");
   renderCompanion();
   return true;
@@ -1918,32 +1986,39 @@ function appendCompanionRow(name, sub, btnLabel, enabled, onClick) {
 function renderCompanion() {
   if (!companionListEl) return;
   companionListEl.innerHTML = "";
-  // following 中(護衛中)の女の子=同行候補。発見してまだ地表へ着いていない子だけ連れていける。
-  const escorting = (G.girls || []).filter((g) => g.state === "following");
-  if (!escorting.length) {
+  // v0.11.0: 同行候補 = 救出済みストック(rescued)+ いま同行に出している子(deployed=following)。
+  // 「女の子 N」の番号は G.girls の固定インデックスで安定させる(救出順で並べ替えない)。
+  const candidates = [];
+  (G.girls || []).forEach((g, i) => {
+    if (g.state === "rescued" || (g.deployed && g.state === "following")) candidates.push({ g, n: i + 1 });
+  });
+  if (!candidates.length) {
     appendCompanionRow(
       "同行できる仲間がいない",
-      "地中で女の子を見つけて護衛中だと同行できる",
+      "地中で女の子を救出して地上へ連れ帰るとストックに貯まる",
       "",
       false,
       () => {},
     );
     return;
   }
-  let idx = 0;
-  for (const g of escorting) {
-    idx++;
-    const isCompanion = G.companion === g;
+  const onSurface = G.py === 0;
+  for (const { g, n } of candidates) {
+    const isCompanion = G.companion === g && g.deployed;
     const lvl = g.level || 0;
     const cexp = g.cexp || 0;
+    const atk = lvl * CONST.COMPANION_ATK_PER_LV;
     const sub = isCompanion
-      ? "同行中・Lv." + lvl + "（経験値 " + cexp + "・援護 +" + (lvl * CONST.COMPANION_ATK_PER_LV) + "）"
-      : "Lv." + lvl + "（同行で +" + (lvl * CONST.COMPANION_ATK_PER_LV) + " 援護・経験値 " + cexp + "）";
+      ? "同行中・Lv." + lvl + "（経験値 " + cexp + "・援護 +" + atk + "）"
+      : "ストック・Lv." + lvl + "（同行で +" + atk + " 援護・経験値 " + cexp + "）";
+    // 同行中の子は「やめる」を常時押せる。ストックの子は地表でだけ「同行」を編成できる。
+    const btnLabel = isCompanion ? "やめる" : "同行";
+    const enabled = isCompanion || onSurface;
     appendCompanionRow(
-      "女の子 " + idx,
+      "女の子 " + n,
       sub,
-      isCompanion ? "やめる" : "同行",
-      true,
+      btnLabel,
+      enabled,
       () => { setCompanion(g); },
     );
   }
