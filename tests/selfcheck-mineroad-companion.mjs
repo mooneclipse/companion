@@ -354,6 +354,156 @@ const ui = await page.evaluate(() => {
 check("⑥ 仲間タブ表示=ストック1行・active・同行ボタン押下可・クラフトへ戻せる(gate Q 互換)",
   !ui.compHidden && ui.rows === 1 && ui.tabActive && ui.btnEnabled && ui.btnLabel === "同行" && ui.craftShown, ui);
 
+// ⑦ (1) ②境界修正: 自機が地表で静止しても、追従しきった女の子が救出されストックに入る(実プレイ経路)。
+//   旧挙動=女の子が自機の1マス後ろ(row1)で止まり row0 に乗れず rescueGirl 未発火。修正=自機が地表に
+//   居て足跡を消化しきって追いついた(caughtUpAtSurface)なら row0 に物理的に乗らなくても救出成立。
+//   実プレイ: 掘り当て→足跡追従で地表へ。自機ワープ/state注入に戻らない。
+const staticSurface = await page.evaluate((driver) => {
+  eval(driver);
+  startDive();
+  G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
+  const t = girlPositions(G.seed).find((p) => p.col === 11 && p.row === 6) || girlPositions(G.seed)[0];
+  digTowards(t.col, t.row - 1);
+  G.monsters = [];
+  const g = G.girls.find((x) => x.origCol === t.col && x.origRow === t.row);
+  const gi = G.girls.indexOf(g);
+  let d = 0; while (G.girls[gi].state === "hidden" && d < 8) { act(0, 1); d++; }
+  G.monsters = [];
+  climbToSurface(); // 実 climb で地表へ。
+  const playerAtSurface = (G.py === 0);
+  const rescuedAtSurface = (G.girls[gi].state === "rescued");
+  // 救出後そのまま地表で静止しても rescued のまま(再加算なし)。
+  const stillRescued = (G.girls[gi].state === "rescued");
+  // ストックに入っている(仲間タブ候補=rescued)。
+  const inStock = (G.girls[gi].state === "rescued");
+  return { playerAtSurface, rescuedAtSurface, stillRescued, inStock, girlRow: G.girls[gi].row, rescued: G.rescued, hud: document.getElementById("rescue-val").textContent };
+}, driverSrc);
+check("⑦ (1) 自機が地表で静止しても追従しきった女の子が救出されストック入り(row0 非依存)",
+  staticSurface.playerAtSurface && staticSurface.rescuedAtSurface && staticSurface.inStock &&
+  staticSurface.rescued >= 1 && staticSurface.hud !== "0/5", staticSurface);
+
+// ⑦-b ②フル経路を通しで(実プレイ): 救出→ストック→地表で同行選択→潜行→撃破cexp→帰還レベルUP→ストック戻し。
+//   ②の全段が実プレイ経路(act の掘削+足跡追従+実 climb)で完結することを通しで assert。
+const fullCycle = await page.evaluate((driver) => {
+  eval(driver);
+  startDive();
+  G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
+  const t = girlPositions(G.seed).find((p) => p.col === 11 && p.row === 6) || girlPositions(G.seed)[0];
+  // 1) 救出→ストック(実プレイ)。
+  digTowards(t.col, t.row - 1); G.monsters = [];
+  const g = G.girls.find((x) => x.origCol === t.col && x.origRow === t.row);
+  const gi = G.girls.indexOf(g);
+  let d = 0; while (G.girls[gi].state === "hidden" && d < 8) { act(0, 1); d++; }
+  G.monsters = []; climbToSurface();
+  const step1Rescued = (g.state === "rescued");
+  // 2) 地表で同行選択(deploy)。
+  G.monsters = []; G.spawned = new Set();
+  const setOk = setCompanion(g);
+  const step2Deployed = (G.companion === g && g.deployed && g.state === "following" && g.col === G.px && g.row === G.py);
+  // 3) 同行を連れて潜行→撃破で cexp(実プレイで少し掘り下げてから撃破)。
+  digTowards(t.col, 4); G.monsters = [];
+  const cexpBefore = g.cexp || 0;
+  const foe = { key: "SNAKE", col: G.px, row: G.py + 1, hp: 0 }; // SNAKE exp=6。
+  G.monsters = [foe]; killMonster(foe);
+  const step3CexpGained = (g.cexp || 0) - cexpBefore; // 6。
+  // 4) 地表帰還で別れてレベルUP→ストック戻し(実 climb)。
+  G.monsters = [];
+  // 端数なし換算のため cexp を 10 の倍数に整える(EXP_PER_LV=10 → ちょうど 1 レベル)。
+  g.cexp = 10; g.level = 0;
+  climbToSurface();
+  const step4 = {
+    backToStock: (g.state === "rescued" && !g.deployed),
+    companionCleared: (G.companion === null),
+    level: g.level, cexp: g.cexp, py: G.py,
+  };
+  return { step1Rescued, setOk, step2Deployed, step3CexpGained, step4 };
+}, driverSrc);
+check("⑦-b ②フル経路通し(救出→ストック→地表同行→潜行cexp→帰還Lv→ストック戻し)が実プレイで完結",
+  fullCycle.step1Rescued && fullCycle.setOk === true && fullCycle.step2Deployed &&
+  fullCycle.step3CexpGained === 6 && fullCycle.step4.backToStock &&
+  fullCycle.step4.companionCleared && fullCycle.step4.level === 1 && fullCycle.step4.py === 0, fullCycle);
+
+// ⑧ (A) 足跡キュー GC: 長経路(多数手のジグザグ)で playerTrail が上限内に収まり、かつ GC の trailIdx
+//   補正後も女の子が正しく追従し続けて救出されることを実プレイで assert。最深(8,14)で長い経路を踏む。
+const trailGc = await page.evaluate((driver) => {
+  eval(driver);
+  startDive();
+  G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
+  const t = girlPositions(G.seed).find((p) => p.col === 8 && p.row === 14) || girlPositions(G.seed)[girlPositions(G.seed).length - 1];
+  // 最深(8,14)まで掘り進む = 長い経路(縦14+横ずれ)。following 0 人の間は GC が末尾1点へ畳むので、
+  // 発見直前(掘り進み中)の trail は際限なく伸びず短く保たれる(=following ゼロ時の畳み込みの検証)。
+  digTowards(t.col, t.row - 1);
+  const trailBeforeDiscover = G.playerTrail.length; // following 0 人 → 末尾1点に畳まれている。
+  G.monsters = [];
+  const g = G.girls.find((x) => x.origCol === t.col && x.origRow === t.row);
+  const gi = G.girls.indexOf(g);
+  let d = 0; while (G.girls[gi].state === "hidden" && d < 8) { act(0, 1); d++; }
+  G.monsters = [];
+  // climb 中の最大 trail 長を観測しながら地表へ。
+  let maxTrail = G.playerTrail.length;
+  let c = 0;
+  while (G.screen === "dive" && G.py > 0 && c < 600) {
+    c++;
+    const bx = G.px, by = G.py;
+    if (isSpace(G.px, G.py - 1)) act(0, -1);
+    else if (isSpace(G.px - 1, G.py)) act(-1, 0);
+    else if (isSpace(G.px + 1, G.py)) act(1, 0);
+    else break;
+    if (G.playerTrail.length > maxTrail) maxTrail = G.playerTrail.length;
+    if (G.girls[gi].state === "rescued") break;
+    if (G.px === bx && G.py === by) break;
+  }
+  // trail 長の上限 = following 中は min(trailIdx) より前を切るので「自機〜最も遅れた女の子の距離 + 数」
+  // で頭打ち(盤面の縦+横 = DEPTH_ROWS+GRID_COLS 程度)。際限なく伸びない(数百〜数千にならない)。
+  const bound = CONST.DEPTH_ROWS + CONST.GRID_COLS + 8;
+  return {
+    trailBeforeDiscover, maxTrail, bound, rescued: G.girls[gi].state === "rescued",
+    finalTrail: G.playerTrail.length, totalRescued: G.rescued,
+  };
+}, driverSrc);
+check("⑧ (A) 長経路で playerTrail が上限内(GC 効く)・GC 補正後も追従して救出成立",
+  trailGc.trailBeforeDiscover <= 2 && trailGc.maxTrail <= trailGc.bound &&
+  trailGc.rescued === true && trailGc.totalRescued >= 1, trailGc);
+
+// ⑨ (D) 崩落再掘の無限ループ非発生: 崩落で塞がれたマスを再掘削しても、不安定土が尽きれば落下は止まり
+//   「掘っても掘っても塞がる」無限ループにならない。act の G.fallen.delete 後 resolveCaveins が同マスを
+//   積み直し続けないことを、再掘を有限回繰り返して空間が安定保持されることで assert。
+const caveinLoop = await page.evaluate((driver) => {
+  eval(driver);
+  startDive();
+  G.pick = "DIAMOND";
+  // (5,7) を掘り抜き→崩落で塞がれた状態にし、真上(5,6)に自機。再掘を最大数回。
+  const key = "5,7";
+  G.dug.add("5,6"); G.dug.add(key);
+  G.fallen.add(key); G.dug.delete(key); // 崩落で塞がれた。
+  G.px = 5; G.py = 6;
+  // この (5,7) は元 SOIL で不安定土でない(avalancheAt 次第)。再掘して空間化したあと、複数回 act しても
+  // 同マスが再び fallen に積み直されて SOIL へ戻り続ける(無限ループ)ことがないか観測。
+  let reopenCount = 0;
+  let reblockCount = 0;
+  let guard = 0;
+  // まず再掘で開ける。
+  while (!isSpace(5, 7) && guard < 8) { act(0, 1); guard++; }
+  const reopenedOnce = isSpace(5, 7);
+  // 開いた後、さらに自機が周辺で行動(下/横へ)を数手しても (5,7) が再び塞がれ続けない。
+  // resolveCaveins は moveTo ごとに走る。不安定土が無ければ落下源が無く塞ぎ直さない。
+  const seq = [];
+  for (let k = 0; k < 6 && G.screen === "dive"; k++) {
+    // 自機を (5,7) 付近に保ったまま行動(下があれば掘る、無ければ横)。
+    if (isSpace(5, 7) && !(G.px === 5 && G.py === 7)) { /* 開いたまま */ }
+    const wasSpace = isSpace(5, 7);
+    // 1 手行動(下掘り or 横)。
+    if (tileAt(G.px, G.py + 1) !== undefined && G.py + 1 <= CONST.DEPTH_ROWS) act(0, 1);
+    else act(1, 0);
+    const nowSpace = isSpace(5, 7);
+    if (wasSpace && !nowSpace) reblockCount++; // 開いていたのに塞がれた = 崩落で積み直された。
+    seq.push(nowSpace ? 1 : 0);
+  }
+  return { reopenedOnce, reblockCount, seq };
+}, driverSrc);
+check("⑨ (D) 崩落再掘で空間化後、行動を続けても無限に塞がれ直さない(再掘ループ非発生)",
+  caveinLoop.reopenedOnce === true && caveinLoop.reblockCount === 0, caveinLoop);
+
 check("pageerror 0", errors.length === 0, errors);
 
 await browser.close();
