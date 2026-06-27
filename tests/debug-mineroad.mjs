@@ -1301,7 +1301,7 @@ let shortVpPass = false;
 }
 
 // ============================================================================
-// (F) 既存 6 作回帰(URL 不変・200・pageerror 0・コア表示)
+// (F) 既存 4 作回帰(URL 不変・200・pageerror 0・コア表示)
 // ============================================================================
 let regressionPass = true;
 {
@@ -1310,10 +1310,8 @@ let regressionPass = true;
     { url: "/tomoshibi/", name: "tomoshibi" },
     { url: "/nagori/", name: "nagori" },
     { url: "/akari/", name: "akari" },
-    { url: "/tomoru/", name: "tomoru" },
-    { url: "/saguri/", name: "saguri" },
   ];
-  console.log("== 既存 6 作 回帰 ==");
+  console.log("== 既存 4 作 回帰 ==");
   for (const g of games) {
     const { ctx, page, errors } = await openPage();
     const resp = await page.goto(`${BASE}${g.url}`, { waitUntil: "networkidle" });
@@ -1325,7 +1323,7 @@ let regressionPass = true;
     if (!ok) regressionPass = false;
     await ctx.close();
   }
-  out("PASS(既存 6 作 回帰)", regressionPass);
+  out("PASS(既存 4 作 回帰)", regressionPass);
 }
 
 // ============================================================================

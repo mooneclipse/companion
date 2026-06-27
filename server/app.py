@@ -72,28 +72,6 @@ STATIC = {
     "/akari/manifest.json": ("akari/web/manifest.json", "application/manifest+json"),
     "/akari/icons/icon-192.png": ("akari/web/icons/icon-192.png", "image/png"),
     "/akari/icons/icon-512.png": ("akari/web/icons/icon-512.png", "image/png"),
-    # 第 5 作「ともる」(/tomoru/ prefix)。リアルタイム採掘/精錬サバイバル(縦坑ダイブ)。
-    "/tomoru/": ("tomoru/web/index.html", "text/html; charset=utf-8"),
-    "/tomoru/index.html": ("tomoru/web/index.html", "text/html; charset=utf-8"),
-    "/tomoru/app.js": ("tomoru/web/app.js", "application/javascript; charset=utf-8"),
-    "/tomoru/tiles.js": ("tomoru/web/tiles.js", "application/javascript; charset=utf-8"),
-    "/tomoru/upgrades.js": ("tomoru/web/upgrades.js", "application/javascript; charset=utf-8"),
-    "/tomoru/fragments.js": ("tomoru/web/fragments.js", "application/javascript; charset=utf-8"),
-    "/tomoru/style.css": ("tomoru/web/style.css", "text/css; charset=utf-8"),
-    "/tomoru/manifest.json": ("tomoru/web/manifest.json", "application/manifest+json"),
-    "/tomoru/icons/icon-192.png": ("tomoru/web/icons/icon-192.png", "image/png"),
-    "/tomoru/icons/icon-512.png": ("tomoru/web/icons/icon-512.png", "image/png"),
-    # 第 6 作「さぐり」(/saguri/ prefix)。明るい断面の掘削救出デドゥース(ターン制)。
-    "/saguri/": ("saguri/web/index.html", "text/html; charset=utf-8"),
-    "/saguri/index.html": ("saguri/web/index.html", "text/html; charset=utf-8"),
-    "/saguri/app.js": ("saguri/web/app.js", "application/javascript; charset=utf-8"),
-    "/saguri/tiles.js": ("saguri/web/tiles.js", "application/javascript; charset=utf-8"),
-    "/saguri/upgrades.js": ("saguri/web/upgrades.js", "application/javascript; charset=utf-8"),
-    "/saguri/fragments.js": ("saguri/web/fragments.js", "application/javascript; charset=utf-8"),
-    "/saguri/style.css": ("saguri/web/style.css", "text/css; charset=utf-8"),
-    "/saguri/manifest.json": ("saguri/web/manifest.json", "application/manifest+json"),
-    "/saguri/icons/icon-192.png": ("saguri/web/icons/icon-192.png", "image/png"),
-    "/saguri/icons/icon-512.png": ("saguri/web/icons/icon-512.png", "image/png"),
     # 第 7 作「マインロード」(/mineroad/ prefix)。Mine Road 忠実リメイクの縦切り(v0.1.0)。
     # 自由掘削サイドビュー探索 × スタミナ→体力の二段ゲージ × 地上全回復の撤退 × 女の子救出。
     "/mineroad/": ("mineroad/web/index.html", "text/html; charset=utf-8"),
