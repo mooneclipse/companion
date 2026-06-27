@@ -1,5 +1,5 @@
-// マインロード v0.11.0 実機相当デバッグ + 既存 6 作回帰(gate A〜AA)。
-// v0.11.0 = 中核作り直し(実機 FB で中核破綻が判明)。①女の子追従を「自機足跡履歴(G.playerTrail)を
+// マインロード v0.12.0 実機相当デバッグ + 既存 6 作回帰(gate A〜AA)。
+// v0.12.0 = 中核作り直し(実機 FB で中核破綻が判明)。①女の子追従を「自機足跡履歴(G.playerTrail)を
 // 1手ずつ消化する snake 追従」へ引き直し(旧 bfsStep+独立重力の底張り付きを設計から消す)→ gate C/N/P を
 // 「状態注入/ワープ/縦坑先掘りなしの実プレイ経路(act でジグザグ掘削→足跡追従→地表救出)」へ作り直し。
 // ②仲間モデルを「救出済みストック(rescued)を地表で1人選び次の潜行へ同行(deployed=following)→帰還で別れて
@@ -33,6 +33,8 @@
 //     →連れ帰り→clear」を最前面ヒットテスト常時で通す = みちゆき "overlay 飛び越え PASS" 同型の
 //     穴を塞ぐ。clear overlay のはみ出しも検査)。
 //  H. fail(defeat) overlay のはみ出し 0 + retry 押下可(全画面はみ出し 0 を満たすため追加)。
+//  AB. v0.12.0 セーブ/永続: fail→retry で永続 state 復元 + ランごとリセット state は 0。
+//      surfaceReturn でセーブ/クリア後消去/決定論 3 回一致/非介入。
 //  I. determinism 静的検査: 配信中の app.js/tiles.js に Math.random/Date.now/performance.now の
 //     実呼び出しが無い(行コメント除去後に grep。コメント言及は許容)。
 import { chromium } from "playwright";
@@ -53,6 +55,7 @@ async function openPage(opts = {}) {
     hasTouch: true,
     serviceWorkers: "block",
   });
+  await ctx.addInitScript(() => { try { localStorage.removeItem("mineroad_save"); } catch (e) {} });
   if (opts.seedHowto) {
     await ctx.addInitScript(() => { try { localStorage.setItem("mineroad_seen_howto", "1"); } catch (e) {} });
   }
@@ -171,7 +174,7 @@ async function startToDive(page) {
   await page.waitForTimeout(700);
 }
 
-// v0.11.0: 実プレイ経路ドライバ(page 側 純 JS。act() だけで自機を動かす=状態注入/ワープ/縦坑先掘りなし)。
+// v0.12.0: 実プレイ経路ドライバ(page 側 純 JS。act() だけで自機を動かす=状態注入/ワープ/縦坑先掘りなし)。
 // 旧 gate C/N/P/S は g.state="following" を直接代入し自機を女の子の真上にワープして縦坑を先掘りする
 // 理想経路だけを通し、足跡追従(①)の破綻をすり抜けた。この driver は act() で実際にジグザグ掘削し、
 // 女の子を足跡追従で連れ帰る=作り直した追従を実経路で検証する。eval(MR_DRIVER) で各 evaluate に注入。
@@ -343,7 +346,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.11.0" &&
+    version === "v0.12.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.start === "もぐる" &&
@@ -369,7 +372,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.11.0)", corePass);
+  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.12.0)", corePass);
   await ctx.close();
 }
 
@@ -776,7 +779,7 @@ let mechPass = false;
   const rescue = await page.evaluate((driver) => {
     eval(driver);
     startDive();
-    // v0.11.0: 実プレイ経路で最寄り(11,6)を掘り当て→足跡追従→地表救出(ワープ/縦坑先掘りなし)。
+    // v0.12.0: 実プレイ経路で最寄り(11,6)を掘り当て→足跡追従→地表救出(ワープ/縦坑先掘りなし)。
     G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
     const target = girlPositions(G.seed).find((p) => p.col === 11 && p.row === 6) || girlPositions(G.seed)[0];
     mrDigTowards(target.col, target.row - 1);
@@ -805,6 +808,7 @@ let mechPass = false;
   // moveTo(...,true) 内の advanceGirl が同マスで bfsStep null → 誤って cueGirlBlocked 表示。
   // 同マス早期 return の修正後は cueGirlFound 系のまま、追従も継続することを assert する。
   const discoverHint = await page.evaluate(() => {
+    try { localStorage.removeItem("mineroad_save"); } catch (e) {}
     startDive();
     const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
     const gi = G.girls.indexOf(g);
@@ -945,7 +949,7 @@ let girlFollowPass = false;
     eval(driver);
     startDive();
     const seed = G.seed;
-    // v0.11.0 作り直し検証: 最深の 1 人(8,14)を「実プレイ経路」で掘り当て→足跡追従→地表救出。
+    // v0.12.0 作り直し検証: 最深の 1 人(8,14)を「実プレイ経路」で掘り当て→足跡追従→地表救出。
     // 旧テストは自機を女の子マスへワープし一直線の縦坑を先掘りして全ステップ上向きで追わせ、横ずれの
     // 重力落とし戻し(=底張り付き)を構造的にすり抜けた。ここは act() だけでジグザグ掘削+実 climb し、
     // 女の子 row が底へ落ち戻らず単調に減って地表へ着くことを実測する(底張り付きの否定を実経路で証明)。
@@ -1028,7 +1032,7 @@ let girlFollowPass = false;
 }
 
 // ============================================================================
-// (N2) v0.11.0 ②救出の「地表静止」バグ 実機相当再検証(前回 FAIL の再現確認)。
+// (N2) v0.12.0 ②救出の「地表静止」バグ 実機相当再検証(前回 FAIL の再現確認)。
 //   前回 FAIL = 女の子を地表(py=0)まで足跡追従させても、自機が地表で静止していると女の子が
 //   自機の 1 マス後ろ(row1)で止まり row0 に乗れず救出されない(仲間タブのストックが空のまま)。
 //   修正 = caughtUpAtSurface(g): 自機 py=0 + 追従中の女の子が足跡を消化しきって追いついた
@@ -1145,7 +1149,7 @@ let staticRescuePass = false;
   if (stockOverflow.overflowCount > 0) overflowFails.push(stockOverflow);
   await tapSelector(page, "#craft-close");
 
-  console.log("== (N2) v0.11.0 ②地表静止救出 実機相当(前回 FAIL 再現確認・画面座標タップ) ==");
+  console.log("== (N2) v0.12.0 ②地表静止救出 実機相当(前回 FAIL 再現確認・画面座標タップ) ==");
   out("pageerrors", errors);
   out("dive 遷移", diveScr);
   out("掘り進み到達(11,5)", afterDig);
@@ -1709,7 +1713,7 @@ let multiGirlPass = false;
     eval(driver);
     startDive();
     const hud0 = document.getElementById("rescue-val").textContent; // 0/5
-    // v0.11.0: 2 人を「実プレイ経路」で順に掘り当て→足跡追従→地表救出(ワープ/縦坑先掘りなし)。
+    // v0.12.0: 2 人を「実プレイ経路」で順に掘り当て→足跡追従→地表救出(ワープ/縦坑先掘りなし)。
     // power/モンスターのノイズを除去し、発見直後の following(掘り当て成立)と地表 climb 後の rescued を観測。
     function rescueOne(col, row) {
       G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
@@ -2123,7 +2127,7 @@ let monsterPass = false;
     startDive();
     const rescuedBefore = G.rescued;
     G.girls[0].state = "following"; G.girls[0].col = 5; G.girls[0].row = 5; G.girls[0].hp = 4;
-    // v0.11.0: 護衛中の検証なので追従(足跡消化)で女の子をその場から動かさないよう trailIdx を末尾へ
+    // v0.12.0: 護衛中の検証なので追従(足跡消化)で女の子をその場から動かさないよう trailIdx を末尾へ
     // 合わせる(advanceOneGirl が「もう自機の真後ろまで来ている」と判断して移動しない=GIRLATK の純検証)。
     G.girls[0].trailIdx = (G.playerTrail || []).length;
     G.px = 0; G.py = 1; // 自機は遠い(女の子優先標的)。
@@ -2153,7 +2157,7 @@ let monsterPass = false;
       G.px = oc; G.py = orow - 1; G.stamina = 100; G.hp = 30;
       moveTo(oc, orow, true); // origRow マスへ侵入 → tryRediscoverGirlAt が発火するはず。
       o.rediscovered = g.state === "following"; // hidden → following へ復帰した。
-      // v0.11.0: following 復帰後、実 climb(act で上へ)で地表へ連れ帰り rescued を increment できる。
+      // v0.12.0: following 復帰後、実 climb(act で上へ)で地表へ連れ帰り rescued を increment できる。
       // moveTo が足跡を記録し advanceGirl が女の子を足跡追従させる(縦坑先掘り済みの空洞を上る実経路)。
       G.monsters = [];
       mrClimbToSurface();
@@ -2630,7 +2634,7 @@ let growthPass = false;
     eval(driver);
     startDive();
     const info0 = G.info || 0;
-    // v0.11.0: 最寄り(11,6)を実プレイ経路(掘り当て→足跡追従→地表救出)で救出(gate C と同型)。
+    // v0.12.0: 最寄り(11,6)を実プレイ経路(掘り当て→足跡追従→地表救出)で救出(gate C と同型)。
     mrRescueGirlAt(11, 6);
     return { info0, info1: G.info, rescued: G.rescued, infoHud: (document.getElementById("info-val") || {}).textContent };
   }, MR_DRIVER);
@@ -2742,7 +2746,7 @@ let growthPass = false;
     eval(driver);
     function run() {
       startDive();
-      // v0.11.0: 1 人を実プレイ経路(掘り当て→足跡追従→地表救出)で救出して情報 +1。
+      // v0.12.0: 1 人を実プレイ経路(掘り当て→足跡追従→地表救出)で救出して情報 +1。
       mrRescueGirlAt(11, 6);
       G.bp = 0; G.exp = 0;
       G.per = { HP: 0, ST: 0, DIG: 0, ATTACK: 0, DEFENCE: 0, SWIM: 0 };
@@ -2813,7 +2817,7 @@ let growthPass = false;
 }
 
 // ============================================================================
-// (AA) v0.11.0 仲間同行(§2-4、作り直し): 救出済みストック(rescued)を地表で1人選んで次の潜行へ同行→
+// (AA) v0.12.0 仲間同行(§2-4、作り直し): 救出済みストック(rescued)を地表で1人選んで次の潜行へ同行→
 //      同行中の撃破で EXP 蓄積→地表帰還で別れてレベル反映→ストックへ戻る、を「画面座標ヒットテスト」+
 //      状態 API で実観測する(v0.10.0 の following 同行モデルを廃した新仕様)。
 //   AA1 工房第4タブ「仲間」存在 + 4タブ往復(クラフト/商人/育成 ⇄ 仲間。タブ切替で gate 退行しない)。
@@ -2838,7 +2842,7 @@ let growthPass = false;
 // ============================================================================
 let companionPass = false;
 {
-  console.log("== (AA) v0.11.0 仲間同行(作り直し): 救出ストック→地表で同行→潜行で EXP→帰還で別れて Lv→ストックへ ==");
+  console.log("== (AA) v0.12.0 仲間同行(作り直し): 救出ストック→地表で同行→潜行で EXP→帰還で別れて Lv→ストックへ ==");
 
   // 仲間タブを開く共通ヘルパー(作る → 工房 → 仲間タブ。最前面ヒットテスト経由)。
   async function openCompanionTab(page) {
@@ -2911,7 +2915,7 @@ let companionPass = false;
   await tapSelector(page, "#craft-close");
   await page.waitForTimeout(100);
 
-  // --- AA2 同行候補表示(v0.11.0 作り直し): 救出済みストック 0 人 → 案内行 / 1 人 → 1 行(画面操作で開く) ---
+  // --- AA2 同行候補表示(v0.12.0 作り直し): 救出済みストック 0 人 → 案内行 / 1 人 → 1 行(画面操作で開く) ---
   const candEmpty = await page.evaluate(() => {
     startDive(); // 救出ストックを作らない。
     openCraft(); setWorkshopTab("companion");
@@ -2953,7 +2957,7 @@ let companionPass = false;
     aa3tap2.tapped && aa3tap2.wasTopBtn && aa3tap2.label === "やめる" &&
     aa3afterUnset.companionNull === true && aa3afterUnset.btnLabel === "同行";
 
-  // --- AA4 同行中の撃破で cexp と自機 exp が並走 / 同行0人で撃破は cexp no-op(v0.11.0: 救出ストックを地表で同行) ---
+  // --- AA4 同行中の撃破で cexp と自機 exp が並走 / 同行0人で撃破は cexp no-op(v0.12.0: 救出ストックを地表で同行) ---
   const aa4 = await page.evaluate(() => {
     startDive();
     // 同行 0 人での撃破: 自機 exp のみ、companion=null。
@@ -2991,7 +2995,7 @@ let companionPass = false;
     aa5.atkWith === aa5.baseAtk + aa5.companionAtk;
 
   // --- AA6 地表帰還で別れてレベルアップ + companion 解除 + 端数繰越 + ストックへ戻る ---
-  //   v0.11.0: deployed companion の帰還=別れて Lv→rescued ストックへ。情報は二重計上しない(初回救出で計上済)。
+  //   v0.12.0: deployed companion の帰還=別れて Lv→rescued ストックへ。情報は二重計上しない(初回救出で計上済)。
   const aa6 = await page.evaluate(() => {
     startDive();
     const g = G.girls[0]; g.state = "rescued"; G.px = 7; G.py = 0; setCompanion(g);
@@ -3101,6 +3105,174 @@ let companionPass = false;
 }
 
 // ============================================================================
+// (AB) v0.12.0 セーブ/永続: fail→retry で永続 state 復元 + ランごとリセット state は 0。
+//      surfaceReturn でセーブされ localStorage に保存。
+// ============================================================================
+let savePass = true;
+{
+  console.log("== (AB) v0.12.0 セーブ/永続(fail→retry で永続 state 復元 / ランごとリセット) ==");
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToDive(page);
+
+  // 1人救出して PER を振り、地表帰還でセーブを走らせる。
+  const ab1 = await page.evaluate(() => {
+    // ダイヤツルハシを持たせる(掘削力ゲートのノイズ除去)。モンスターも除去(戦闘ノイズ除去)。
+    G.pick = "DIAMOND";
+    G.monsters = [];
+    G.spawned = new Set();
+    // 最寄りの女の子(11,6) へ掘り進む。
+    const target = G.girls.find(g => g.origRow === 6);
+    if (!target) return { err: "girl not found" };
+    // col 11 へ移動(地表を横歩き)。
+    while (G.px < 11) act(1, 0);
+    // row 6 まで掘り下げる。
+    while (G.py < 6) act(0, 1);
+    // 女の子を発見して追従開始。
+    const found = target.state === "following";
+    if (!found) return { err: "not following", state: target.state, px: G.px, py: G.py };
+    // 地表へ戻る。
+    while (G.py > 0) act(0, -1);
+    const rescued = G.rescued;
+    const info = G.info;
+    // 育成: 情報を BP に変換して PER_HP を上げる。
+    convertInfoToBp();
+    const bpAfter = G.bp;
+    if (bpAfter >= bpCostFor("HP", 0)) {
+      levelUpPer("HP");
+    }
+    const per = { ...G.per };
+    const pick = G.pick;
+    // surfaceReturn は act(0,-1) で py===0 に到達した時点で自動発火済み(セーブ=育成前の状態)。
+    // 育成後のセーブを反映するため、もう一度 surfaceReturn を呼ぶ(py===0 なので追従は no-op、全回復+セーブ)。
+    surfaceReturn();
+    return { rescued, info, per, pick, bpAfter, screen: G.screen };
+  });
+  out("AB1 救出+育成", ab1);
+  const ab1Ok = ab1.rescued >= 1 && ab1.per && ab1.per.HP >= 1 && ab1.pick === "DIAMOND";
+  if (!ab1Ok) savePass = false;
+  out("PASS(AB1 救出+育成で永続対象に値がある)", ab1Ok);
+
+  // surfaceReturn でセーブされたか localStorage を確認。
+  const saveData = await page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem("mineroad_save");
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  });
+  out("AB2 localStorage セーブデータ", saveData);
+  const ab2Ok = saveData && saveData.v === 1 && saveData.rescued >= 1 && saveData.per && saveData.per.HP >= 1 && saveData.pick === "DIAMOND";
+  if (!ab2Ok) savePass = false;
+  out("PASS(AB2 surfaceReturn で localStorage に永続 state 保存)", ab2Ok);
+
+  // 力尽きさせてから retry(startDive)で永続 state が復元されるか確認。
+  const ab3 = await page.evaluate(() => {
+    // 地中(py>0)でないと checkFail は発火しないので 1 マス掘り下げる。
+    act(0, 1);
+    G.hp = 0;
+    G.stamina = 0;
+    checkFail();
+    if (G.screen !== "fail") return { err: "not fail screen", screen: G.screen, py: G.py };
+    // retry = startDive。
+    startDive();
+    return {
+      rescued: G.rescued,
+      per: { ...G.per },
+      info: G.info,
+      bp: G.bp,
+      pick: G.pick,
+      // ランごとリセット state。
+      ore: { ...G.ore },
+      mushrooms: G.mushrooms,
+      potions: G.potions,
+      ladders: G.ladders,
+      antenna: G.antenna,
+      exp: G.exp,
+      kills: G.kills,
+      screen: G.screen,
+      // girls の rescued 状態。
+      girlStates: G.girls.map(g => g.state),
+    };
+  });
+  out("AB3 fail→retry 後の state", ab3);
+  const ab3Ok =
+    ab3.rescued >= 1 &&
+    ab3.per && ab3.per.HP >= 1 &&
+    ab3.pick === "DIAMOND" &&
+    ab3.ore && ab3.ore.COPPER === 0 && ab3.ore.IRON === 0 &&
+    ab3.mushrooms === 0 && ab3.potions === 0 && ab3.ladders === 0 &&
+    ab3.antenna === false && ab3.exp === 0 && ab3.kills === 0 &&
+    ab3.girlStates.filter(s => s === "rescued").length >= 1;
+  if (!ab3Ok) savePass = false;
+  out("PASS(AB3 fail→retry で永続 state 復元 + ランごと state リセット)", ab3Ok);
+
+  // クリア後にセーブデータが消去されるか確認。
+  const ab4 = await page.evaluate(() => {
+    showClear();
+    try {
+      return localStorage.getItem("mineroad_save");
+    } catch (e) { return "error"; }
+  });
+  out("AB4 クリア後セーブデータ", ab4);
+  const ab4Ok = ab4 === null;
+  if (!ab4Ok) savePass = false;
+  out("PASS(AB4 クリア後にセーブデータ消去)", ab4Ok);
+
+  // 決定論: 3 回連続で結果一致。
+  const detResults = [];
+  for (let trial = 0; trial < 3; trial++) {
+    await page.evaluate(() => {
+      try { localStorage.removeItem("mineroad_save"); } catch (e) {}
+    });
+    const r = await page.evaluate(() => {
+      startDive();
+      G.pick = "DIAMOND";
+      G.monsters = [];
+      G.spawned = new Set();
+      while (G.px < 11) act(1, 0);
+      while (G.py < 6) act(0, 1);
+      while (G.py > 0) act(0, -1);
+      convertInfoToBp();
+      if (G.bp >= bpCostFor("HP", 0)) levelUpPer("HP");
+      // surfaceReturn は act(0,-1) で py===0 到達時に自動発火済み。
+      try {
+        const raw = localStorage.getItem("mineroad_save");
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    });
+    detResults.push(JSON.stringify(r));
+  }
+  const detOk = detResults[0] === detResults[1] && detResults[1] === detResults[2] && detResults[0] !== "null";
+  if (!detOk) savePass = false;
+  out("PASS(AB5 決定論: セーブデータ 3 回連続一致)", detOk);
+
+  // 非介入: tileType/girlPositions/oreAt/monster/hazard/avalanche のワールドレイヤーに変更なし。
+  const nonIntervention = await page.evaluate(() => {
+    startDive();
+    const seed = G.seed;
+    const cols = 15, rows = 15;
+    for (let c = 0; c < cols; c++) {
+      for (let r = 1; r <= rows; r++) {
+        const t = tileType(c, r, seed);
+        if (t === undefined) return "tileType undefined at " + c + "," + r;
+      }
+    }
+    const gp = girlPositions(seed);
+    if (gp.length !== 5) return "girlPositions count " + gp.length;
+    return true;
+  });
+  if (nonIntervention !== true) savePass = false;
+  out("PASS(AB6 非介入: ワールドレイヤー不変)", nonIntervention === true);
+
+  const ab_pe = errors.filter(e => !e.includes("net::ERR_") && !e.includes("favicon"));
+  if (ab_pe.length > 0) savePass = false;
+  out("pageerror", ab_pe);
+  out("PASS(AB: セーブ/永続 全体)", savePass);
+  await ctx.close();
+}
+
+// ============================================================================
 // (I) determinism 静的検査(lead 必須): app.js/tiles.js に Math.random/Date.now/
 //     performance.now の実呼び出しが無い(コメント言及は可)。配信中のソースを取得して検査。
 // ============================================================================
@@ -3131,7 +3303,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.11.0 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.12.0 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -3147,7 +3319,8 @@ out("(W) v0.6.0 水/マグマ 浸水ハザード(消耗割増 + マグマ HP chi
 out("(X) v0.7.0 なだれ/落盤 崩落物理(落下で道塞ぎ + 埋没ダメージ)", caveinPass);
 out("(Y) v0.8.0 商人(キノコ採取/物々交換/商人タブ UI/非介入)", merchantPass);
 out("(Z) v0.9.0 育成(情報/EXP→BP→PER Lv.UP/実効値変化/育成タブ往復/決定論/非介入)", growthPass);
-out("(AA) v0.11.0 仲間同行(救出ストック→地表で同行→潜行で EXP→帰還で別れて Lv→ストックへ/タブ往復/画面操作/決定論/非介入)", companionPass);
+out("(AA) v0.12.0 仲間同行(救出ストック→地表で同行→潜行で EXP→帰還で別れて Lv→ストックへ/タブ往復/画面操作/決定論/非介入)", companionPass);
+out("(AB) v0.12.0 セーブ/永続(fail→retry 永続 state 復元/ランごとリセット/surfaceReturn 保存/クリア消去/決定論/非介入)", savePass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
@@ -3161,7 +3334,7 @@ if (overflowFails.length) {
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
   mechPass && girlFollowPass && staticRescuePass && clearGatePass && multiGirlPass &&
-  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && dpadPass && shortVpPass && regressionPass &&
+  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && savePass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);

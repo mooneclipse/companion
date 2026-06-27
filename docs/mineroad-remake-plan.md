@@ -19,6 +19,8 @@
 | v0.2.0–0.2.2 | Kenney CC0 フルリスキン + 実機 FB 修正（キャラ/BGM/SFX/追従バグ） | 本番反映済み |
 | v0.3.0 | 裏庭を本物のダンジョン化（女の子1→5人 + §7 クリア条件） | 本番反映済み・OWNER「現状維持で OK」 |
 | v0.4.0 | アイテム/クラフト系（原作 item.csv/craft.csv 忠実：ツルハシ power 掘削ゲート / 決定論 `oreAt` 鉱石 / クラフト6レシピ / 回復薬・アンテナ・はしご） | commit `0725be7`・タグ `mineroad-v0.4.0`・**本番反映は OWNER 承認待ち** |
+| v0.5.0–v0.11.0 | モンスター/ハザード/商人/育成/仲間同行/中核作り直し | 実装済み・本番反映 OWNER 承認待ち |
+| v0.12.0 | セーブ/永続（力尽き跨ぎで rescued/per/bp/info/pick/girls level を永続化） | implementer 実装・検証完了・**本番反映は OWNER 承認待ち** |
 
 - **撤退の緊張について**: v0.3.0 の fun-test で力尽き率 0/20。これは未解決の欠陥ではなく、**OWNER が「死の緊張は次のモンスター増分で出す」と明示済み**（STATUS 行88、「そのうち敵が出てくるから緊張が出てくる」）。資源数値の単独調整はしない（対症療法回避）。
 
@@ -38,6 +40,7 @@
 4. **仲間**（女の子1人を同行 → 一緒に戦い EXP 蓄積 → 地上で別れてレベルアップ §5）= 護衛の難度と育成の二面。
    - **【v0.10.0 で実装（2026-06-26）→ v0.11.0 で中核作り直し（2026-06-26）】**: v0.10.0 は「地中で護衛中(following)の子を同行指定」モデルだったが、実機 FB で**中核（女の子追従・救出・仲間同行）が破綻**と判明（追従が旧 bfsStep+独立重力でジグザグ掘削の横ずれ時に縦坑底へ落とし戻され底張り付き、崩落で塞がれたマス再掘が soft-lock で詰む）。**v0.11.0 で中核を作り直し**＝① 女の子追従を「自機足跡履歴(G.playerTrail)を1手ずつ消化する snake 追従」へ引き直し（重力/bfs の条件分岐を増やさず追従の責務を single source of truth へ集約＝2周目を打たず一段引いた）、② 仲間モデルを**ユーザー確定方針**「救出済みストック(rescued)を地表で1人選んで次の潜行へ同行(deployed=following)→一緒に戦い cexp 蓄積→地表帰還で別れて Lv→ストックへ戻る」（原作 §5「別れると再び情報としてストック→また連れられる」）へ作り直し、③ 崩落 soft-lock 修正（act 掘り抜きに G.fallen.delete を1点）。v0.10.0 の `G.companion`/`cexp`/`level`/`effCompanionAtk`/`killMonster` cexp 加算は流用・改修。撃破 EXP は companion.cexp と自機プール `G.exp`(v0.9.0 BP 路)に並走（二面両立）、companion レベルで `effCompanionAtk` が自機 ATK を援護。UI＝工房第4タブ「仲間」（候補=救出ストック、地表でのみ編成）。**検証を実プレイ経路へ全面作り直し**（状態注入と自機ワープ＋縦坑先掘りを廃し act() の実掘削+足跡追従+実 climb で assert、①の底張り付き否定と③の再掘可を実経路で実証）。tileType/girlPositions/oreAt/monster/hazard/avalanche のワールドレイヤーには非介入、ラン内ストック（永続は §2-5 番）。implementer 自己動作確認 selfcheck-companion 12/12・debug gate A〜AA(27) ALL PASS・selfcheck-grow 13/13、いずれも3回連続 ALL PASS。playtester 実機ヒットテスト + code-reviewer は orc 後段、本番反映 OWNER 承認待ち。詳細は STATUS「v0.11.0」エントリ。
 5. **セーブ/永続**（力尽き跨ぎで救出済み女の子・育成を永続化 = save モデル）= v0.3.0 でスコープ境界として次送りした宿題（STATUS 行78）。
+   - **【v0.12.0 で実装（2026-06-28）】**: localStorage JSON 方式（既存 getInt/setInt と同じ try/catch パターン）。永続対象: rescued/per/bp/info/pick/girls level・cexp。保存＝地上帰還(surfaceReturn)成功時、ロード＝startDive 冒頭、クリアで消去。ランごとリセット state（dug/seen/monsters/ore/mushrooms/potions/ladders/antenna/exp/kills/companion 等）は永続しない。selfcheck-save 21/21 ALL PASS（3回連続）・debug gate A〜AB(28) ALL PASS・selfcheck-grow 13/13・selfcheck-companion 16/16 ALL PASS。本番反映は OWNER 承認待ち。詳細は STATUS「v0.12.0」エントリ。
 6. **残りダンジョン**（防空壕〜モンスターの巣窟の8つ、`dungeon.csv` の深度難度カーブ §6）+ **クリア条件→次ダンジョン解放の連結**（§7/§11）。
 7. **アイテム拡充**（原作45種への拡張、§8）+ **アンテナ保険**（電波範囲内は力尽きてもアイテムをロストしない §8）。
 

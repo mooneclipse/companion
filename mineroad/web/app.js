@@ -57,7 +57,9 @@
 // へ作り直し(旧 following 同行モデルを廃止)。③崩落で塞がれた(G.fallen)マスを再掘で空間へ戻す
 // soft-lock 修正(act の掘り抜きで G.fallen.delete)。tileType/girlPositions/oreAt/monster/hazard/avalanche の
 // ワールドレイヤーには引き続き非介入。
-const VERSION = "v0.11.0";
+// v0.12.0: セーブ/永続(力尽き跨ぎで rescued/per/bp/info/pick/girls level を永続化)。保存=地上帰還時、
+// ロード=startDive 冒頭、クリアで消去。localStorage JSON 方式(既存 getInt/setInt と同じ try/catch)。
+const VERSION = "v0.12.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -454,6 +456,61 @@ function markHowtoSeen() {
   }
 }
 
+// ---- v0.12.0 セーブ/永続(力尽き跨ぎ) -----------------------------------
+const SAVE_KEY = "mineroad_save";
+function savePersistent() {
+  try {
+    const girls = (G.girls || [])
+      .map((g, i) => (g.state === "rescued" ? { i, level: g.level || 0, cexp: g.cexp || 0 } : null))
+      .filter(Boolean);
+    const data = {
+      v: 1,
+      rescued: G.rescued || 0,
+      per: G.per ? { ...G.per } : { HP: 0, ST: 0, DIG: 0, ATTACK: 0, DEFENCE: 0, SWIM: 0 },
+      info: G.info || 0,
+      bp: G.bp || 0,
+      pick: G.pick || CONST.INIT_PICK,
+      girls: girls,
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch (e) {
+    /* localStorage 不可環境でもゲームは成立(保存のみ諦める) */
+  }
+}
+function loadPersistent() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1) return;
+    G.rescued = data.rescued || 0;
+    G.per = data.per || { HP: 0, ST: 0, DIG: 0, ATTACK: 0, DEFENCE: 0, SWIM: 0 };
+    G.info = data.info || 0;
+    G.bp = data.bp || 0;
+    if (data.pick && PICK[data.pick]) G.pick = data.pick;
+    if (data.girls && G.girls) {
+      for (const sg of data.girls) {
+        if (sg.i >= 0 && sg.i < G.girls.length) {
+          G.girls[sg.i].state = "rescued";
+          G.girls[sg.i].level = sg.level || 0;
+          G.girls[sg.i].cexp = sg.cexp || 0;
+        }
+      }
+    }
+    G.stamina = effStaminaMax();
+    G.hp = effHpMax();
+  } catch (e) {
+    /* 破損/不正データでも進行可能(永続なし扱い) */
+  }
+}
+function clearPersistent() {
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch (e) {
+    /* noop */
+  }
+}
+
 // ---- ダイブ開始 --------------------------------------------------------
 function startDive() {
   G.seed = CONST.BASE_SEED; // 縦切りは固定(決定論再挑戦)。
@@ -508,6 +565,7 @@ function startDive() {
   G.playerTrail = [[G.px, G.py]]; // v0.11.0: 自機足跡履歴(追従の正本)。地表スタート位置を起点に。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
   spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
+  loadPersistent(); // v0.12.0: 永続 state を復元(rescued/per/bp/info/pick/girls level)。
   G.screen = "dive";
   hideOverlay();
   hudEl.hidden = false;
@@ -1563,6 +1621,7 @@ function surfaceReturn() {
   G.stamina = effStaminaMax();
   G.hp = effHpMax();
   G.enteredHpZone = false;
+  savePersistent(); // v0.12.0: 地上帰還時に永続 state を保存(力尽きたら前回の地上帰還時点に戻る)。
   showHint(surfaceProgressText(), false);
   playSfx("heal");
   renderHud();
@@ -1676,6 +1735,7 @@ function showClear() {
   G.screen = "clear";
   hudEl.hidden = true;
   playSfx("clear");
+  clearPersistent(); // v0.12.0: クリアでセーブデータ消去(周回開始)。
   resetOverlayParts();
   ovTitleEl.textContent = TEXT.clearTitle;
   ovTitleEl.hidden = false;

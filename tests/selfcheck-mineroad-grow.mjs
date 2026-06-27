@@ -47,7 +47,7 @@ await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle"
 
 const version = await page.evaluate(() => window.G ? document.getElementById("ov-version")?.textContent : null);
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.11.0", ver === "v0.11.0", { ver }); // v0.11.0 中核作り直しで bump。育成機能の回帰検証は不変。
+check("VERSION = v0.12.0", ver === "v0.12.0", { ver }); // v0.12.0 中核作り直しで bump。育成機能の回帰検証は不変。
 
 // ダイブ開始。
 await page.evaluate(() => startDive());
