@@ -42,7 +42,7 @@ class ClaudeOptions:
     session_id: str | None = None       # for first prompt of a channel
     resume_session: str | None = None   # for subsequent prompts
     output_format: str = "json"
-    permission_mode: str = "default"
+    permission_mode: str = "auto"
     model: str = "claude-sonnet-4-6"    # UQ-10: bot fixed to Sonnet 4.6
     timeout_s: float = 300.0
     # ペルソナ等の常駐指示を default system prompt に追記する (--append-system-prompt)。
