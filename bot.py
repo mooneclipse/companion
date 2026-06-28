@@ -872,7 +872,7 @@ def _save_reminders(reminders: list[dict]) -> None:
     REMINDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = REMINDERS_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(reminders, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.rename(REMINDERS_PATH)
+    os.replace(tmp, REMINDERS_PATH)
 
 
 def _add_reminder(chat_id: int, thread_id: int | None, fire_at: float, message: str) -> dict:
@@ -2407,11 +2407,11 @@ async def slash_snooze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def _remind_fire(context: ContextTypes.DEFAULT_TYPE) -> None:
     data = context.job.data
-    _remove_reminder(data["reminder_id"])
     await send_text(
         context.bot, data["chat_id"], data["thread_id"],
         f"[リマインド] {data['message']}",
     )
+    _remove_reminder(data["reminder_id"])
     logger.info("remind fired id=%s msg=%r", data["reminder_id"], data["message"])
 
 
