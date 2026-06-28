@@ -1230,11 +1230,16 @@ async def _fetch_official_usage() -> str | None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+    except Exception:
+        return None
+    try:
         stdout_b, _ = await asyncio.wait_for(
             proc.communicate(input=b"/usage"),
             timeout=15,
         )
-    except (asyncio.TimeoutError, Exception):
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
         return None
     if proc.returncode != 0:
         return None

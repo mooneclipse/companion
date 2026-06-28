@@ -2712,12 +2712,27 @@ class FetchOfficialUsageTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
-    async def test_timeout_returns_none(self) -> None:
+    async def test_timeout_kills_process_and_returns_none(self) -> None:
+        from unittest import mock
+
+        fake_proc = mock.AsyncMock()
+        fake_proc.kill = mock.Mock()
+        fake_proc.wait = mock.AsyncMock()
+
+        with mock.patch("asyncio.create_subprocess_exec", return_value=fake_proc), \
+             mock.patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            result = await self.bot._fetch_official_usage()
+
+        self.assertIsNone(result)
+        fake_proc.kill.assert_called_once()
+        fake_proc.wait.assert_awaited_once()
+
+    async def test_spawn_failure_returns_none(self) -> None:
         from unittest import mock
 
         with mock.patch(
             "asyncio.create_subprocess_exec",
-            side_effect=asyncio.TimeoutError,
+            side_effect=FileNotFoundError("claude not found"),
         ):
             result = await self.bot._fetch_official_usage()
 
