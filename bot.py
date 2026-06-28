@@ -270,6 +270,9 @@ PROACTIVE_MARKER = "[[proactive-v1]]"
 # quota.py の ledger.jsonl とは別ファイル (こちらは budget 集計に混ぜない記録専用)。
 PROACTIVE_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "proactive_ledger.jsonl"
 
+REMINDERS_PATH = Path(__file__).resolve().parent / "sessions" / "reminders.json"
+MAX_REMIND_SECONDS = 7 * 86400
+
 # snooze 状態 = maintenance/.state/proactive (script と共有、key=value 行形式)。
 # bot 側 /snooze で snooze_until=<epoch> を書き、script 側で snooze 中 skip を判定。
 PROACTIVE_STATE_FILE = Path.home() / "companion" / "maintenance" / ".state" / "proactive"
@@ -836,6 +839,116 @@ def cmd_snooze(args: list[str], now_epoch: float | None = None) -> str:
         f"[snooze] 自発発話を {days} 日間止めます "
         f"(再開: {until_jst.isoformat(timespec='minutes')})。"
     )
+
+
+# ---------------------------------------------------------------------------
+# /remind
+# ---------------------------------------------------------------------------
+
+_REMIND_DURATION_RE = re.compile(
+    r"^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$"
+)
+
+
+def parse_remind_duration(s: str) -> int | None:
+    m = _REMIND_DURATION_RE.match(s)
+    if not m or not any(m.groups()):
+        return None
+    d, h, mn, sc = (int(v) if v else 0 for v in m.groups())
+    total = d * 86400 + h * 3600 + mn * 60 + sc
+    if total <= 0 or total > MAX_REMIND_SECONDS:
+        return None
+    return total
+
+
+def _load_reminders() -> list[dict]:
+    try:
+        return json.loads(REMINDERS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_reminders(reminders: list[dict]) -> None:
+    REMINDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = REMINDERS_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(reminders, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.rename(REMINDERS_PATH)
+
+
+def _add_reminder(chat_id: int, thread_id: int | None, fire_at: float, message: str) -> dict:
+    entry = {
+        "id": uuid.uuid4().hex[:8],
+        "chat_id": chat_id,
+        "thread_id": thread_id,
+        "fire_at": fire_at,
+        "message": message,
+        "created_at": datetime.now(quota.JST).isoformat(timespec="seconds"),
+    }
+    reminders = _load_reminders()
+    reminders.append(entry)
+    _save_reminders(reminders)
+    return entry
+
+
+def _remove_reminder(reminder_id: str) -> bool:
+    reminders = _load_reminders()
+    before = len(reminders)
+    reminders = [r for r in reminders if r["id"] != reminder_id]
+    if len(reminders) == before:
+        return False
+    _save_reminders(reminders)
+    return True
+
+
+def cmd_remind_usage() -> str:
+    return (
+        "[remind] 使い方:\n"
+        "  /remind 30m 洗濯物  — 30分後にリマインド\n"
+        "  /remind 1h30m 会議  — 1時間30分後\n"
+        "  /remind list        — 一覧\n"
+        "  /remind cancel <番号> — キャンセル\n"
+        "対応単位: d(日) h(時) m(分) s(秒)、最大7日"
+    )
+
+
+def cmd_remind_list() -> str:
+    reminders = _load_reminders()
+    now = time.time()
+    active = [r for r in reminders if r["fire_at"] > now]
+    if not active:
+        return "[remind] アクティブなリマインダはありません。"
+    active.sort(key=lambda r: r["fire_at"])
+    lines = ["[remind] アクティブなリマインダ:"]
+    for i, r in enumerate(active, 1):
+        remaining = int(r["fire_at"] - now)
+        if remaining >= 86400:
+            t = f"{remaining // 86400}d{(remaining % 86400) // 3600}h"
+        elif remaining >= 3600:
+            t = f"{remaining // 3600}h{(remaining % 3600) // 60}m"
+        elif remaining >= 60:
+            t = f"{remaining // 60}m{remaining % 60}s"
+        else:
+            t = f"{remaining}s"
+        lines.append(f"  {i}. {r['message']}  (残り {t})")
+    return "\n".join(lines)
+
+
+def cmd_remind_cancel(index_str: str) -> str:
+    try:
+        idx = int(index_str)
+    except ValueError:
+        return "[remind] 番号を指定してください。"
+    reminders = _load_reminders()
+    now = time.time()
+    active = sorted(
+        [r for r in reminders if r["fire_at"] > now],
+        key=lambda r: r["fire_at"],
+    )
+    if idx < 1 or idx > len(active):
+        return f"[remind] 番号 {idx} は範囲外です (1〜{len(active)})。"
+    target = active[idx - 1]
+    _remove_reminder(target["id"])
+    return f"[remind] キャンセルしました: {target['message']}"
 
 
 def _append_proactive_ledger(entry: dict) -> None:
@@ -2292,6 +2405,77 @@ async def slash_snooze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+async def _remind_fire(context: ContextTypes.DEFAULT_TYPE) -> None:
+    data = context.job.data
+    _remove_reminder(data["reminder_id"])
+    await send_text(
+        context.bot, data["chat_id"], data["thread_id"],
+        f"[リマインド] {data['message']}",
+    )
+    logger.info("remind fired id=%s msg=%r", data["reminder_id"], data["message"])
+
+
+async def slash_remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    args = context.args or []
+
+    if not args:
+        output = cmd_remind_usage()
+    elif args[0] == "list":
+        output = cmd_remind_list()
+    elif args[0] == "cancel":
+        if len(args) < 2:
+            output = "[remind] キャンセルする番号を指定してください。例: /remind cancel 1"
+        else:
+            output = cmd_remind_cancel(args[1])
+            if "キャンセルしました" in output:
+                active_ids = {r["id"] for r in _load_reminders()}
+                for job in context.application.job_queue.jobs():
+                    if (job.name and job.name.startswith("remind_")
+                            and isinstance(job.data, dict)
+                            and job.data.get("reminder_id") not in active_ids):
+                        job.schedule_removal()
+    else:
+        delay = parse_remind_duration(args[0])
+        if delay is None:
+            output = (
+                f"[remind] 時間の指定が不正です: {args[0]}\n"
+                "例: 30m, 1h, 2h30m, 1d, 90s (最大7日)"
+            )
+        elif len(args) < 2:
+            output = "[remind] メッセージを指定してください。例: /remind 30m 洗濯物"
+        else:
+            message = " ".join(args[1:])
+            fire_at = time.time() + delay
+            entry = _add_reminder(chat_id, thread_id, fire_at, message)
+            context.application.job_queue.run_once(
+                _remind_fire,
+                when=delay,
+                data={
+                    "chat_id": chat_id,
+                    "thread_id": thread_id,
+                    "message": message,
+                    "reminder_id": entry["id"],
+                },
+                name=f"remind_{entry['id']}",
+            )
+            fire_jst = datetime.fromtimestamp(fire_at, quota.JST)
+            output = (
+                f"[remind] セットしました: {message}\n"
+                f"発火: {fire_jst.strftime('%m/%d %H:%M')}"
+            )
+
+    logger.info("cmd=/remind args=%r send len=%d", args, len(output))
+    await send_text(
+        context.bot, chat_id, thread_id, output,
+        reply_to=msg.message_id if msg else None,
+    )
+
+
 async def slash_vault_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
@@ -2749,6 +2933,7 @@ async def post_init(application: Application) -> None:
         BotCommand("tweet", "ツイート/ポストを vault に保存"),
         BotCommand("vault_push", "vault の commit 済変更を GitHub に push"),
         BotCommand("snooze", "自発発話を指定日数止める (例: /snooze 3、解除は /snooze 0)"),
+        BotCommand("remind", "リマインダ設定 (例: /remind 30m 洗濯物)"),
     ]
     scope = BotCommandScopeChat(chat_id=NOTIFY_CHAT_ID)
     try:
@@ -2788,6 +2973,29 @@ async def post_init(application: Application) -> None:
         first=STALL_CHECK_INTERVAL_S,
         name="stall_check",
     )
+
+    # /remind 再スケジュール
+    now = time.time()
+    reminders = _load_reminders()
+    surviving = [r for r in reminders if r["fire_at"] > now]
+    if len(surviving) != len(reminders):
+        _save_reminders(surviving)
+    for r in surviving:
+        delay = r["fire_at"] - now
+        application.job_queue.run_once(
+            _remind_fire,
+            when=delay,
+            data={
+                "chat_id": r["chat_id"],
+                "thread_id": r.get("thread_id"),
+                "message": r["message"],
+                "reminder_id": r["id"],
+            },
+            name=f"remind_{r['id']}",
+        )
+    if surviving:
+        logger.info("reminders restored: %d active, %d expired",
+                    len(surviving), len(reminders) - len(surviving))
 
 
 async def post_shutdown(application: Application) -> None:
@@ -2846,6 +3054,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("tweet", slash_tweet, filters=message_filter))
     app.add_handler(CommandHandler("vault_push", slash_vault_push, filters=message_filter))
     app.add_handler(CommandHandler("snooze", slash_snooze, filters=message_filter))
+    app.add_handler(CommandHandler("remind", slash_remind, filters=message_filter))
     # slash command 以外の text message → on_message
     app.add_handler(
         MessageHandler(

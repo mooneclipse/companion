@@ -2785,5 +2785,35 @@ class CanonicalTweetUrlTest(unittest.TestCase):
         )
 
 
+class TestParseRemindDuration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_minutes(self):
+        assert self.bot.parse_remind_duration("30m") == 1800
+
+    def test_hours(self):
+        assert self.bot.parse_remind_duration("1h") == 3600
+
+    def test_combined(self):
+        assert self.bot.parse_remind_duration("2h30m") == 9000
+
+    def test_days(self):
+        assert self.bot.parse_remind_duration("1d") == 86400
+
+    def test_seconds(self):
+        assert self.bot.parse_remind_duration("90s") == 90
+
+    def test_invalid(self):
+        assert self.bot.parse_remind_duration("abc") is None
+
+    def test_zero(self):
+        assert self.bot.parse_remind_duration("0m") is None
+
+    def test_over_7d(self):
+        assert self.bot.parse_remind_duration("8d") is None
+
+
 if __name__ == "__main__":
     unittest.main()
