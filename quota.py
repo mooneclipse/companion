@@ -75,6 +75,16 @@ def read_ledger(path: Path = DEFAULT_LEDGER_PATH) -> list[dict]:
     return out
 
 
+def last_usage_for_topic(
+    topic_key: str, path: Path = DEFAULT_LEDGER_PATH
+) -> dict | None:
+    """Return the ``usage`` dict of the most recent ledger entry for *topic_key*, or None."""
+    for entry in reversed(read_ledger(path)):
+        if entry.get("topic_key") == topic_key:
+            return entry.get("usage")
+    return None
+
+
 def _entries_since(entries: Iterable[dict], threshold: datetime) -> list[dict]:
     out = []
     for e in entries:

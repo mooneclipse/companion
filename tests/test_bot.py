@@ -2646,6 +2646,54 @@ class BuildPhotoPromptTest(unittest.TestCase):
         self.assertIn("/tmp/y.jpg", prompt)
 
 
+class CmdStatusTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _call(self, usage_return):
+        from unittest import mock
+        from datetime import datetime as dt
+        now = dt(2026, 6, 28, 12, 0, 0, tzinfo=self.bot.quota.JST)
+        summary = mock.MagicMock()
+        summary.last_call_at = now
+        with mock.patch.object(self.bot.sessions, "load", return_value=None), \
+             mock.patch.object(self.bot.budget_guard, "summary", return_value=summary), \
+             mock.patch.object(self.bot.voice_status, "format_voice_summary", return_value="voice: ok"), \
+             mock.patch.object(self.bot.quota, "last_usage_for_topic", return_value=usage_return), \
+             mock.patch.object(self.bot, "BOT_START_AT", now):
+            return self.bot.cmd_status(-100, 3, socket_ok=True)
+
+    def test_reset_hint_shown_when_cache_read_exceeds_150k(self) -> None:
+        result = self._call({"cache_read_input_tokens": 200_000})
+        self.assertIn("cache_read 200,000 tokens", result)
+        self.assertIn("/reset", result)
+
+    def test_no_reset_hint_when_cache_read_below_150k(self) -> None:
+        result = self._call({"cache_read_input_tokens": 45_000})
+        self.assertIn("cache_read 45,000 tokens", result)
+        self.assertNotIn("/reset", result)
+
+    def test_no_context_line_when_usage_none(self) -> None:
+        result = self._call(None)
+        self.assertNotIn("session context", result)
+
+
+class VaultHintGuardTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_vault_hint_omitted_when_not_string(self) -> None:
+        for bad in (123, True, 6.5, ["2026-06-01_x"], {"a": 1}):
+            prompt = self.bot.build_proactive_prompt(
+                {"seed_kind": "recent_conversation+vault", "vault_hint": bad}
+            )
+            self.assertNotIn("ノート名", prompt, msg=f"vault_hint={bad!r}")
+
+
 class CanonicalTweetUrlTest(unittest.TestCase):
 
     @classmethod

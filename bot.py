@@ -727,7 +727,7 @@ def build_proactive_prompt(
             )
         parts.append(msg)
     vault_hint = payload.get("vault_hint")
-    if vault_hint:
+    if isinstance(vault_hint, str) and vault_hint:
         parts.append(
             f"今日ユーザーが触れていた話題のヒント (ノート名): {vault_hint}。"
             "無理に全部に触れず、自然な一言だけにする。"
@@ -1870,6 +1870,14 @@ def cmd_status(
         )
     else:
         lines.append("current session: なし (次の prompt で新規発番)")
+    # session context (Step 3-3: セッション肥大可視化)
+    tk = sessions.topic_key(chat_id, thread_id)
+    usage = quota.last_usage_for_topic(tk)
+    if usage is not None:
+        cache_read = int(usage.get("cache_read_input_tokens") or 0)
+        lines.append(f"session context: cache_read {cache_read:,} tokens")
+        if cache_read > 150_000:
+            lines.append("\U0001f4a1 セッションが肥大化しています — /reset で単価が下がります")
     # voice 集計 (voice-design v2.0 §1.5 (4)、失敗しても /status 本体は出す)
     try:
         lines.append(voice_status.format_voice_summary(now))
