@@ -562,6 +562,7 @@ function clearPersistent() {
 // ---- ダイブ開始 --------------------------------------------------------
 function startDive() {
   applyDungeonConst(G.dungeonId);
+  resize();
   G.seed = CONST.BASE_SEED + G.dungeonId;
   G.px = Math.floor(CONST.GRID_COLS / 2);
   G.py = 0;

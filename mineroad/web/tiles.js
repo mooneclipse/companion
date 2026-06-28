@@ -461,16 +461,6 @@ const HAZARD = {
   MAGMA: 2, // マグマ。水より危険=激消耗 + 滞在で体力を直接 chip(MAGMA_HP_CHIP)。深層帯(row>=9)から。
 };
 
-// 深度ゲート(原作 行104 の難度カーブに忠実。v0.4.0 oreAt の深度4等分帯=浅1-4/中5-8/深9-12/最深
-// 13-15 に揃える)。水は中層帯(row>=5)から、マグマは深層帯(row>=9)から。深いほど密度↑・マグマ比率↑。
-const HAZARD_WATER_MIN_ROW = 5; // 水はこの row 以上に出る(浅層 row1-4 は安全)。
-const HAZARD_MAGMA_MIN_ROW = 9; // マグマはこの row 以上に出る(深層帯から、特に危険)。
-// 浸水存在率(NONE 空間がハザードで満たされる割合)。深いほど上げる(難度カーブ)。
-const HAZARD_RATE_MID = 0.18; // 中層(5-8): 水のみ、控えめ。
-const HAZARD_RATE_DEEP = 0.3; // 深層(9-15): 水+マグマ合算でこの割合(深いほど密度↑)。
-// 深層でハザードが在るとき、マグマである確率(残りは水)。深いほどマグマ寄りに。
-const HAZARD_MAGMA_FRAC = 0.45; // 深層帯のハザードのうちこの割合がマグマ(残りは水)。
-
 // ある (col,row) の浸水ハザード種を返す(決定論・乱数禁止)。浸水しないなら HAZARD.NONE。
 // tileType=NONE のマス("空間")にのみ意味を持つ(呼び出し側 hazardOf が isSpace で律速)。
 // GIRL マス・地表・範囲外は NONE。tileType/oreAt/monster と別位相のハッシュ(+1597/+2389/+7919)。
@@ -501,10 +491,6 @@ function hazardAt(col, row, seed) {
 // 深度ゲート: 裏庭 ID0 は AVALANCHE=0(チュートリアルは安全)だが、v0.6.0 の水/マグマ同様
 // 「深いほど増える」忠実意図に沿った自前カーブで翻案。中層帯(row>=5)から出し、深いほど密度↑
 // (浅層 row1-4 は崩落なし=安全帯を保つ)。
-const AVALANCHE_MIN_ROW = 5; // 不安定土はこの row 以上の SOIL に出る(浅層 row1-4 は安定)。
-const AVALANCHE_RATE_MID = 0.16; // 中層(5-8)の SOIL が不安定土である割合。
-const AVALANCHE_RATE_DEEP = 0.28; // 深層(9-15)の SOIL が不安定土である割合(深いほど密度↑)。
-
 // ある (col,row) の SOIL が「不安定土(なだれ土)」か(決定論・乱数禁止)。SOIL でないマスは false
 // (呼び出し側で tileType==SOIL を保証 or ここで判定)。GIRL マス・地表・範囲外・浅層は false。
 // 別位相ハッシュ(+2671/+3331/+9173)。oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・

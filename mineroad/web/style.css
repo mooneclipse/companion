@@ -751,6 +751,7 @@ body {
   border: 1px solid rgba(230, 178, 90, 0.4);
   border-radius: 0.6rem;
   padding: 0.65rem 1rem;
+  margin-bottom: 0.4rem;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;

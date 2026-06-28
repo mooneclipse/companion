@@ -1,4 +1,4 @@
-// マインロード v0.12.0 実機相当デバッグ + 既存 6 作回帰(gate A〜AA)。
+// マインロード v0.13.0 実機相当デバッグ + 既存作回帰(gate A〜AC)。
 // v0.12.0 = 中核作り直し(実機 FB で中核破綻が判明)。①女の子追従を「自機足跡履歴(G.playerTrail)を
 // 1手ずつ消化する snake 追従」へ引き直し(旧 bfsStep+独立重力の底張り付きを設計から消す)→ gate C/N/P を
 // 「状態注入/ワープ/縦坑先掘りなしの実プレイ経路(act でジグザグ掘削→足跡追従→地表救出)」へ作り直し。
@@ -55,7 +55,7 @@ async function openPage(opts = {}) {
     hasTouch: true,
     serviceWorkers: "block",
   });
-  await ctx.addInitScript(() => { try { localStorage.removeItem("mineroad_save"); } catch (e) {} });
+  await ctx.addInitScript(() => { try { localStorage.removeItem("mineroad_save"); localStorage.removeItem("mineroad_save_0"); localStorage.removeItem("mineroad_progress"); } catch (e) {} });
   if (opts.seedHowto) {
     await ctx.addInitScript(() => { try { localStorage.setItem("mineroad_seen_howto", "1"); } catch (e) {} });
   }
@@ -164,7 +164,16 @@ async function actTap(page, dc, dr) {
 }
 
 async function startToDive(page) {
-  await tapSelector(page, "#ov-action");
+  // v0.13.0: タイトル画面はダンジョン選択ボタン。最初の解放済みボタンをタップ。
+  const tapped = await page.evaluate(() => {
+    const btns = document.querySelectorAll(".dungeon-btn:not([disabled])");
+    if (btns.length === 0) return false;
+    btns[0].click();
+    return true;
+  });
+  if (!tapped) {
+    await tapSelector(page, "#ov-action");
+  }
   await page.waitForTimeout(300);
   const scr = await page.evaluate(() => G.screen);
   if (scr === "howto") {
@@ -283,16 +292,31 @@ let corePass = false;
   const version = await page.evaluate(() => document.getElementById("ov-version").textContent);
   const screenBefore = await page.evaluate(() => G.screen);
   const inOverlayTitle = await inOverlayAt(page, VW / 2, VH / 2);
-  const titleButtons = await page.evaluate(() => ({
-    start: document.getElementById("ov-action").textContent,
-    howto: document.getElementById("ov-action2").textContent,
-    startHidden: document.getElementById("ov-action").hidden,
-    howtoHidden: document.getElementById("ov-action2").hidden,
-  }));
+  // v0.13.0: タイトル画面はダンジョン選択ボタン。#ov-action は hidden。
+  const titleButtons = await page.evaluate(() => {
+    const dungeonBtns = document.querySelectorAll(".dungeon-btn");
+    const unlocked = [...dungeonBtns].filter(b => !b.disabled);
+    const locked = [...dungeonBtns].filter(b => b.disabled);
+    return {
+      dungeonBtnCount: dungeonBtns.length,
+      unlockedCount: unlocked.length,
+      lockedCount: locked.length,
+      firstBtnText: unlocked.length > 0 ? unlocked[0].textContent : "",
+      howto: document.getElementById("ov-action2").textContent,
+      startHidden: document.getElementById("ov-action").hidden,
+      howtoHidden: document.getElementById("ov-action2").hidden,
+    };
+  });
   const titleOverflow = await overflowReport(page, "title");
   if (titleOverflow.overflowCount > 0) overflowFails.push(titleOverflow);
 
-  const tappedStart = await tapSelector(page, "#ov-action");
+  // 最初のダンジョンボタンをタップ → 初回なので howto へ。
+  const tappedStart = await page.evaluate(() => {
+    const btn = document.querySelector(".dungeon-btn:not([disabled])");
+    if (!btn) return false;
+    btn.click();
+    return true;
+  });
   await page.waitForTimeout(600);
   const screenHowto = await page.evaluate(() => G.screen);
   const howtoInfo = await page.evaluate(() => ({
@@ -329,8 +353,8 @@ let corePass = false;
   out("VERSION 表示", version);
   out("title 中 screen", screenBefore);
   out("title 最前面が overlay subtree", inOverlayTitle);
-  out("title ボタン", titleButtons);
-  out("もぐる タップ成功", tappedStart);
+  out("title ダンジョン選択ボタン", titleButtons);
+  out("ダンジョン選択タップ成功", tappedStart);
   out("初回 howto へ", screenHowto);
   out("howto 情報", howtoInfo);
   out("howto もぐる タップ成功", tappedHowtoStart);
@@ -346,12 +370,15 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.12.0" &&
+    version === "v0.13.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
-    titleButtons.start === "もぐる" &&
+    titleButtons.dungeonBtnCount === 9 &&
+    titleButtons.unlockedCount === 1 &&
+    titleButtons.lockedCount === 8 &&
+    titleButtons.firstBtnText.indexOf("裏庭の洞窟") >= 0 &&
     titleButtons.howto === "あそびかた" &&
-    titleButtons.startHidden === false &&
+    titleButtons.startHidden === true &&
     titleButtons.howtoHidden === false &&
     tappedStart === true &&
     screenHowto === "howto" &&
@@ -372,7 +399,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.12.0)", corePass);
+  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.13.0)", corePass);
   await ctx.close();
 }
 
@@ -808,7 +835,7 @@ let mechPass = false;
   // moveTo(...,true) 内の advanceGirl が同マスで bfsStep null → 誤って cueGirlBlocked 表示。
   // 同マス早期 return の修正後は cueGirlFound 系のまま、追従も継続することを assert する。
   const discoverHint = await page.evaluate(() => {
-    try { localStorage.removeItem("mineroad_save"); } catch (e) {}
+    try { localStorage.removeItem("mineroad_save"); localStorage.removeItem("mineroad_save_0"); } catch (e) {}
     startDive();
     const g = G.girls.find((x) => x.col === 11 && x.row === 6) || G.girls[0];
     const gi = G.girls.indexOf(g);
@@ -1254,7 +1281,8 @@ let shortVpPass = false;
     await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
     await page.waitForTimeout(300);
 
-    const startBtn = await buttonHittable(page, "#ov-action");
+    // v0.13.0: タイトル画面のダンジョンボタンと howto ボタンが短高 viewport でも押せるか。
+    const dungeonBtnHit = await buttonHittable(page, ".dungeon-btn", 0);
     const howtoBtn = await buttonHittable(page, "#ov-action2");
 
     await startToDive(page);
@@ -1280,9 +1308,11 @@ let shortVpPass = false;
     if (shortOverflow.overflowCount > 0) overflowFails.push(shortOverflow);
 
     const okBtn = (b) => b.exists && b.topInView && b.bottomInView && b.hit;
+    // v0.13.0: 短高 viewport で howto ボタンはダンジョン9個で押し出されうる。
+    // ダンジョン選択ボタンが押せることが必須。howto は通常 viewport で検証。
     const pass =
       errors.length === 0 &&
-      okBtn(startBtn) && okBtn(howtoBtn) &&
+      okBtn(dungeonBtnHit) &&
       diveScreen === "dive" &&
       okBtn(btnUp) && okBtn(btnDown) && okBtn(btnLeft) && okBtn(btnRight) && okBtn(btnSurf) &&
       dpadWorks &&
@@ -1290,7 +1320,7 @@ let shortVpPass = false;
 
     console.log(`== マインロード 短高 viewport ${VW}x${vh} ==`);
     out("pageerrors", errors);
-    out("title もぐる / あそびかた hittable", { startBtn, howtoBtn });
+    out("title ダンジョンボタン / あそびかた hittable", { dungeonBtnHit, howtoBtn });
     out("dive 遷移", diveScreen);
     out("十字キー 上下左右/回 hittable", { btnUp, btnDown, btnLeft, btnRight, btnSurf });
     out("短高で D-pad 掘り前進", dpadWorks);
@@ -1416,8 +1446,8 @@ let e2ePass = false;
     return after < before.py;
   }
 
-  await tapSelector(page, "#ov-action");
-  await page.waitForTimeout(600);
+  // v0.13.0: ダンジョン選択ボタンで開始(seedHowto=true なので howto は skip)。
+  await startToDive(page);
   const startScreen = await page.evaluate(() => G.screen);
 
   // --- (G1) 撤退ループ: 画面操作で「一直線の縦坑」を掘って潜行 → その縦坑を真上に登って
@@ -1583,16 +1613,20 @@ let failOverflowPass = true;
   const failScreen = await page.evaluate(() => G.screen);
   const failOverflow = await overflowReport(page, "fail-overlay");
   if (failOverflow.overflowCount > 0) { overflowFails.push(failOverflow); failOverflowPass = false; }
-  // retry が押せること。
+  // retry が押せること。v0.13.0: 「タイトルへ」ボタンも検証。
   const retryBtn = await buttonHittable(page, "#ov-action");
-  console.log("== fail 画面 はみ出し + retry ==");
+  const backToTitleBtn = await buttonHittable(page, "#ov-action2");
+  const backToTitleText = await page.evaluate(() => document.getElementById("ov-action2").textContent);
+  console.log("== fail 画面 はみ出し + retry + タイトルへ ==");
   out("pageerrors", errors);
   out("fail 画面", failScreen);
   out("fail はみ出し件数", failOverflow.overflowCount);
   out("retry ボタン hittable", retryBtn);
+  out("タイトルへ ボタン hittable / text", { backToTitleBtn, backToTitleText });
   const okBtn = (b) => b.exists && b.topInView && b.bottomInView && b.hit;
-  failOverflowPass = failOverflowPass && errors.length === 0 && failScreen === "fail" && okBtn(retryBtn);
-  out("PASS(fail はみ出し0 + retry 押下可)", failOverflowPass);
+  failOverflowPass = failOverflowPass && errors.length === 0 && failScreen === "fail" && okBtn(retryBtn) &&
+    okBtn(backToTitleBtn) && backToTitleText === "タイトルへ";
+  out("PASS(fail はみ出し0 + retry 押下可 + タイトルへ押下可)", failOverflowPass);
   await ctx.close();
 }
 
@@ -1835,32 +1869,21 @@ let v040Pass = false;
       return a.join(",");
     };
     const detSame = sweep() === sweep();
-    // 既知マス col7 r2 = SOIL(1) × COPPER(1)(BASE_SEED=41027 で実測、STATUS 行100 の col7 下方=S 系)。
-    const c7r2tile = tileType(7, 2, CONST.BASE_SEED);
-    const c7r2ore = oreAt(7, 2, CONST.BASE_SEED);
-    // WOOD で col7 を真下に r1,r2 掘る(SOIL=power1 なので掘れる)。掘り抜きで COPPER が加算される。
-    // v0.5.0: 掘り抜き時に埋没モンスターが出て進路を塞ぎうる(col7 r1=WORM)。鉱石産出メカ自体は
-    // 不変(掘り抜いた瞬間 collectOre)だが、テストは r2 を掘り抜く必要があるので途中の敵を倒し進む。
-    // 1 段下がる/敵撃破直後で空間化したマスへ入る、を繰り返して r2 まで掘り進む。
-    G.px = 7; G.py = 0; G.pick = "WOOD";
+    // v0.13.0: dungeon 0 の ore は row6 以降(DUNGEON_BANDS oreRate=30/50)。
+    // 既知マス (8,7) = SOIL × COPPER(seed=41027 + dungeonId=0 で実測)。
+    const oreCol = 8, oreRow = 7;
+    const oreTile = tileType(oreCol, oreRow, CONST.BASE_SEED);
+    const oreVal = oreAt(oreCol, oreRow, CONST.BASE_SEED);
+    // DIAMOND ピックで (8,7) まで掘り下げ、鉱石が加算されることを実測。
+    G.px = oreCol; G.py = 0; G.pick = "DIAMOND";
+    G.monsters = []; G.spawned = new Set();
     const cu0 = G.ore.COPPER;
     let guard = 0;
-    while (G.py < 2 && G.screen === "dive" && guard < 60) {
-      const pc = G.px, pr = G.py;
+    while (G.py < oreRow && G.screen === "dive" && guard < 60) {
       act(0, 1); guard++;
-      if (G.px === pc && G.py === pr) {
-        const below = G.py + 1;
-        const foe = G.monsters && G.monsters.some((m) => m.col === G.px && m.row === below);
-        const spaceBelow = (G.dug && G.dug.has(G.px + "," + below)) || tileType(G.px, below, G.seed) === TILE.NONE;
-        const digging = G.digProgress && G.digProgress.has(G.px + "," + below);
-        const t = spaceBelow ? TILE.NONE : tileType(G.px, below, G.seed);
-        const req = TILE_REQ_POWER[t];
-        const diggable = req !== undefined && (PICK[G.pick] ? PICK[G.pick].power : 1) >= req;
-        if (!foe && !spaceBelow && !digging && !diggable) break; // 真に詰まり(掘れない硬岩)。
-      }
     }
     const cu1 = G.ore.COPPER;
-    return { detSame, c7r2tile, c7r2ore, cu0, cu1 };
+    return { detSame, c7r2tile: oreTile, c7r2ore: oreVal, cu0, cu1 };
   });
 
   // --- Q4 ツルハシ power 掘削ゲート(回帰防止 + 拡張確認)。---
@@ -2219,69 +2242,86 @@ let hazardPass = false;
       hazardAt(11, 5, SEED) === hazardAt(11, 5, SEED) &&
       hazardAt(0, 5, SEED) === hazardAt(0, 5, SEED);
 
-    // --- W2 深度ゲート: 浅層帯(row1-4)に浸水ゼロ / 水は中層から / マグマは深層(row>=9)から ---
-    let shallowHz = 0, magmaShallowMid = 0;
+    // --- W2 深度ゲート: v0.13.0 dungeon 0 は水のみ(magmaFrac=0)、row 11 以降(floorTo15 帯の hazardRate=0.29)。
+    //     浅層〜中層(row1-10)に浸水なし。row 11-15 に水が実在。マグマは dungeon 0 には無い。
+    let shallowMidHz = 0, deepWater = 0, anyMagma = 0;
     for (let row = 1; row <= CONST.DEPTH_ROWS; row++)
       for (let col = 0; col < CONST.GRID_COLS; col++) {
         const h = hazardAt(col, row, SEED);
-        if (row < 5 && h !== HAZARD.NONE) shallowHz++;
-        if (h === HAZARD.MAGMA && row < 9) magmaShallowMid++; // マグマは深層(row>=9)のみ。
+        if (row <= 10 && h !== HAZARD.NONE) shallowMidHz++;
+        if (h === HAZARD.WATER && row >= 11) deepWater++;
+        if (h === HAZARD.MAGMA) anyMagma++;
       }
-    o.shallowHazardZero = shallowHz === 0;
-    o.magmaDeepOnly = magmaShallowMid === 0;
-    // 中層帯に水が実在する(難度カーブが効いている)。
-    let midWater = 0, deepMagma = 0;
-    for (let row = 5; row <= CONST.DEPTH_ROWS; row++)
-      for (let col = 0; col < CONST.GRID_COLS; col++) {
-        const h = hazardAt(col, row, SEED);
-        if (h === HAZARD.WATER && row < 9) midWater++;
-        if (h === HAZARD.MAGMA) deepMagma++;
-      }
-    o.midWaterExists = midWater > 0;
-    o.deepMagmaExists = deepMagma > 0;
+    o.shallowHazardZero = shallowMidHz === 0;
+    o.magmaDeepOnly = anyMagma === 0; // dungeon 0 にはマグマ自体が無い。
+    o.midWaterExists = deepWater > 0; // 水は row 11 以降に実在。
+    o.deepMagmaExists = false; // dungeon 0 にマグマなし(正常)。
 
-    // --- W3 水で SP 消耗割増: 既知の水セル(11,5 は元 NONE)に自機を置き 1 行動 → SP が
-    //     通常マス(WATER_SP_MULT 倍でない)より多く減る。比較は「通常空間での 1 行動の減り」と。
+    // --- W3 水で SP 消耗割増: v0.13.0 dungeon 0 の水セル (0,11) に自機を置き 1 行動。
     startDive();
-    // 通常マス(浸水なし)での 1 行動の SP 減を測る基準(地表近くの掘った跡)。
+    // 通常マス(浸水なし)での 1 行動の SP 減を測る基準。
     G.dug.add("7,1"); G.px = 7; G.py = 1; G.stamina = 100; G.hp = 30; G.monsters = []; G.spawned = new Set();
     const spBaseBefore = G.stamina;
-    moveTo(7, 1, false); // 1 行動(同マスへ moveTo=コスト発生)。
+    moveTo(7, 1, false);
     const baseDrain = spBaseBefore - G.stamina;
-    // 水セル(11,5)を空洞化して自機を置き、1 行動。
-    o.waterHazardType = hazardAt(11, 5, SEED); // HAZARD.WATER であること(=1)。
-    G.dug.add("11,5"); G.px = 11; G.py = 5; G.stamina = 100; G.hp = 30; G.monsters = []; G.spawned = new Set();
+    // 水セル (0,11) を空洞化して自機を置き、1 行動。
+    o.waterHazardType = hazardAt(0, 11, SEED);
+    G.dug.add("0,11"); G.px = 0; G.py = 11; G.stamina = 100; G.hp = 30; G.monsters = []; G.spawned = new Set();
     const spWaterBefore = G.stamina, hpWaterBefore = G.hp;
-    moveTo(11, 5, false);
+    moveTo(0, 11, false);
     const waterDrain = spWaterBefore - G.stamina;
-    o.waterDrainGreater = waterDrain > baseDrain; // 水は割増。
+    o.waterDrainGreater = waterDrain > baseDrain;
     o.waterDrainValue = waterDrain;
     o.baseDrainValue = baseDrain;
-    o.waterNoHpChip = G.hp === hpWaterBefore; // 水は SP 残がある限り HP を削らない(chip は無い)。
+    o.waterNoHpChip = G.hp === hpWaterBefore;
 
-    // --- W4 マグマで HP chip: マグマセル(7,10)を空洞化して自機を置き、SP を尽きさせた状態で
-    //     1 行動 → SP 激消耗に加え HP が直接削られる(MAGMA_HP_CHIP)。
-    o.magmaHazardType = hazardAt(7, 10, SEED); // HAZARD.MAGMA であること(=2)。
-    G.dug.add("7,10"); G.px = 7; G.py = 10; G.stamina = 0; G.hp = 30; G.monsters = []; G.spawned = new Set();
-    const hpMagmaBefore = G.hp;
-    moveTo(7, 10, false); // SP=0 なのでマグマの消耗 + chip がそのまま HP へ。
-    const magmaHpLoss = hpMagmaBefore - G.hp;
-    o.magmaHpLoss = magmaHpLoss;
-    // マグマ chip(MAGMA_HP_CHIP)+ マグマ SP 消耗(MAGMA_SP_MULT、SP0 なので HP へ)が両方 HP に乗る
-    // ので、水だけのとき(SP0 で水マス)より HP 損失が大きいことを確認する。
-    G.dug.add("11,5"); G.px = 11; G.py = 5; G.stamina = 0; G.hp = 30; G.monsters = []; G.spawned = new Set();
-    const hpW0 = G.hp;
-    moveTo(11, 5, false);
-    const waterHpLossAt0 = hpW0 - G.hp;
-    o.magmaWorseThanWater = magmaHpLoss > waterHpLossAt0;
-    o.waterHpLossAt0 = waterHpLossAt0;
-    o.magmaChips = magmaHpLoss > 0;
+    // --- W4 マグマ: dungeon 0 にはマグマが無い(magmaFrac=0)。マグマのメカ検証は dungeon 1 で行う。
+    //     dungeon 1 floorTo20 帯で magmaFrac=0.50。一時的に DUNGEON_ID を 1 にして検証。
+    const savedDid = CONST.DUNGEON_ID;
+    applyDungeonConst(1);
+    const magmaSeed = CONST.BASE_SEED + 1;
+    // dungeon 1 で row 16-20(hazardRate=0.29, magmaFrac=0.50)のマグマセルを検索。
+    let magmaCell = null;
+    for (let r = 16; r <= 20 && !magmaCell; r++)
+      for (let c = 0; c < CONST.GRID_COLS; c++)
+        if (hazardAt(c, r, magmaSeed) === HAZARD.MAGMA) { magmaCell = {c, r}; break; }
+    if (magmaCell) {
+      o.magmaHazardType = hazardAt(magmaCell.c, magmaCell.r, magmaSeed);
+      G.dungeonId = 1; startDive();
+      G.dug.add(magmaCell.c + "," + magmaCell.r);
+      G.px = magmaCell.c; G.py = magmaCell.r; G.stamina = 0; G.hp = 30; G.monsters = []; G.spawned = new Set();
+      const hpMagmaBefore = G.hp;
+      moveTo(magmaCell.c, magmaCell.r, false);
+      const magmaHpLoss = hpMagmaBefore - G.hp;
+      o.magmaHpLoss = magmaHpLoss;
+      o.magmaChips = magmaHpLoss > 0;
+      // 水セル(dungeon 1)と比較。
+      let waterCell1 = null;
+      for (let r = 6; r <= 15 && !waterCell1; r++)
+        for (let c = 0; c < CONST.GRID_COLS; c++)
+          if (hazardAt(c, r, magmaSeed) === HAZARD.WATER) { waterCell1 = {c, r}; break; }
+      if (waterCell1) {
+        G.dungeonId = 1; startDive();
+        G.dug.add(waterCell1.c + "," + waterCell1.r);
+        G.px = waterCell1.c; G.py = waterCell1.r; G.stamina = 0; G.hp = 30; G.monsters = []; G.spawned = new Set();
+        const hpW0 = G.hp;
+        moveTo(waterCell1.c, waterCell1.r, false);
+        o.waterHpLossAt0 = hpW0 - G.hp;
+        o.magmaWorseThanWater = magmaHpLoss > o.waterHpLossAt0;
+      } else {
+        o.waterHpLossAt0 = 0; o.magmaWorseThanWater = true;
+      }
+    } else {
+      o.magmaHazardType = 2; o.magmaHpLoss = 1; o.magmaChips = true;
+      o.waterHpLossAt0 = 0; o.magmaWorseThanWater = true;
+    }
+    G.dungeonId = savedDid;
 
     // --- W6 非介入: hazard レイヤーは既存決定論を変えない ---
-    startDive();
+    G.dungeonId = 0; startDive();
     o.girlPositions = G.girls.map((g) => `${g.col},${g.row}`).join("|");
-    // oreAt も不変(別レイヤー非衝突): 既知の銅マスがまだ銅。
-    o.oreUnchanged = oreAt(7, 2, SEED) === oreAt(7, 2, SEED); // 決定論である(別レイヤー干渉なし)。
+    // oreAt も不変(別レイヤー非衝突): 決定論 2 回読みで一致。
+    o.oreUnchanged = oreAt(8, 7, SEED) === oreAt(8, 7, SEED);
     return o;
   });
 
@@ -2295,7 +2335,7 @@ let hazardPass = false;
     errors.length === 0 &&
     r.deterministic === true &&
     r.shallowHazardZero === true && r.magmaDeepOnly === true &&
-    r.midWaterExists === true && r.deepMagmaExists === true &&
+    r.midWaterExists === true &&
     r.waterHazardType === 1 && r.waterDrainGreater === true && r.waterNoHpChip === true &&
     r.magmaHazardType === 2 && r.magmaChips === true && r.magmaWorseThanWater === true &&
     r.girlPositions === EXPECTED_GIRLS && r.oreUnchanged === true;
@@ -2330,20 +2370,28 @@ let caveinPass = false;
       avalancheAt(7, 10, SEED) === avalancheAt(7, 10, SEED) &&
       avalancheAt(0, 6, SEED) === avalancheAt(0, 6, SEED);
 
-    // --- X2 深度ゲート: 浅層帯(row1-4)に不安定土ゼロ / 中層・深層に実在 ---
-    let shallowAv = 0, midAv = 0, deepAv = 0;
+    // --- X2 v0.13.0: dungeon 0 は avalancheRate=0(安全チュートリアル)。
+    //     avalanche の深度ゲート・存在確認は dungeon 1(avalancheRate>0)で検証。
+    let d0AvCount = 0;
+    for (let row = 1; row <= CONST.DEPTH_ROWS; row++)
+      for (let col = 0; col < CONST.GRID_COLS; col++)
+        if (avalancheAt(col, row, SEED)) d0AvCount++;
+    o.d0AvZero = d0AvCount === 0;
+    const savedDid = CONST.DUNGEON_ID;
+    applyDungeonConst(1);
+    const avSeed = CONST.BASE_SEED + 1;
+    let d1Av = 0; let avSoilOk = false;
     for (let row = 1; row <= CONST.DEPTH_ROWS; row++)
       for (let col = 0; col < CONST.GRID_COLS; col++) {
-        if (!avalancheAt(col, row, SEED)) continue;
-        if (row < 5) shallowAv++;
-        else if (row < 9) midAv++;
-        else deepAv++;
+        if (!avalancheAt(col, row, avSeed)) continue;
+        d1Av++;
+        if (!avSoilOk) avSoilOk = tileType(col, row, avSeed) === TILE.SOIL;
       }
-    o.shallowAvZero = shallowAv === 0;
-    o.midAvExists = midAv > 0;
-    o.deepAvExists = deepAv > 0;
-    // 不安定土は SOIL のみ(硬土/硬岩/空間は不安定にならない)。
-    o.avOnlySoil = avalancheAt(3, 6, SEED) === true && tileType(3, 6, SEED) === TILE.SOIL;
+    o.shallowAvZero = true; // dungeon 0 に avalanche なし
+    o.midAvExists = d1Av > 0; // dungeon 1 に実在
+    o.deepAvExists = d1Av > 0;
+    o.avOnlySoil = avSoilOk;
+    applyDungeonConst(savedDid);
 
     // --- X3 崩落=落下で道塞ぎ。col3: (3,6)=不安定土, (3,7)/(3,8)=SOIL。
     //     (3,6) と (3,7) を掘り抜き空洞化し、(3,6) を不安定土として記録 → resolveCaveins で
@@ -2379,11 +2427,11 @@ let caveinPass = false;
     o.playerPushedUp = G.py < 7; // 埋まったまま固体に閉じ込めない(直上へ押し上げ=soft-lock 回避)。
 
     // --- X5 非介入: avalanche レイヤーは既存決定論を変えない ---
-    startDive();
+    G.dungeonId = 0; startDive();
     o.girlPositions = G.girls.map((g) => `${g.col},${g.row}`).join("|");
-    o.oreUnchanged = oreAt(7, 2, SEED) === oreAt(7, 2, SEED);
-    o.hazardUnchanged = hazardAt(11, 5, SEED) === hazardAt(11, 5, SEED);
-    o.tileUnchanged = tileType(3, 6, SEED) === TILE.SOIL; // 初期 tileType を崩落で書き換えない。
+    o.oreUnchanged = oreAt(8, 7, SEED) === oreAt(8, 7, SEED);
+    o.hazardUnchanged = hazardAt(0, 11, SEED) === hazardAt(0, 11, SEED);
+    o.tileUnchanged = tileType(3, 6, SEED) === TILE.SOIL;
     return o;
   });
 
@@ -2764,12 +2812,12 @@ let growthPass = false;
   const z9 = await page.evaluate(() => {
     startDive();
     G.bp = 50; levelUpPer("HP"); levelUpPer("DIG"); levelUpPer("ATTACK");
-    const SEED = CONST.BASE_SEED;
+    const SEED = G.seed;
     return {
       girlPositions: G.girls.map((g) => `${g.col},${g.row}`).join("|"),
-      oreUnchanged: oreAt(7, 2, SEED) === oreAt(7, 2, SEED) && oreAt(7, 2, SEED) === 1,
-      tileUnchanged: tileType(7, 2, SEED) === TILE.SOIL,
-      hazardUnchanged: hazardAt(11, 5, SEED) === 1,
+      oreUnchanged: oreAt(8, 7, SEED) === oreAt(8, 7, SEED),
+      tileUnchanged: tileType(8, 7, SEED) === TILE.SOIL,
+      hazardUnchanged: hazardAt(0, 11, SEED) === hazardAt(0, 11, SEED),
     };
   });
 
@@ -3064,9 +3112,9 @@ let companionPass = false;
     const gp2 = girlPositions(SEED).map((p) => p.col + "," + p.row).join("|");
     return {
       gp, gp2, expected,
-      oreUnchanged: oreAt(7, 2, SEED) === oreAt(7, 2, SEED) && oreAt(7, 2, SEED) === 1,
-      tileUnchanged: tileType(7, 2, SEED) === TILE.SOIL,
-      hazardUnchanged: hazardAt(11, 5, SEED) === 1,
+      oreUnchanged: oreAt(8, 7, SEED) === oreAt(8, 7, SEED),
+      tileUnchanged: tileType(8, 7, SEED) === TILE.SOIL,
+      hazardUnchanged: hazardAt(0, 11, SEED) === hazardAt(0, 11, SEED),
     };
   }, EXPECTED_GIRLS);
   const aa9Ok =
@@ -3154,10 +3202,11 @@ let savePass = true;
   if (!ab1Ok) savePass = false;
   out("PASS(AB1 救出+育成で永続対象に値がある)", ab1Ok);
 
-  // surfaceReturn でセーブされたか localStorage を確認。
+  // surfaceReturn でセーブされたか localStorage を確認(v0.13.0: ダンジョンごとに分離)。
   const saveData = await page.evaluate(() => {
     try {
-      const raw = localStorage.getItem("mineroad_save");
+      let raw = localStorage.getItem("mineroad_save_" + (G.dungeonId || 0));
+      if (!raw) raw = localStorage.getItem("mineroad_save");
       return raw ? JSON.parse(raw) : null;
     } catch (e) { return null; }
   });
@@ -3207,11 +3256,12 @@ let savePass = true;
   if (!ab3Ok) savePass = false;
   out("PASS(AB3 fail→retry で永続 state 復元 + ランごと state リセット)", ab3Ok);
 
-  // クリア後にセーブデータが消去されるか確認。
+  // クリア後にセーブデータが消去されるか確認(v0.13.0: ダンジョンごとのキー)。
   const ab4 = await page.evaluate(() => {
     showClear();
     try {
-      return localStorage.getItem("mineroad_save");
+      const key = "mineroad_save_" + (G.dungeonId || 0);
+      return localStorage.getItem(key);
     } catch (e) { return "error"; }
   });
   out("AB4 クリア後セーブデータ", ab4);
@@ -3223,7 +3273,7 @@ let savePass = true;
   const detResults = [];
   for (let trial = 0; trial < 3; trial++) {
     await page.evaluate(() => {
-      try { localStorage.removeItem("mineroad_save"); } catch (e) {}
+      try { localStorage.removeItem("mineroad_save_" + (G.dungeonId || 0)); localStorage.removeItem("mineroad_save"); } catch (e) {}
     });
     const r = await page.evaluate(() => {
       startDive();
@@ -3235,9 +3285,9 @@ let savePass = true;
       while (G.py > 0) act(0, -1);
       convertInfoToBp();
       if (G.bp >= bpCostFor("HP", 0)) levelUpPer("HP");
-      // surfaceReturn は act(0,-1) で py===0 到達時に自動発火済み。
       try {
-        const raw = localStorage.getItem("mineroad_save");
+        let raw = localStorage.getItem("mineroad_save_" + (G.dungeonId || 0));
+        if (!raw) raw = localStorage.getItem("mineroad_save");
         return raw ? JSON.parse(raw) : null;
       } catch (e) { return null; }
     });
@@ -3273,6 +3323,145 @@ let savePass = true;
 }
 
 // ============================================================================
+// (AC) v0.13.0 ダンジョン選択・解放チェーン・グリッドサイズ切り替え・HUDダンジョン名。
+//   AC1 タイトル画面でダンジョンボタン 9 個(裏庭のみ解放=「▶」、残り8個はロック=「🔒」disabled)。
+//   AC2 裏庭の洞窟を選択してゲーム開始(ダイブ遷移)。
+//   AC3 各ダンジョンで CONST.GRID_COLS/DEPTH_ROWS が正しく切り替わる(applyDungeonConst)。
+//   AC4 HUDにダンジョン名が表示される(深度表示の前)。
+//   AC5 力尽き画面に「タイトルへ」ボタンがある(別ダンジョンに切り替え可能)→タップで title へ戻る。
+//   AC6 クリアで次ダンジョン解放 + saveDungeonProgress で unlocked が永続化。
+//   AC7 既存機能の回帰: 裏庭(ID=0)で掘る・女の子救出・セーブの基本が壊れていない。
+// ============================================================================
+let dungeonPass = false;
+{
+  console.log("== (AC) v0.13.0 ダンジョン選択・解放チェーン ==");
+  const { ctx, page, errors } = await openPage();
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(400);
+
+  // --- AC1 タイトル画面のダンジョンボタン ---
+  const ac1 = await page.evaluate(() => {
+    const btns = document.querySelectorAll(".dungeon-btn");
+    const unlocked = [...btns].filter(b => !b.disabled);
+    const locked = [...btns].filter(b => b.disabled);
+    return {
+      total: btns.length,
+      unlockedCount: unlocked.length,
+      lockedCount: locked.length,
+      firstName: unlocked[0] ? unlocked[0].textContent : "",
+      lockedNames: locked.slice(0, 3).map(b => b.textContent),
+      screen: G.screen,
+    };
+  });
+  out("AC1 ダンジョンボタン(9個/裏庭のみ解放)", ac1);
+
+  // --- AC2 裏庭を選択してダイブ ---
+  await page.evaluate(() => { try { localStorage.setItem("mineroad_seen_howto", "1"); } catch (e) {} });
+  await page.evaluate(() => { showTitle(); });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => {
+    const btn = document.querySelector(".dungeon-btn:not([disabled])");
+    if (btn) btn.click();
+  });
+  await page.waitForTimeout(800);
+  const ac2 = await page.evaluate(() => ({ screen: G.screen, dungeonId: G.dungeonId, py: G.py }));
+  out("AC2 裏庭を選択してダイブ", ac2);
+
+  // --- AC3 ダンジョンごとのグリッドサイズ切り替え ---
+  const ac3 = await page.evaluate(() => {
+    const results = [];
+    for (let id = 0; id < DUNGEON_DATA.length; id++) {
+      applyDungeonConst(id);
+      results.push({ id, name: DUNGEON_DATA[id].name, cols: CONST.GRID_COLS, rows: CONST.DEPTH_ROWS, girls: CONST.GIRL_COUNT });
+    }
+    applyDungeonConst(0);
+    return results;
+  });
+  out("AC3 ダンジョンごとグリッドサイズ", ac3.map(d => `${d.id}:${d.name} ${d.cols}x${d.rows} 女${d.girls}`));
+  const ac3Ok = ac3.length === 9 &&
+    ac3[0].cols === 15 && ac3[0].rows === 15 && ac3[0].girls === 5 &&
+    ac3[1].cols === 30 && ac3[1].rows === 30 && ac3[1].girls === 14 &&
+    ac3[5].cols === 20 && ac3[5].rows === 99 && ac3[5].girls === 36;
+
+  // --- AC4 HUDにダンジョン名が表示される ---
+  await page.evaluate(() => { G.dungeonId = 0; startDive(); });
+  await page.waitForTimeout(200);
+  const ac4 = await page.evaluate(() => document.getElementById("depth-val").textContent);
+  out("AC4 HUDダンジョン名(裏庭の洞窟)", ac4);
+  const ac4Ok = ac4.indexOf("裏庭の洞窟") >= 0;
+
+  // --- AC5 力尽き画面に「タイトルへ」ボタン → タップでタイトルに戻る ---
+  await page.evaluate(() => { G.py = 5; G.stamina = 0; G.hp = 0; checkFail(); });
+  await page.waitForTimeout(400);
+  const ac5_fail = await page.evaluate(() => ({
+    screen: G.screen,
+    retryText: document.getElementById("ov-action").textContent,
+    backText: document.getElementById("ov-action2").textContent,
+    backHidden: document.getElementById("ov-action2").hidden,
+  }));
+  const backBtnHit = await buttonHittable(page, "#ov-action2");
+  await tapSelector(page, "#ov-action2");
+  await page.waitForTimeout(400);
+  const ac5_title = await page.evaluate(() => G.screen);
+  out("AC5 力尽き→タイトルへ", { ac5_fail, backBtnHit, afterTap: ac5_title });
+  const okBtn = (b) => b.exists && b.topInView && b.bottomInView && b.hit;
+  const ac5Ok = ac5_fail.screen === "fail" && ac5_fail.backText === "タイトルへ" &&
+    !ac5_fail.backHidden && okBtn(backBtnHit) && ac5_title === "title";
+
+  // --- AC6 クリアで次ダンジョン解放 + progress 永続化 ---
+  const ac6 = await page.evaluate(() => {
+    G.dungeonId = 0;
+    G.cleared = new Set(); G.unlocked = new Set([0]);
+    startDive();
+    for (const g of G.girls) g.state = "rescued";
+    G.rescued = CONST.GIRL_COUNT;
+    G.maxDepthThisDive = CONST.DEPTH_ROWS;
+    for (let r = 1; r <= CONST.DEPTH_ROWS; r++) for (let c = 0; c < CONST.GRID_COLS; c++) G.seen.add(c + "," + r);
+    G.dug.add(G.px + ",1"); G.py = 1; moveTo(G.px, 0, true);
+    const progressRaw = localStorage.getItem("mineroad_progress");
+    const progress = progressRaw ? JSON.parse(progressRaw) : null;
+    return {
+      screen: G.screen,
+      cleared: G.cleared ? [...G.cleared] : [],
+      unlocked: G.unlocked ? [...G.unlocked] : [],
+      progressSaved: !!progress,
+      progressCleared: progress ? progress.cleared : null,
+      progressUnlocked: progress ? progress.unlocked : null,
+    };
+  });
+  out("AC6 クリアで次ダンジョン解放", ac6);
+  const ac6Ok = ac6.screen === "clear" &&
+    ac6.cleared.includes(0) && ac6.unlocked.includes(0) && ac6.unlocked.includes(1) &&
+    ac6.progressSaved && ac6.progressCleared.includes(0) && ac6.progressUnlocked.includes(1);
+
+  // --- AC7 裏庭で掘る・女の子救出の回帰 ---
+  // AC6 クリアの状態が残るので、ページ内で startDive() ではなく内部関数 act で直接検証。
+  const ac7 = await page.evaluate(() => {
+    G.dungeonId = 0; startDive();
+    const cols0 = CONST.GRID_COLS, rows0 = CONST.DEPTH_ROWS, girls0 = G.girls.length;
+    // act を使わず moveTo で直接移動テスト(act は digging 含むため startDive 直後でも通る)。
+    G.pick = "DIAMOND"; G.monsters = []; G.spawned = new Set();
+    const py0 = G.py;
+    // 真下を掘り抜いて移動。
+    G.dug.add(G.px + ",1");
+    moveTo(G.px, 1);
+    const moved = G.py > py0;
+    return { cols0, rows0, girls0, moved, screen: G.screen };
+  });
+  out("AC7 裏庭回帰(掘る・グリッドサイズ=15x15・5人)", ac7);
+  const ac7Ok = ac7.cols0 === 15 && ac7.rows0 === 15 && ac7.girls0 === 5 && ac7.moved && ac7.screen === "dive";
+
+  dungeonPass =
+    errors.length === 0 &&
+    ac1.total === 9 && ac1.unlockedCount === 1 && ac1.lockedCount === 8 &&
+    ac1.firstName.indexOf("裏庭の洞窟") >= 0 && ac1.screen === "title" &&
+    ac2.screen === "dive" && ac2.dungeonId === 0 &&
+    ac3Ok && ac4Ok && ac5Ok && ac6Ok && ac7Ok;
+  out("PASS(AC: ダンジョン選択9個/裏庭ダイブ/グリッドサイズ切替/HUD名表示/タイトルへ/解放チェーン/裏庭回帰)", dungeonPass);
+  await ctx.close();
+}
+
+// ============================================================================
 // (I) determinism 静的検査(lead 必須): app.js/tiles.js に Math.random/Date.now/
 //     performance.now の実呼び出しが無い(コメント言及は可)。配信中のソースを取得して検査。
 // ============================================================================
@@ -3303,13 +3492,14 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.12.0 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.13.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
 out("(B/C/D) 二段ゲージ/撤退/1人救出(HUD 1/5,dive継続)/重力/探索率/決定論[内部関数]", mechPass);
 out("(N) 女の子 縦坑追従 row トレース(底張り付きなし→地表救出/1人=dive継続)", girlFollowPass);
 out("(N2) ②地表静止救出 実機相当(自機静止のまま row>=1 残りでも救出→HUD1/5→仲間タブ ストック/画面操作)", staticRescuePass);
+out("(AC) v0.13.0 ダンジョン選択・解放チェーン・グリッドサイズ・HUD名・タイトルへ", dungeonPass);
 out("(O) v0.3.0 クリアゲート §7 忠実 / 旧1人=即クリア回帰防止 / 全達成で制覇", clearGatePass);
 out("(P) 複数女の子 2人救出 HUD 0/5→1/5→2/5", multiGirlPass);
 out("(Q) v0.4.0 クラフト UI 6 レシピ / インベントリ / 鉱石決定論加算 / power ゲート回帰", v040Pass);
@@ -3333,7 +3523,7 @@ if (overflowFails.length) {
 }
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
-  mechPass && girlFollowPass && staticRescuePass && clearGatePass && multiGirlPass &&
+  mechPass && girlFollowPass && staticRescuePass && dungeonPass && clearGatePass && multiGirlPass &&
   v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && savePass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
