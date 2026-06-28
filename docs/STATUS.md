@@ -25,7 +25,34 @@
 
 ## In progress
 
-（なし）
+### S6-6 延命チューニング（計測フェーズ = sudo 不要分、2026-06-29）
+
+machine-audit PLAN.md S6-6 の 7 作業項目のうち、sudo 不要な計測・分析を先行実施。
+
+**1. 現状計測（2026-06-29 00:24, uptime 1d4h）**:
+- CPU 温度: Package 47°C / Core 0,1 = 46°C（high=87°C, crit=105°C まで大幅余裕）
+- ファン: dell_smm fan1 = 0 RPM（低温停止=正常）。別 hwmon fan1_input = 0 も同一ファン
+- 電源: AC online=1, BAT status=Unknown/present=1（取り外し済みだが ACPI 上は存在扱い）
+- RAM: used 1.6G / 3.7G (avail 1.7G), swap: 577Mi / 3.9G（zram 効果で S1 スキャン時 1.8G/2.0G → 改善）
+- ディスク: 115G / 457G (27%)（S3 完了時 11%=45G から companion-games 等で増加）
+- load average: 0.85, 0.85, 0.54（低負荷）
+
+**2. CPU governor**: `schedutil`（4コア全て）。ドライバ = `intel_cpufreq`（intel_pstate passive モード）。周波数帯 800MHz–1.8GHz。schedutil は負荷追従型で常駐サーバに適切、powersave への変更は不要
+
+**3. ディスプレイ消灯 (DPMS)**: DPMS Enabled だが Standby/Suspend/Off 全て **0**（=タイムアウトなし＝消灯しない）。Screen Saver timeout も 0。**dashboard 表示時間帯以外は消灯すべき**（AC 直結でも液晶バックライトの無駄消費＋パネル寿命）。設定は xset / xfce4-power-manager で可能だが、dashboard の自動起動/表示スケジュールとの整合が要るため、ユーザー在席時に判断
+
+**4. 電源断耐性**: companion 系 5 サービス（bot/games/photos/remote/video-mpv）は全て Python ファイルベース（JSON/.state テキスト）で **SQLite 不使用**。dashboard の Firefox プロファイルに SQLite 24 ファイルあるが、現在 inactive（Firefox 未起動）。mozc/presage/NSS の DB はデスクトップアプリのローカルキャッシュで突然死の実害なし。**companion 系に突然死で壊れうる永続データなし = 電源断リスクは低い**。唯一の懸念は ext4 journaling のメタデータ外の大きな書き込み途中だが、companion 系の書き込みは小サイズ state ファイルのみ
+
+**5. thermald**: active（Intel 熱制御デーモン稼働中=自動スロットリングが効く）
+
+**6. VM writeback**: laptop_mode=0（有効化すればディスク IO をバッチ化して HDD スピンダウンを増やせる＝AC 常時なら不要だがファン回転を減らす効果は微小）。dirty_writeback=500cs(5s)、dirty_expire=3000cs(30s) = デフォルト値
+
+**sudo 必要で未実施の項目（ユーザー在席時に実施）**:
+- powertop で待機消費の詳細内訳計測（before snapshot）
+- 省電力適用（powertop 個別項目の適用 or TLP 導入）
+- DPMS 消灯の設定変更（dashboard スケジュールとの整合判断が先）
+- BIOS 設定確認（Battery not detected 警告スキップ + AC Recovery。物理操作必須）
+- 物理メンテ（筐体清掃。ユーザーが行う）
 
 ## Review pending
 
