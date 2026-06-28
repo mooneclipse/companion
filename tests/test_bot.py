@@ -2680,6 +2680,62 @@ class CmdStatusTest(unittest.TestCase):
         self.assertNotIn("session context", result)
 
 
+class FetchOfficialUsageTest(unittest.IsolatedAsyncioTestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    async def test_success_returns_stdout(self) -> None:
+        from unittest import mock
+
+        fake_proc = mock.AsyncMock()
+        fake_proc.communicate = mock.AsyncMock(
+            return_value=(b"Session usage: 42%\nWeekly: 10%", b"")
+        )
+        fake_proc.returncode = 0
+
+        with mock.patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+            result = await self.bot._fetch_official_usage()
+
+        self.assertEqual(result, "Session usage: 42%\nWeekly: 10%")
+
+    async def test_nonzero_rc_returns_none(self) -> None:
+        from unittest import mock
+
+        fake_proc = mock.AsyncMock()
+        fake_proc.communicate = mock.AsyncMock(return_value=(b"error", b""))
+        fake_proc.returncode = 1
+
+        with mock.patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+            result = await self.bot._fetch_official_usage()
+
+        self.assertIsNone(result)
+
+    async def test_timeout_returns_none(self) -> None:
+        from unittest import mock
+
+        with mock.patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=asyncio.TimeoutError,
+        ):
+            result = await self.bot._fetch_official_usage()
+
+        self.assertIsNone(result)
+
+    async def test_empty_stdout_returns_none(self) -> None:
+        from unittest import mock
+
+        fake_proc = mock.AsyncMock()
+        fake_proc.communicate = mock.AsyncMock(return_value=(b"  \n  ", b""))
+        fake_proc.returncode = 0
+
+        with mock.patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+            result = await self.bot._fetch_official_usage()
+
+        self.assertIsNone(result)
+
+
 class VaultHintGuardTest(unittest.TestCase):
 
     @classmethod

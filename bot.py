@@ -1212,6 +1212,36 @@ def cmd_quota() -> str:
     return quota.format_summary(summary)
 
 
+async def _fetch_official_usage() -> str | None:
+    """Run ``claude -p "/usage"`` and return the raw text output, or None on failure.
+
+    num_turns 0 / $0 の軽量リクエスト。parse せず全文転記する (文言マッチ分岐をしない)。
+    """
+    env = os.environ.copy()
+    for key in ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
+                "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ID"):
+        env.pop(key, None)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            CLAUDE_BIN, "-p",
+            cwd=CLAUDE_CWD,
+            env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_b, _ = await asyncio.wait_for(
+            proc.communicate(input=b"/usage"),
+            timeout=15,
+        )
+    except (asyncio.TimeoutError, Exception):
+        return None
+    if proc.returncode != 0:
+        return None
+    text = stdout_b.decode("utf-8", errors="replace").strip()
+    return text if text else None
+
+
 def _normalize_play_url(url: str) -> str | None:
     if any(ch.isspace() or ord(ch) < 0x20 for ch in url):
         return None
@@ -2131,6 +2161,14 @@ async def slash_quota(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     chat_id = update.effective_chat.id
     thread_id = msg.message_thread_id if msg else None
     output = cmd_quota()
+    usage_text = await _fetch_official_usage()
+    if usage_text:
+        output += (
+            "\n\n[公式利用率 (アカウント全体 — bot 以外の手元セッション含む)]\n"
+            + usage_text
+        )
+    else:
+        output += "\n\n公式利用率: 取得失敗"
     logger.info("cmd=/quota send len=%d", len(output))
     await send_text(context.bot, chat_id, thread_id, output, reply_to=msg.message_id if msg else None)
 
