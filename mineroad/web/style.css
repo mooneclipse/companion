@@ -737,3 +737,34 @@ body {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
+
+/* ===== v0.13.0 ダンジョン選択(タイトル画面の ovHowto 領域) ===== */
+.dungeon-btn {
+  display: block;
+  width: 100%;
+  font-family: var(--mincho);
+  font-size: clamp(0.88rem, 4vw, 1.08rem);
+  letter-spacing: 0.08em;
+  text-align: left;
+  color: var(--ink);
+  background: rgba(230, 178, 90, 0.1);
+  border: 1px solid rgba(230, 178, 90, 0.4);
+  border-radius: 0.6rem;
+  padding: 0.65rem 1rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.dungeon-btn:active {
+  background: rgba(230, 178, 90, 0.25);
+}
+.dungeon-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+.dungeon-btn.locked {
+  color: rgba(244, 238, 226, 0.35);
+  background: rgba(244, 238, 226, 0.03);
+  border-color: rgba(244, 238, 226, 0.15);
+  cursor: default;
+}

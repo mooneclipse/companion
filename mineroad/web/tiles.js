@@ -44,19 +44,135 @@ function hash3(a, b, c) {
   return h / 4294967296; // [0,1)
 }
 
-// ---- 裏庭(dungeon ID0)のブロック分布 ---------------------------------
-// dungeon.csv ID0 を忠実再現(合計100、floor帯別)。乱数禁止 = この累積確率を
-// 決定論ハッシュ値と比較して分布を再現する(同じ col/row/seed は常に同じタイル)。
-//   floor 1〜10 : 土 83 / 空間 5 / 硬土 10 / 硬岩 2
-//   floor 11〜15: 土 81 / 空間 5 / 硬土 10 / 硬岩 2 / 水 2
-//     → v0.1 は SWIM 未実装のため水 2 を土に丸める(floor11-15 も土 83 扱い)。
-// 累積しきい値(0..1)。r < cum.none → 空間、< cum.hard → 硬土、< cum.rock → 硬岩、以降 土。
+// ---- 全9ダンジョンのマスターデータ(dungeon_info.csv 忠実) ---------------
+const DUNGEON_DATA = [
+  { id: 0, name: "裏庭の洞窟",       cols: 15, rows: 15,  girls:  5, bpRate: 100, desc: "どこかの裏庭の小さな洞窟。誰が少女を埋めたのか。" },
+  { id: 1, name: "古い防空壕",       cols: 30, rows: 30,  girls: 14, bpRate:  92, desc: "古い時代の防空壕。暗い、カビ臭い、気持ち悪い。" },
+  { id: 2, name: "廃炭鉱",           cols: 40, rows: 40,  girls: 23, bpRate:  88, desc: "かつて炭鉱だった場所。何故だろう、骨がよく見つかるような…。" },
+  { id: 3, name: "地底湖",           cols: 45, rows: 40,  girls: 27, bpRate:  68, desc: "地底の湖。それはある意味、おそろしい場所だ。" },
+  { id: 4, name: "埋没城跡",         cols: 50, rows: 35,  girls: 35, bpRate:  72, desc: "火山灰に埋もれた古い城跡。かつての栄光は、もはや見る影もない。" },
+  { id: 5, name: "オンカロ",         cols: 20, rows: 99,  girls: 36, bpRate:  68, desc: "人の出入りを禁止された聖地。遙か昔、そこには何物かが封印されたと云われている。" },
+  { id: 6, name: "孤独な山",         cols: 80, rows: 80,  girls: 69, bpRate:  65, desc: "山っていうか……山？ ただでさえ孤独なあなたがさらに孤独を感じるような、そんな場所。" },
+  { id: 7, name: "朽ち果てた塔",     cols: 28, rows: 70,  girls: 39, bpRate:  67, desc: "老朽化した巨大建造物。崩壊しきったその骨組みは、見るものに時の無情さを感じさせる。" },
+  { id: 8, name: "モンスターの巣窟", cols: 50, rows: 50,  girls: 26, bpRate:  30, desc: "最近発見された、世界でも有数の危険スポット。" },
+];
+
+// ---- ダンジョン深度帯データ(dungeon.csv 忠実) ---------------------------
+// 各帯: floorTo(この行まで適用), none/hard/rock(ブロック比率 0..1, 累積前),
+//   hazardRate(空間に占める水/マグマの割合), magmaFrac(ハザード中のマグマ割合),
+//   avalancheRate(SOIL 中の不安定土割合), oreRate(鉱石含有率 /1000),
+//   oreW[copper,iron,gold,diamond](鉱石種の重み),
+//   monW[BAT,SLIME,SLIME_HALF,SNAKE,WORM,SPIDER](実装済みモンスターの重み)。
+const DUNGEON_BANDS = {
+  0: [
+    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [64,30,5,0],  monW: [80,0,0,0,10,10] },
+    { floorTo: 10, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:  30, oreW: [64,30,5,0],  monW: [64,5,0,0,10,20] },
+    { floorTo: 15, none: 0.07, hard: 0.10, rock: 0.02, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0,      oreRate:  50, oreW: [58,30,10,0], monW: [56,10,0,3,10,20] },
+  ],
+  1: [
+    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [64,30,5,0],  monW: [49,10,0,10,10,20] },
+    { floorTo: 10, none: 0.06, hard: 0.12, rock: 0.05, hazardRate: 0.17, magmaFrac: 0,    avalancheRate: 0.013,  oreRate:  40, oreW: [64,30,5,0],  monW: [29,10,0,20,10,30] },
+    { floorTo: 15, none: 0.07, hard: 0.14, rock: 0.05, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0.0135, oreRate:  80, oreW: [52,30,15,1], monW: [13,20,0,20,10,30] },
+    { floorTo: 20, none: 0.07, hard: 0.16, rock: 0.05, hazardRate: 0.29, magmaFrac: 0.50, avalancheRate: 0.0278, oreRate: 120, oreW: [51,30,15,1], monW: [13,20,0,20,10,30] },
+    { floorTo: 25, none: 0.08, hard: 0.18, rock: 0.05, hazardRate: 0.38, magmaFrac: 0.33, avalancheRate: 0.029,  oreRate: 160, oreW: [35,35,25,1], monW: [6,10,0,20,10,30] },
+    { floorTo: 30, none: 0.10, hard: 0.20, rock: 0.05, hazardRate: 0.50, magmaFrac: 0.40, avalancheRate: 0.0308, oreRate: 200, oreW: [34,35,25,1], monW: [9,10,0,20,10,20] },
+  ],
+  2: [
+    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.0125, oreRate:   0, oreW: [64,30,5,0],  monW: [39,10,0,30,10,10] },
+    { floorTo: 10, none: 0.06, hard: 0.12, rock: 0.05, hazardRate: 0.17, magmaFrac: 0,    avalancheRate: 0.013,  oreRate:  40, oreW: [63,30,5,0],  monW: [39,10,0,30,10,10] },
+    { floorTo: 15, none: 0.07, hard: 0.14, rock: 0.05, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0.027,  oreRate:  80, oreW: [44,30,20,3], monW: [16,20,0,30,10,15] },
+    { floorTo: 20, none: 0.07, hard: 0.16, rock: 0.05, hazardRate: 0.29, magmaFrac: 0.50, avalancheRate: 0.0278, oreRate: 120, oreW: [44,30,20,3], monW: [16,20,0,30,10,15] },
+    { floorTo: 25, none: 0.10, hard: 0.18, rock: 0.08, hazardRate: 0.50, magmaFrac: 0.40, avalancheRate: 0.0625, oreRate: 160, oreW: [27,35,30,5], monW: [1,20,0,20,10,10] },
+    { floorTo: 30, none: 0.13, hard: 0.20, rock: 0.08, hazardRate: 0.62, magmaFrac: 0.38, avalancheRate: 0.0678, oreRate: 200, oreW: [27,35,30,5], monW: [4,20,0,20,10,10] },
+    { floorTo: 35, none: 0.13, hard: 0.26, rock: 0.08, hazardRate: 0.62, magmaFrac: 0.62, avalancheRate: 0.0755, oreRate: 240, oreW: [13,35,40,8], monW: [5,15,0,20,0,5] },
+    { floorTo: 40, none: 0.14, hard: 0.28, rock: 0.10, hazardRate: 0.64, magmaFrac: 0.89, avalancheRate: 0.125,  oreRate: 280, oreW: [7,35,45,9],  monW: [7,9,0,15,0,0] },
+  ],
+  3: [
+    { floorTo:  4, none: 0.25, hard: 0.30, rock: 0.02, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0,      oreRate:   0, oreW: [60,30,10,0],  monW: [5,0,0,0,0,0] },
+    { floorTo:  8, none: 0.25, hard: 0.30, rock: 0.02, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0,      oreRate:  20, oreW: [58,30,10,0],  monW: [9,20,0,10,5,10] },
+    { floorTo: 14, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  40, oreW: [40,30,25,3],  monW: [4,20,0,10,5,10] },
+    { floorTo: 19, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  60, oreW: [40,30,25,3],  monW: [8,20,0,10,5,10] },
+    { floorTo: 25, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  80, oreW: [33,30,30,5],  monW: [1,20,0,10,5,10] },
+    { floorTo: 30, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate: 100, oreW: [25,30,35,8],  monW: [5,10,0,10,5,10] },
+    { floorTo: 35, none: 0.30, hard: 0.30, rock: 0.04, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.1111, oreRate: 120, oreW: [19,30,35,14], monW: [4,10,0,10,5,10] },
+    { floorTo: 40, none: 0.30, hard: 0.30, rock: 0.04, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.1111, oreRate: 140, oreW: [21,30,30,17], monW: [2,10,0,10,5,5] },
+  ],
+  4: [
+    { floorTo: 10, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.0926, oreRate:   0, oreW: [46,10,40,0],  monW: [25,5,0,5,3,8] },
+    { floorTo: 15, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.0926, oreRate:  40, oreW: [43,10,40,3],  monW: [11,5,0,5,3,8] },
+    { floorTo: 20, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate:  80, oreW: [33,20,38,5],  monW: [8,5,0,5,3,8] },
+    { floorTo: 25, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 120, oreW: [31,20,38,7],  monW: [0,5,0,5,3,8] },
+    { floorTo: 30, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 160, oreW: [21,20,38,17], monW: [4,3,0,5,3,8] },
+    { floorTo: 35, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 200, oreW: [20,20,36,20], monW: [4,3,0,5,3,8] },
+    { floorTo: 40, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.2222, oreRate: 240, oreW: [10,20,41,25], monW: [2,5,0,5,3,8] },
+    { floorTo: 50, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.2222, oreRate: 280, oreW: [5,20,43,28],  monW: [2,5,0,5,3,8] },
+  ],
+  5: [
+    { floorTo:   5, none: 0.10, hard: 0.80, rock: 0,    hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.20,   oreRate:   0, oreW: [50,30,20,0], monW: [36,10,0,30,0,20] },
+    { floorTo:  17, none: 0.10, hard: 0.75, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.20,   oreRate:  50, oreW: [40,30,30,0], monW: [16,10,0,30,0,20] },
+    { floorTo:  30, none: 0.09, hard: 0.70, rock: 0.05, hazardRate: 0.11, magmaFrac: 0,    avalancheRate: 0.125,  oreRate: 100, oreW: [39,30,30,1], monW: [20,20,0,20,0,10] },
+    { floorTo:  40, none: 0.09, hard: 0.60, rock: 0.10, hazardRate: 0.11, magmaFrac: 0,    avalancheRate: 0.0952, oreRate: 150, oreW: [39,30,30,1], monW: [20,20,0,20,0,10] },
+    { floorTo:  50, none: 0.08, hard: 0.60, rock: 0.10, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0909, oreRate: 200, oreW: [24,40,35,1], monW: [22,20,0,10,0,5] },
+    { floorTo:  60, none: 0.08, hard: 0.50, rock: 0.15, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0741, oreRate: 250, oreW: [14,40,45,1], monW: [22,30,0,0,0,5] },
+    { floorTo:  70, none: 0.08, hard: 0.50, rock: 0.15, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0741, oreRate: 300, oreW: [13,40,45,2], monW: [20,27,0,0,0,5] },
+    { floorTo:  80, none: 0.09, hard: 0.40, rock: 0.20, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0645, oreRate: 250, oreW: [12,40,45,3], monW: [22,25,0,0,0,0] },
+    { floorTo:  90, none: 0.09, hard: 0.40, rock: 0.20, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0645, oreRate: 400, oreW: [5,40,50,5],  monW: [22,10,0,0,0,0] },
+    { floorTo: 100, none: 0.10, hard: 0.30, rock: 0.25, hazardRate: 0.50, magmaFrac: 0.60, avalancheRate: 0.0571, oreRate: 450, oreW: [5,40,47,8],  monW: [27,5,0,0,0,0] },
+  ],
+  6: [
+    { floorTo:  8, none: 0.01, hard: 0.10, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [64,30,5,0],  monW: [24,10,0,40,5,15] },
+    { floorTo: 16, none: 0.07, hard: 0.12, rock: 0.05, hazardRate: 0.57, magmaFrac: 0.50, avalancheRate: 0,      oreRate:  40, oreW: [63,30,5,0],  monW: [19,10,0,30,5,15] },
+    { floorTo: 24, none: 0.09, hard: 0.14, rock: 0.10, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0149, oreRate:  80, oreW: [46,35,15,1], monW: [6,20,0,30,5,10] },
+    { floorTo: 32, none: 0.07, hard: 0.16, rock: 0.10, hazardRate: 0.57, magmaFrac: 0.50, avalancheRate: 0.0149, oreRate: 120, oreW: [45,35,15,1], monW: [7,20,0,30,5,10] },
+    { floorTo: 48, none: 0.05, hard: 0.18, rock: 0.12, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0.0154, oreRate: 160, oreW: [30,40,25,1], monW: [9,20,0,15,5,5] },
+    { floorTo: 56, none: 0.11, hard: 0.20, rock: 0.12, hazardRate: 0.73, magmaFrac: 0.50, avalancheRate: 0.0351, oreRate: 200, oreW: [29,40,25,1], monW: [9,30,0,14,5,0] },
+    { floorTo: 64, none: 0.13, hard: 0.24, rock: 0.16, hazardRate: 0.62, magmaFrac: 0.50, avalancheRate: 0.0426, oreRate: 240, oreW: [18,45,30,2], monW: [1,25,0,14,5,0] },
+    { floorTo: 72, none: 0.11, hard: 0.26, rock: 0.16, hazardRate: 0.73, magmaFrac: 0.50, avalancheRate: 0.0426, oreRate: 280, oreW: [16,45,30,3], monW: [3,25,0,11,5,0] },
+    { floorTo: 76, none: 0.09, hard: 0.28, rock: 0.19, hazardRate: 0.89, magmaFrac: 0.50, avalancheRate: 0.0682, oreRate: 320, oreW: [4,50,35,5],  monW: [8,10,0,10,5,0] },
+    { floorTo: 80, none: 0.13, hard: 0.30, rock: 0.19, hazardRate: 0.77, magmaFrac: 0.50, avalancheRate: 0.0789, oreRate: 360, oreW: [1,50,35,8],  monW: [28,5,0,2,5,0] },
+  ],
+  7: [
+    { floorTo:  8, none: 0.01, hard: 0.80, rock: 0.10, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [9,40,50,0],  monW: [85,0,0,0,0,15] },
+    { floorTo: 16, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 100, oreW: [9,40,50,0],  monW: [16,10,0,15,5,15] },
+    { floorTo: 24, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 200, oreW: [9,40,50,0],  monW: [18,10,0,15,5,15] },
+    { floorTo: 32, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 300, oreW: [9,40,50,0],  monW: [15,10,0,15,5,15] },
+    { floorTo: 48, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 400, oreW: [9,40,50,0],  monW: [17,10,0,15,5,15] },
+    { floorTo: 56, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 500, oreW: [9,40,50,0],  monW: [5,10,0,15,5,15] },
+    { floorTo: 64, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 600, oreW: [9,40,50,0],  monW: [7,10,0,15,5,15] },
+    { floorTo: 72, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 600, oreW: [9,40,50,0],  monW: [7,10,0,15,5,15] },
+  ],
+  8: [
+    { floorTo:  3, none: 0.20, hard: 0.30, rock: 0,    hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [56,10,30,0],  monW: [28,8,0,15,3,8] },
+    { floorTo: 10, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate:  40, oreW: [56,10,30,0],  monW: [11,8,0,8,3,8] },
+    { floorTo: 15, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate:  80, oreW: [53,10,30,3],  monW: [10,8,0,8,3,8] },
+    { floorTo: 20, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate: 120, oreW: [41,20,30,5],  monW: [7,8,0,8,3,8] },
+    { floorTo: 25, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 160, oreW: [41,20,30,5],  monW: [7,8,0,8,3,8] },
+    { floorTo: 30, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 200, oreW: [33,20,30,13], monW: [4,8,0,8,3,8] },
+    { floorTo: 35, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 240, oreW: [33,20,30,13], monW: [4,8,0,8,3,8] },
+    { floorTo: 40, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 280, oreW: [31,20,30,15], monW: [3,8,0,8,3,8] },
+    { floorTo: 50, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 320, oreW: [31,20,30,15], monW: [3,8,0,8,3,8] },
+  ],
+};
+
+// 現在のダンジョンの深度帯データを引く。row に一致する帯(floorTo 以下)を返す。
+function getDungeonBand(row) {
+  const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
+  const did = C.DUNGEON_ID != null ? C.DUNGEON_ID : 0;
+  const bands = DUNGEON_BANDS[did];
+  if (!bands || !bands.length) return null;
+  for (const b of bands) { if (row <= b.floorTo) return b; }
+  return bands[bands.length - 1];
+}
+
+// ---- ブロック分布(ダンジョン×深度帯 動的) --------------------------------
 function blockThresholds(row) {
-  // v0.1: floor 帯によらず統一(水を土に丸めた結果、両帯とも 土83/空間5/硬土10/硬岩2)。
-  void row;
-  const none = 0.05; // 空間 5%
-  const hard = none + 0.1; // 硬土 10%
-  const rock = hard + 0.02; // 硬岩 2%(残り 83% が土)
+  const band = getDungeonBand(row);
+  if (!band) {
+    return { none: 0.05, hard: 0.15, rock: 0.17 };
+  }
+  const none = band.none;
+  const hard = none + band.hard;
+  const rock = hard + band.rock;
   return { none, hard, rock };
 }
 
@@ -139,19 +255,20 @@ const ORE_META = {
 function oreAt(col, row, seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
   if (row <= 0 || col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return ORE.NONE;
-  if (isGirlAt(col, row, seed)) return ORE.NONE; // 救出対象マスは鉱石なし。
-  const floors = C.DEPTH_ROWS;
-  // 深度帯(4 等分): 浅=銅 / 中=鉄 / 深=金 / 最深=ダイヤ。
-  const frac = row / floors;
-  let kind;
-  if (frac <= 0.27) kind = ORE.COPPER;
-  else if (frac <= 0.54) kind = ORE.IRON;
-  else if (frac <= 0.8) kind = ORE.GOLD;
-  else kind = ORE.DIAMOND;
-  // 含有率(控えめ): 浅いほど出やすく、高価な深層ほど絞る。tileType と別位相のハッシュ。
-  const RATE = { [ORE.COPPER]: 0.22, [ORE.IRON]: 0.16, [ORE.GOLD]: 0.1, [ORE.DIAMOND]: 0.06 };
-  const h = hash3(col + 911, row + 733, seed + 5557); // tileType の hash3(col,row,seed) と非衝突。
-  return h < RATE[kind] ? kind : ORE.NONE;
+  if (isGirlAt(col, row, seed)) return ORE.NONE;
+  const band = getDungeonBand(row);
+  if (!band || band.oreRate <= 0) return ORE.NONE;
+  const h = hash3(col + 911, row + 733, seed + 5557);
+  if (h >= band.oreRate / 1000) return ORE.NONE;
+  const w = band.oreW;
+  const total = w[0] + w[1] + w[2] + w[3];
+  if (total <= 0) return ORE.NONE;
+  const h2 = hash3(col + 733, row + 5557, seed + 911);
+  const pick = h2 * total;
+  if (pick < w[0]) return ORE.COPPER;
+  if (pick < w[0] + w[1]) return ORE.IRON;
+  if (pick < w[0] + w[1] + w[2]) return ORE.GOLD;
+  return ORE.DIAMOND;
 }
 
 // ---- ツルハシ(pickaxe) — 原作 item.csv 忠実(v0.4.0) ----------------------
@@ -243,19 +360,16 @@ const MONSTER = {
     drops: [{ item: "クモの糸", per: 70 }, { item: "解毒薬", per: 30 }],
   },
 };
-// 空間スポーン候補(space=1)を深度帯で並べる(浅いほど弱い種を出す難度カーブ)。
-// 浅=小スライム/コウモリ、中=スライム/クモ、深=ヘビ。WORM は space=0 なので含めない。
+// v0.12.0 以前の静的帯(裏庭用フォールバック、DUNGEON_BANDS が無い環境向け)。
 const SPACE_SPAWN_BANDS = [
   { maxFrac: 0.34, species: [MON.SLIME_HALF, MON.BAT] },
   { maxFrac: 0.67, species: [MON.SLIME, MON.SPIDER] },
   { maxFrac: 1.01, species: [MON.SNAKE, MON.BAT] },
 ];
-// 埋没掘りスポーン候補(掘り抜き時に bury% で出る種)。土の住人。bury が高い種ほど出やすい。
-// 浅いほど弱い種に寄せる(難度カーブ)。各帯から 1 種を hash で選び、その種の bury% で判定。
 const BURY_SPAWN_BANDS = [
-  { maxFrac: 0.34, species: [MON.WORM, MON.SLIME_HALF] }, // 浅: ミミズ(bury100)/小スライム(15)
-  { maxFrac: 0.67, species: [MON.WORM, MON.SLIME] }, //     中: ミミズ/スライム(30)
-  { maxFrac: 1.01, species: [MON.SPIDER, MON.SNAKE] }, //    深: クモ(100)/ヘビ(80)
+  { maxFrac: 0.34, species: [MON.WORM, MON.SLIME_HALF] },
+  { maxFrac: 0.67, species: [MON.WORM, MON.SLIME] },
+  { maxFrac: 1.01, species: [MON.SPIDER, MON.SNAKE] },
 ];
 
 // 空間スポーン率(NONE マスにモンスターが居る確率)。決定論ハッシュしきい値。控えめに
@@ -273,11 +387,22 @@ const BURY_PRESENCE_RATE = 0.16;
 function spaceMonsterAt(col, row, seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
   if (row <= 0 || col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return null;
-  if (isGirlAt(col, row, seed)) return null; // 救出対象マスにモンスターを置かない。
-  // 出現有無(別位相ハッシュ。tileType の hash3(col,row,seed)・oreAt の +911/+733/+5557 と非衝突)。
+  if (isGirlAt(col, row, seed)) return null;
   const h = hash3(col + 313, row + 197, seed + 8821);
   if (h >= SPACE_SPAWN_RATE) return null;
-  // 深度帯から種を選ぶ(帯内は別ハッシュで 1 種選択)。
+  const dband = getDungeonBand(row);
+  if (dband) {
+    const mw = dband.monW;
+    const spW = [mw[0], mw[1], mw[2], mw[3], mw[5]]; // BAT,SLIME,SLIME_HALF,SNAKE,SPIDER (space=1)
+    const spS = [MON.BAT, MON.SLIME, MON.SLIME_HALF, MON.SNAKE, MON.SPIDER];
+    const total = spW[0] + spW[1] + spW[2] + spW[3] + spW[4];
+    if (total <= 0) return null;
+    const h2 = hash3(col + 401, row + 89, seed + 8821);
+    const pick = h2 * total;
+    let acc = 0;
+    for (let i = 0; i < spS.length; i++) { acc += spW[i]; if (pick < acc) return spS[i]; }
+    return spS[spS.length - 1];
+  }
   const frac = row / C.DEPTH_ROWS;
   let band = SPACE_SPAWN_BANDS[SPACE_SPAWN_BANDS.length - 1];
   for (const b of SPACE_SPAWN_BANDS) { if (frac <= b.maxFrac) { band = b; break; } }
@@ -292,19 +417,31 @@ function buryMonsterAt(col, row, seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
   if (row <= 0 || col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return null;
   if (isGirlAt(col, row, seed)) return null;
-  // ① 住人居住の有無(密度ノブ)。居なければ掘っても何も出ない(掘削テンポを保つ)。
-  const presence = hash3(col + 233, row + 617, seed + 3001); // 他レイヤーと別位相。
+  const presence = hash3(col + 233, row + 617, seed + 3001);
   if (presence >= BURY_PRESENCE_RATE) return null;
-  // ② 居住種を深度帯から 1 つ選ぶ(別位相ハッシュ)。
-  const frac = row / C.DEPTH_ROWS;
-  let band = BURY_SPAWN_BANDS[BURY_SPAWN_BANDS.length - 1];
-  for (const b of BURY_SPAWN_BANDS) { if (frac <= b.maxFrac) { band = b; break; } }
-  const pick = Math.floor(hash3(col + 557, row + 271, seed + 6173) * band.species.length);
-  const key = band.species[Math.min(pick, band.species.length - 1)];
+  let key;
+  const dband = getDungeonBand(row);
+  if (dband) {
+    const mw = dband.monW;
+    const buW = [mw[1], mw[2], mw[3], mw[4], mw[5]]; // SLIME,SLIME_HALF,SNAKE,WORM,SPIDER (bury>0)
+    const buS = [MON.SLIME, MON.SLIME_HALF, MON.SNAKE, MON.WORM, MON.SPIDER];
+    const total = buW[0] + buW[1] + buW[2] + buW[3] + buW[4];
+    if (total <= 0) return null;
+    const h2 = hash3(col + 557, row + 271, seed + 6173);
+    const pick = h2 * total;
+    let acc = 0;
+    key = buS[buS.length - 1];
+    for (let i = 0; i < buS.length; i++) { acc += buW[i]; if (pick < acc) { key = buS[i]; break; } }
+  } else {
+    const frac = row / C.DEPTH_ROWS;
+    let band = BURY_SPAWN_BANDS[BURY_SPAWN_BANDS.length - 1];
+    for (const b of BURY_SPAWN_BANDS) { if (frac <= b.maxFrac) { band = b; break; } }
+    const pick = Math.floor(hash3(col + 557, row + 271, seed + 6173) * band.species.length);
+    key = band.species[Math.min(pick, band.species.length - 1)];
+  }
   const m = MONSTER[key];
   if (!m) return null;
-  // ③ その種の bury%(埋没掘りper, verbatim)で飛び出すか判定。h < bury/100 なら出現。
-  const h = hash3(col + 1019, row + 643, seed + 6173); // spaceMonster とも非衝突。
+  const h = hash3(col + 1019, row + 643, seed + 6173);
   return h < m.bury / 100 ? key : null;
 }
 
@@ -339,20 +476,16 @@ const HAZARD_MAGMA_FRAC = 0.45; // 深層帯のハザードのうちこの割合
 // GIRL マス・地表・範囲外は NONE。tileType/oreAt/monster と別位相のハッシュ(+1597/+2389/+7919)。
 function hazardAt(col, row, seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
-  if (row < HAZARD_WATER_MIN_ROW) return HAZARD.NONE; // 浅層帯は安全(水も出ない)。
+  if (row <= 0) return HAZARD.NONE;
   if (col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return HAZARD.NONE;
-  if (isGirlAt(col, row, seed)) return HAZARD.NONE; // 救出対象マスは浸水させない。
-  // 存在判定(別位相ハッシュ。既存 oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・
-  // buryMonster(+233/+617/+3001)・tileType(col,row,seed) と非衝突)。
+  if (isGirlAt(col, row, seed)) return HAZARD.NONE;
+  const band = getDungeonBand(row);
+  if (!band || band.hazardRate <= 0) return HAZARD.NONE;
   const presence = hash3(col + 1597, row + 2389, seed + 7919);
-  if (row < HAZARD_MAGMA_MIN_ROW) {
-    // 中層帯(5-8): 水のみ。
-    return presence < HAZARD_RATE_MID ? HAZARD.WATER : HAZARD.NONE;
-  }
-  // 深層帯(9-15): 水+マグマ。在るときに種別を別ハッシュで分ける(マグマ比率は深層で固定)。
-  if (presence >= HAZARD_RATE_DEEP) return HAZARD.NONE;
-  const kindH = hash3(col + 2389, row + 7919, seed + 1597); // 種別用(存在ハッシュと別位相)。
-  return kindH < HAZARD_MAGMA_FRAC ? HAZARD.MAGMA : HAZARD.WATER;
+  if (presence >= band.hazardRate) return HAZARD.NONE;
+  if (band.magmaFrac <= 0) return HAZARD.WATER;
+  const kindH = hash3(col + 2389, row + 7919, seed + 1597);
+  return kindH < band.magmaFrac ? HAZARD.MAGMA : HAZARD.WATER;
 }
 
 // ---- なだれ/落盤 崩落物理 — 原作忠実翻案(v0.7.0) ------------------------
@@ -378,13 +511,14 @@ const AVALANCHE_RATE_DEEP = 0.28; // 深層(9-15)の SOIL が不安定土であ�
 // buryMonster(+233/+617/+3001)・hazard(+1597/+2389/+7919)・tileType(col,row,seed) と非衝突。
 function avalancheAt(col, row, seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
-  if (row < AVALANCHE_MIN_ROW) return false; // 浅層帯は安定(崩落なし)。
+  if (row <= 0) return false;
   if (col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return false;
-  if (isGirlAt(col, row, seed)) return false; // 救出対象マスは崩落させない。
-  if (tileType(col, row, seed) !== TILE.SOIL) return false; // 不安定なのは土だけ(硬土/硬岩/空間は対象外)。
-  const rate = row < 9 ? AVALANCHE_RATE_MID : AVALANCHE_RATE_DEEP;
-  const h = hash3(col + 2671, row + 3331, seed + 9173); // 既存4レイヤー + tileType と非衝突。
-  return h < rate;
+  if (isGirlAt(col, row, seed)) return false;
+  if (tileType(col, row, seed) !== TILE.SOIL) return false;
+  const band = getDungeonBand(row);
+  if (!band || band.avalancheRate <= 0) return false;
+  const h = hash3(col + 2671, row + 3331, seed + 9173);
+  return h < band.avalancheRate;
 }
 
 // ---- キノコ(交換通貨) — 原作忠実翻案(v0.8.0) -------------------------
@@ -530,6 +664,7 @@ const TILES_FALLBACK_CONST = {
   GRID_COLS: 15,
   DEPTH_ROWS: 15,
   GIRL_COUNT: 5,
+  DUNGEON_ID: 0,
 };
 
 // ---- PALETTE(深度軸 + 掘った道) --------------------------------------
@@ -608,4 +743,8 @@ if (typeof window !== "undefined") {
   // v0.10.0 仲間同行(同行 EXP→レベル換算 + 説明データ。実効値ヘルパーは app.js 側)。
   window.COMPANION_DEFS = COMPANION_DEFS;
   window.companionLevelGain = companionLevelGain;
+  // v0.13.0 全9ダンジョンデータ(マスター + 深度帯)。
+  window.DUNGEON_DATA = DUNGEON_DATA;
+  window.DUNGEON_BANDS = DUNGEON_BANDS;
+  window.getDungeonBand = getDungeonBand;
 }

@@ -59,7 +59,7 @@
 // ワールドレイヤーには引き続き非介入。
 // v0.12.0: セーブ/永続(力尽き跨ぎで rescued/per/bp/info/pick/girls level を永続化)。保存=地上帰還時、
 // ロード=startDive 冒頭、クリアで消去。localStorage JSON 方式(既存 getInt/setInt と同じ try/catch)。
-const VERSION = "v0.12.0";
+const VERSION = "v0.13.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -264,6 +264,10 @@ const TEXT = {
   bestDepthSuffix: " 層",
   bestRescuePrefix: "救出 ",
   bestRescueSuffix: " 人",
+  nextDungeon: "次のダンジョンへ",
+  backToTitle: "タイトルへ",
+  dungeonUnlocked: "新しいダンジョンが解放された",
+  selectDungeon: "ダンジョンを選ぶ",
 };
 
 // ---- DOM 参照 ----------------------------------------------------------
@@ -423,6 +427,10 @@ const G = {
   // 指すだけで、移動/戦闘巻き込まれ/ロストの物理は既存 following レイヤーがそのまま担う(非介入)。
   // 各 girl は level(同行レベル)/cexp(同行中に貯めた経験値) を持つ(startDive 初期化)。
   companion: null, // 同行中の女の子(G.girls の要素を指す)。未指定なら null=既存挙動に完全一致。
+  // ---- v0.13.0 ダンジョン選択・解放チェーン ----
+  dungeonId: 0,
+  cleared: null, // Set(dungeonId) クリア済みダンジョン。
+  unlocked: null, // Set(dungeonId) 解放済みダンジョン。
 };
 window.G = G;
 
@@ -456,8 +464,44 @@ function markHowtoSeen() {
   }
 }
 
-// ---- v0.12.0 セーブ/永続(力尽き跨ぎ) -----------------------------------
-const SAVE_KEY = "mineroad_save";
+// ---- v0.13.0 ダンジョン CONST 動的設定 ----------------------------------
+function applyDungeonConst(id) {
+  const d = DUNGEON_DATA[id];
+  if (!d) return;
+  CONST.GRID_COLS = d.cols;
+  CONST.DEPTH_ROWS = d.rows;
+  CONST.GIRL_COUNT = d.girls;
+  CONST.DUNGEON_ID = id;
+}
+
+// ---- v0.13.0 ダンジョン進捗(クリア/解放チェーン) -------------------------
+const PROGRESS_KEY = "mineroad_progress";
+function saveDungeonProgress() {
+  try {
+    const data = {
+      v: 1,
+      cleared: G.cleared ? [...G.cleared] : [],
+      unlocked: G.unlocked ? [...G.unlocked] : [0],
+      currentDungeon: G.dungeonId,
+    };
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(data));
+  } catch (e) { /* noop */ }
+}
+function loadDungeonProgress() {
+  try {
+    const raw = localStorage.getItem(PROGRESS_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1) return;
+    G.cleared = new Set(data.cleared || []);
+    G.unlocked = new Set(data.unlocked || [0]);
+    G.dungeonId = data.currentDungeon || 0;
+  } catch (e) { /* noop */ }
+}
+
+// ---- v0.12.0 セーブ/永続(力尽き跨ぎ。ダンジョンごとに分離) ---------------
+const SAVE_KEY_PREFIX = "mineroad_save_";
+function saveKeyForDungeon(id) { return SAVE_KEY_PREFIX + id; }
 function savePersistent() {
   try {
     const girls = (G.girls || [])
@@ -472,14 +516,18 @@ function savePersistent() {
       pick: G.pick || CONST.INIT_PICK,
       girls: girls,
     };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    localStorage.setItem(saveKeyForDungeon(G.dungeonId), JSON.stringify(data));
   } catch (e) {
     /* localStorage 不可環境でもゲームは成立(保存のみ諦める) */
   }
 }
 function loadPersistent() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    let raw = localStorage.getItem(saveKeyForDungeon(G.dungeonId));
+    if (!raw && G.dungeonId === 0) {
+      raw = localStorage.getItem("mineroad_save");
+      if (raw) localStorage.removeItem("mineroad_save");
+    }
     if (!raw) return;
     const data = JSON.parse(raw);
     if (!data || data.v !== 1) return;
@@ -505,7 +553,7 @@ function loadPersistent() {
 }
 function clearPersistent() {
   try {
-    localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem(saveKeyForDungeon(G.dungeonId));
   } catch (e) {
     /* noop */
   }
@@ -513,7 +561,8 @@ function clearPersistent() {
 
 // ---- ダイブ開始 --------------------------------------------------------
 function startDive() {
-  G.seed = CONST.BASE_SEED; // 縦切りは固定(決定論再挑戦)。
+  applyDungeonConst(G.dungeonId);
+  G.seed = CONST.BASE_SEED + G.dungeonId;
   G.px = Math.floor(CONST.GRID_COLS / 2);
   G.py = 0;
   // v0.9.0 育成初期化(ランごと。fail/再挑戦でリセット=既存スコープ境界踏襲、save モデルは次増分)。
@@ -1660,18 +1709,32 @@ function resetOverlayParts() {
 function showTitle() {
   G.screen = "title";
   hudEl.hidden = true;
+  loadDungeonProgress();
+  if (!G.cleared) G.cleared = new Set();
+  if (!G.unlocked) G.unlocked = new Set([0]);
   resetOverlayParts();
   ovTitleEl.textContent = TEXT.title;
   ovTitleEl.hidden = false;
-  const bd = getInt(BEST_DEPTH_KEY);
-  const br = getInt(RESCUE_KEY);
-  ovSubEl.textContent =
-    TEXT.bestDepthPrefix + bd + TEXT.bestDepthSuffix + "　" +
-    TEXT.bestRescuePrefix + br + TEXT.bestRescueSuffix;
-  ovSubEl.hidden = false;
-  ovActionEl.textContent = TEXT.start;
-  ovActionEl.hidden = false;
-  ovActionEl.onclick = () => onStartPressed();
+  // ダンジョン選択リストを ovHowto 領域に動的生成。
+  ovHowtoEl.innerHTML = "";
+  for (let i = 0; i < DUNGEON_DATA.length; i++) {
+    const d = DUNGEON_DATA[i];
+    const isUnlocked = G.unlocked.has(i);
+    const isCleared = G.cleared.has(i);
+    const btn = document.createElement("button");
+    btn.className = "dungeon-btn" + (isUnlocked ? "" : " locked");
+    btn.type = "button";
+    if (isUnlocked) {
+      btn.textContent = (isCleared ? "✓ " : "▶ ") + d.name;
+      const did = i;
+      btn.onclick = () => { G.dungeonId = did; onStartPressed(); };
+    } else {
+      btn.textContent = "🔒 " + d.name;
+      btn.disabled = true;
+    }
+    ovHowtoEl.appendChild(btn);
+  }
+  ovHowtoEl.hidden = false;
   ovAction2El.textContent = TEXT.howtoButton;
   ovAction2El.hidden = false;
   ovAction2El.onclick = () => showHowto("title");
@@ -1719,15 +1782,20 @@ function showFail() {
   hudEl.hidden = true;
   playSfx("fail");
   if (G.maxDepthThisDive > getInt(BEST_DEPTH_KEY)) setInt(BEST_DEPTH_KEY, G.maxDepthThisDive);
+  const d = DUNGEON_DATA[G.dungeonId];
   resetOverlayParts();
   ovTitleEl.textContent = TEXT.failTitle;
   ovTitleEl.hidden = false;
   ovTitleEl.classList.add("small-title");
-  ovSubEl.textContent = TEXT.failSub + "　" + TEXT.depthPrefix + G.maxDepthThisDive + TEXT.depthSuffix;
+  const dname = d ? d.name : "";
+  ovSubEl.textContent = (dname ? dname + " — " : "") + TEXT.failSub + "　" + TEXT.depthPrefix + G.maxDepthThisDive + TEXT.depthSuffix;
   ovSubEl.hidden = false;
   ovActionEl.textContent = TEXT.retry;
   ovActionEl.hidden = false;
   ovActionEl.onclick = () => startDive();
+  ovAction2El.textContent = TEXT.backToTitle;
+  ovAction2El.hidden = false;
+  ovAction2El.onclick = () => showTitle();
   showOverlay();
 }
 
@@ -1735,22 +1803,42 @@ function showClear() {
   G.screen = "clear";
   hudEl.hidden = true;
   playSfx("clear");
-  clearPersistent(); // v0.12.0: クリアでセーブデータ消去(周回開始)。
+  clearPersistent();
+  if (!G.cleared) G.cleared = new Set();
+  if (!G.unlocked) G.unlocked = new Set([0]);
+  G.cleared.add(G.dungeonId);
+  const nextId = G.dungeonId + 1;
+  const hasNext = nextId < DUNGEON_DATA.length;
+  if (hasNext) G.unlocked.add(nextId);
+  saveDungeonProgress();
+  const d = DUNGEON_DATA[G.dungeonId];
   resetOverlayParts();
   ovTitleEl.textContent = TEXT.clearTitle;
   ovTitleEl.hidden = false;
   ovTitleEl.classList.add("small-title");
-  ovSubEl.textContent = TEXT.clearSub;
+  const sub = d ? d.name + " 制覇" : TEXT.clearSub;
+  ovSubEl.textContent = hasNext ? sub + " — " + TEXT.dungeonUnlocked : sub;
   ovSubEl.hidden = false;
-  ovActionEl.textContent = TEXT.again;
-  ovActionEl.hidden = false;
-  ovActionEl.onclick = () => startDive();
+  if (hasNext) {
+    ovActionEl.textContent = TEXT.nextDungeon;
+    ovActionEl.hidden = false;
+    ovActionEl.onclick = () => { G.dungeonId = nextId; startDive(); };
+    ovAction2El.textContent = TEXT.backToTitle;
+    ovAction2El.hidden = false;
+    ovAction2El.onclick = () => showTitle();
+  } else {
+    ovActionEl.textContent = TEXT.backToTitle;
+    ovActionEl.hidden = false;
+    ovActionEl.onclick = () => showTitle();
+  }
   showOverlay();
 }
 
 // ---- HUD レンダリング(DOM) --------------------------------------------
 function renderHud() {
-  depthValEl.textContent = TEXT.depthPrefix + G.py + TEXT.depthSuffix;
+  const d = DUNGEON_DATA[G.dungeonId];
+  const dname = d ? d.name : "";
+  depthValEl.textContent = (dname ? dname + " " : "") + TEXT.depthPrefix + G.py + TEXT.depthSuffix;
   rescueValEl.textContent = G.rescued + "/" + CONST.GIRL_COUNT;
   exploreValEl.textContent = Math.round(exploreRatio() * 100) + "%";
   if (expValEl) expValEl.textContent = G.exp || 0; // v0.5.0 EXP 蓄積(育成未実装=表示のみ)。
