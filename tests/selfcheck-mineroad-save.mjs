@@ -46,7 +46,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.12.0", ver === "v0.12.0", { ver });
+check("VERSION = v0.13.0", ver === "v0.13.0", { ver });
 
 // ============================================================================
 // 1. fail→retry で永続 state 復元
@@ -81,7 +81,7 @@ const save1 = await page.evaluate(() => {
   // 育成(convertInfo/growPer)は surfaceReturn の後なので、育成後の状態をセーブするために
   // 再度手動で surfaceReturn を呼ぶ。ただし既に py===0 なので girls 追従は no-op、全回復+セーブ。
   surfaceReturn();
-  try { return JSON.parse(localStorage.getItem("mineroad_save")); } catch (e) { return null; }
+  try { return JSON.parse(localStorage.getItem("mineroad_save_0")); } catch (e) { return null; }
 });
 check("1b surfaceReturn でセーブデータ存在", save1 && save1.v === 1, save1);
 check("1c セーブデータに rescued/per/pick", save1 && save1.rescued >= 1 && save1.per && save1.per.HP >= 1 && save1.pick === "DIAMOND", save1);
@@ -115,7 +115,7 @@ check("1g retry 後に girls[rescued] 復元", retry1.girlRescued >= 1, retry1);
 console.log("\n== 2. surfaceReturn で localStorage に保存 ==");
 
 const save2 = await page.evaluate(() => {
-  try { return JSON.parse(localStorage.getItem("mineroad_save")); } catch (e) { return null; }
+  try { return JSON.parse(localStorage.getItem("mineroad_save_0")); } catch (e) { return null; }
 });
 check("2a セーブデータのバージョン", save2 && save2.v === 1, save2);
 check("2b セーブデータの永続対象", save2 && typeof save2.rescued === "number" && save2.per && typeof save2.pick === "string", save2);
@@ -128,7 +128,7 @@ console.log("\n== 3. クリア後にセーブ消去 ==");
 
 const clear3 = await page.evaluate(() => {
   showClear();
-  try { return localStorage.getItem("mineroad_save"); } catch (e) { return "error"; }
+  try { return localStorage.getItem("mineroad_save_0"); } catch (e) { return "error"; }
 });
 check("3a クリア後にセーブデータ消去", clear3 === null, { clear3 });
 
@@ -139,7 +139,7 @@ console.log("\n== 4. ランごとリセット state は復元されない ==");
 
 // 新しいダイブで鉱石やアイテムを持った状態にする。
 const run4 = await page.evaluate(() => {
-  try { localStorage.removeItem("mineroad_save"); } catch (e) {}
+  try { localStorage.removeItem("mineroad_save"); localStorage.removeItem("mineroad_save_0"); localStorage.removeItem("mineroad_progress"); } catch (e) {}
   startDive();
   G.pick = "DIAMOND";
   G.monsters = [];
@@ -192,7 +192,7 @@ console.log("\n== 5. 決定論: 3回連続一致 ==");
 const detResults = [];
 for (let trial = 0; trial < 3; trial++) {
   await page.evaluate(() => {
-    try { localStorage.removeItem("mineroad_save"); } catch (e) {}
+    try { localStorage.removeItem("mineroad_save"); localStorage.removeItem("mineroad_save_0"); localStorage.removeItem("mineroad_progress"); } catch (e) {}
   });
   const r = await page.evaluate(() => {
     startDive();
@@ -205,7 +205,7 @@ for (let trial = 0; trial < 3; trial++) {
     convertInfoToBp();
     if (G.bp >= bpCostFor("HP", 0)) levelUpPer("HP");
     surfaceReturn();
-    try { return JSON.parse(localStorage.getItem("mineroad_save")); } catch (e) { return null; }
+    try { return JSON.parse(localStorage.getItem("mineroad_save_0")); } catch (e) { return null; }
   });
   detResults.push(JSON.stringify(r));
 }
