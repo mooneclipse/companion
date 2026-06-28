@@ -35,7 +35,7 @@ bot 改良プラン (2026-06-10 OWNER 合意、center of truth = `~/companion/wo
 - ~~**C-1**: Step 1 閲覧自由化~~ → **2026-06-10 完了、Done 転記済み** (実弾検証 3 件 pass、消費観察起点 = 2026-06-10)。
 - ~~**C-2**: Step 2 bot.py 小改変パック #1 — 画像応答 + permission_denials 記録~~ → **2026-06-10 完了、Done 転記済み** (restart + 実弾検証 2 件 pass、数日の様子見のみ継続)。
 - **C-3 (一部凍結、独立項目完了)**: Step 3 予算計器 — 課金窓アンカー集計 (`BOT_CREDIT_ANCHOR_DAY`) / ソフト警告 50%/80% / /quota 窓終端着地予測 は **2026-06-15 のクレジット枠分離が公式 pause されたため凍結** (金額・課金窓を前提とするため。Anthropic が制度を確定したら再設計)。**2026-06-16**: budget guard は `requests_count` (1h 回数上限) に戻し、ledger の金額記録・/quota の金額表示は撤去済 (詳細は下記 Done「2026-06-16 credit guard 撤去」)。**2026-06-28**: クレジット枠と独立な 2 項目完了 — /status セッション肥大可視化 (Step 3-3、commit `c9caaa8`) + /quota 公式利用率併記 (Step 3-4、commit `05064d9`)、Done 転記済み。
-- **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 の優先順。死蔵知識 proactive 拡張は persona 軸 4 実装 (2) として 2026-06-12 に前倒し完了 (チケット #20、Done 転記済み)。
+- **C-4 (C-2/C-3 後、1 機能 = 1 着手)**: Step 4 機能追加 — /remind → チケット連携 の優先順。死蔵知識 proactive 拡張は persona 軸 4 実装 (2) として 2026-06-12 に前倒し完了 (チケット #20、Done 転記済み)。**2026-06-28**: /remind 実装完了 (commit `cc1734d`、Done 転記済み)。
 - ~~**C-5 (次回 bot.py 改修時に同梱)**~~ → **2026-06-28 完了** (Step 3-3 と同梱、commit `c9caaa8`、Done 転記済み)。
 
 (`/vault_push` 実装は下記「Done」セクションに転記済)
@@ -188,6 +188,13 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 （なし）
 
 ## Done
+
+### /remind コマンド追加 (2026-06-28、Step 4-1、C-4)
+
+**目的**: `/remind 30m 洗濯物` で指定時間後にリマインダを送信。claude を介さない (コスト 0)。
+
+- **変更**: bot.py に duration パーサ (`parse_remind_duration`)、JSON 永続化 (`sessions/reminders.json`、atomic write)、list/cancel サブコマンド、JobQueue 連携 (`_remind_fire`)、post_init 再スケジュールを追加。テスト 8 ケース追加 (全 295+8=303 pass)
+- **commit**: `cc1734d`。restart で本番反映、push は user 承認待ち
 
 ### /quota に公式利用率併記 (2026-06-28、Step 3-4、todo#43)
 
