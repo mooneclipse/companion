@@ -16,7 +16,7 @@
 
 ## TODO
 
-- machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 + S6-1 + S6-2 完了済み。残は S6-6 延命チューニング
+- machine-audit: マシン全体メンテナンス (計画 = `machine-audit/PLAN.md`)。S1〜S5 + S6-1 + S6-2 完了済み。S6-6 延命チューニングは powertop 恒久化まで完了、残は BIOS 設定 + 物理清掃のみ (次の再起動・物理操作時)
 - usb-backup 運用: USB を挿したら `sudo ~/companion/maintenance/scripts/usb-backup.sh` を手動 1 発、**月 1 目安**。**普段 USB は外しておき、daily system-report の滞留 nudge (30 日超) が来たら挿して実行する運用に確定** (2026-06-15、下記 Done 参照)。挿し忘れ検出は実装済み
 - RAM 物理増設: **当面見送り (2026-06-11 ユーザー判断)**。古い PC の活用という位置付けで、定常使用 1.3G 程度なら zram で足りる見込み。再考トリガ = (a) daily system-report の swap が zram 導入後も膨らみ続ける、(b) ブラウザ操作等の重いワークロードをこの機に足すと決めたとき。増設する場合の情報は観測済み: JDIMM2 空き・最大 16GB (8GB/枚)・DDR3L-1600 SODIMM (詳細 = `machine-audit/PLAN.md` S6-1)
 - machine-audit 四半期再走 (S5 で採用): **次回 2026-09 頃**。全体スキャンからやり直して新 PLAN を作成、現 `machine-audit/PLAN.md` は手順テンプレ + 前回観測との比較基準として参照
@@ -25,9 +25,9 @@
 
 ## In progress
 
-### S6-6 延命チューニング（計測フェーズ = sudo 不要分、2026-06-29）
+### S6-6 延命チューニング（2026-06-29）
 
-machine-audit PLAN.md S6-6 の 7 作業項目のうち、sudo 不要な計測・分析を先行実施。
+machine-audit PLAN.md S6-6 の 7 作業項目。計測→powertop 適用→DPMS 判断まで完了。
 
 **1. 現状計測（2026-06-29 00:24, uptime 1d4h）**:
 - CPU 温度: Package 47°C / Core 0,1 = 46°C（high=87°C, crit=105°C まで大幅余裕）
@@ -44,6 +44,20 @@ machine-audit PLAN.md S6-6 の 7 作業項目のうち、sudo 不要な計測・
 **4. 電源断耐性**: companion 系 5 サービス（bot/games/photos/remote/video-mpv）は全て Python ファイルベース（JSON/.state テキスト）で **SQLite 不使用**。dashboard の Firefox プロファイルに SQLite 24 ファイルあるが、現在 inactive（Firefox 未起動）。mozc/presage/NSS の DB はデスクトップアプリのローカルキャッシュで突然死の実害なし。**companion 系に突然死で壊れうる永続データなし = 電源断リスクは低い**。唯一の懸念は ext4 journaling のメタデータ外の大きな書き込み途中だが、companion 系の書き込みは小サイズ state ファイルのみ
 
 **5. thermald**: active（Intel 熱制御デーモン稼働中=自動スロットリングが効く）
+
+**6. powertop（2026-06-29、sudo 実行）**:
+- `apt install powertop` → `powertop --csv=/tmp/powertop-baseline.csv --time=30` で計測。CPU は C7 に 88-92% 滞在、GPU RC6p 98%、USB autosuspend 主要デバイス適用済み。Audio codec が消費トップだが制御不可
+- "Software Settings in Need of Tuning" 26 項目: i915 I2C runtime PM / SATA ポート runtime PM / PCI デバイス runtime PM / NMI watchdog off / VM writeback 延長。USB autosuspend は既に最適化済みで x11vnc への影響なし
+- `powertop --auto-tune` で一括適用。副作用なし（x11vnc / キーボード / マウス正常）
+- 恒久化: `powertop-autotune.service` (Type=oneshot, After=multi-user.target) を作成・enable。起動時に自動適用。スクリプト = `machine-audit/s6-6-powertop-autotune.sh`
+
+**7. DPMS 消灯（2026-06-29、スキップ）**:
+- DPMS は X11 全体に効くため TV (HDMI-1) も消灯してしまう。TV は YouTube 等で常用するため不可
+- LVDS-1 (ノート内蔵パネル) のみ `xrandr --output LVDS-1 --off` で消す案も検討したが、ダッシュボードの `--kiosk-monitor=1` の番号体系が変わるリスクがあり、ユーザー判断で見送り
+
+**残作業（物理操作時）**:
+- ⑤ 物理清掃: 筐体裏蓋を外してファン・ヒートシンクの埃飛ばし
+- ⑦ BIOS 設定: Dell「Warnings and Errors」→ Continue（バッテリー未検出警告スキップ）+ AC Recovery（停電復帰で自動起動）の有無確認・有効化
 
 **6. VM writeback**: laptop_mode=0（有効化すればディスク IO をバッチ化して HDD スピンダウンを増やせる＝AC 常時なら不要だがファン回転を減らす効果は微小）。dirty_writeback=500cs(5s)、dirty_expire=3000cs(30s) = デフォルト値
 
