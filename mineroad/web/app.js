@@ -59,7 +59,7 @@
 // ワールドレイヤーには引き続き非介入。
 // v0.12.0: セーブ/永続(力尽き跨ぎで rescued/per/bp/info/pick/girls level を永続化)。保存=地上帰還時、
 // ロード=startDive 冒頭、クリアで消去。localStorage JSON 方式(既存 getInt/setInt と同じ try/catch)。
-const VERSION = "v0.13.0";
+const VERSION = "v0.13.1";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -311,6 +311,8 @@ const pickIcoEl = document.getElementById("pick-ico");
 const potionValEl = document.getElementById("potion-val");
 const btnPotionEl = document.getElementById("btn-potion");
 const btnCraftEl = document.getElementById("btn-craft");
+const ladderValEl = document.getElementById("ladder-val");
+const btnLadderEl = document.getElementById("btn-ladder");
 const craftOverlayEl = document.getElementById("craft-overlay");
 const craftListEl = document.getElementById("craft-list");
 const craftCloseEl = document.getElementById("craft-close");
@@ -611,6 +613,7 @@ function startDive() {
   G.mushrooms = 0; // v0.8.0: キノコ通貨(SOIL 掘り抜きで採取)。
   G.dreamMushrooms = 0; // v0.8.0: 夢キノコ(キノコ100 から統合)。
   G.fruits = 0; // v0.8.0: フルーツ(商人で鉄鉱石2 と交換)。
+  G.placedLadders = new Set(); // v0.13.1: 設置済みはしご位置("col,row")。ランごとリセット。
   G.companion = null; // v0.10.0: 同行指定はランごとリセット(level/cexp は girls 配列の初期化で 0 へ)。
   G.playerTrail = [[G.px, G.py]]; // v0.11.0: 自機足跡履歴(追従の正本)。地表スタート位置を起点に。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
@@ -765,8 +768,54 @@ function act(dc, dr) {
   // こうしないと単軸移動 + 全重力では掘った縦坑を登れず地表へ戻れない(= 全回復の撤退ループが
   // 成立しない)ため。「上移動は 1 マスだけ」のスロットルは 1 行動 1 マスで担保。
   if (dr === -1) {
-    if (!isSpace(col, row)) return; // 真上が固い = 登れない(上掘り不可)。
-    moveTo(col, row, false, true); // noGravity = true。
+    if (isSpace(col, row)) {
+      moveTo(col, row, false, true); // noGravity = true。
+      return;
+    }
+    // v0.13.1 上掘り: 自機位置にはしごが設置済みなら、真上の固体タイルを掘れる。
+    if (G.placedLadders && G.placedLadders.has(G.px + "," + G.py)) {
+      const t = tileAt(col, row);
+      if (t === TILE.NONE || t === TILE.SURFACE) { moveTo(col, row, false, true); return; }
+      const req = TILE_REQ_POWER[t];
+      if (req === undefined || pickPower() < req) {
+        showHint(TEXT.cueRockHit, false);
+        spawnPopupAt(col, row, "×", "warn");
+        playSfx("blocked");
+        return;
+      }
+      const key = col + "," + row;
+      let remain = G.digProgress.get(key);
+      if (remain === undefined) remain = digTaps(t);
+      remain -= 1;
+      spawnPopupAt(col, row, "・");
+      playDig();
+      spendAction();
+      if (remain > 0) {
+        G.digProgress.set(key, remain);
+        renderHud();
+        checkFail();
+        return;
+      }
+      G.digProgress.delete(key);
+      G.dug.add(key);
+      G.fallen.delete(key);
+      let buried = null;
+      if (t === TILE.GIRL) discoverGirl(col, row);
+      else {
+        if (t === TILE.SOIL && avalancheAt(col, row, G.seed)) markUnstableDug(col, row);
+        collectOre(col, row);
+        if (t === TILE.SOIL) collectMushroom(col, row);
+        buried = trySpawnBuryMonster(col, row);
+      }
+      if (buried) {
+        revealAround();
+        monstersAct();
+        renderHud();
+        checkFail();
+        return;
+      }
+      moveTo(col, row, true, true);
+    }
     return;
   }
 
@@ -945,6 +994,33 @@ function doCraft(rec) {
   renderCraft(); // パネルの可否表示を更新。
   return true;
 }
+// v0.13.1 はしご設置(消耗品を 1 個消費して自機位置にはしごを置く)。
+function placeLadder() {
+  if (G.screen !== "dive") return false;
+  if ((G.ladders || 0) <= 0) return false;
+  const key = G.px + "," + G.py;
+  if (!isSpace(G.px, G.py) || G.py <= 0) return false;
+  if (G.placedLadders.has(key)) return false;
+  G.ladders -= 1;
+  G.placedLadders.add(key);
+  playSfx("heal");
+  showHint("はしごを設置した", false);
+  renderHud();
+  return true;
+}
+// v0.13.1 はしご回収(自機位置の設置済みはしごを拾って所持に戻す)。
+function recoverLadder() {
+  if (G.screen !== "dive") return false;
+  const key = G.px + "," + G.py;
+  if (!G.placedLadders || !G.placedLadders.has(key)) return false;
+  G.placedLadders.delete(key);
+  G.ladders += 1;
+  playSfx("heal");
+  showHint("はしごを回収した", false);
+  renderHud();
+  return true;
+}
+
 // 回復薬を使う(体力 +POTION_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
 function usePotion() {
   if (G.screen !== "dive" || G.potions <= 0) return false;
@@ -1871,6 +1947,14 @@ function renderInventory() {
     btnPotionEl.disabled = (G.potions || 0) <= 0;
     btnPotionEl.classList.toggle("disabled", (G.potions || 0) <= 0);
   }
+  // v0.13.1 はしご: 所持数表示 + 設置/回収トグルの disabled 制御。
+  if (ladderValEl) ladderValEl.textContent = G.ladders || 0;
+  if (btnLadderEl) {
+    const onLadder = G.placedLadders && G.placedLadders.has(G.px + "," + G.py);
+    const dis = (G.ladders || 0) <= 0 && !onLadder;
+    btnLadderEl.disabled = dis;
+    btnLadderEl.classList.toggle("disabled", dis);
+  }
   // v0.8.0 商人通貨: キノコ所持数を HUD バーに表示(夢キノコ/フルーツは工房=商人タブで扱う)。
   if (mushValEl) mushValEl.textContent = G.mushrooms || 0;
   // v0.9.0 育成: 救出した女の子の「情報」ストックを HUD バーに表示(BP/PER 操作は工房=育成タブ)。
@@ -2318,6 +2402,11 @@ if (btnMuteEl) {
 if (btnCraftEl) btnCraftEl.addEventListener("click", () => openCraft());
 if (craftCloseEl) craftCloseEl.addEventListener("click", () => closeCraft());
 if (btnPotionEl) btnPotionEl.addEventListener("click", () => usePotion());
+if (btnLadderEl) btnLadderEl.addEventListener("click", () => {
+  const key = G.px + "," + G.py;
+  if (G.placedLadders && G.placedLadders.has(key)) recoverLadder();
+  else placeLadder();
+});
 // v0.8.0: 工房のタブ切り替え(クラフト / 商人)。商人は「作る」ボタン→工房→商人タブで開く
 // (上部バーに 3 つ目のボタンを足さない=既存ボタン x 位置/地表タップ前提を壊さない)。
 if (tabCraftEl) tabCraftEl.addEventListener("click", () => setWorkshopTab("craft"));
@@ -2444,6 +2533,21 @@ function render() {
           const hc = hexToRgb(hz === HAZARD.MAGMA ? PALETTE.magma : PALETTE.water);
           ctx.fillStyle = `rgba(${hc[0]},${hc[1]},${hc[2]},${hz === HAZARD.MAGMA ? 0.55 : 0.45})`;
           ctx.fillRect(sx, sy, tile + 1, tile + 1);
+        }
+        // v0.13.1 設置済みはしご(木の色で縦2本+横段3本の簡素はしご)。
+        if (G.placedLadders && G.placedLadders.has(col + "," + row)) {
+          ctx.strokeStyle = "rgba(180,160,120,0.7)";
+          ctx.lineWidth = Math.max(2, tile * 0.08);
+          const lx1 = sx + tile * 0.3;
+          const lx2 = sx + tile * 0.7;
+          ctx.beginPath();
+          ctx.moveTo(lx1, sy + tile * 0.1); ctx.lineTo(lx1, sy + tile * 0.9);
+          ctx.moveTo(lx2, sy + tile * 0.1); ctx.lineTo(lx2, sy + tile * 0.9);
+          for (let ri2 = 0; ri2 < 3; ri2++) {
+            const ry = sy + tile * (0.25 + ri2 * 0.25);
+            ctx.moveTo(lx1, ry); ctx.lineTo(lx2, ry);
+          }
+          ctx.stroke();
         }
       } else {
         // 固体タイル = スプライト(SOIL/HARD/ROCK、女の子マスは soil で描き上に重ねる)。

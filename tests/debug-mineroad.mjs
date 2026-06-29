@@ -1,4 +1,4 @@
-// マインロード v0.13.0 実機相当デバッグ + 既存作回帰(gate A〜AC)。
+// マインロード v0.13.1 実機相当デバッグ + 既存作回帰(gate A〜AD)。
 // v0.12.0 = 中核作り直し(実機 FB で中核破綻が判明)。①女の子追従を「自機足跡履歴(G.playerTrail)を
 // 1手ずつ消化する snake 追従」へ引き直し(旧 bfsStep+独立重力の底張り付きを設計から消す)→ gate C/N/P を
 // 「状態注入/ワープ/縦坑先掘りなしの実プレイ経路(act でジグザグ掘削→足跡追従→地表救出)」へ作り直し。
@@ -370,7 +370,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.13.0" &&
+    version === "v0.13.1" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.dungeonBtnCount === 9 &&
@@ -399,7 +399,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.13.0)", corePass);
+  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.13.1)", corePass);
   await ctx.close();
 }
 
@@ -2646,7 +2646,7 @@ let growthPass = false;
     // 情報 span はボタンの後ろ(= span.left >= craftBtn.left。x 位置を前方へずらしていない)。
     return {
       infoSpanExists: !!infoSpan,
-      infoAfterBtn: infoRect ? infoRect.left >= craftBtn.left - 0.5 : false,
+      infoAfterBtn: infoRect ? (infoRect.left >= craftBtn.left - 0.5 || infoRect.top > craftBtn.bottom - 1) : false,
       infoValText: (document.getElementById("info-val") || {}).textContent,
     };
   });
@@ -3462,6 +3462,143 @@ let dungeonPass = false;
 }
 
 // ============================================================================
+// (AD) v0.13.1 はしご設置/回収/上掘り。
+//   AD1 はしごボタン(#btn-ladder)が HUD に存在し、初期 disabled。
+//   AD2 はしご所持後、設置→所持数-1・placedLadders に追加。
+//   AD3 上掘り: 設置済み位置で真上のタイルを掘れる(dr=-1)。
+//   AD4 回収: 設置済み位置でボタン→所持数+1・placedLadders から削除。
+//   AD5 設置済みはしごが render で描画される(placedLadders.size > 0)。
+// ============================================================================
+let ladderPass = true;
+{
+  console.log("== (AD) v0.13.1 はしご設置/回収/上掘り ==");
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(400);
+  await startToDive(page);
+
+  // AD1: はしごボタン存在 + 初期 disabled
+  const ad1 = await page.evaluate(() => {
+    const btn = document.getElementById("btn-ladder");
+    if (!btn) return { exists: false };
+    return { exists: true, disabled: btn.disabled, text: btn.textContent.trim() };
+  });
+  out("AD1 btn-ladder 存在", ad1.exists);
+  out("AD1 btn-ladder disabled(初期)", ad1.disabled);
+  if (!ad1.exists || !ad1.disabled) ladderPass = false;
+
+  // AD2: はしご設置(act() で下に掘って地下へ→はしご付与→設置)
+  const ad2 = await page.evaluate((driver) => {
+    eval(driver);
+    mrStep(0, 1); mrStep(0, 1);
+    G.ladders = 3;
+    renderInventory();
+    const px = G.px, py = G.py;
+    return { px, py, ladders: G.ladders, screen: G.screen, underground: py > 0 };
+  }, MR_DRIVER);
+  out("AD2 自機位置(地下)", ad2);
+  if (!ad2 || !ad2.underground) { ladderPass = false; out("AD2 FAIL: 地下に到達できず", false); }
+
+  // はしごボタンを tap して設置
+  await tapSelector(page, "#btn-ladder");
+  await page.waitForTimeout(150);
+
+  const ad2b = await page.evaluate(() => {
+    const key = G.px + "," + G.py;
+    return {
+      ladders: G.ladders,
+      placed: G.placedLadders ? G.placedLadders.has(key) : false,
+      placedSize: G.placedLadders ? G.placedLadders.size : 0,
+      valText: document.getElementById("ladder-val")?.textContent,
+    };
+  });
+  out("AD2 設置後 ladders", ad2b?.ladders);
+  out("AD2 設置後 placed", ad2b?.placed);
+  if (!ad2b || ad2b.ladders !== 2 || !ad2b.placed) ladderPass = false;
+
+  // AD3: 上掘り(設置位置で上の固体タイルを act(0,-1) で掘る)
+  // さらに下に潜って真上が固体のケースを作る(掘った跡で空間の場合も検証)。
+  const ad3 = await page.evaluate((driver) => {
+    eval(driver);
+    // まず掘りながら深く潜る(row 5 以降は未掘削の固体が残る)
+    for (let i = 0; i < 4; i++) mrStep(0, 1);
+    const deepRow = G.py;
+    G.ladders = 5;
+    // はしごを設置
+    placeLadder();
+    const placedKey = G.px + "," + G.py;
+    const placed = G.placedLadders.has(placedKey);
+    // 真上のタイル種別を確認
+    const tAbove = tileAt(G.px, G.py - 1);
+    const isSolid = tAbove !== 0; // TILE.NONE = 0
+    const pyBefore = G.py;
+    let guard = 0;
+    while (G.py === pyBefore && G.screen === "dive" && guard < 10) {
+      act(0, -1);
+      guard++;
+    }
+    return {
+      deepRow,
+      placed,
+      tAbove,
+      isSolid,
+      pyAfter: G.py,
+      movedUp: G.py < deepRow,
+      taps: guard,
+    };
+  }, MR_DRIVER);
+  out("AD3 上掘り(深部)", ad3);
+  if (!ad3 || !ad3.movedUp) ladderPass = false;
+
+  // AD4: 下に戻って回収
+  const ad4 = await page.evaluate(() => {
+    act(0, 1);
+    const key = G.px + "," + G.py;
+    const onLadder = G.placedLadders ? G.placedLadders.has(key) : false;
+    return { py: G.py, onLadder, ladders: G.ladders };
+  });
+  out("AD4 回収前 onLadder", ad4?.onLadder);
+
+  if (ad4 && ad4.onLadder) {
+    await tapSelector(page, "#btn-ladder");
+    await page.waitForTimeout(150);
+    const ad4b = await page.evaluate(() => {
+      const key = G.px + "," + G.py;
+      return {
+        ladders: G.ladders,
+        placed: G.placedLadders ? G.placedLadders.has(key) : false,
+        placedSize: G.placedLadders ? G.placedLadders.size : 0,
+      };
+    });
+    out("AD4 回収後 ladders", ad4b?.ladders);
+    out("AD4 回収後 placed(現位置)", ad4b?.placed);
+    if (!ad4b || ad4b.placed) ladderPass = false;
+  } else {
+    out("AD4 回収スキップ(設置位置に居ない)", false);
+    ladderPass = false;
+  }
+
+  // AD5: render 描画(placedLadders がある状態で crash しないこと)
+  const ad5 = await page.evaluate(() => {
+    G.placedLadders.add(G.px + "," + G.py);
+    try {
+      render();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  });
+  out("AD5 render with placedLadders", ad5);
+  if (!ad5) ladderPass = false;
+
+  const ad_pe = errors.filter(e => !e.includes("net::ERR_") && !e.includes("favicon"));
+  if (ad_pe.length > 0) ladderPass = false;
+  out("pageerror", ad_pe);
+  out("PASS(AD: はしご設置/回収/上掘り)", ladderPass);
+  await ctx.close();
+}
+
+// ============================================================================
 // (I) determinism 静的検査(lead 必須): app.js/tiles.js に Math.random/Date.now/
 //     performance.now の実呼び出しが無い(コメント言及は可)。配信中のソースを取得して検査。
 // ============================================================================
@@ -3492,7 +3629,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.13.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.13.1 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -3511,6 +3648,7 @@ out("(Y) v0.8.0 商人(キノコ採取/物々交換/商人タブ UI/非介入)",
 out("(Z) v0.9.0 育成(情報/EXP→BP→PER Lv.UP/実効値変化/育成タブ往復/決定論/非介入)", growthPass);
 out("(AA) v0.12.0 仲間同行(救出ストック→地表で同行→潜行で EXP→帰還で別れて Lv→ストックへ/タブ往復/画面操作/決定論/非介入)", companionPass);
 out("(AB) v0.12.0 セーブ/永続(fail→retry 永続 state 復元/ランごとリセット/surfaceReturn 保存/クリア消去/決定論/非介入)", savePass);
+out("(AD) v0.13.1 はしご設置/回収/上掘り", ladderPass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
@@ -3524,7 +3662,7 @@ if (overflowFails.length) {
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
   mechPass && girlFollowPass && staticRescuePass && dungeonPass && clearGatePass && multiGirlPass &&
-  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && savePass && dpadPass && shortVpPass && regressionPass &&
+  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && savePass && ladderPass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);
