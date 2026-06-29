@@ -19,11 +19,11 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 
 import auth
 import dlqueue
+import nowplaying
 import playlist
 import status as os_status
 import thoughts
 import tickets
-import nowplaying
 import urlguard
 import vault
 import version
@@ -38,6 +38,8 @@ def is_music_url(url):
         return urlparse(url).hostname == "music.youtube.com"
     except Exception:
         return False
+
+
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 MAX_BODY = 64 * 1024  # (iii) JSON body 上限。F-1 prompt の別枠拡張は v1-β。
 
