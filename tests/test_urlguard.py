@@ -84,6 +84,9 @@ class TestVideoDerive(unittest.TestCase):
         s = video._derive({"idle-active": True})
         self.assertEqual(s["phase"], "idle")
         self.assertFalse(s["is_live"])
+        self.assertIsNone(s["path"])
+        self.assertIsNone(s["artist"])
+        self.assertIsNone(s["uploader"])
 
     def test_resolving(self):
         # loadfile 直後: file あり(idle-active False)だが再生未開始(time-pos None)
@@ -111,6 +114,28 @@ class TestVideoDerive(unittest.TestCase):
                            "seekable": False, "pause": False})
         self.assertEqual(s["phase"], "playing")
         self.assertTrue(s["is_live"])
+
+    def test_music_metadata(self):
+        s = video._derive({
+            "idle-active": False, "time-pos": 30.0, "duration": 240.0,
+            "seekable": True, "pause": False,
+            "path": "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            "metadata/by-key/artist": "Rick Astley",
+            "metadata/by-key/uploader": "Rick Astley - Topic",
+        })
+        self.assertEqual(s["phase"], "playing")
+        self.assertEqual(s["path"], "https://music.youtube.com/watch?v=dQw4w9WgXcQ")
+        self.assertEqual(s["artist"], "Rick Astley")
+        self.assertEqual(s["uploader"], "Rick Astley - Topic")
+
+    def test_metadata_none_when_absent(self):
+        s = video._derive({
+            "idle-active": False, "time-pos": 5.0, "duration": 60.0,
+            "seekable": True, "pause": False,
+        })
+        self.assertIsNone(s["path"])
+        self.assertIsNone(s["artist"])
+        self.assertIsNone(s["uploader"])
 
 
 if __name__ == "__main__":
