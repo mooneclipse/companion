@@ -1019,7 +1019,8 @@ async function refreshTodo() {
     if (!r.ok) return;
     const data = await r.json();
     updateTodoBadge(data.counts);
-    if ($("todo").classList.contains("active")) renderTodo(data.tickets || []);
+    if ($("todo").classList.contains("active") && !document.querySelector(".todo-edit-input"))
+      renderTodo(data.tickets || []);
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
 }
 
@@ -1533,8 +1534,6 @@ function initNav() {
   document.querySelectorAll("[data-open]").forEach((el) => {
     el.addEventListener("click", () => navOpenScreen(el.getAttribute("data-open")));
   });
-  // data-href タイル(写真など別オリジン PWA): 画面遷移せず外部 URL を別タブで開く。
-  // user gesture 内なので window.open は許可される。opener は渡さない。
   // data-action タイル(screensaver 等): 画面遷移せず即アクション実行。
   document.querySelectorAll("[data-action]").forEach((el) => {
     el.addEventListener("click", () => {

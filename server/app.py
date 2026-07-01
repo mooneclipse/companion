@@ -21,13 +21,13 @@ import auth
 import dlqueue
 import nowplaying
 import playlist
+import screensaver
 import status as os_status
 import thoughts
 import tickets
 import urlguard
 import vault
 import version
-import screensaver
 import video
 
 HOST = "127.0.0.1"
@@ -324,20 +324,26 @@ def api_todo_add(handler):
 
 
 def api_todo_edit(handler):
-    """POST /api/todo/edit {id, text} — テキスト更新。Bearer 必須。"""
+    """POST /api/todo/edit {id, text} — テキスト更新。Bearer 必須。
+
+    分岐は state を引く前に確定: id/text を先に検証して 400、その後の
+    TicketError は「該当 id なし」=404 と一意に決まる(文言マッチで分岐しない)。
+    """
     data, err = _read_json(handler)
     if err:
         return err
     tid = data.get("id")
     if isinstance(tid, bool) or not isinstance(tid, int):
         return 400, {"error": "id must be an integer"}
+    text = data.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return 400, {"error": "text required"}
+    if len(text.strip()) > tickets.MAX_TEXT:
+        return 400, {"error": "text too long"}
     try:
-        return 200, tickets.edit(tid, data.get("text"))
-    except tickets.TicketError as e:
-        s = str(e)
-        if "no such ticket" in s:
-            return 404, {"error": s}
-        return 400, {"error": s}
+        return 200, tickets.edit(tid, text)
+    except tickets.TicketError:
+        return 404, {"error": "no such ticket"}
 
 
 def api_todo_status(handler):
@@ -420,10 +426,9 @@ def api_screensaver_toggle(handler):
     """POST /api/screensaver/toggle — Bearer 必須。"""
     if screensaver.is_active():
         screensaver.stop()
-        return 200, {"active": False}
     else:
         screensaver.start()
-        return 200, {"active": True}
+    return 200, {"active": screensaver.is_active()}
 
 
 def api_vault_image(handler):
