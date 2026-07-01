@@ -987,7 +987,7 @@ function startEditTodo(li, t) {
   const doSave = async () => {
     const newText = input.value.trim();
     if (!newText) return;
-    if (newText === t.text) { refreshTodo(); return; }
+    if (newText === t.text) { refreshTodo(true); return; }
     save.disabled = true;
     cancel.disabled = true;
     try {
@@ -996,7 +996,7 @@ function startEditTodo(li, t) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: t.id, text: newText }),
       });
-      if (r.ok) { await refreshTodo(); }
+      if (r.ok) { await refreshTodo(true); }
       else { save.disabled = false; cancel.disabled = false; }
     } catch (e) {
       if (e.message !== "unauthorized") { save.disabled = false; cancel.disabled = false; }
@@ -1004,22 +1004,22 @@ function startEditTodo(li, t) {
   };
 
   save.addEventListener("click", doSave);
-  cancel.addEventListener("click", () => refreshTodo());
+  cancel.addEventListener("click", () => refreshTodo(true));
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); doSave(); }
-    if (e.key === "Escape") { e.preventDefault(); refreshTodo(); }
+    if (e.key === "Escape") { e.preventDefault(); refreshTodo(true); }
   });
 }
 
 // バッジは常時更新(15s ポーリング)、一覧はやること画面表示中のみ最新描画。
-async function refreshTodo() {
+async function refreshTodo(force) {
   if (!getToken()) return;
   try {
     const r = await api("/api/todo");
     if (!r.ok) return;
     const data = await r.json();
     updateTodoBadge(data.counts);
-    if ($("todo").classList.contains("active") && !document.querySelector(".todo-edit-input"))
+    if ($("todo").classList.contains("active") && (force || !document.querySelector(".todo-edit-input")))
       renderTodo(data.tickets || []);
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
 }
@@ -1509,16 +1509,29 @@ async function refreshScreensaver() {
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
 }
 
+let ssBusy = false;
 async function toggleScreensaver() {
-  if (!getToken()) return;
-  $("tile-ss-sub").textContent = "切替中…";
+  if (!getToken() || ssBusy) return;
+  ssBusy = true;
+  const sub = $("tile-ss-sub");
+  sub.textContent = "切替中…";
   try {
     const r = await api("/api/screensaver/toggle", { method: "POST" });
-    if (!r.ok) { $("tile-ss-sub").textContent = "エラー"; return; }
+    if (!r.ok) { sub.textContent = "エラー"; ssBusy = false; return; }
     const data = await r.json();
-    $("tile-ss-sub").textContent = data.active ? "表示中" : "停止中";
+    if (data.ok) {
+      sub.textContent = data.action === "stop" ? "-- 停止しました" : "-- 開始しました";
+      setTimeout(() => {
+        sub.textContent = data.active ? "表示中" : "停止中";
+        ssBusy = false;
+      }, 1500);
+    } else {
+      sub.textContent = "失敗";
+      setTimeout(() => { refreshScreensaver(); ssBusy = false; }, 1500);
+    }
   } catch (e) {
-    if (e.message !== "unauthorized") $("tile-ss-sub").textContent = "エラー";
+    if (e.message !== "unauthorized") sub.textContent = "エラー";
+    ssBusy = false;
   }
 }
 

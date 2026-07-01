@@ -424,11 +424,13 @@ def api_screensaver_state(handler):
 
 def api_screensaver_toggle(handler):
     """POST /api/screensaver/toggle — Bearer 必須。"""
-    if screensaver.is_active():
-        screensaver.stop()
+    was_active = screensaver.is_active()
+    if was_active:
+        ok = screensaver.stop()
+        return 200, {"active": not ok, "action": "stop", "ok": ok}
     else:
-        screensaver.start()
-    return 200, {"active": screensaver.is_active()}
+        ok = screensaver.start()
+        return 200, {"active": ok, "action": "start", "ok": ok}
 
 
 def api_vault_image(handler):

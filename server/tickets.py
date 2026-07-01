@@ -17,6 +17,7 @@ CLI(claude セッション用):
   python3 tickets.py add "text" [--by ai|user]   # 起票(既定 --by user)
   python3 tickets.py list [--all]                # 一覧(既定 done 除外、--all で全件)
   python3 tickets.py show <id>                    # 1件の詳細
+  python3 tickets.py edit <id> <text>             # テキスト更新
   python3 tickets.py start <id>                   # 着手中(doing)に
   python3 tickets.py done <id>                    # 完了(done、一覧から外れる)
 """
@@ -107,6 +108,24 @@ def add(text, by="user"):
         data["next_id"] = tid + 1
         _save(data)
     return ticket
+
+
+def edit(tid, text):
+    """tid のテキストを text に更新。返り値は更新後チケット。無ければ TicketError。"""
+    if not isinstance(text, str) or not text.strip():
+        raise TicketError("text required")
+    text = text.strip()
+    if len(text) > MAX_TEXT:
+        raise TicketError("text too long")
+    with _locked():
+        data = _load()
+        for t in data["tickets"]:
+            if isinstance(t, dict) and t.get("id") == tid:
+                t["text"] = text
+                t["updated"] = _now()
+                _save(data)
+                return t
+    raise TicketError("no such ticket: #%s" % tid)
 
 
 def set_status(tid, status):
@@ -211,6 +230,10 @@ def main(argv):
             created = time.strftime("%Y-%m-%d %H:%M", time.localtime(t.get("created", 0)))
             updated = time.strftime("%Y-%m-%d %H:%M", time.localtime(t.get("updated", 0)))
             print("  起票 %s / 更新 %s" % (created, updated))
+        elif cmd == "edit":
+            tid = int(rest[0])
+            text = " ".join(rest[1:])
+            print(_fmt(edit(tid, text)))
         elif cmd == "start":
             print(_fmt(set_status(int(rest[0]), "doing")))
         elif cmd == "done":

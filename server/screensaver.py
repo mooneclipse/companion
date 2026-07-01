@@ -1,5 +1,6 @@
 """screensaver.service のオン/オフ制御。"""
 import subprocess
+import time
 
 
 def is_active():
@@ -15,21 +16,23 @@ def is_active():
 
 def start():
     try:
-        subprocess.run(
+        r = subprocess.run(
             ["systemctl", "--user", "start", "screensaver.service"],
             timeout=10,
             check=False,
         )
+        return r.returncode == 0
     except (OSError, subprocess.SubprocessError):
-        pass
+        return False
 
 
 def stop():
     try:
-        subprocess.run(
+        r = subprocess.run(
             ["systemctl", "--user", "stop", "screensaver.service"],
             timeout=10,
             check=False,
         )
+        return r.returncode == 0
     except (OSError, subprocess.SubprocessError):
-        pass
+        return False

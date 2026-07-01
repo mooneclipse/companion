@@ -91,6 +91,40 @@ class TestStatus(TicketsTestBase):
             tickets.set_status(999, "done")
 
 
+class TestEdit(TicketsTestBase):
+    def test_edit_updates_text(self):
+        tickets.add("original")
+        updated = tickets.edit(1, "changed")
+        self.assertEqual(updated["text"], "changed")
+        self.assertEqual(tickets.get(1)["text"], "changed")
+
+    def test_edit_updates_timestamp(self):
+        t = tickets.add("x")
+        before = t["updated"]
+        edited = tickets.edit(1, "y")
+        self.assertGreaterEqual(edited["updated"], before)
+
+    def test_edit_strips_text(self):
+        tickets.add("x")
+        self.assertEqual(tickets.edit(1, "  spaced  ")["text"], "spaced")
+
+    def test_edit_reject_empty(self):
+        tickets.add("x")
+        for bad in ("", "   ", None, 123):
+            with self.subTest(text=bad):
+                with self.assertRaises(tickets.TicketError):
+                    tickets.edit(1, bad)
+
+    def test_edit_reject_too_long(self):
+        tickets.add("x")
+        with self.assertRaises(tickets.TicketError):
+            tickets.edit(1, "x" * (tickets.MAX_TEXT + 1))
+
+    def test_edit_missing_ticket(self):
+        with self.assertRaises(tickets.TicketError):
+            tickets.edit(999, "nope")
+
+
 class TestQueries(TicketsTestBase):
     def test_active_excludes_done(self):
         tickets.add("a")            # 1 todo
