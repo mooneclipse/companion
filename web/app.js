@@ -1527,12 +1527,10 @@ async function toggleScreensaver() {
     if (!r.ok) { sub.textContent = "エラー"; ssBusy = false; return; }
     const data = await r.json();
     if (data.ok) {
-      ssActive = action === "start";
       sub.textContent = action === "stop" ? "-- 停止しました" : "-- 開始しました";
-      setTimeout(() => {
-        sub.textContent = ssActive ? "表示中" : "停止中";
-        ssBusy = false;
-      }, 1500);
+      // 1.5s 後は仮定値でなく実態を引き直す (dashboard 稼働中は start 直後に
+      // 排他ガードで dead になるため、仮定値だと「表示中」の誤表示が残る)。
+      setTimeout(() => { refreshScreensaver(); ssBusy = false; }, 1500);
     } else {
       sub.textContent = "失敗";
       setTimeout(() => { refreshScreensaver(); ssBusy = false; }, 1500);
