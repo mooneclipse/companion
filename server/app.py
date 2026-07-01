@@ -27,6 +27,7 @@ import tickets
 import urlguard
 import vault
 import version
+import screensaver
 import video
 
 HOST = "127.0.0.1"
@@ -322,6 +323,23 @@ def api_todo_add(handler):
     return 200, ticket
 
 
+def api_todo_edit(handler):
+    """POST /api/todo/edit {id, text} — テキスト更新。Bearer 必須。"""
+    data, err = _read_json(handler)
+    if err:
+        return err
+    tid = data.get("id")
+    if isinstance(tid, bool) or not isinstance(tid, int):
+        return 400, {"error": "id must be an integer"}
+    try:
+        return 200, tickets.edit(tid, data.get("text"))
+    except tickets.TicketError as e:
+        s = str(e)
+        if "no such ticket" in s:
+            return 404, {"error": s}
+        return 400, {"error": s}
+
+
 def api_todo_status(handler):
     """POST /api/todo/status {id, status} — 状態変更(done で一覧から外れる)。Bearer 必須。
 
@@ -393,6 +411,21 @@ def api_thoughts(handler):
     return 200, thoughts.list_entries()
 
 
+def api_screensaver_state(handler):
+    """GET /api/screensaver/state — Bearer 必須。"""
+    return 200, {"active": screensaver.is_active()}
+
+
+def api_screensaver_toggle(handler):
+    """POST /api/screensaver/toggle — Bearer 必須。"""
+    if screensaver.is_active():
+        screensaver.stop()
+        return 200, {"active": False}
+    else:
+        screensaver.start()
+        return 200, {"active": True}
+
+
 def api_vault_image(handler):
     """GET /api/vault/image?path=<相対パス> — ノート埋め込みローカル画像を read 専用配信。Bearer 必須。
 
@@ -438,6 +471,7 @@ ROUTES = {
     ("GET", "/api/todo"): (api_todo_list, True),
     ("GET", "/api/todo/history"): (api_todo_history, True),
     ("POST", "/api/todo"): (api_todo_add, True),
+    ("POST", "/api/todo/edit"): (api_todo_edit, True),
     ("POST", "/api/todo/status"): (api_todo_status, True),
     # F-vault(出先からの read-only ノート閲覧)。全て GET / Bearer 必須。書き込み endpoint なし。
     ("GET", "/api/vault/list"): (api_vault_list, True),
@@ -446,6 +480,9 @@ ROUTES = {
     ("GET", "/api/vault/image"): (api_vault_image, True),
     # 思考ログ(bot の私的観察を read-only で時系列閲覧)。GET / Bearer 必須。書き込み endpoint なし。
     ("GET", "/api/thoughts"): (api_thoughts, True),
+    # F-screensaver(ジェネラティブアートスクリーンセーバーのオン/オフ)。全て Bearer 必須。
+    ("GET", "/api/screensaver/state"): (api_screensaver_state, True),
+    ("POST", "/api/screensaver/toggle"): (api_screensaver_toggle, True),
 }
 
 # (ii) 静的ファイル allowlist。{url_path: (web/ 配下の相対パス, content_type)}。

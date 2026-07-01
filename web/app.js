@@ -927,17 +927,87 @@ function renderTodo(tickets) {
       text.appendChild(tag);
     }
 
+    const actions = document.createElement("span");
+    actions.className = "todo-actions";
+
+    const edit = document.createElement("button");
+    edit.className = "todo-done";
+    edit.type = "button";
+    edit.textContent = "編集";
+    edit.addEventListener("click", () => startEditTodo(li, t));
+
     const done = document.createElement("button");
     done.className = "todo-done";
     done.type = "button";
     done.textContent = "完了";
     done.addEventListener("click", () => doneTodo(t.id));
 
+    actions.appendChild(edit);
+    actions.appendChild(done);
+
     li.appendChild(id);
     li.appendChild(by);
     li.appendChild(text);
-    li.appendChild(done);
+    li.appendChild(actions);
     list.appendChild(li);
+  });
+}
+
+function startEditTodo(li, t) {
+  const text = li.querySelector(".todo-text");
+  const actions = li.querySelector(".todo-actions");
+  if (!text || !actions) return;
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "todo-edit-input";
+  input.value = t.text;
+  input.maxLength = 2000;
+
+  const newActions = document.createElement("span");
+  newActions.className = "todo-actions";
+
+  const save = document.createElement("button");
+  save.className = "todo-done";
+  save.type = "button";
+  save.textContent = "保存";
+
+  const cancel = document.createElement("button");
+  cancel.className = "todo-done";
+  cancel.type = "button";
+  cancel.textContent = "戻す";
+
+  newActions.appendChild(save);
+  newActions.appendChild(cancel);
+
+  text.replaceWith(input);
+  actions.replaceWith(newActions);
+  input.focus();
+
+  const doSave = async () => {
+    const newText = input.value.trim();
+    if (!newText) return;
+    if (newText === t.text) { refreshTodo(); return; }
+    save.disabled = true;
+    cancel.disabled = true;
+    try {
+      const r = await api("/api/todo/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: t.id, text: newText }),
+      });
+      if (r.ok) { await refreshTodo(); }
+      else { save.disabled = false; cancel.disabled = false; }
+    } catch (e) {
+      if (e.message !== "unauthorized") { save.disabled = false; cancel.disabled = false; }
+    }
+  };
+
+  save.addEventListener("click", doSave);
+  cancel.addEventListener("click", () => refreshTodo());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); doSave(); }
+    if (e.key === "Escape") { e.preventDefault(); refreshTodo(); }
   });
 }
 
@@ -1426,6 +1496,31 @@ async function refreshThoughts() {
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
 }
 
+// ===== スクリーンセーバー(即トグル、画面遷移なし) =====
+
+async function refreshScreensaver() {
+  if (!getToken()) return;
+  try {
+    const r = await api("/api/screensaver/state");
+    if (!r.ok) return;
+    const data = await r.json();
+    $("tile-ss-sub").textContent = data.active ? "表示中" : "停止中";
+  } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
+}
+
+async function toggleScreensaver() {
+  if (!getToken()) return;
+  $("tile-ss-sub").textContent = "切替中…";
+  try {
+    const r = await api("/api/screensaver/toggle", { method: "POST" });
+    if (!r.ok) { $("tile-ss-sub").textContent = "エラー"; return; }
+    const data = await r.json();
+    $("tile-ss-sub").textContent = data.active ? "表示中" : "停止中";
+  } catch (e) {
+    if (e.message !== "unauthorized") $("tile-ss-sub").textContent = "エラー";
+  }
+}
+
 // ===== ナビゲーション初期化 =====
 // タイル(data-open) → 詳細画面、戻る(data-back/data-home) → ホーム。
 // 委譲ではなく要素列挙で結線(タイル枚数は少数、将来追加も局所で済む)。
@@ -1437,6 +1532,14 @@ function initNav() {
 
   document.querySelectorAll("[data-open]").forEach((el) => {
     el.addEventListener("click", () => navOpenScreen(el.getAttribute("data-open")));
+  });
+  // data-href タイル(写真など別オリジン PWA): 画面遷移せず外部 URL を別タブで開く。
+  // user gesture 内なので window.open は許可される。opener は渡さない。
+  // data-action タイル(screensaver 等): 画面遷移せず即アクション実行。
+  document.querySelectorAll("[data-action]").forEach((el) => {
+    el.addEventListener("click", () => {
+      if (el.getAttribute("data-action") === "screensaver-toggle") toggleScreensaver();
+    });
   });
   // data-href タイル(写真など別オリジン PWA): 画面遷移せず外部 URL を別タブで開く。
   // user gesture 内なので window.open は許可される。opener は渡さない。
@@ -1486,6 +1589,7 @@ function init() {
     refreshVersion();
     refreshGlance();
     refreshTodo();
+    refreshScreensaver();
   });
   $("status-refresh").addEventListener("click", refreshGlance);
   initNav();
@@ -1500,6 +1604,7 @@ function init() {
   refreshVersion();
   refreshGlance();
   refreshTodo();
+  refreshScreensaver();
   setInterval(refreshGlance, 15000);
   setInterval(refreshTodo, 15000);
 
