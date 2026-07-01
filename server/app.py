@@ -423,14 +423,23 @@ def api_screensaver_state(handler):
 
 
 def api_screensaver_toggle(handler):
-    """POST /api/screensaver/toggle — Bearer 必須。"""
-    was_active = screensaver.is_active()
-    if was_active:
+    """POST /api/screensaver/toggle {action} — Bearer 必須。
+
+    クライアントが意図するアクション (start/stop) を明示的に送る。
+    サーバ側で is_active() から判断しない (ページロード時の state 取得と
+    toggle 発火時の is_active() でタイミングが食い違う問題を排除)。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    action = data.get("action")
+    if action == "stop":
         ok = screensaver.stop()
-        return 200, {"active": not ok, "action": "stop", "ok": ok}
-    else:
+    elif action == "start":
         ok = screensaver.start()
-        return 200, {"active": ok, "action": "start", "ok": ok}
+    else:
+        return 400, {"error": "action must be start or stop"}
+    return 200, {"ok": ok, "action": action}
 
 
 def api_vault_image(handler):

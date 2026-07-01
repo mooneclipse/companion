@@ -1505,24 +1505,32 @@ async function refreshScreensaver() {
     const r = await api("/api/screensaver/state");
     if (!r.ok) return;
     const data = await r.json();
-    $("tile-ss-sub").textContent = data.active ? "表示中" : "停止中";
+    ssActive = data.active;
+    $("tile-ss-sub").textContent = ssActive ? "表示中" : "停止中";
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
 }
 
 let ssBusy = false;
+let ssActive = false;
 async function toggleScreensaver() {
   if (!getToken() || ssBusy) return;
   ssBusy = true;
   const sub = $("tile-ss-sub");
-  sub.textContent = "切替中…";
+  const action = ssActive ? "stop" : "start";
+  sub.textContent = action === "stop" ? "停止中…" : "起動中…";
   try {
-    const r = await api("/api/screensaver/toggle", { method: "POST" });
+    const r = await api("/api/screensaver/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
     if (!r.ok) { sub.textContent = "エラー"; ssBusy = false; return; }
     const data = await r.json();
     if (data.ok) {
-      sub.textContent = data.action === "stop" ? "-- 停止しました" : "-- 開始しました";
+      ssActive = action === "start";
+      sub.textContent = action === "stop" ? "-- 停止しました" : "-- 開始しました";
       setTimeout(() => {
-        sub.textContent = data.active ? "表示中" : "停止中";
+        sub.textContent = ssActive ? "表示中" : "停止中";
         ssBusy = false;
       }, 1500);
     } else {
