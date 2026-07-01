@@ -22,6 +22,10 @@ PREV_MUTE_FILE="$DASH_DIR/.state/prev-sink-mute"
 
 export DISPLAY="${DISPLAY:-:0}"
 
+# ── 0. screensaver 排他: 稼働中なら止める (冪等、非稼働なら no-op)。HDMI-1 kiosk の 2 重占有を防ぐ。
+#   screensaver-start.sh 側にも dashboard ガードがあり双方向 (Conflicts= は対称動作で不採用)。
+systemctl --user stop screensaver.service 2>/dev/null || true
+
 # ── 1. 音量を固定値にセット（前夜の状態に依存させない）。冪等・同期。読み戻し比較や再 set はしない。
 #   停止時に dashboard-restore-volume.sh (ExecStopPost) で元値へ戻すため、現値を .state/ に保存。
 #   保存失敗は警告のみで進む（復元側がファイル不在で no-op に流れる＝20% のまま残るが、無音破綻はしない）。
