@@ -4,6 +4,7 @@ Description=Stop screensaver at 05:25
 [Timer]
 OnCalendar=*-*-* 05:25:00
 AccuracySec=1s
+Unit=screensaver-stop.service
 
 [Install]
 WantedBy=timers.target
