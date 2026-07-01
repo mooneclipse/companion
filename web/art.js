@@ -43,6 +43,8 @@ new p5(function (p) {
       lifespan: p.floor(p.random(250, 600)),
       age: 0,
       hueOffset: p.random(-20, 20),
+      sat: p.random(55, 75),
+      bri: p.random(65, 90),
     };
   }
 
@@ -54,6 +56,8 @@ new p5(function (p) {
     pt.lifespan = p.floor(p.random(250, 600));
     pt.age = 0;
     pt.hueOffset = p.random(-20, 20);
+    pt.sat = p.random(55, 75);
+    pt.bri = p.random(65, 90);
   }
 
   p.setup = function () {
@@ -61,7 +65,10 @@ new p5(function (p) {
     h = p.windowHeight;
     p.createCanvas(w, h);
     p.colorMode(p.HSB, 360, 100, 100, 1);
-    p.background(17, 25, 8);
+    p.push();
+    p.colorMode(p.RGB, 255);
+    p.background(11, 15, 21);
+    p.pop();
     p.frameRate(30);
     for (var i = 0; i < PARTICLE_COUNT; i++) {
       var pt = makeParticle();
@@ -102,10 +109,7 @@ new p5(function (p) {
       var alpha = fadeIn * fadeOut * 0.2;
 
       var hue = (baseHue + pt.hueOffset + 360) % 360;
-      var sat = p.random(55, 75);
-      var bri = p.random(65, 90);
-
-      p.stroke(hue, sat, bri, alpha);
+      p.stroke(hue, pt.sat, pt.bri, alpha);
       p.strokeWeight(1.5);
       p.line(pt.px, pt.py, pt.x, pt.y);
     }
