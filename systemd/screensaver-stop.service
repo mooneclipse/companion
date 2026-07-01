@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop screensaver
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user stop screensaver.service
