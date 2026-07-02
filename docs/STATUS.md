@@ -7,7 +7,7 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 
 - systemd user service `companion-english` → 127.0.0.1:47827
 - 公開: `https://miho-inspiron-3521.tail5e989b.ts.net:8447/` (tailscale serve、2026-07-02 設定)
-- リモコン PWA タイル「♪ 09 耳ならし」から遷移 (remote repo 側)
+- リモコン PWA タイル「♪ 09 KIKITORI」から遷移 (remote repo 側)
 - 教材: TADC Ep1 (HwAPLk_sQ3w、手動 en 字幕、クリップ 40 本) 取込済み
 
 ## 構成 (設計 §1)

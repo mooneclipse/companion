@@ -101,7 +101,7 @@ async function renderHome() {
 
   const top = el("header", "top");
   const brand = el("div", "brand");
-  brand.append(document.createTextNode("耳ならし"), el("span", "brand-sub", "English Listening"));
+  brand.append(document.createTextNode("KIKITORI"), el("span", "brand-sub", "English Listening"));
   top.append(brand);
   if (!isEmpty) {
     const streak = el("div", "streak");
@@ -565,7 +565,7 @@ async function renderLibrary() {
   app.replaceChildren();
   const top = el("header", "top");
   const brand = el("div", "brand");
-  brand.append(document.createTextNode("耳ならし"), el("span", "brand-sub", "English Listening"));
+  brand.append(document.createTextNode("KIKITORI"), el("span", "brand-sub", "English Listening"));
   top.append(brand);
   app.append(top);
 
