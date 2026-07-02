@@ -318,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
 
         with contextlib.closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, text, blanks FROM clips WHERE id = ?", (clip_id,)
+                "SELECT id, text, blanks, translation FROM clips WHERE id = ?", (clip_id,)
             ).fetchone()
             if not row:
                 raise _ApiError(404, "clip not found")
@@ -344,6 +344,7 @@ class Handler(BaseHTTPRequestHandler):
             "results": [r["correct"] for r in results],
             "text": row["text"],
             "blanks": [{"idx": b["idx"], "answer": b["answer"]} for b in blanks],
+            "translation": row["translation"],
         })
 
     def _api_drill_flag(self, body):

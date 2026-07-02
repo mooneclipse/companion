@@ -34,6 +34,8 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 
 ## Done
 
+- 2026-07-03: **日本語訳 + 動画外字幕** (user 要望、設計 v0.8)。clips.translation (公式 ja 字幕から抽出、Ep1 40/40 バックフィル済み) を答え合わせ応答でのみ返す。プレイヤー字幕は track hidden + cuechange で動画直下に自前描画。テスト: pipeline unittest / server test_api 全 PASS + 隔離 E2E
+
 - 2026-07-02: **v0 実装完了・本番稼働開始** (#63)。implementer 3 体 (pipeline/server/web) 並列実装 + code-reviewer 全体レビュー反映 (修正必須 1: rebuild FK 違反 / 軽微: 空 daily_set 非固定・watch 入力検証・カーリーアポストロフィ対称化)。検証: pipeline unittest 19 本 / server test_api 69 チェック / 実データ E2E (Playwright 412x915、隔離 DB) / tailnet 8447 疎通
 - 2026-07-02: TADC Ep1 実弾 ingest (sub_kind=manual 判定、字幕注記・話者ダッシュ・ラベル残渣の清掃を実データで確定、クリップ 40 本)
 - 2026-07-02: 設計 v0.6 確定 (workspace 側)、UI モック 4 案 → D 案 user 確定、english/ 雛形作成

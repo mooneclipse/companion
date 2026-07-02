@@ -95,6 +95,13 @@ def _entry_sub_kind(entry):
     return "none"
 
 
+def _entry_has_manual_ja(entry):
+    """手動 ja 字幕があるか (自動翻訳字幕の automatic_captions は見ない、日本語訳は
+    手動字幕のみ使う方針、team-lead 指示)。"""
+    subs = entry.get("subtitles") or {}
+    return isinstance(subs, dict) and "ja" in subs
+
+
 def _entry_sort_key(entry):
     """話数順キー。プレイリスト index を 4 桁 0 埋め (10 話超での字句ソート崩れ対策)。"""
     idx = entry.get("playlist_index")
@@ -164,6 +171,32 @@ def _download_episode(entry, sub_kind, env):
     return True, None
 
 
+def _download_ja_subtitle(entry, env):
+    """手動 ja 字幕を best-effort で取得する (`media/subs/raw/<id>.ja.vtt`)。動画は
+    既に DL 済みなので --skip-download。失敗しても ingest 全体は失敗させない (呼び出し側に
+    真偽を返さずログのみ、1 回確定・リトライしない — dlqueue と同型の設計契約)。
+    sub_kind (en 専用) には一切影響させない。"""
+    vid = entry["id"]
+    url = entry.get("webpage_url") or ("https://www.youtube.com/watch?v=" + vid)
+    argv = [
+        YTDLP, "--ignore-config", "--no-playlist", "--no-progress", "-4",
+        "--skip-download", "--write-subs", "--sub-langs", "ja",
+        "--sub-format", "vtt", "--convert-subs", "vtt",
+        "-P", "subtitle:%s" % common.SUBS_RAW_DIR,
+        "-o", "%(id)s.%(ext)s",
+        "--no-simulate", url,
+    ]
+    try:
+        p = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, timeout=DL_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        common.log("ja subtitle fetch failed for %s: %s" % (vid, exc))
+        return
+    if p.returncode != 0:
+        tail = (p.stderr or "").strip()[-ERROR_TAIL:]
+        common.log("ja subtitle fetch failed (rc=%d) for %s: %s" % (p.returncode, vid, tail))
+
+
 def _insert_episode_row(conn, id_, series_id, title, source_url, duration_s,
                          video_path, sub_path, sub_kind, sort_key):
     conn.execute(
@@ -193,6 +226,8 @@ def _ingest_one_entry(conn, entry, series_id, source_url, env):
     ok, err = _download_episode(entry, sub_kind, env)
     if not ok:
         return False, err
+    if _entry_has_manual_ja(entry):
+        _download_ja_subtitle(entry, env)
     video_path = common.EPISODES_DIR / ("%s.mp4" % vid)
     duration_s = entry.get("duration")
     if not isinstance(duration_s, (int, float)) or duration_s <= 0:

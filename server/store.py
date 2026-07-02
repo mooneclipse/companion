@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS clips (
   tokens TEXT NOT NULL,
   blanks TEXT NOT NULL,
   wpm INTEGER NOT NULL,
-  feature_tags TEXT NOT NULL DEFAULT '[]'
+  feature_tags TEXT NOT NULL DEFAULT '[]',
+  translation TEXT
 );
 CREATE TABLE IF NOT EXISTS attempts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,3 +86,14 @@ def connect(db_path=None):
 def init_db(conn):
     conn.executescript(SCHEMA)
     conn.commit()
+    _migrate(conn)
+
+
+def _migrate(conn):
+    """新規列の冪等マイグレーション (SCHEMA の CREATE TABLE IF NOT EXISTS は既存 DB の
+    列追加には効かないため、PRAGMA table_info で列有無を見て ALTER TABLE ADD COLUMN する。
+    列があれば何もしない = 1 回確定、リトライ・分岐は増やさない。"""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(clips)")}
+    if "translation" not in cols:
+        conn.execute("ALTER TABLE clips ADD COLUMN translation TEXT")
+        conn.commit()

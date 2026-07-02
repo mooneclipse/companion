@@ -13,6 +13,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
@@ -62,6 +63,17 @@ the end
 (laughs)
 """
 
+# sentence1 ([0.0,5.0]) / sentence2 ([8.0,16.0]) の区間にちょうど重なる ja 手動字幕。
+# clips.translation の抽出 (cue 重なり判定 + en と同じ効果音注記清掃) を実データ経路で検証する。
+JA_RAW_VTT = """WEBVTT
+
+00:00:00.000 --> 00:00:05.000
+むかしむかし、遠い銀河で。
+
+00:00:08.000 --> 00:00:16.000
+もっと大きい船が要るぞ、って感じだよね [笑い]
+"""
+
 
 class PipelineSyntheticTest(unittest.TestCase):
     """subs.py → clips.py を合成 VTT + ffmpeg testsrc のダミー動画で実走させる。"""
@@ -95,6 +107,8 @@ class PipelineSyntheticTest(unittest.TestCase):
 
         raw_vtt_path = common.SUBS_RAW_DIR / "ep1.en.vtt"
         raw_vtt_path.write_text(RAW_VTT, encoding="utf-8")
+        ja_vtt_path = common.SUBS_RAW_DIR / "ep1.ja.vtt"
+        ja_vtt_path.write_text(JA_RAW_VTT, encoding="utf-8")
 
         conn = common.open_db(str(cls.db_path))
         conn.execute("INSERT INTO series (id, title, sort) VALUES ('test','Test Series',0)")
@@ -215,6 +229,8 @@ class PipelineSyntheticTest(unittest.TestCase):
         blanks1 = json.loads(s1["blanks"])
         self.assertEqual(blanks1, [{"idx": 0, "answer": "a",
                                      "choices": blanks1[0]["choices"]}])
+        # ja raw VTT の重なり cue から抽出 (§3.3 の重なり判定 + en と同じ注記清掃)
+        self.assertEqual(s1["translation"], "むかしむかし、遠い銀河で。")
 
         s2 = clip_rows["ep1-8000"]
         blanks2 = json.loads(s2["blanks"])
@@ -223,6 +239,7 @@ class PipelineSyntheticTest(unittest.TestCase):
         self.assertIn("going", blanks2[0]["choices"])   # confusions.json: gonna/going
         self.assertIn("kind", blanks2[1]["choices"])    # confusions.json: kinda/kind
         self.assertEqual(json.loads(s2["feature_tags"]), ["weak_form"])
+        self.assertEqual(s2["translation"], "もっと大きい船が要るぞ、って感じだよね")  # 注記除去
 
         # 冪等性: 2 回目は新規クリップを作らない
         made2, _ = clips.process_all(db_path=str(self.db_path))
@@ -290,6 +307,50 @@ class PipelineSyntheticTest(unittest.TestCase):
         disk_ids = {p.stem for p in common.CLIPS_DIR.glob("*.mp4")}
         self.assertEqual(disk_ids, clip_ids_after)
 
+    def test_05_fill_translations_updates_without_touching_mp4(self):
+        # translation 列を一旦 NULL に落としてから --fill-translations で埋め直し、
+        # 「再エンコードなし・UPDATE のみ」(mp4 の mtime/内容が変わらない) を確認する。
+        conn = common.open_db(str(self.db_path))
+        conn.execute("UPDATE clips SET translation=NULL WHERE episode_id='ep1'")
+        conn.commit()
+        conn.close()
+
+        mp4_path = common.CLIPS_DIR / "ep1-0.mp4"
+        before_mtime = mp4_path.stat().st_mtime_ns
+        before_bytes = mp4_path.read_bytes()
+
+        filled, skipped = clips.fill_translations("ep1", db_path=str(self.db_path))
+        self.assertEqual((filled, skipped), (2, 0))
+
+        conn = common.open_db(str(self.db_path))
+        rows = {r["id"]: r["translation"] for r in
+                conn.execute("SELECT id, translation FROM clips WHERE episode_id='ep1'")}
+        conn.close()
+        self.assertEqual(rows["ep1-0"], "むかしむかし、遠い銀河で。")
+        self.assertEqual(rows["ep1-8000"], "もっと大きい船が要るぞ、って感じだよね")
+
+        self.assertEqual(mp4_path.stat().st_mtime_ns, before_mtime)  # mp4 は re-encode されない
+        self.assertEqual(mp4_path.read_bytes(), before_bytes)
+
+        with self.assertRaises(ValueError):
+            clips.fill_translations("no-such-episode", db_path=str(self.db_path))
+
+    def test_06_fill_translations_no_ja_subtitle_returns_zero(self):
+        # ep2: en 字幕のみ (ja raw VTT を置かない) の episode で fill-translations を叩くと
+        # 0/0 で終わる (例外にしない、§3.3 docstring どおり)。
+        conn = common.open_db(str(self.db_path))
+        conn.execute(
+            "INSERT INTO series (id, title, sort) VALUES ('test2','Test Series 2',1)")
+        conn.execute(
+            "INSERT INTO episodes (id, series_id, title, source_url, duration_s, video_path, "
+            "sub_path, sub_kind, sort_key, ingested_at) VALUES "
+            "('ep2','test2','Test Ep2',NULL,10,'media/episodes/ep1.mp4',NULL,'auto','0001',0)")
+        conn.commit()
+        conn.close()
+
+        filled, skipped = clips.fill_translations("ep2", db_path=str(self.db_path))
+        self.assertEqual((filled, skipped), (0, 0))
+
 
 class ClipsUnitTest(unittest.TestCase):
     """ffmpeg/DB を使わない純粋ロジックの単体テスト。"""
@@ -317,6 +378,41 @@ class ClipsUnitTest(unittest.TestCase):
         tokens = ["I", "can’t", "go"]
         eligible = clips._eligible_indices(tokens, weak_forms, common2000)
         self.assertEqual(eligible, [(1, "weak")])
+
+    def test_extract_translation_joins_overlapping_cues_and_cleans(self):
+        ja_cues = [
+            {"start": 0.0, "end": 2.0, "text": "むかしむかし"},
+            {"start": 2.0, "end": 5.0, "text": "遠い銀河で。 [ため息]"},
+            {"start": 8.0, "end": 10.0, "text": "-もっと大きい船が要る"},
+        ]
+        # クリップ区間 [0.0, 5.0] に完全に重なる先頭2 cue のみ結合、効果音注記も除去される
+        self.assertEqual(clips._extract_translation(ja_cues, 0.0, 5.0),
+                          "むかしむかし 遠い銀河で。")
+        # 重なりなし
+        self.assertIsNone(clips._extract_translation(ja_cues, 20.0, 25.0))
+        # 部分重なり (cue.start < end_s and cue.end > start_s) + 先頭ダッシュ除去
+        self.assertEqual(clips._extract_translation(ja_cues, 9.0, 12.0), "もっと大きい船が要る")
+        # cue が無い (ja 字幕自体が無い) 場合は None
+        self.assertIsNone(clips._extract_translation(None, 0.0, 5.0))
+        self.assertIsNone(clips._extract_translation([], 0.0, 5.0))
+
+    def test_load_ja_cues_missing_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(clips._load_ja_cues(pathlib.Path(d) / "missing.ja.vtt"))
+
+    def test_load_ja_cues_parses_and_dedupes_scroll(self):
+        vtt = (
+            "WEBVTT\n\n"
+            "00:00:00.000 --> 00:00:02.000\nこんにちは\n\n"
+            "00:00:02.000 --> 00:00:02.010\nこんにちは\n\n"
+            "00:00:02.010 --> 00:00:04.000\nこんにちは、元気ですか。\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / "ep.ja.vtt"
+            path.write_text(vtt, encoding="utf-8")
+            cues = clips._load_ja_cues(path)
+            self.assertEqual(len(cues), 1)  # ロールアップ重複が畳み込まれる
+            self.assertEqual(cues[0]["text"], "こんにちは、元気ですか。")
 
     def test_select_candidate_sentences_filters_and_samples(self):
         # 4-12s かつ 5-25 語のみ通過する

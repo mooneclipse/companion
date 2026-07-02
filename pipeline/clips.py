@@ -29,6 +29,15 @@ confusions.json の形式: {"groups": [[word, word, ...], ...]} — 内側配列
 
 `--rebuild <episode_id>` で指定 episode の clips (DB行+media/clips 実体) を集合で削除して
 から再生成できる (wordlists/subs.py の清掃規則変更を既存クリップに反映させる作り直し用)。
+
+日本語訳 (clips.translation、設計 english-design.md team-lead 指示):
+  ingest.py が best-effort で取得した手動 ja 字幕 (`media/subs/raw/<id>.ja.vtt`、無ければ
+  スキップされ翻訳は NULL のまま) から、クリップの [start_s, end_s] と重なる ja cue を
+  開始時刻順に連結して 1 クリップぶんの訳文にする。重なり判定は
+  `cue.start < end_s and cue.end > start_s` (半開区間の交差判定)。効果音注記除去・行頭残渣
+  除去は en と同じ `subs._clean_clip_text` を連結後のテキストに 1 回適用する。
+  `--fill-translations <episode_id>` で、既存クリップ (mp4 は変更しない) の translation 列
+  だけを UPDATE で埋め直せる (再エンコードなしのバックフィル用)。
 """
 import argparse
 import json
@@ -41,6 +50,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import common  # noqa: E402
+import subs    # noqa: E402  (ja cue の parse_vtt/dedupe_scroll/_clean_clip_text 再利用)
 
 FFMPEG = os.environ.get("ENGLISH_FFMPEG", "ffmpeg")
 
@@ -217,6 +227,32 @@ def build_clip_fields(text, weak_forms, common2000, confusion_groups, fallback_p
     return tokens, blanks, feature_tags
 
 
+def _load_ja_cues(path):
+    """ja raw VTT (path) があれば dedupe 済み cue リスト ([{"start","end","text"}]) を返す。
+    ファイルが無い/cue が 1 本も無ければ None (呼び出し側は「訳なし」として扱う)。"""
+    if not path.is_file():
+        return None
+    cues = subs.parse_vtt(path)
+    if not cues:
+        return None
+    return subs.dedupe_scroll(cues)
+
+
+def _extract_translation(ja_cues, start_s, end_s):
+    """[start_s, end_s] と重なる ja cue (cue.start < end_s and cue.end > start_s) を
+    開始時刻順に連結し、en と同じ効果音注記/先頭残渣清掃 (subs._clean_clip_text) を
+    連結後のテキストに 1 回適用する。重なりが無い/清掃後に空なら None。"""
+    if not ja_cues:
+        return None
+    overlapping = [c for c in ja_cues if c["start"] < end_s and c["end"] > start_s]
+    if not overlapping:
+        return None
+    overlapping.sort(key=lambda c: c["start"])
+    joined = " ".join(c["text"] for c in overlapping)
+    cleaned = subs._clean_clip_text(joined)
+    return cleaned or None
+
+
 def process_episode(conn, ep, weak_forms, common2000, confusion_groups, fallback_pool):
     video_path = common.ROOT / ep["video_path"]
     sentences_path = common.SUBS_DIR / ("%s.sentences.json" % ep["id"])
@@ -224,6 +260,7 @@ def process_episode(conn, ep, weak_forms, common2000, confusion_groups, fallback
         return 0, 0, "sentences json not found: %s" % sentences_path
     with open(sentences_path, encoding="utf-8") as f:
         sentences = json.load(f)
+    ja_cues = _load_ja_cues(common.SUBS_RAW_DIR / ("%s.ja.vtt" % ep["id"]))
     candidates = _select_candidate_sentences(sentences)
     existing_ids = {row["id"] for row in
                     conn.execute("SELECT id FROM clips WHERE episode_id=?", (ep["id"],))}
@@ -250,13 +287,14 @@ def process_episode(conn, ep, weak_forms, common2000, confusion_groups, fallback
         n_words = len(tokens)
         dur_min = max((s["end"] - s["start"]) / 60.0, 1e-6)
         wpm = int(round(n_words / dur_min))
+        translation = _extract_translation(ja_cues, s["start"], s["end"])
         conn.execute(
             "INSERT INTO clips (id, episode_id, start_s, end_s, video_path, text, tokens, "
-            "blanks, wpm, feature_tags) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "blanks, wpm, feature_tags, translation) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (clip_id, ep["id"], s["start"], s["end"],
              str(out_path.relative_to(common.ROOT)), s["text"],
              json.dumps(tokens, ensure_ascii=False), json.dumps(blanks, ensure_ascii=False),
-             wpm, json.dumps(feature_tags, ensure_ascii=False)))
+             wpm, json.dumps(feature_tags, ensure_ascii=False), translation))
         conn.commit()
         made += 1
     return made, skipped_no_blank, None
@@ -320,6 +358,35 @@ def rebuild_episode(episode_id, db_path=None):
     return made, skipped
 
 
+def fill_translations(episode_id, db_path=None):
+    """再エンコードなしで既存クリップの translation だけ埋め直す (mp4 は触らない、UPDATE のみ)。
+    ja raw VTT (`media/subs/raw/<episode_id>.ja.vtt`) が無ければ 0/0 で終わる (呼び出し側が
+    事前に yt-dlp で ja 字幕だけ取得しておく運用、§3.1 ingest.py の best-effort 取得と同じ
+    命名規則から見つける)。"""
+    conn = common.open_db(db_path)
+    ep = conn.execute("SELECT id FROM episodes WHERE id=?", (episode_id,)).fetchone()
+    if ep is None:
+        raise ValueError("episode not found: %s" % episode_id)
+    ja_cues = _load_ja_cues(common.SUBS_RAW_DIR / ("%s.ja.vtt" % episode_id))
+    if not ja_cues:
+        common.log("fill-translations %s: no ja subtitle found" % episode_id)
+        return 0, 0
+    rows = conn.execute(
+        "SELECT id, start_s, end_s FROM clips WHERE episode_id=?", (episode_id,)).fetchall()
+    filled = skipped = 0
+    for row in rows:
+        translation = _extract_translation(ja_cues, row["start_s"], row["end_s"])
+        if translation is None:
+            skipped += 1
+            continue
+        conn.execute("UPDATE clips SET translation=? WHERE id=?", (translation, row["id"]))
+        filled += 1
+    conn.commit()
+    common.log("fill-translations %s: filled=%d skipped=%d (total clips=%d)" %
+               (episode_id, filled, skipped, len(rows)))
+    return filled, skipped
+
+
 def process_all(db_path=None):
     conn = common.open_db(db_path)
     weak_forms = _load_wordlist(common.WORDLISTS_DIR / "weak_forms.txt")
@@ -347,9 +414,14 @@ def main(argv=None):
     parser.add_argument("--db", default=None, help="DB パス (既定: data/english.db、テスト用に上書き可)")
     parser.add_argument("--rebuild", default=None, metavar="EPISODE_ID",
                          help="指定 episode の clips (DB行+実体) を削除してから再生成する")
+    parser.add_argument("--fill-translations", default=None, metavar="EPISODE_ID",
+                         help="指定 episode の既存クリップの translation 列だけ埋め直す "
+                              "(mp4 は変更しない、UPDATE のみ)")
     args = parser.parse_args(argv)
     if args.rebuild:
         rebuild_episode(args.rebuild, db_path=args.db)
+    elif args.fill_translations:
+        fill_translations(args.fill_translations, db_path=args.db)
     else:
         process_all(db_path=args.db)
 

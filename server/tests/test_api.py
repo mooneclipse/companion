@@ -151,24 +151,31 @@ def run(root):
         (now,),
     )
     clips = [
+        # translation あり (ja 手動字幕からの抽出を想定) / c2,c3,c4 は translation NULL
+        # (ja 字幕なしエピソードのクリップは NULL に縮退する契約、§2)
         ("c1", 10, 16, "I can't believe it's you",
          ["I", "can't", "believe", "it's", "you"],
-         [{"idx": 1, "answer": "can't", "choices": ["can't", "can", "cant", "kinda"]}]),
+         [{"idx": 1, "answer": "can't", "choices": ["can't", "can", "cant", "kinda"]}],
+         "信じられない、あなただったなんて"),
         ("c2", 30, 38, "We're gonna be late for the show",
          ["We're", "gonna", "be", "late", "for", "the", "show"],
-         [{"idx": 1, "answer": "gonna", "choices": ["gonna", "going", "gotta", "wanna"]}]),
+         [{"idx": 1, "answer": "gonna", "choices": ["gonna", "going", "gotta", "wanna"]}],
+         None),
         ("c3", 50, 58, "I don't know what you mean",
          ["I", "don't", "know", "what", "you", "mean"],
-         [{"idx": 1, "answer": "don't", "choices": ["don't", "dont", "doesn't", "didn't"]}]),
+         [{"idx": 1, "answer": "don't", "choices": ["don't", "dont", "doesn't", "didn't"]}],
+         None),
         ("c4", 300, 306, "This part hasn't been watched yet",
          ["This", "part", "hasn't", "been", "watched", "yet"],
-         [{"idx": 2, "answer": "hasn't", "choices": ["hasn't", "hasnt", "wasn't", "isn't"]}]),
+         [{"idx": 2, "answer": "hasn't", "choices": ["hasn't", "hasnt", "wasn't", "isn't"]}],
+         None),
     ]
-    for cid, start_s, end_s, text, tokens, blanks in clips:
+    for cid, start_s, end_s, text, tokens, blanks, translation in clips:
         conn.execute(
             "INSERT INTO clips (id, episode_id, start_s, end_s, video_path, text, tokens, blanks, "
-            "wpm, feature_tags) VALUES (?, 'ep1', ?, ?, ?, ?, ?, ?, 140, '[\"weak_form\"]')",
-            (cid, start_s, end_s, f"media/clips/{cid}.mp4", text, json.dumps(tokens), json.dumps(blanks)),
+            "wpm, feature_tags, translation) VALUES (?, 'ep1', ?, ?, ?, ?, ?, ?, 140, '[\"weak_form\"]', ?)",
+            (cid, start_s, end_s, f"media/clips/{cid}.mp4", text, json.dumps(tokens), json.dumps(blanks),
+             translation),
         )
     conn.commit()
     conn.close()
@@ -285,6 +292,7 @@ def _run_checks(base, root, db_path):
     check("done は未回答なので False", c1["done"] is False, c1["done"])
     check("episode_title が入る", c1["episode_title"] == "Ep1", c1["episode_title"])
     check("start_s/end_s が入る", (c1["start_s"], c1["end_s"]) == (10, 16), (c1["start_s"], c1["end_s"]))
+    check("drill/today には translation を含まない (出題時のネタバレ防止)", "translation" not in c1, c1)
 
     # /api/drill/answer: c1 正解、c2 誤答 (誤答肢を記録)
     status, _, body = http("POST", base, "/api/drill/answer", {
@@ -294,12 +302,15 @@ def _run_checks(base, root, db_path):
     check("answer c1 200", status == 200, status)
     check("answer c1 正解", ans1["results"] == [True], ans1)
     check("answer に attempt_id が入る", isinstance(ans1.get("attempt_id"), int), ans1)
+    check("answer c1 translation あり (答え合わせ時のみ返す)",
+          ans1["translation"] == "信じられない、あなただったなんて", ans1)
 
     status, _, body = http("POST", base, "/api/drill/answer", {
         "clip_id": "c2", "answers": ["gotta"], "flags": ["unheard"], "replays": 2, "duration_ms": 3000,
     })
     ans2 = json.loads(body)
     check("answer c2 誤答", ans2["results"] == [False], ans2)
+    check("answer c2 translation は NULL (ja 字幕なし)", ans2["translation"] is None, ans2)
 
     conn = sqlite3.connect(db_path)
     row = conn.execute("SELECT results, flags FROM attempts WHERE clip_id='c2'").fetchone()

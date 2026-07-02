@@ -475,6 +475,7 @@ function renderDrillAnswer() {
 
   const cloze = el("div", "cloze");
   cloze.append(renderSentenceAnswer(clip, d, resp));
+  if (resp.translation) cloze.append(el("p", "translation", resp.translation));
   screen.append(cloze);
 
   const area = el("div", "answer-area");
@@ -647,6 +648,17 @@ async function renderPlayer(id) {
   frame.append(video);
   wrap.append(frame);
 
+  // 字幕は動画に重ねず、動画直下の専用行に自前描画する (track はブラウザ標準描画をさせず mode="hidden" 固定、
+  // cuechange で activeCues を拾って subLineText に反映する)。トグル OFF 時は行ごと畳んで領域を取らない。
+  let subLine = null, subLineText = null;
+  if (trackEl) {
+    subLine = el("div", "sub-line");
+    subLineText = el("p", "sub-line-text");
+    subLine.append(subLineText);
+    subLine.style.display = "none"; // 既定 OFF
+    wrap.append(subLine);
+  }
+
   const body = el("div", "player-body");
   body.append(el("p", "player-title", ep.title || ""));
 
@@ -691,7 +703,7 @@ async function renderPlayer(id) {
     const subBtn = el("button", "toggle off", "字幕 EN · オフ");
     subBtn.addEventListener("click", () => {
       subsOn = !subsOn;
-      trackEl.track.mode = subsOn ? "showing" : "hidden";
+      subLine.style.display = subsOn ? "block" : "none";
       subBtn.textContent = subsOn ? "字幕 EN · オン" : "字幕 EN · オフ";
       subBtn.classList.toggle("off", !subsOn);
     });
@@ -701,7 +713,17 @@ async function renderPlayer(id) {
   wrap.append(body);
   app.append(wrap);
 
-  if (trackEl) trackEl.track.mode = "hidden";
+  if (trackEl) {
+    // hidden でも cuechange は発火する (発火しないのは disabled のときだけ)。
+    // 標準描画 (showing) には一切しない — 描画は自前の subLineText で行う。
+    trackEl.track.mode = "hidden";
+    trackEl.track.addEventListener("cuechange", () => {
+      const cues = trackEl.track.activeCues;
+      const lines = [];
+      for (let i = 0; i < cues.length; i++) lines.push(cues[i].text);
+      subLineText.textContent = lines.join("\n");
+    });
+  }
 
   video.addEventListener("loadedmetadata", () => {
     const pos = typeof ep.position_s === "number" ? ep.position_s : 0;
