@@ -5,6 +5,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 ## 改版履歴
 
+- **v0.6 (2026-07-02)**: user 確定「おすすめの進め方でいこう」— 教材を **TADC 本命 + Bee and PuppyCat 並走** で確定 (§0.5 / §6 v0-1)。Bee and PuppyCat は個別動画 (Ep1 実測: 6.5 分・手動 en 字幕あり・日本から視聴可) を ingest する方針で一括動画の粒度問題を解消。Bravest Warriors は 3 本目候補として温存
 - **v0.5 (2026-07-02)**: チケット #62 消化 — §0.5 を「未調査の見込み」から調査結果に置換 (WebSearch + 日本回線からの yt-dlp 実測)。TADC = 公式全話無料 + 手動字幕確認で**初期教材確定**、Peanuts / Adventure Time = 日本からの YouTube 公式ルートなし。追加候補 4 件 (Bee and PuppyCat / Bravest Warriors / Murder Drones / GLITCH パイロット群) と不採用 2 件 (Cartoon Cartoons / Bluey、日本リージョンロック) を実測付きで記録。§8 該当項目をチェック
 - **v0.4 (2026-07-02)**: 2 回目 code-reviewer (全体) 反映。修正必須 1 件 — `analysis.weights` の契約スキーマを §3.4 に固定 (llm/fallback 共通形 + clip へのペア適用規則 + 検証 NG は fallback 1 回確定 + 同日 REPLACE)。軽微 — claude -p 受け取りを `--output-format json` の `.result` parse に固定 / streak 定義を `daily_sets.clip_ids` 全件に統一 (§4.3-3 と整合) / ブリーフの版数参照を「常に最新版」に変更
 - **v0.3 (2026-07-02)**: user 要望「claude -p の活用」「回答の記録 (傾向と対策)」を明文化。§3.4 analyze.py 新設 (v1: 夜間 claude -p で傾向と対策レポート + 出題重み、ルールベースフォールバック必須、Max サブスク枠消費の前提明記)、§3.5 claude -p 活用余地の一覧、attempts.results を「選んだ誤答肢まで記録」(v0 から) に拡張 + `analysis` テーブル追加、§4.3 適応選定を analysis weights 参照に具体化
@@ -60,16 +61,16 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 | 作品 | チャンネル | 全話 | 字幕 | 日本から | 備考 |
 |---|---|---|---|---|---|
-| Bee and PuppyCat (原作 2013-14) | @cartoonhangover 公式 | 全 10 話一括 66 分 | 手動 ja/fr/pt + 自動 en | ✅ | 会話ゆっくり・日常語彙で一番やさしい。ja 手動字幕が理解の保険になる |
+| Bee and PuppyCat (原作 2013-14) | @cartoonhangover 公式 | 個別動画 (Ep1 実測 6.5 分) + 全 10 話一括 66 分 | **個別動画に手動 en あり** (Ep1 実測)。一括は手動 ja/fr/pt + 自動 en | ✅ | 会話ゆっくり・日常語彙で一番やさしい。ingest は個別動画を使う (プレイリスト有無は着手時確認、無ければ sources.json に個別 URL 複数登録) |
 | Bravest Warriors | @cartoonhangover 公式 | S1-3 一括 3.4h + S4 個別 | 自動 en のみ | ✅ | **Adventure Time 作者 Pendleton Ward 原作**で作風が最も近い代替。1 話 5〜11 分 |
 | Murder Drones | @GLITCH 公式 | 全 8 話 | 手動 (TADC と同じ多言語、Ep8 実測) | ✅ | TADC と同一チャンネル・同一 ingest。ただしセリフ速め・アクション多めで難度は上 |
 | Knights of Guinevere / GAMEOVERSE | @GLITCH 公式 | パイロット各 1 本 | (未実測、GLITCH 慣習では手動あり) | ✅ | GLITCH の新作パイロット群。話数が増えたら候補 |
 
-注意: Bee and PuppyCat / Bravest Warriors の「全話一括動画」は 1 動画 = 1 episode 前提 (§2 episodes / §3.1 ingest) だと 66 分〜3.4h の巨大 episode になり、§0.3 #3「直近視聴エピソード優先」の出題プールと理解度申告の粒度が粗くなる。採用時はチャプター分割 ingest か個別動画 (Bravest Warriors S4 等) を優先する — 2 本目採用時の検討事項。
+注意: 「全話一括動画」は 1 動画 = 1 episode 前提 (§2 episodes / §3.1 ingest) だと 66 分〜3.4h の巨大 episode になり、§0.3 #3「直近視聴エピソード優先」の出題プールと理解度申告の粒度が粗くなる。**必ず個別動画を優先して ingest する** (Bee and PuppyCat は個別動画あり実測済み。Bravest Warriors は S4 個別あり、S1-3 は採用時にチャプター分割 ingest を検討)。
 
 **不採用 (実測でリージョンロック確認)**: Cartoon Cartoons 公式 (CN 旧作 Courage / Dexter's Lab 等の全話無料、UK 運営) と Bluey 公式 — いずれも複数動画で「This video is not available」(日本ブロック)。VPN 前提の設計はしない
 
-- → アプリ設計は調達と切り離す (0.3 #4) のまま。**v0 の初期教材は TADC で確定**、2 本目は user の好み次第で Bee and PuppyCat / Bravest Warriors を提案
+- → アプリ設計は調達と切り離す (0.3 #4) のまま。**user 確定 (2026-07-02): TADC 本命 + Bee and PuppyCat 並走** (個別動画 ingest)。Adventure Time 気分の枠は Bravest Warriors で代替 (3 本目候補、v0 では入れない)
 
 ---
 
@@ -288,7 +289,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 
 ### v0 (最初に作り切る範囲 — これだけで毎日回る)
 
-1. pipeline 3 スクリプト + wordlists (手動実行、教材は TADC など確実なもの 1 作品から)
+1. pipeline 3 スクリプト + wordlists (手動実行、教材は **TADC + Bee and PuppyCat の 2 作品** — §0.5 user 確定。まず TADC 1 本で pipeline を通してから 2 作品目を足す)
 2. server (静的 + API + Range) + systemd unit + tailscale serve 公開
 3. UI 4 画面 (claude design モック → 組み込み)
 4. streak + 正答率 14 日ミニグラフ
@@ -322,7 +323,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 - [ ] `tailscale serve status` を **user 実行**で 8447 空きを実見 (photos ポストモーテム原則 1)
 - [ ] yt-dlp で TADC 1 本実弾: 動画 + 手動字幕 (en) が取れるか、`sub_kind` 判定含め確認
 - [ ] `<video>` + Range 配信 + WebVTT `<track>` を Pixel 6 実機ブラウザで縦切り確認 (最初の実装ステップ)
-- [x] 3 作品の公式可用性 Web 調査 (チケット #62) → §0.5 に追記済み — **2026-07-02 実測: TADC のみ公式全話+手動字幕で成立、初期教材確定。Peanuts / Adventure Time は日本からの YouTube 公式ルートなし**
+- [x] 3 作品の公式可用性 Web 調査 (チケット #62) → §0.5 に追記済み — **2026-07-02 実測: TADC のみ公式全話+手動字幕で成立、初期教材確定。Peanuts / Adventure Time は日本からの YouTube 公式ルートなし** (v0.6 追記: Bee and PuppyCat も個別動画+手動 en で成立、§0.5)
 
 ## 9. リスクと設計判断
 
