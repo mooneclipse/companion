@@ -5,6 +5,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 ## 改版履歴
 
+- **v0.7 (2026-07-02)**: v0 実装完了 (#63) に伴う実装確定差分の反映。UI は **D 融合案で user 確定** (A 字幕の骨格 + ドリルのみ C の可読性、モック生成元 `english-ui-mocks/build.py`)。§4.2 に追記 — `POST /api/drill/flag` (attempt_id 指定で attempts.flags を UPDATE、答え合わせ後のワンタップフラグ用)、`/api/drill/today` の各クリップに `done`/`episode_title`/`start_s`/`end_s`、`/api/library` の episode に `sub_kind`、answer 応答に `attempt_id`。answers 配列は blanks idx 昇順への位置対応。POST ボディは dispatch 層で必ず drain (keep-alive 混入対策)。§2 孤児対策に追記 — `clips.py --rebuild` は attempts を**意図的に残す** (streak/正答率履歴の源泉のため。rebuild 時のみ FK OFF で clips を削除、DB 確定後に media を消す)
 - **v0.6 (2026-07-02)**: user 確定「おすすめの進め方でいこう」— 教材を **TADC 本命 + Bee and PuppyCat 並走** で確定 (§0.5 / §6 v0-1)。Bee and PuppyCat は個別動画 (Ep1 実測: 6.5 分・手動 en 字幕あり・日本から視聴可) を ingest する方針で一括動画の粒度問題を解消。Bravest Warriors は 3 本目候補として温存
 - **v0.5 (2026-07-02)**: チケット #62 消化 — §0.5 を「未調査の見込み」から調査結果に置換 (WebSearch + 日本回線からの yt-dlp 実測)。TADC = 公式全話無料 + 手動字幕確認で**初期教材確定**、Peanuts / Adventure Time = 日本からの YouTube 公式ルートなし。追加候補 4 件 (Bee and PuppyCat / Bravest Warriors / Murder Drones / GLITCH パイロット群) と不採用 2 件 (Cartoon Cartoons / Bluey、日本リージョンロック) を実測付きで記録。§8 該当項目をチェック
 - **v0.4 (2026-07-02)**: 2 回目 code-reviewer (全体) 反映。修正必須 1 件 — `analysis.weights` の契約スキーマを §3.4 に固定 (llm/fallback 共通形 + clip へのペア適用規則 + 検証 NG は fallback 1 回確定 + 同日 REPLACE)。軽微 — claude -p 受け取りを `--output-format json` の `.result` parse に固定 / streak 定義を `daily_sets.clip_ids` 全件に統一 (§4.3-3 と整合) / ブリーフの版数参照を「常に最新版」に変更
@@ -267,6 +268,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 | GET `/api/episodes/<id>` | 再生用詳細 (`video_url, sub_url, position_s`) |
 | POST `/api/watch` | `{episode_id, position_s}` を 15 秒間隔 + pause 時に beacon。position_s は上書き、max_position_s は `max()` 更新。90% 到達で completed_at 設定 |
 | POST `/api/comprehension` | `{episode_id, level:1..4}` (エピソード完了時ワンタップ、スキップ可) |
+| POST `/api/drill/flag` | (v0.7 追記) `{attempt_id, flags}` → 該当 attempts 行の flags を UPDATE (上書き・行は増えない)。答え合わせ表示後のワンタップフラグ用。attempt_id は answer 応答に含まれる |
 
 ドリル完了画面の streak 更新表示は `/api/home` を再取得して描画する (完了専用 API は作らない)。
 
