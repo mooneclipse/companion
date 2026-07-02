@@ -5,6 +5,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 ## 改版履歴
 
+- **v0.3 (2026-07-02)**: user 要望「claude -p の活用」「回答の記録 (傾向と対策)」を明文化。§3.4 analyze.py 新設 (v1: 夜間 claude -p で傾向と対策レポート + 出題重み、ルールベースフォールバック必須、Max サブスク枠消費の前提明記)、§3.5 claude -p 活用余地の一覧、attempts.results を「選んだ誤答肢まで記録」(v0 から) に拡張 + `analysis` テーブル追加、§4.3 適応選定を analysis weights 参照に具体化
 - **v0.2 (2026-07-02)**: code-reviewer 指摘反映。修正必須 2 件 — (1) `clips.tokens` 列を追加しトークン化を clips.py の空白 split 1 回で確定 (blank 位置の正解漏れ対策で API は blank 位置 null 置換を明記)、(2) `watch.max_position_s` を分離 (レジューム位置と視聴済み右端の二重意味を解消、巻き戻しでプールが縮む問題)。軽微 — Range は photos 実装流用可 / 出題選定のフォールバック 2 件明文化 / streak 更新は `/api/home` 再取得 / ブリーフのクリップ長を 4〜12 秒に統一・誤記修正。加えて df 実測 (320GB 空き) で 720p 確定
 - **v0.1 (2026-07-02)**: 初版。チャット版要件定義を user の追加入力で改訂し、4 分岐 (解答方式 / 分量 / 出題範囲 / 教材調達) を user 確定。全体設計・データモデル・パイプライン・API・フェーズ分けを起こした。UI は `english-ui-brief.md` (claude design 用ブリーフ) に分離。
 
@@ -85,6 +86,7 @@ YouTube / ローカルファイル持ち込み (inbox/)
 │   ├── ingest.py     # sources.json → yt-dlp DL (動画+字幕) → DB episodes
 │   ├── subs.py       # VTT/SRT クリーニング → 文単位 cue + プレイヤー用 WebVTT
 │   ├── clips.py      # ffmpeg クリップ切り出し + 穴埋め生成 → DB clips
+│   ├── analyze.py    # (v1) 回答記録の傾向分析 → DB analysis。claude -p + ルールベースフォールバック
 │   ├── sources.json  # 登録 URL/プレイリスト (series 単位)
 │   └── wordlists/    # weak_forms.txt / confusions.json (穴埋め対象・誤答肢)
 ├── web/              # index.html / app.js / style.css / manifest.webmanifest (vanilla、ビルドなし)
@@ -143,10 +145,17 @@ CREATE TABLE attempts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   clip_id TEXT NOT NULL REFERENCES clips(id),
   ts INTEGER NOT NULL,
-  results TEXT NOT NULL,         -- JSON: 空欄ごと true/false
+  results TEXT NOT NULL,         -- JSON: 空欄ごと {"answer":"can't","chosen":"can","correct":false}
+                                 --   選んだ誤答肢まで記録する (混同ペア傾向分析の材料。true/false だけにしない)
   flags TEXT NOT NULL DEFAULT '[]', -- JSON: "sub_suspect"(字幕怪しい) | "unheard"(聞き取れなかった)
   replays INTEGER NOT NULL DEFAULT 0,
   duration_ms INTEGER NOT NULL
+);
+CREATE TABLE analysis (
+  date TEXT PRIMARY KEY,         -- 分析実行日 (JST)
+  report_md TEXT NOT NULL,       -- 「傾向と対策」日本語 Markdown (UI 表示用)
+  weights TEXT NOT NULL,         -- JSON: feature_tag / 混同ペア → 出題重み (drill.py が読む)
+  source TEXT NOT NULL           -- llm (claude -p) | fallback (ルールベース集計)
 );
 CREATE TABLE daily_sets (
   date TEXT PRIMARY KEY,         -- JST "YYYY-MM-DD"
@@ -190,6 +199,27 @@ CREATE TABLE daily_sets (
 - **誤答肢 (choices 4 択)**: `wordlists/confusions.json` の音韻混同ペア (can/can't, in/on/and, their/there/they're, of/off, to/too/two, ...) を優先し、不足分は同リスト内頻出語からランダム。正解位置はシャッフル
 - 穴埋め候補が 1 つも取れない文はクリップ化しない
 
+### 3.4 analyze.py — 回答記録の傾向分析「傾向と対策」(v1、claude -p 活用)
+
+回答の**記録**は v0 から完全に取る (attempts に正答・**選んだ誤答肢**・リプレイ回数・フラグ・所要時間、§2)。**分析**は v1 の夜間バッチで claude -p に委任する:
+
+- **入力**: 直近 14 日の attempts × clips の join (誤答した語 / 選んだ誤答肢 / feature_tags / wpm / replays / flags) を JSON 集計してプロンプトに埋め込む
+- **claude -p 呼び出し**: 夜間 1 回のみ (`claude -p`、JSON 構造化出力を指示)。出力は 2 部構成:
+  1. `report_md` — 日本語の「傾向と対策」短文 (例: 「can/can't の聞き分けで落としている。否定形は母音が潰れるので直後の動詞で判断する練習を」)。ホーム/統計画面にそのまま表示
+  2. `weights` — feature_tag・混同ペアごとの出題重み (drill.py の選定に反映)
+- **ルールベースフォールバック必須**: claude -p が失敗 (rc≠0 / JSON 不正) したら **1 回確定で fallback に切替** (リトライ・stderr 文言分岐をしない)。fallback = feature_tag 別誤答率の単純集計から weights を算出し、report_md は定型文 (「今週の正答率 X%。よく落とす特徴: …」)。学習ループは LLM なしでも完全に回る — claude -p の付加価値は文章化と混同ペアの洞察のみに限定する
+- **state 1 回引き**: 結果は `analysis` テーブル (date, report_md, weights, source) に確定保存。drill.py は最新 1 行を読むだけ、UI も同じ行を表示するだけ (分岐を analysis 側に持たせない)
+- **クォータ前提**: `claude -p` は Max サブスクリプション枠を消費する (クレジット枠分離は 2026-06-15 公式 pause 中)。夜間 1 呼び出し・入力は集計済み JSON のみ (生ログを流さない) で消費を最小化。bot の requests_count 運用と競合しない規模に収める
+- **cwd**: skill は使わない素の `claude -p` なので cwd 依存なし。systemd timer から呼ぶ場合も WorkingDirectory は english/ に固定しておく (惰性の罠回避)
+
+### 3.5 claude -p のその他の活用余地 (フェーズ配置)
+
+| 用途 | フェーズ | 備考 |
+|---|---|---|
+| 傾向と対策 + 出題重み (§3.4) | **v1** | 本命。フォールバック必須 |
+| 穴埋め対象・誤答肢の品質向上 (clips.py の選定を claude -p で置換/検証) | v1 で品質不満が出たら | §9 の 2 周目ルール対象 — wordlists を際限なく増やす前にこちらへ |
+| 字幕なしエピソードの文字起こし | やらない | Whisper (v2) の領分。LLM に音声は渡せない |
+
 ## 4. サーバ (server/app.py)
 
 photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は photos/server/app.py に実装済み (L34-82 相当) なのでそのまま流用可** — 新規に書く要素は API 層のみ。
@@ -206,7 +236,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 |---|---|
 | GET `/api/home` | `{streak, today:{done,total,completed}, continue:{episode_id,title,position_s,duration_s}\|null, trend:[{date,acc}]×14}` |
 | GET `/api/drill/today` | 今日のセット (daily_sets を引き、なければ生成して固定)。クリップごとに `{id, video_url, tokens:[...], blanks:[{idx,choices}]}` — **tokens の blank 位置は null に置換して返す** (原文語のまま返すと正解漏れ)。answer は answer API まで返さない |
-| POST `/api/drill/answer` | `{clip_id, answers:[...], flags:[...], replays, duration_ms}` → 採点して attempts 記録、`{results:[bool], text, blanks:[{idx,answer}]}` を返す |
+| POST `/api/drill/answer` | `{clip_id, answers:[...], flags:[...], replays, duration_ms}` → 採点し、空欄ごとの `{answer, chosen, correct}` を attempts.results に記録 (§2、傾向分析の材料)。`{results:[bool], text, blanks:[{idx,answer}]}` を返す |
 | POST `/api/drill/extra` | 「もう 1 セット」: 3 本追加して extra_ids に固定 |
 | GET `/api/library` | series → episodes (+watch 状態) の一覧 |
 | GET `/api/episodes/<id>` | 再生用詳細 (`video_url, sub_url, position_s`) |
@@ -220,7 +250,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 1. 対象プール = **視聴済み範囲内**のクリップ (`clip.end_s <= watch.max_position_s` または completed)。プールが空なら全クリップにフォールバック (最初のドリルが空にならない)
 2. 3 本の内訳: 直近視聴エピソードから 1 本 + プール全体から 2 本。直近視聴エピソードに適格クリップが 0 本 (視聴専用エピソード等) ならプール全体から 3 本
 3. 未出題を優先、なければ最終 attempt が古い順。同一クリップは同日重複させない。全クリップ数が 3 未満ならある分だけでセットを組む (today.total にその本数を返す)
-4. 適応選定 (誤答特徴による重み付け) は v1。**v0 に賢さを入れない**
+4. 適応選定は v1: `analysis` テーブル最新 1 行の weights (§3.4) で feature_tag / 混同ペアの重み付けサンプリング。analysis 行が無ければ 1〜3 のみで動く。**v0 に賢さを入れない**
 
 ## 5. UI
 
@@ -245,8 +275,8 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 
 - 夜間バッチ化 (systemd timer、03:00 + RandomizedDelay。新エピソード自動巡回)
 - 入力式解答モード (設定でチップ式と切替)
-- 弱点タグ集計 (weak_form / 速度帯別 正答率) + 統計画面、理解度推移
-- 誤答ログによる出題重み付け (ルールベース)
+- **「傾向と対策」夜間分析 (analyze.py §3.4)**: claude -p で誤答傾向の文章化 + 出題重み生成 (ルールベースフォールバック必須)。ホームにレポートカード追加、drill.py の選定に weights 反映
+- 弱点タグ集計 (weak_form / 混同ペア / 速度帯別 正答率) + 統計画面、理解度推移
 - english.db を USB バックアップ運用に追加
 
 ### v2
@@ -258,7 +288,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 ## 7. 非要件 (作らない)
 
 - TTS 音声生成 / リアルタイム書き起こし / 厳密採点 (スペル・句読点)
-- クラウド依存 (学習ループは全ローカル。LLM は夜間分析のみ可、v1 以降)
+- クラウド依存 (学習ループは全ローカル。LLM 利用は夜間の claude -p 分析のみ、§3.4-3.5。日中のドリル/視聴経路には入れない)
 - TV 連携・mpv 連携 (remote と別軌道)、複数ユーザー・認証
 - クリップの厳密な語アライメント (字幕タイムスタンプ精度で足りる)
 
@@ -274,7 +304,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 
 - **yt-dlp は YouTube 側変更で定期的に壊れる**: dlqueue と同一実体を使うため、更新・破損対応は dlqueue 側の churn 台帳運用に相乗りする (二重管理しない)
 - **自動字幕の誤りは仕様**: 最終判断は user (「字幕怪しい」フラグ)。採点は緩い正規化 (小文字化・句読点無視・アポストロフィ正規化) 後の一致
-- **穴埋め品質はルールベースの限界がある**: v0 は weak_forms + 頻出語 + 混同ペアで割り切る。品質不満が出たら v1 で夜間 LLM 選定を検討 (対症療法でリストを際限なく増やさない — 2 周目ルール対象)
+- **穴埋め品質はルールベースの限界がある**: v0 は weak_forms + 頻出語 + 混同ペアで割り切る。品質不満が出たら夜間 claude -p 選定へ切替える (§3.5。wordlists を対症療法で際限なく増やさない — 2 周目ルール対象)
 - **1 回の短さを壊さない**: ホーム→ドリル完了まで タップ数最小 (目標: 起動 1 + 回答 3〜9 + 次へ 3)。機能追加時もこの動線に割り込ませない
 
 ---
