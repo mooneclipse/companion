@@ -548,13 +548,46 @@ main{padding-top:8px}
 .skip{color:var(--muted);font-weight:700}
 '''
 
+# ---------------------------------------------------------------- Variant D 「融合」= A の骨格 + ドリルだけ C の可読性
+# CSS_A に後勝ちで重ねる。ホーム/ライブラリ/プレイヤーは A のまま、ドリル系クラスのみ上書き。
+CSS_D_EXTRA = '''
+/* D: 進行はドット表示 (C 由来)、数字は隠す */
+.drill-progress .num{display:none}
+.drill-progress .dots{display:flex;gap:7px}
+.drill-progress .dots i{width:10px;height:10px;border-radius:50%;background:#dddcd6;display:block}
+.drill-progress .dots i.done{background:var(--ok)}
+.drill-progress .dots i.cur{background:var(--accent);transform:scale(1.25)}
+/* D: 字幕ストリップをやめ、白カード + 枠付き空欄スロット (C 由来) を A のトーンで */
+.cloze{background:#fff;border:1px solid var(--line);border-radius:8px;padding:22px 18px}
+.sentence{color:var(--ink);font-size:22px;line-height:2.05}
+.blank{border:1.5px dashed #c6c5bf;border-radius:8px;padding:2px 10px;background:var(--bg);min-width:80px}
+.blank.filled{border-style:solid;border-color:var(--ink);color:var(--ink)}
+.blank.current{border:2px solid var(--accent);border-radius:8px;background:rgba(216,57,42,.06);outline:none}
+/* D: 正誤は淡色塗り (C 由来) を落ち着いた彩度で */
+.word.ok{color:#276b44;background:#e3f0e8;border-radius:6px;padding:2px 8px;border-bottom:none}
+.word.ng{color:var(--accent);background:#faeae7;border-radius:6px;padding:2px 8px;text-decoration:line-through;text-decoration-thickness:2px}
+.fix{color:#276b44;background:#e3f0e8;border-radius:6px;padding:2px 8px;text-decoration:none;border-bottom:none}
+/* D: 選択チップと主ボタンは大きく明瞭に、ただし角は控えめ */
+.chips{gap:12px}
+.chip{height:56px;background:#fff;border:1.5px solid #d5d4ce;border-radius:10px;font-size:17px}
+.btn-check{border-radius:8px}
+.btn-replay{border-radius:8px}
+.btn-next{border-radius:8px}
+'''
+
 FONTS = {
     "a": '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">',
     "b": '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">',
     "c": '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&display=swap" rel="stylesheet">',
 }
+FONTS["d"] = FONTS["a"]
 
-VARIANTS = {"a": ("A 字幕", CSS_A), "b": ("B 学習帳", CSS_B), "c": ("C ラウンド", CSS_C)}
+VARIANTS = {
+    "a": ("A 字幕", CSS_A),
+    "b": ("B 学習帳", CSS_B),
+    "c": ("C ラウンド", CSS_C),
+    "d": ("D 融合 A×C", CSS_A + CSS_D_EXTRA),
+}
 
 TEMPLATE = '''<!-- @dsCard group="{group}" name="{name}" viewport="460x944" -->
 <!doctype html>
