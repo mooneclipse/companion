@@ -1,0 +1,5 @@
+media/
+data/
+inbox/
+__pycache__/
+*.pyc
