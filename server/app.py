@@ -518,25 +518,6 @@ STATIC = {
     "/nowplaying.html": ("nowplaying.html", "text/html; charset=utf-8"),
 }
 
-# english UI モック一時公開 (2026-07-02): 4 案の実機選定用。選定後にこのブロックと web/mock/ を撤去する。
-# allowlist 方式は維持 (固定タプルの列挙のみ、glob/FS 連結はしない)。
-_MOCK_HTML = (
-    "index.html",
-    "01-home-a.html", "01-home-b.html", "01-home-c.html",
-    "02-home-empty-a.html", "02-home-empty-b.html", "02-home-empty-c.html",
-    "03-drill-question-a.html", "03-drill-question-b.html", "03-drill-question-c.html",
-    "04-drill-answer-a.html", "04-drill-answer-b.html", "04-drill-answer-c.html",
-    "05-drill-done-a.html", "05-drill-done-b.html", "05-drill-done-c.html",
-    "06-library-a.html", "06-library-b.html", "06-library-c.html",
-    "07-player-a.html", "07-player-b.html", "07-player-c.html",
-    # D 融合案 (A ホーム × C ドリル、2026-07-02 追加)
-    "01-home-d.html", "02-home-empty-d.html", "03-drill-question-d.html",
-    "04-drill-answer-d.html", "05-drill-done-d.html", "06-library-d.html",
-    "07-player-d.html",
-)
-STATIC.update({f"/mock/{n}": (f"mock/{n}", "text/html; charset=utf-8") for n in _MOCK_HTML})
-STATIC["/mock"] = STATIC["/mock/"] = STATIC["/mock/index.html"]
-
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
