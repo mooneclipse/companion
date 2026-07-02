@@ -5,6 +5,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 ## 改版履歴
 
+- **v0.4 (2026-07-02)**: 2 回目 code-reviewer (全体) 反映。修正必須 1 件 — `analysis.weights` の契約スキーマを §3.4 に固定 (llm/fallback 共通形 + clip へのペア適用規則 + 検証 NG は fallback 1 回確定 + 同日 REPLACE)。軽微 — claude -p 受け取りを `--output-format json` の `.result` parse に固定 / streak 定義を `daily_sets.clip_ids` 全件に統一 (§4.3-3 と整合) / ブリーフの版数参照を「常に最新版」に変更
 - **v0.3 (2026-07-02)**: user 要望「claude -p の活用」「回答の記録 (傾向と対策)」を明文化。§3.4 analyze.py 新設 (v1: 夜間 claude -p で傾向と対策レポート + 出題重み、ルールベースフォールバック必須、Max サブスク枠消費の前提明記)、§3.5 claude -p 活用余地の一覧、attempts.results を「選んだ誤答肢まで記録」(v0 から) に拡張 + `analysis` テーブル追加、§4.3 適応選定を analysis weights 参照に具体化
 - **v0.2 (2026-07-02)**: code-reviewer 指摘反映。修正必須 2 件 — (1) `clips.tokens` 列を追加しトークン化を clips.py の空白 split 1 回で確定 (blank 位置の正解漏れ対策で API は blank 位置 null 置換を明記)、(2) `watch.max_position_s` を分離 (レジューム位置と視聴済み右端の二重意味を解消、巻き戻しでプールが縮む問題)。軽微 — Range は photos 実装流用可 / 出題選定のフォールバック 2 件明文化 / streak 更新は `/api/home` 再取得 / ブリーフのクリップ長を 4〜12 秒に統一・誤記修正。加えて df 実測 (320GB 空き) で 720p 確定
 - **v0.1 (2026-07-02)**: 初版。チャット版要件定義を user の追加入力で改訂し、4 分岐 (解答方式 / 分量 / 出題範囲 / 教材調達) を user 確定。全体設計・データモデル・パイプライン・API・フェーズ分けを起こした。UI は `english-ui-brief.md` (claude design 用ブリーフ) に分離。
@@ -164,7 +165,7 @@ CREATE TABLE daily_sets (
 );
 ```
 
-- **streak 定義**: その日の daily_sets の 3 本すべてに attempts がある日 = 達成。連続日数は attempts から都度計算 (JST)
+- **streak 定義**: その日の `daily_sets.clip_ids` の全件に attempts がある日 = 達成 (全クリップ数が 3 未満の日はその本数、§4.3-3 と整合)。連続日数は attempts から都度計算 (JST)
 - **孤児対策** (photos §6.1 の轍): ingest は incremental add のみ。episode/clip の削除は手動スクリプトで「DB 行 + media 実体」を集合差分で同時に消す (v0 は削除機能なしでよい、台帳に手順だけ書く)
 
 ## 3. パイプライン (pipeline/、v0 は手動実行)
@@ -204,11 +205,15 @@ CREATE TABLE daily_sets (
 回答の**記録**は v0 から完全に取る (attempts に正答・**選んだ誤答肢**・リプレイ回数・フラグ・所要時間、§2)。**分析**は v1 の夜間バッチで claude -p に委任する:
 
 - **入力**: 直近 14 日の attempts × clips の join (誤答した語 / 選んだ誤答肢 / feature_tags / wpm / replays / flags) を JSON 集計してプロンプトに埋め込む
-- **claude -p 呼び出し**: 夜間 1 回のみ (`claude -p`、JSON 構造化出力を指示)。出力は 2 部構成:
+- **claude -p 呼び出し**: 夜間 1 回のみ。`claude -p --output-format json` で包んで `.result` を parse する (素の stdout は markdown フェンス混入があり得るため受け取り形式をここで固定)。出力は 2 部構成:
   1. `report_md` — 日本語の「傾向と対策」短文 (例: 「can/can't の聞き分けで落としている。否定形は母音が潰れるので直後の動詞で判断する練習を」)。ホーム/統計画面にそのまま表示
   2. `weights` — feature_tag・混同ペアごとの出題重み (drill.py の選定に反映)
 - **ルールベースフォールバック必須**: claude -p が失敗 (rc≠0 / JSON 不正) したら **1 回確定で fallback に切替** (リトライ・stderr 文言分岐をしない)。fallback = feature_tag 別誤答率の単純集計から weights を算出し、report_md は定型文 (「今週の正答率 X%。よく落とす特徴: …」)。学習ループは LLM なしでも完全に回る — claude -p の付加価値は文章化と混同ペアの洞察のみに限定する
 - **state 1 回引き**: 結果は `analysis` テーブル (date, report_md, weights, source) に確定保存。drill.py は最新 1 行を読むだけ、UI も同じ行を表示するだけ (分岐を analysis 側に持たせない)
+  - **weights スキーマ (llm / fallback 共通の契約、これ以外の形を許さない)**: `{"feature_tags": {"weak_form": 1.5}, "pairs": {"can|can't": 2.0}}` (ペアキーはソート済み `|` 連結)
+  - **clip へのペア適用規則**: いずれかの blank で answer がペアに含まれ、かつ相手側の語が choices に含まれる clip にマッチ
+  - スキーマ検証 NG (キー欠落 / 型不正) は「JSON 不正」と同扱いで fallback へ (判定はこの 1 回)
+  - 同日再実行は `INSERT OR REPLACE` (date PK)
 - **クォータ前提**: `claude -p` は Max サブスクリプション枠を消費する (クレジット枠分離は 2026-06-15 公式 pause 中)。夜間 1 呼び出し・入力は集計済み JSON のみ (生ログを流さない) で消費を最小化。bot の requests_count 運用と競合しない規模に収める
 - **cwd**: skill は使わない素の `claude -p` なので cwd 依存なし。systemd timer から呼ぶ場合も WorkingDirectory は english/ に固定しておく (惰性の罠回避)
 

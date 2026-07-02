@@ -1,6 +1,6 @@
 # english-ui-brief.md — 英語リスニング学習アプリ UI デザインブリーフ
 
-claude design にそのまま渡せる自己完結ブリーフ。設計本体は `english-design.md` (v0.1)。
+claude design にそのまま渡せる自己完結ブリーフ。設計本体は `english-design.md` (常に最新版を正とする)。
 このブリーフの範囲 = v0 の 4 画面 + 完了/空状態。
 
 ---
