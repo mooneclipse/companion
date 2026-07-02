@@ -59,7 +59,7 @@
         <div class="np-time"><span id="nowbar-time"></span></div>
       </button>
 
-      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">8</span></div>
+      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">9</span></div>
 
       <!-- タイルグリッド(2列)。
            将来機能拡張: この .grid 内に <button class="tile" data-open="xxx"> を 1 枚足し、
@@ -105,6 +105,11 @@
         <button class="tile" type="button" id="tile-ss" data-action="screensaver-toggle">
           <span class="t-mark">◈ 08</span><span class="t-name">アート</span>
           <span class="t-sub" id="tile-ss-sub">TV スクリーンセーバー</span>
+        </button>
+        <!-- 耳ならしは別ポート(:8447)の独立英語学習 PWA を開くランチャ。写真タイルと同型
+             (data-href → window.open _blank noopener、remote は proxy しない)。 -->
+        <button class="tile" type="button" data-href="https://miho-inspiron-3521.tail5e989b.ts.net:8447/">
+          <span class="t-mark">♪ 09</span><span class="t-name">耳ならし</span><span class="t-sub">英語リスニング</span>
         </button>
       </div>
     </section>
