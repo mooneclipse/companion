@@ -3,3 +3,5 @@ data/
 inbox/
 __pycache__/
 *.pyc
+pipeline/tests/_scratch/
+pipeline/tests/_scratch_inbox/

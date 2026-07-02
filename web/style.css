@@ -1,0 +1,171 @@
+/* companion-english — D 案 (A×C 融合) を実アプリ向けに移植した stylesheet。
+   redesign/english-ui-mocks/dist/*-d.html のクラス名・トークンをそのまま踏襲する。
+   モックは 412px の「額縁 (.phone)」付きモックだったが、実アプリは body 自体を
+   スマホ幅で中央寄せしたページとして扱う (額縁なし、高さはビューポート基準)。 */
+
+*{margin:0;padding:0;box-sizing:border-box}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+a{color:inherit;text-decoration:none}
+
+:root{
+  --bg:#fbfbf9;--ink:#191a1e;--muted:#6c6d73;--line:#e5e4df;--accent:#d8392a;--ok:#2e7d4f;
+  --jp:"Noto Sans JP",sans-serif;--disp:"Archivo",sans-serif;--mono:"IBM Plex Mono",monospace;
+}
+
+body{
+  background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;
+  font-family:var(--jp);font-size:14px;
+  max-width:480px;margin:0 auto;min-height:100vh;overflow-x:hidden;position:relative;
+}
+
+/* ── ヘッダー (ホーム / ライブラリ共通) ── */
+.top{display:flex;align-items:baseline;justify-content:space-between;padding:26px 24px 18px;border-bottom:1px solid var(--line)}
+.brand{display:flex;flex-direction:column;gap:2px;font-weight:700;font-size:17px}
+.brand-sub{font-family:var(--mono);font-size:8.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:400}
+.streak{display:flex;align-items:baseline;gap:5px}
+.streak-num{font-family:var(--disp);font-weight:700;font-size:22px}
+.streak-label{font-family:var(--mono);font-size:10px;color:var(--muted)}
+
+/* ── ホーム ── */
+main{padding:22px 24px 32px}
+.card{margin-bottom:16px;background:none;border-bottom:1px solid var(--line);padding-left:0;padding-right:0}
+.eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.hero{padding:18px 22px 24px;border-top:2px solid var(--ink)}
+.hero-title{font-size:28px;font-weight:700;margin:8px 0 6px}
+.hero-meta{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.btn-primary{display:flex;align-items:center;justify-content:center;width:100%;height:56px;margin-top:20px;
+  background:var(--accent);color:#fff;border-radius:4px;font-size:15px;font-weight:700;letter-spacing:.06em}
+.btn-ghost{display:flex;align-items:center;justify-content:center;width:100%;height:48px;margin-top:10px;
+  border:1px solid var(--line);border-radius:4px;color:var(--muted)}
+
+.graph-card{padding:18px 22px}
+.graph-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
+.graph-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--muted)}
+.graph-value{font-family:var(--disp);font-weight:700;font-size:17px}
+.spark{display:block;width:100%;height:44px}
+.bar{fill:#d6d5cf}
+.bar.today{fill:var(--accent)}
+
+.resume-card{padding:18px 22px}
+.resume-row{display:flex;gap:14px;margin-top:12px}
+.thumb{flex:0 0 104px;height:58px;display:flex;align-items:center;justify-content:center;
+  background:#131418;color:#fff;font-family:var(--mono);font-size:20px;border-radius:3px}
+.resume-info{flex:1;min-width:0}
+.resume-series{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.resume-title{font-weight:500;font-size:14px;margin-top:2px}
+.progress{height:4px;width:100%;overflow:hidden;background:var(--line)}
+.progress-fill{height:100%;background:var(--accent)}
+.resume-info .progress{margin:8px 0 4px}
+.resume-left{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+
+.lib-link{display:flex;justify-content:space-between;align-items:center;padding:16px 2px;font-weight:500;font-size:13.5px}
+.lib-link .arrow{font-family:var(--disp)}
+
+.empty .empty-copy{margin-top:10px;line-height:1.9;color:var(--muted);font-size:13px}
+
+.loading{padding:40px 24px;color:var(--muted);font-family:var(--mono);font-size:12px;text-align:center}
+.error-box{margin:16px 24px;padding:16px 18px;border:1px solid var(--line);border-radius:8px;background:#faeae7;color:var(--accent);font-size:13px;line-height:1.7}
+
+/* ── ドリル ── */
+/* 額縁なしの実アプリでは answer-area を position:absolute で画面下端に貼り付けられない
+   (body の高さがコンテンツ依存になるため)。done 画面と同じ「flex 縦積み + 最終要素に
+   margin-top:auto」パターンに統一し、画面が短ければ下端に、長ければ自然にスクロールする。 */
+.drill-screen{display:flex;flex-direction:column;min-height:100vh}
+.drill-top{display:flex;align-items:center;justify-content:space-between;padding:20px 20px 14px;border-bottom:1px solid var(--line)}
+.icon-btn{width:36px;height:36px;font-size:20px;line-height:36px;color:var(--muted);text-align:center}
+.drill-progress .dots{display:flex;gap:7px}
+.drill-progress .dots i{width:10px;height:10px;border-radius:50%;background:#dddcd6;display:block}
+.drill-progress .dots i.done{background:var(--ok)}
+.drill-progress .dots i.cur{background:var(--accent);transform:scale(1.25)}
+.speed-toggle{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.speed-toggle button{padding:7px 12px;font-size:12px;font-family:var(--mono);color:var(--muted)}
+.speed-toggle .on{background:var(--ink);color:#fff}
+
+.clip{margin-top:20px;padding:0 20px}
+.clip-frame{position:relative;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;
+  background:#131418;color:#8b8e96;border-radius:4px;overflow:hidden}
+.clip-frame video{width:100%;height:100%;object-fit:cover}
+.clip-time{position:absolute;right:10px;bottom:8px;font-size:11px;font-family:var(--mono);color:#9aa0a6}
+.clip-under{display:flex;justify-content:space-between;padding:8px 2px 0;font-size:12px}
+.clip-hint{color:var(--muted)}
+.cue-meta{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+.play-ico{display:block;width:0;height:0;border-style:solid;border-width:11px 0 11px 19px;border-color:transparent transparent transparent currentColor}
+.pause-ico{display:block;width:18px;height:24px;border-left:6px solid currentColor;border-right:6px solid currentColor}
+
+.cloze{margin:16px 20px 18px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:22px 18px}
+.sentence{word-spacing:.05em;font-family:var(--disp);font-weight:600;color:var(--ink);font-size:22px;line-height:2.05}
+.blank{display:inline-block;min-height:1.2em;text-align:center;
+  border:1.5px dashed #c6c5bf;border-radius:8px;padding:2px 10px;background:var(--bg);min-width:80px}
+.blank.filled{border-style:solid;border-color:var(--ink);color:var(--ink)}
+.blank.current{border:2px solid var(--accent);border-radius:8px;background:rgba(216,57,42,.06);outline:none}
+.word{display:inline-block}
+.word.ok{color:#276b44;background:#e3f0e8;border-radius:6px;padding:2px 8px}
+.word.ng{color:var(--accent);background:#faeae7;border-radius:6px;padding:2px 8px;text-decoration:line-through;text-decoration-thickness:2px}
+.fix{margin-left:.45em;display:inline-block;text-decoration:none;color:#276b44;background:#e3f0e8;border-radius:6px;padding:2px 8px}
+
+.answer-area{padding:14px 20px 26px;margin-top:auto}
+.chips{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.chip{height:56px;background:#fff;border:1.5px solid #d5d4ce;border-radius:10px;font-family:var(--disp);font-weight:500;font-size:17px;
+  display:flex;align-items:center;justify-content:center}
+.btn-check,.btn-next{display:flex;align-items:center;justify-content:center;width:100%;height:56px;
+  background:var(--accent);color:#fff;border-radius:8px;font-weight:700;letter-spacing:.06em}
+.btn-check:disabled{background:#e7e6e2;color:#a6a5a0}
+.flags{display:flex;gap:8px;margin-bottom:12px}
+.flag{padding:8px 12px;border:1px solid var(--line);border-radius:4px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.flag[aria-pressed="true"]{border-color:var(--ink);color:var(--ink)}
+.btn-replay{display:flex;align-items:center;justify-content:center;width:100%;height:48px;margin-bottom:10px;
+  border:1px solid var(--ink);border-radius:8px;font-weight:500}
+
+/* ── ドリル完了 ── */
+main.done{display:flex;flex-direction:column;min-height:100vh;padding:0 24px}
+.done-hero{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:14px}
+.done-score{font-family:var(--disp)}
+.done-num{font-weight:700;font-size:88px;line-height:1}
+.done-frac{font-size:20px;color:var(--muted);margin-left:8px}
+.streak-update{font-family:var(--mono);font-size:14px}
+.streak-update .to{color:var(--accent);font-weight:700}
+.streak-update .arrow{margin:0 .5em;color:var(--muted)}
+.done-actions{padding-bottom:34px}
+.done .lib-link{justify-content:center;gap:8px;font-size:12.5px;color:var(--muted)}
+
+/* ── ライブラリ ── */
+.page-title{margin:4px 0 18px;font-size:24px;font-weight:700;border-top:2px solid var(--ink);padding-top:16px}
+.series{margin-bottom:26px;border-bottom:1px solid var(--line);padding-bottom:20px}
+.series.pending{opacity:.7}
+.series-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+.series-head h2{font-size:15.5px;font-weight:700}
+.series-meta{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.ep-row{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;margin:0 -24px;padding-left:24px;padding-right:24px}
+.ep-card{flex:0 0 128px;min-width:0}
+.ep-thumb{height:72px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;
+  background:#131418;color:#fff;font-family:var(--mono);font-size:12px;border-radius:3px}
+.pending .ep-thumb{opacity:.4}
+.ep-title{font-size:12px;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.ep-state{font-size:11px;margin-top:4px;font-family:var(--mono);color:var(--muted)}
+.ep-state.done{color:var(--ok)}
+.ep-state.watchonly{color:var(--muted);border:1px solid var(--line);display:inline-block;padding:1px 6px;border-radius:3px}
+.ep-card .progress{margin-top:6px}
+.pending-note{font-size:12px;line-height:1.8;color:var(--muted)}
+
+/* ── プレイヤー ── */
+.player-back{display:inline-flex;align-items:center;gap:6px;padding:14px 24px 0;color:var(--muted);font-family:var(--mono);font-size:11px}
+.player-frame{position:relative;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;background:#131418;color:#fff}
+.player-frame video{width:100%;height:100%;object-fit:contain}
+.player-body{padding:18px 24px}
+.player-title{margin:2px 0 14px;font-size:17px;font-weight:700}
+.scrub .progress{background:#e0dfda}
+.times{display:flex;justify-content:space-between;font-size:11px;margin-top:6px;font-family:var(--mono);color:var(--muted)}
+.player-controls{display:flex;align-items:center;justify-content:center;gap:26px;margin:22px 0 14px}
+.ctl{width:56px;height:56px;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);border-radius:50%;font-family:var(--mono);font-size:12px}
+.ctl-main{width:68px;height:68px;background:var(--ink);color:#fff;border:none}
+.subrow{display:flex;justify-content:center;gap:10px}
+.toggle{padding:8px 14px;font-size:12px;border:1px solid var(--line);border-radius:4px;font-family:var(--mono);color:var(--ink)}
+.toggle.off{color:var(--muted)}
+.overlay{margin-top:26px;padding:18px 20px;text-align:center;
+  border:1px solid var(--line);background:#fff;border-radius:4px;box-shadow:0 8px 24px rgba(20,20,25,.08)}
+.ovl-q{font-weight:700;font-size:14px}
+.emoji-row{display:flex;justify-content:center;gap:12px;margin:14px 0 10px}
+.emoji{width:52px;height:52px;font-size:24px;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);border-radius:4px;background:var(--bg)}
+.skip{font-size:12px;font-family:var(--mono);color:var(--muted)}

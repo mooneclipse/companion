@@ -1,0 +1,25 @@
+{
+  "_comment": "音韻混同グループ定義。形式は clips.py の docstring 参照: groups は配列の配列で、各内側配列が『聞き分けにくい語の集合』(小文字・大小無視でマッチ)。ある空欄の答えがいずれかのグループに属する場合、そのグループの残り語を誤答肢の優先候補にする。",
+  "groups": [
+    ["can", "can't"],
+    ["in", "on", "and"],
+    ["their", "there", "they're"],
+    ["of", "off"],
+    ["to", "too", "two"],
+    ["for", "four"],
+    ["than", "then"],
+    ["were", "where", "we're"],
+    ["it's", "its"],
+    ["your", "you're"],
+    ["was", "is"],
+    ["him", "his"],
+    ["them", "then"],
+    ["that", "what"],
+    ["or", "are"],
+    ["gonna", "going"],
+    ["wanna", "want"],
+    ["kinda", "kind"],
+    ["as", "is"],
+    ["from", "for"]
+  ]
+}
