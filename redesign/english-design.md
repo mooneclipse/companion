@@ -5,6 +5,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 ## 改版履歴
 
+- **v0.5 (2026-07-02)**: チケット #62 消化 — §0.5 を「未調査の見込み」から調査結果に置換 (WebSearch + 日本回線からの yt-dlp 実測)。TADC = 公式全話無料 + 手動字幕確認で**初期教材確定**、Peanuts / Adventure Time = 日本からの YouTube 公式ルートなし。追加候補 4 件 (Bee and PuppyCat / Bravest Warriors / Murder Drones / GLITCH パイロット群) と不採用 2 件 (Cartoon Cartoons / Bluey、日本リージョンロック) を実測付きで記録。§8 該当項目をチェック
 - **v0.4 (2026-07-02)**: 2 回目 code-reviewer (全体) 反映。修正必須 1 件 — `analysis.weights` の契約スキーマを §3.4 に固定 (llm/fallback 共通形 + clip へのペア適用規則 + 検証 NG は fallback 1 回確定 + 同日 REPLACE)。軽微 — claude -p 受け取りを `--output-format json` の `.result` parse に固定 / streak 定義を `daily_sets.clip_ids` 全件に統一 (§4.3-3 と整合) / ブリーフの版数参照を「常に最新版」に変更
 - **v0.3 (2026-07-02)**: user 要望「claude -p の活用」「回答の記録 (傾向と対策)」を明文化。§3.4 analyze.py 新設 (v1: 夜間 claude -p で傾向と対策レポート + 出題重み、ルールベースフォールバック必須、Max サブスク枠消費の前提明記)、§3.5 claude -p 活用余地の一覧、attempts.results を「選んだ誤答肢まで記録」(v0 から) に拡張 + `analysis` テーブル追加、§4.3 適応選定を analysis weights 参照に具体化
 - **v0.2 (2026-07-02)**: code-reviewer 指摘反映。修正必須 2 件 — (1) `clips.tokens` 列を追加しトークン化を clips.py の空白 split 1 回で確定 (blank 位置の正解漏れ対策で API は blank 位置 null 置換を明記)、(2) `watch.max_position_s` を分離 (レジューム位置と視聴済み右端の二重意味を解消、巻き戻しでプールが縮む問題)。軽微 — Range は photos 実装流用可 / 出題選定のフォールバック 2 件明文化 / streak 更新は `/api/home` 再取得 / ブリーフのクリップ長を 4〜12 秒に統一・誤記修正。加えて df 実測 (320GB 空き) で 720p 確定
@@ -34,7 +35,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 | 1 | ドリル解答方式 | **選択式チップ** (空欄ごとに 4 択チップをタップ)。入力式は v1 |
 | 2 | デイリードリル分量 | **クリップ 3 本 ≈ 2〜3 分**。物足りなければ「もう 1 セット」ボタン |
 | 3 | 出題範囲 | **視聴済み範囲から** (直近視聴エピソード優先。ネタバレなし・文脈既知で聞き取りに集中) |
-| 4 | 教材調達 | **汎用 ingest** (URL/プレイリスト登録 + ローカルファイル持ち込み)。3 作品の公式可用性は**別途 Web 調査タスク** |
+| 4 | 教材調達 | **汎用 ingest** (URL/プレイリスト登録 + ローカルファイル持ち込み)。3 作品の公式可用性は**別途 Web 調査タスク** (→ #62 で消化、結果は §0.5) |
 
 ### 0.4 チャット版要件からの主な改訂
 
@@ -45,12 +46,30 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 3. **採点は緩く / 答え (字幕) は不完全前提 / 進捗可視化 / 段階的に作る** の設計原則はそのまま継承
 4. 適応出題・Whisper・チャンネル自動巡回は v1/v2 のまま (先に作らない)
 
-### 0.5 教材可用性の正直な前提 (未調査・要確認)
+### 0.5 教材可用性 (調査済み 2026-07-02、チケット #62)
 
-- **TADC**: Glitch 公式チャンネルで全話無料公開 + 手動字幕あり見込み — 最有力の初期教材
-- **Peanuts**: クラシック作品は Apple TV+ 独占の可能性が高く、YouTube 公式はクリップ中心の見込み
-- **Adventure Time**: Cartoon Network 公式はクリップのみの見込み。非公式アップロードは字幕品質・takedown の面で不安定
-- → アプリ設計は調達と切り離す (0.3 #4)。**可用性調査は別チケットで WebSearch 実施**し、結果を本台帳 §0.5 に追記する
+調査方法: WebSearch + **自宅回線からの yt-dlp メタデータ実測** (`--flat-playlist` / `--list-subs` / `--print`、ダウンロードなし)。「日本から視聴可か」を実測で判定した (リージョンロックは Web 記事では分からない)。
+
+**3 作品の結果**:
+
+- **TADC**: ✅ **確定・初期教材第 1 候補**。@GLITCH 公式で全 9 話無料公開 (最終話 Ep9 58 分は 2026-06-19 公開済み、シリーズ完結)。**手動字幕 21 言語 (英語+日本語含む) を Ep9 で実測確認**。日本から視聴可。Netflix にも非独占配信あり
+- **Peanuts**: ❌ YouTube 公式ルートなし。@snoopy 公式は 30 秒〜5 分のクリップのみ (全編は Apple TV+ 誘導)。The Snoopy Show / Camp Snoopy は Apple TV+ 独占。検索上位の「Peanuts (Full Episodes)」プレイリストは非公式かつ動画視聴不可。→ 全話ライブラリに入れるなら **ローカル持ち込み (DVD rip 等) か Apple TV+ 契約**
+- **Adventure Time**: ❌ 日本からは YouTube 公式ルート実質なし。@AdventureTime 公式はクリップ/コンピレーション中心で、数少ない「FULL EPISODE」動画 (I Remember You) も**日本から視聴不可 (リージョンロック実測)**。S1-5 4K マラソン動画も視聴不可。米国では Hulu/Max 配信
+
+**追加候補 (可用性は日本から実測済み、レベル適合順)**:
+
+| 作品 | チャンネル | 全話 | 字幕 | 日本から | 備考 |
+|---|---|---|---|---|---|
+| Bee and PuppyCat (原作 2013-14) | @cartoonhangover 公式 | 全 10 話一括 66 分 | 手動 ja/fr/pt + 自動 en | ✅ | 会話ゆっくり・日常語彙で一番やさしい。ja 手動字幕が理解の保険になる |
+| Bravest Warriors | @cartoonhangover 公式 | S1-3 一括 3.4h + S4 個別 | 自動 en のみ | ✅ | **Adventure Time 作者 Pendleton Ward 原作**で作風が最も近い代替。1 話 5〜11 分 |
+| Murder Drones | @GLITCH 公式 | 全 8 話 | 手動 (TADC と同じ多言語、Ep8 実測) | ✅ | TADC と同一チャンネル・同一 ingest。ただしセリフ速め・アクション多めで難度は上 |
+| Knights of Guinevere / GAMEOVERSE | @GLITCH 公式 | パイロット各 1 本 | (未実測、GLITCH 慣習では手動あり) | ✅ | GLITCH の新作パイロット群。話数が増えたら候補 |
+
+注意: Bee and PuppyCat / Bravest Warriors の「全話一括動画」は 1 動画 = 1 episode 前提 (§2 episodes / §3.1 ingest) だと 66 分〜3.4h の巨大 episode になり、§0.3 #3「直近視聴エピソード優先」の出題プールと理解度申告の粒度が粗くなる。採用時はチャプター分割 ingest か個別動画 (Bravest Warriors S4 等) を優先する — 2 本目採用時の検討事項。
+
+**不採用 (実測でリージョンロック確認)**: Cartoon Cartoons 公式 (CN 旧作 Courage / Dexter's Lab 等の全話無料、UK 運営) と Bluey 公式 — いずれも複数動画で「This video is not available」(日本ブロック)。VPN 前提の設計はしない
+
+- → アプリ設計は調達と切り離す (0.3 #4) のまま。**v0 の初期教材は TADC で確定**、2 本目は user の好み次第で Bee and PuppyCat / Bravest Warriors を提案
 
 ---
 
@@ -303,7 +322,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 - [ ] `tailscale serve status` を **user 実行**で 8447 空きを実見 (photos ポストモーテム原則 1)
 - [ ] yt-dlp で TADC 1 本実弾: 動画 + 手動字幕 (en) が取れるか、`sub_kind` 判定含め確認
 - [ ] `<video>` + Range 配信 + WebVTT `<track>` を Pixel 6 実機ブラウザで縦切り確認 (最初の実装ステップ)
-- [ ] 3 作品の公式可用性 Web 調査 (別チケット) → §0.5 に追記
+- [x] 3 作品の公式可用性 Web 調査 (チケット #62) → §0.5 に追記済み — **2026-07-02 実測: TADC のみ公式全話+手動字幕で成立、初期教材確定。Peanuts / Adventure Time は日本からの YouTube 公式ルートなし**
 
 ## 9. リスクと設計判断
 
