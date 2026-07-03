@@ -51,7 +51,7 @@ workspace 直下は **(C) ローカル git のみ（remote なし、rollback 専
 2. **実装** — 必要な編集・テスト
 3. **レビュー** — `code-reviewer` subagent を呼び差分を点検（`.claude/agents/code-reviewer.md`）。修正必須が出れば反映 → 再レビュー
 4. **コミット** — 適切な粒度（1 論理単位 = 1 commit）で `git add` → `git commit`。`permissions.allow` で確認なく通る
-5. **プッシュ** — `git push`。`permissions.ask` なのでユーザー側で 1 回承認が必要（誤りの最終ゲート、完全自動化はしない）
+5. **プッシュ** — claude 側で `git push` を実行しない。**(B) GitHub remote 付き repo のみ** `cd <repo> && git push origin <branch>` を 1 行表示し、ユーザーが自分のターミナルで叩く（誤りの最終ゲート）。**(C) ローカル git のみ repo（workspace / web / remote / bot-workspace / games 等）は commit で完結**、push 行も出さない。判別は `git remote -v`（空 = (C)）。auto mode classifier は push を構造的に block するため claude 側で試みること自体が無駄ターン（2026-06-16 協働判断で確定）
 6. **STATUS.md / PROJECT.md 更新** — Done エントリ追加、最終更新日時更新
 
 ### コミット粒度の指針
