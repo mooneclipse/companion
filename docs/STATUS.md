@@ -295,6 +295,7 @@ OWNER 発注＝セーブ/永続（`mineroad-remake-plan.md` §2 バックログ 
 - **配信の実態**: v0.11.0 で確認済みのとおり、server/app.py は静的ファイルを毎リクエストでディスク直読み＋no-cache のため、mineroad/web/app.js のコミット時点で本番47825に v0.12.0 が即時反映されている。
 
 - **配信の実態（一次確認・要設計判断）**: `server/app.py` の `do_GET` は STATIC dict の URL→相対パスを引き **毎リクエストで `with open(...) as f: f.read()` のディスク直読み＋`Cache-Control: no-cache`**。よって `mineroad/web/` 配下の静的ファイル編集は **restart 不要で本番47825へ即時反映**（restart が要るのは server/app.py 自体＝STATIC dict に新規 URL を足すときのみ）。実測：本番47825 は現在 v0.11.0 を配信中（`curl /mineroad/app.js` に `VERSION = "v0.11.0"` を確認）。**＝v0.5.0〜v0.11.0 の「本番反映 OWNER 承認待ち／restart 未実施」という運用記述は、新規 URL を伴わない既存ファイル編集の増分には実効しておらず、ファイル保存時点で本番に出ていた**。配信ゲートを実効化するなら build/deploy 分離か別ディレクトリ配信が要る（設計判断は OWNER 預かり）。
+  - **2026-07-06 OWNER 裁定 = 現状追認**（AskUserQuestion で確定）: live-from-disk＋no-cache を仕様として受け入れる。ゲートの定義は「playtester + code-reviewer 通過 → commit」までとし、「本番反映は OWNER 承認待ち」という独立ゲートは**廃止**（v0.5.0〜v0.13.x の各エントリの同文言はこの再定義で読み替える。歴史記述は改稿しない）。根拠: 単一ユーザ・mineroad の露出は OWNER 限定（直 URL のみ）・v0.5〜v0.13 の全増分で保存即本番だったが実害ゼロの実績があり、build/deploy 分離の実装・運用コストに見合う保護対象がない。作業中の中間状態が保存時点で本番に出る点は認識のうえ受容（壊れた中間状態を worktree に長時間放置しない運用のみ徹底）。deploy 分離は将来公開範囲が広がる等の前提変化時に再起票。
 
 
 ## 第 4 作 方向転換（あかり 出荷済み v1.3.0・感想 7/10、2026-06-03 着手 / `/newgame` 2 度目、Steam 実データ起点）
