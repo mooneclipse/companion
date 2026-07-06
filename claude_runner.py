@@ -43,7 +43,7 @@ class ClaudeOptions:
     resume_session: str | None = None   # for subsequent prompts
     output_format: str = "json"
     permission_mode: str = "auto"
-    model: str = "claude-sonnet-4-6"    # UQ-10: bot fixed to Sonnet 4.6
+    model: str = "claude-sonnet-5"      # UQ-10 の Sonnet 固定方針を踏襲、2026-07-06 に 4.6 から移行
     timeout_s: float = 300.0
     # ペルソナ等の常駐指示を default system prompt に追記する (--append-system-prompt)。
     append_system_prompt: str | None = None
