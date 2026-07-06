@@ -223,7 +223,7 @@ dashboard/
 - [x] 秒表示は無し（時計は `HH:MM` のみ、コロンは静的）に決定 → `.time .ss` / `<span class="ss">` / inline script の `ss` を削除済み
 - [x] **〔ユーザー〕`docs/SETUP.md` の手順を実行**（音楽配置 → dashboard-config.js 記入 → 手動 start/stop テスト → timer enable → git push）— 2026-05-14 完了。dashboard-config.js の中村区実データ書き換えは TODO に残る
 - [x] **〔ユーザー〕`web/dashboard-config.js` の緯度経度を中村区実値に書き換え** — 2026-05-19 (N35°10'25.38" E136°52'16.87" → lat 35.173717 / lon 136.871353)
-- [ ] **〔ユーザー実機作業 / 観察対象外〕`web/dashboard-config.js` の garbage.rules を中村区の自分の地区の実収集日に書き換え**（現状ダミー、機能的支障なし）
+- [x] **〔ユーザー実機作業 / 観察対象外〕`web/dashboard-config.js` の garbage.rules を中村区の自分の地区の実収集日に書き換え** — 2026-06-16 実データ反映済み（commit `86ae9cd`、todo#8。本チェックの消し込みは 2026-07-06、台帳 drift 解消）
 - [x] git → GitHub private repo `mooneclipse/companion-dashboard`（private）→ push 済み（2026-05-13）。※companion repo 群の monorepo 化は someday 候補（`workspace/PROJECT.md` の「将来の保留事項」に記載）
 - [x] (B12 残) 2026-05-15 05:30 発火検証 → **失敗**、root cause = WM_CLASS-grep が前夜 22:14 起動の常用 firefox 窓（PID 158734、YouTube タブ）を拾った。team `dashboard-redesign` で設計引き直し、PID 一致への置換確定。
 - [x] **〔ユーザー〕現状回復** — 2026-05-16 完了（常用 firefox を閉じて HDMI-1 占拠解消）。
