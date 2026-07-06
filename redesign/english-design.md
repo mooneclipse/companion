@@ -323,9 +323,9 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 ## 8. 実装前チェックリスト (T-0 相当、着手時に実測)
 
 - [x] `df -h` でディスク残量実測 — **2026-07-02 実測: 320GB 空き (457GB 中 115GB 使用)**。720p 全話 DL (Adventure Time 級 280 話でも 30〜50GB) は成立。フォーマットは dlqueue と同一の 720p 上限で確定
-- [ ] `tailscale serve status` を **user 実行**で 8447 空きを実見 (photos ポストモーテム原則 1)
-- [ ] yt-dlp で TADC 1 本実弾: 動画 + 手動字幕 (en) が取れるか、`sub_kind` 判定含め確認
-- [ ] `<video>` + Range 配信 + WebVTT `<track>` を Pixel 6 実機ブラウザで縦切り確認 (最初の実装ステップ)
+- [x] `tailscale serve status` を **user 実行**で 8447 空きを実見 (photos ポストモーテム原則 1) — **2026-07-02 serve 設定・tailnet 疎通済み、2026-07-06 Pixel 6 実機アクセス成功で実運用確認**
+- [x] yt-dlp で TADC 1 本実弾: 動画 + 手動字幕 (en) が取れるか、`sub_kind` 判定含め確認 — **2026-07-02 Ep1 実弾 ingest 完了 (sub_kind=manual 判定、クリップ 40 本、english STATUS 同日 Done)**
+- [x] `<video>` + Range 配信 + WebVTT `<track>` を Pixel 6 実機ブラウザで縦切り確認 (最初の実装ステップ) — **2026-07-06 user 実機確認 OK (ホーム / ドリル / 動画再生・シーク・動画外字幕 / クリップ音声、崩れなし)。§8 全項目消化**
 - [x] 3 作品の公式可用性 Web 調査 (チケット #62) → §0.5 に追記済み — **2026-07-02 実測: TADC のみ公式全話+手動字幕で成立、初期教材確定。Peanuts / Adventure Time は日本からの YouTube 公式ルートなし** (v0.6 追記: Bee and PuppyCat も個別動画+手動 en で成立、§0.5)
 
 ## 9. リスクと設計判断
