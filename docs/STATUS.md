@@ -27,12 +27,13 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 
 ## TODO
 
-- [ ] **Pixel 6 実機で縦切り確認** (§8 チェックリスト最後の 1 項目、user の実機で)
 - [ ] TADC 残り 8 話 + Bee and PuppyCat (個別動画 URL) を sources.json に追加して ingest
 - [ ] 1〜2 週間 毎日使うか検証 (v0 完了条件、設計 §6)
 - [ ] v1: 夜間バッチ化 / analyze.py (claude -p 傾向と対策) / 入力式解答 / english.db の USB バックアップ追加
 
 ## Done
+
+- 2026-07-06: **Pixel 6 実機で縦切り確認 OK** (§8 チェックリスト最後の 1 項目)。user が実機 (縦持ち) で ホーム / ドリル 1 セット / 動画再生 (シーク・動画外字幕) / クリップ音声 を確認、崩れ・問題なし。§8 は全項目消化 (tailscale serve 8447 の実見も Pixel 6 からの tailnet アクセス成功で充足)
 
 - 2026-07-03: **日本語訳 + 動画外字幕** (user 要望、設計 v0.8)。clips.translation (公式 ja 字幕から抽出、Ep1 40/40 バックフィル済み) を答え合わせ応答でのみ返す。プレイヤー字幕は track hidden + cuechange で動画直下に自前描画。テスト: pipeline unittest / server test_api 全 PASS + 隔離 E2E
 
