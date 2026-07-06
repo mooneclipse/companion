@@ -59,6 +59,11 @@ def _position_window():
                     parts = line.split(None, 1)
                     wid = parts[0] if parts else None
                     if wid:
+                        # --kiosk は起動時点でフルスクリーンになっており、Marco は
+                        # フルスクリーンウィンドウへの移動要求を無視する。
+                        # 一旦解除してから HDMI-1 (+0+0) へ移動し、再フルスクリーン化する。
+                        subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "remove,fullscreen"], timeout=3)
+                        time.sleep(0.3)
                         subprocess.run(["wmctrl", "-i", "-r", wid, "-e", "0,0,0,1920,1080"], timeout=3)
                         time.sleep(0.3)
                         subprocess.run(["wmctrl", "-i", "-r", wid, "-b", "add,fullscreen"], timeout=3)
