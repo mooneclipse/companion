@@ -221,6 +221,21 @@ def add_extra(conn, date_str=None):
     return new_ids
 
 
+def episode_clip_progress(conn, episode_id):
+    """エピソード内クリップの累計回答カバレッジ (#72 「どこまでやれば通しで見ていいか」)。
+    attempted は全期間の DISTINCT clip_id (当日分ではない — 到達点の指標なので累計)。"""
+    row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT c.id) AS total, COUNT(DISTINCT a.clip_id) AS attempted
+        FROM clips c
+        LEFT JOIN attempts a ON a.clip_id = c.id
+        WHERE c.episode_id = ?
+        """,
+        (episode_id,),
+    ).fetchone()
+    return {"attempted": row["attempted"], "total": row["total"]}
+
+
 # ---- streak / trend ----------------------------------------------------
 
 def attempted_today_ids(conn, date_str=None):

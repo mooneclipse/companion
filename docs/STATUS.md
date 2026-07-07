@@ -33,6 +33,8 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 
 ## Done
 
+- 2026-07-08: **本編内の位置バー + エピソード消化カバレッジ** (#72、設計 v0.9)。drill クリップ応答に `episode_duration_s`、answer 応答に `episode_progress:{attempted,total}` (全期間 DISTINCT、drill.episode_clip_progress) を追加。出題・答え合わせ画面のクリップ直下に本編内位置マーカー + `本編 MM:SS / MM:SS`、答え合わせ画面に `N / M 回答済み` バー (全問到達で緑「通しで見てOK」— 目安表示でありロックではない)。テスト: test_api 83 チェック全 PASS + 隔離 fixture の Playwright E2E (実プレイ経路で 1/4→4/4、位置バー描画・complete 切替を実観測)
+
 - 2026-07-06: **Pixel 6 実機で縦切り確認 OK** (§8 チェックリスト最後の 1 項目)。user が実機 (縦持ち) で ホーム / ドリル 1 セット / 動画再生 (シーク・動画外字幕) / クリップ音声 を確認、崩れ・問題なし。§8 は全項目消化 (tailscale serve 8447 の実見も Pixel 6 からの tailnet アクセス成功で充足)
 
 - 2026-07-03: **日本語訳 + 動画外字幕** (user 要望、設計 v0.8)。clips.translation (公式 ja 字幕から抽出、Ep1 40/40 バックフィル済み) を答え合わせ応答でのみ返す。プレイヤー字幕は track hidden + cuechange で動画直下に自前描画。テスト: pipeline unittest / server test_api 全 PASS + 隔離 E2E

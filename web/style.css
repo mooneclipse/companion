@@ -89,6 +89,14 @@ main{padding:22px 24px 32px}
 .clip-under{display:flex;justify-content:space-between;padding:8px 2px 0;font-size:12px}
 .clip-hint{color:var(--muted)}
 .cue-meta{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+.ep-pos{display:flex;align-items:center;gap:10px;padding:8px 2px 0}
+.ep-pos-track{position:relative;flex:1;height:4px;background:var(--line);border-radius:2px}
+.ep-pos-mark{position:absolute;top:0;height:100%;min-width:6px;background:var(--accent);border-radius:2px;display:block}
+.ep-pos-label{font-family:var(--mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
+.ep-coverage{margin:0 20px}
+.ep-coverage-label{display:block;font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-bottom:6px}
+.ep-coverage.complete .ep-coverage-label{color:var(--ok)}
+.ep-coverage.complete .progress-fill{background:var(--ok)}
 .play-ico{display:block;width:0;height:0;border-style:solid;border-width:11px 0 11px 19px;border-color:transparent transparent transparent currentColor}
 .pause-ico{display:block;width:18px;height:24px;border-left:6px solid currentColor;border-right:6px solid currentColor}
 

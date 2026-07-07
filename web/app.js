@@ -348,6 +348,22 @@ function clipFrame(clip) {
   under.append(el("span", "clip-hint", "タップでもう一度聞く"));
   if (clip.episode_title) under.append(el("span", "cue-meta", clip.episode_title));
   wrap.append(under);
+
+  // 本編内の位置バー (#72): クリップがエピソードのどのあたりかをマーカーで示す
+  const dur = clip.episode_duration_s;
+  if (typeof clip.start_s === "number" && typeof clip.end_s === "number" && typeof dur === "number" && dur > 0) {
+    const pos = el("div", "ep-pos");
+    const track = el("div", "ep-pos-track");
+    const mark = el("i", "ep-pos-mark");
+    const widthPct = Math.max(2, ((clip.end_s - clip.start_s) / dur) * 100);
+    const leftPct = Math.max(0, Math.min((clip.start_s / dur) * 100, 100 - widthPct));
+    mark.style.left = `${leftPct}%`;
+    mark.style.width = `${widthPct}%`;
+    track.append(mark);
+    pos.append(track);
+    pos.append(el("span", "ep-pos-label", `本編 ${fmtClock(clip.start_s)} / ${fmtClock(dur)}`));
+    wrap.append(pos);
+  }
   return { wrap, video, playClip };
 }
 
@@ -477,6 +493,24 @@ function renderDrillAnswer() {
   cloze.append(renderSentenceAnswer(clip, d, resp));
   if (resp.translation) cloze.append(el("p", "translation", resp.translation));
   screen.append(cloze);
+
+  // エピソードのドリル消化状況 (#72): 全問回答済みになったら通し視聴の目安を出す
+  const prog = resp.episode_progress;
+  if (prog && typeof prog.attempted === "number" && typeof prog.total === "number" && prog.total > 0) {
+    const complete = prog.attempted >= prog.total;
+    const cov = el("div", complete ? "ep-coverage complete" : "ep-coverage");
+    const epName = clip.episode_title || "このエピソード";
+    const label = complete
+      ? `${epName} の全 ${prog.total} 問 回答済み — 通しで見てOK`
+      : `${epName} の問題 ${prog.attempted} / ${prog.total} 回答済み`;
+    cov.append(el("span", "ep-coverage-label", label));
+    const bar = el("div", "progress");
+    const fill = el("div", "progress-fill");
+    fill.style.width = `${Math.min(100, Math.round((prog.attempted / prog.total) * 100))}%`;
+    bar.append(fill);
+    cov.append(bar);
+    screen.append(cov);
+  }
 
   const area = el("div", "answer-area");
   const flags = el("div", "flags");

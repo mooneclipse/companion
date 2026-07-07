@@ -291,6 +291,7 @@ def _run_checks(base, root, db_path):
     check("video_url は /media/ 配下", c1["video_url"] == "/media/clips/c1.mp4", c1["video_url"])
     check("done は未回答なので False", c1["done"] is False, c1["done"])
     check("episode_title が入る", c1["episode_title"] == "Ep1", c1["episode_title"])
+    check("episode_duration_s が入る (#72 位置表示用)", c1["episode_duration_s"] == 390, c1.get("episode_duration_s"))
     check("start_s/end_s が入る", (c1["start_s"], c1["end_s"]) == (10, 16), (c1["start_s"], c1["end_s"]))
     check("drill/today には translation を含まない (出題時のネタバレ防止)", "translation" not in c1, c1)
 
@@ -304,6 +305,8 @@ def _run_checks(base, root, db_path):
     check("answer に attempt_id が入る", isinstance(ans1.get("attempt_id"), int), ans1)
     check("answer c1 translation あり (答え合わせ時のみ返す)",
           ans1["translation"] == "信じられない、あなただったなんて", ans1)
+    check("answer c1 episode_progress 1/4 (#72 累計カバレッジ)",
+          ans1["episode_progress"] == {"attempted": 1, "total": 4}, ans1.get("episode_progress"))
 
     status, _, body = http("POST", base, "/api/drill/answer", {
         "clip_id": "c2", "answers": ["gotta"], "flags": ["unheard"], "replays": 2, "duration_ms": 3000,
@@ -311,6 +314,16 @@ def _run_checks(base, root, db_path):
     ans2 = json.loads(body)
     check("answer c2 誤答", ans2["results"] == [False], ans2)
     check("answer c2 translation は NULL (ja 字幕なし)", ans2["translation"] is None, ans2)
+    check("answer c2 episode_progress 2/4 (DISTINCT clip 累計)",
+          ans2["episode_progress"] == {"attempted": 2, "total": 4}, ans2.get("episode_progress"))
+
+    # 同一クリップの再回答では attempted が増えない (DISTINCT の本丸)
+    status, _, body = http("POST", base, "/api/drill/answer", {
+        "clip_id": "c1", "answers": ["can"], "flags": [], "replays": 0, "duration_ms": 800,
+    })
+    ans1b = json.loads(body)
+    check("answer c1 再回答でも episode_progress 2/4 据え置き",
+          ans1b["episode_progress"] == {"attempted": 2, "total": 4}, ans1b.get("episode_progress"))
 
     conn = sqlite3.connect(db_path)
     row = conn.execute("SELECT results, flags FROM attempts WHERE clip_id='c2'").fetchone()
@@ -332,7 +345,8 @@ def _run_checks(base, root, db_path):
     count = conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
     conn.close()
     check("flag 後送りで flags が上書きされる", json.loads(row[0]) == ["sub_suspect"], row)
-    check("flag 後送りで新規行が増えない", count == 3, count)
+    # 4 = c1/c2/c3 + c1 再回答 (episode_progress チェック用)。flag は UPDATE のみで行を増やさない
+    check("flag 後送りで新規行が増えない", count == 4, count)
 
     status, _, _ = http("POST", base, "/api/drill/flag", {"attempt_id": 999999, "flags": ["unheard"]})
     check("drill/flag 未知 attempt_id -> 404", status == 404, status)

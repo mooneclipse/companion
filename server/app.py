@@ -272,6 +272,7 @@ class Handler(BaseHTTPRequestHandler):
             "blanks": [{"idx": b["idx"], "choices": b["choices"]} for b in blanks],
             "done": done,
             "episode_title": row["episode_title"],
+            "episode_duration_s": row["episode_duration_s"],
             "start_s": row["start_s"],
             "end_s": row["end_s"],
         }
@@ -297,7 +298,8 @@ class Handler(BaseHTTPRequestHandler):
         placeholders = ",".join("?" for _ in clip_ids)
         rows = conn.execute(
             f"""
-            SELECT c.id, c.video_path, c.tokens, c.blanks, c.start_s, c.end_s, e.title AS episode_title
+            SELECT c.id, c.video_path, c.tokens, c.blanks, c.start_s, c.end_s,
+                   e.title AS episode_title, e.duration_s AS episode_duration_s
             FROM clips c JOIN episodes e ON e.id = c.episode_id
             WHERE c.id IN ({placeholders})
             """,
@@ -318,7 +320,7 @@ class Handler(BaseHTTPRequestHandler):
 
         with contextlib.closing(get_conn()) as conn:
             row = conn.execute(
-                "SELECT id, text, blanks, translation FROM clips WHERE id = ?", (clip_id,)
+                "SELECT id, episode_id, text, blanks, translation FROM clips WHERE id = ?", (clip_id,)
             ).fetchone()
             if not row:
                 raise _ApiError(404, "clip not found")
@@ -338,6 +340,8 @@ class Handler(BaseHTTPRequestHandler):
             )
             conn.commit()
             attempt_id = cur.lastrowid
+            # 今回の attempt を含む累計カバレッジ (#72)。commit 後に引くので自分の回答も数に入る
+            episode_progress = drill.episode_clip_progress(conn, row["episode_id"])
 
         self._send_json(200, {
             "attempt_id": attempt_id,
@@ -345,6 +349,7 @@ class Handler(BaseHTTPRequestHandler):
             "text": row["text"],
             "blanks": [{"idx": b["idx"], "answer": b["answer"]} for b in blanks],
             "translation": row["translation"],
+            "episode_progress": episode_progress,
         })
 
     def _api_drill_flag(self, body):
