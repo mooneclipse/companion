@@ -960,12 +960,13 @@ function renderTodo(tickets) {
   });
 }
 
-// チケットを「#N 本文」形式でクリップボードへ。ターミナル側 (claude セッション) へ
-// 番号ごと貼り付けて「#N やって」と渡す用途。tailscale serve の HTTPS 配信なので
-// secure context 前提 (navigator.clipboard が使える)。結果はボタン文言で短く返す。
+// チケット番号「#N」をクリップボードへ。ターミナル側 (claude セッション) へ貼り、
+// 補足を続けて打つ用途。本文は含めない (claude は番号から tickets.py show N で実物を
+// 引く運用が workspace/CLAUDE.md に明記されており、本文コピーは冗長)。
+// tailscale serve の HTTPS 配信 = secure context 前提 (navigator.clipboard が使える)。
 async function copyTodo(btn, t) {
   try {
-    await navigator.clipboard.writeText("#" + t.id + " " + t.text);
+    await navigator.clipboard.writeText("#" + t.id);
     btn.textContent = "済";
   } catch (e) {
     btn.textContent = "失敗";
