@@ -5,6 +5,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 ## 改版履歴
 
+- **v0.9 (2026-07-08)**: user 要望 (#72)「出題が本編のどのへんか・どこまでやれば通しで見ていいか」。**(1) 本編内の位置バー** — drill クリップ応答に `episode_duration_s` を追加し (episode_id はクライアント未使用のためレビュー指摘で不採用)、出題・答え合わせ両画面のクリップ直下に位置マーカー (`.ep-pos`、start_s〜end_s を全長比で描画、最小幅 2%) + `本編 MM:SS / MM:SS` ラベルを表示。**(2) エピソード消化カバレッジ** — answer 応答に `episode_progress:{attempted,total}` を追加 (そのエピソードの全クリップ数と**全期間** DISTINCT 回答済みクリップ数、集計は drill.episode_clip_progress)。答え合わせ画面に `Ep1 の問題 N / M 回答済み` バーを表示し、全問到達で緑の `全 M 問 回答済み — 通しで見てOK` に切替。「通しで見ていい」の判定ゲートは設計上存在しない (出題プールは視聴済み範囲優先) ため、到達点の**目安表示**であってロックではない
 - **v0.8 (2026-07-03)**: user 要望 2 件。**(1) 答え合わせ時の日本語訳** — `clips.translation` 列を追加 (store.init_db の PRAGMA table_info → ALTER の冪等マイグレーション)。訳は YouTube **手動 ja 字幕のみ** (automatic_captions 不使用、機械翻訳/LLM 不使用 = 学習ループ全ローカル原則の維持)。クリップ時間範囲との半開交差 (`cue.start < end_s and cue.end > start_s`) で ja キューを空白結合、無ければ NULL。answer 応答に `translation: string|null` を追加、**drill/today には含めない** (出題時ネタバレ防止)。ingest は ja を best-effort 1 回確定で取得、`clips.py --fill-translations <ep>` は mp4 非接触の UPDATE のみバックフィル。**(2) プレイヤー字幕の動画外表示** — `<track>` は常時 mode=hidden (標準オーバーレイ描画を止める)、cuechange で動画直下の `.sub-line` に textContent 描画。トグル OFF で行ごと非表示
 - **v0.7 (2026-07-02)**: v0 実装完了 (#63) に伴う実装確定差分の反映。UI は **D 融合案で user 確定** (A 字幕の骨格 + ドリルのみ C の可読性、モック生成元 `english-ui-mocks/build.py`)。§4.2 に追記 — `POST /api/drill/flag` (attempt_id 指定で attempts.flags を UPDATE、答え合わせ後のワンタップフラグ用)、`/api/drill/today` の各クリップに `done`/`episode_title`/`start_s`/`end_s`、`/api/library` の episode に `sub_kind`、answer 応答に `attempt_id`。answers 配列は blanks idx 昇順への位置対応。POST ボディは dispatch 層で必ず drain (keep-alive 混入対策)。§2 孤児対策に追記 — `clips.py --rebuild` は attempts を**意図的に残す** (streak/正答率履歴の源泉のため。rebuild 時のみ FK OFF で clips を削除、DB 確定後に media を消す)
 - **v0.6 (2026-07-02)**: user 確定「おすすめの進め方でいこう」— 教材を **TADC 本命 + Bee and PuppyCat 並走** で確定 (§0.5 / §6 v0-1)。Bee and PuppyCat は個別動画 (Ep1 実測: 6.5 分・手動 en 字幕あり・日本から視聴可) を ingest する方針で一括動画の粒度問題を解消。Bravest Warriors は 3 本目候補として温存
@@ -262,8 +263,8 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 | Method/Path | 内容 |
 |---|---|
 | GET `/api/home` | `{streak, today:{done,total,completed}, continue:{episode_id,title,position_s,duration_s}\|null, trend:[{date,acc}]×14}` |
-| GET `/api/drill/today` | 今日のセット (daily_sets を引き、なければ生成して固定)。クリップごとに `{id, video_url, tokens:[...], blanks:[{idx,choices}]}` — **tokens の blank 位置は null に置換して返す** (原文語のまま返すと正解漏れ)。answer は answer API まで返さない |
-| POST `/api/drill/answer` | `{clip_id, answers:[...], flags:[...], replays, duration_ms}` → 採点し、空欄ごとの `{answer, chosen, correct}` を attempts.results に記録 (§2、傾向分析の材料)。`{results:[bool], text, blanks:[{idx,answer}]}` を返す |
+| GET `/api/drill/today` | 今日のセット (daily_sets を引き、なければ生成して固定)。クリップごとに `{id, video_url, tokens:[...], blanks:[{idx,choices}]}` — **tokens の blank 位置は null に置換して返す** (原文語のまま返すと正解漏れ)。answer は answer API まで返さない。(v0.9) `episode_duration_s` を追加 (本編内の位置バー用) |
+| POST `/api/drill/answer` | `{clip_id, answers:[...], flags:[...], replays, duration_ms}` → 採点し、空欄ごとの `{answer, chosen, correct}` を attempts.results に記録 (§2、傾向分析の材料)。`{results:[bool], text, blanks:[{idx,answer}]}` を返す。(v0.9) `episode_progress:{attempted,total}` を追加 (エピソード内クリップの全期間 DISTINCT 回答済みカバレッジ、#72) |
 | POST `/api/drill/extra` | 「もう 1 セット」: 3 本追加して extra_ids に固定 |
 | GET `/api/library` | series → episodes (+watch 状態) の一覧 |
 | GET `/api/episodes/<id>` | 再生用詳細 (`video_url, sub_url, position_s`) |
