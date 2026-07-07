@@ -543,7 +543,9 @@
       "check_days": 4,
       "genre": "corporate_male",
       "favorite": 3,
-      "note": ""
+      "note": "",
+      "subscriber_count": 169000,
+      "subscriber_count_updated_at": "2026-07-07T20:05:30Z"
     }
   ]
 }
