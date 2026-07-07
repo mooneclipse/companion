@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""ytcheck(F-ytcheck 視聴フィードバック連携)の単体テスト。
+"""ytcheck(F-ytcheck 視聴フィードバック連携 + #71 巡回チャンネル編集)の単体テスト。
 
 month 検証(パス組み立ての門) / get_month の集計+エントリ / set_feedback の行書き換え
 (チェックボックス・feedback 欄・過去月フォーマット付加・video_id の regex escape) /
-該当なし・ファイルなしの YtcheckError / flock 下 write(ロック保持中はブロック) を検証する。
+該当なし・ファイルなしの YtcheckError / flock 下 write(ロック保持中はブロック) /
+チャンネル編集(parse_channel_id の受理・拒否、channel_store 委譲 CRUD) を検証する。
 tmpdir に擬似 viewing ディレクトリを作り VIEWING_DIR / CHANNELS_JSON を差し替えて隔離する
-(本番 vault / ytcheck tasks には非接触)。
+(本番 vault / ytcheck tasks には非接触。tmpdir は git repo 外のため自動 commit は
+warning のみで素通り = channel_store の契約どおり)。
 実行: cd remote && python3 -m unittest discover -s tests
 """
 import fcntl
@@ -217,6 +219,127 @@ class TestLock(YtcheckTestBase):
         t.join(timeout=5)
         self.assertTrue(done.is_set())   # 解放後に完走する
         self.assertTrue(self.line_of("vid001").startswith("- [x] "))
+
+
+UC1 = "UC" + "a" * 22
+UC2 = "UC" + "b" * 22
+UC3 = "UC" + "c" * 22
+
+CHANNELS_JSON_FULL = {
+    "updated": "2026-07-07",
+    "genres": {"corporate_female": "企業勢女子", "indie": "個人勢"},
+    "channels": [
+        {"name": "チャンネルA", "channel_id": UC1, "check_days": 4,
+         "genre": "corporate_female", "favorite": 4, "note": "",
+         "subscriber_count": 1000, "subscriber_count_updated_at": "2026-07-06T00:00:00Z"},
+        {"name": "チャンネルB", "channel_id": UC2, "check_days": 3,
+         "genre": "indie", "favorite": 2, "note": "メモ"},
+    ],
+}
+
+
+class ChannelEditTestBase(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.channels_path = os.path.join(os.path.realpath(self._tmp.name), "youtube-channels.json")
+        with open(self.channels_path, "w", encoding="utf-8") as f:
+            json.dump(CHANNELS_JSON_FULL, f, ensure_ascii=False)
+        self._orig = ytcheck.CHANNELS_JSON
+        ytcheck.CHANNELS_JSON = self.channels_path
+
+    def tearDown(self):
+        ytcheck.CHANNELS_JSON = self._orig
+        self._tmp.cleanup()
+
+    def read_json(self):
+        with open(self.channels_path, encoding="utf-8") as f:
+            return json.load(f)
+
+
+class TestParseChannelId(unittest.TestCase):
+    def test_bare_id(self):
+        self.assertEqual(ytcheck.parse_channel_id(UC1), UC1)
+        self.assertEqual(ytcheck.parse_channel_id("  %s\n" % UC1), UC1)
+
+    def test_channel_url(self):
+        for host in ("www.youtube.com", "youtube.com", "m.youtube.com"):
+            with self.subTest(host=host):
+                self.assertEqual(
+                    ytcheck.parse_channel_id("https://%s/channel/%s" % (host, UC1)), UC1)
+        # 後続パス(/videos 等)が付いていても channel セグメントから取れる
+        self.assertEqual(
+            ytcheck.parse_channel_id("https://www.youtube.com/channel/%s/videos" % UC1), UC1)
+
+    def test_rejects(self):
+        bad = [
+            None, 123, "",
+            "UCshort",                                        # 長さ不足
+            UC1 + "x",                                        # 長さ超過
+            "見てた %s すごい" % UC1,                          # 文中の UC 風部分文字列
+            "https://www.youtube.com/@somehandle",            # @handle は非対応
+            "https://www.youtube.com/watch?v=abc12345678",    # 動画 URL
+            "https://evil.example/channel/%s" % UC1,          # allowlist 外 host
+            "ftp://www.youtube.com/channel/%s" % UC1,         # 非 http(s)
+        ]
+        for text in bad:
+            with self.subTest(text=text):
+                self.assertIsNone(ytcheck.parse_channel_id(text))
+
+    def test_valid_channel_id_is_fullmatch_only(self):
+        self.assertTrue(ytcheck.valid_channel_id(UC1))
+        for bad in (None, "", "https://www.youtube.com/channel/%s" % UC1, UC1 + "x"):
+            with self.subTest(value=bad):
+                self.assertFalse(ytcheck.valid_channel_id(bad))
+
+
+class TestChannelCrud(ChannelEditTestBase):
+    def test_list_channels(self):
+        data = ytcheck.list_channels()
+        self.assertEqual(len(data["channels"]), 2)
+        self.assertEqual(data["genres"]["indie"], "個人勢")
+
+    def test_genre_ids_from_json(self):
+        self.assertEqual(ytcheck.genre_ids(), {"corporate_female", "indie"})
+
+    def test_add_channel(self):
+        entry = {"name": "新規", "channel_id": UC3, "check_days": 4,
+                 "genre": "indie", "favorite": 3, "note": ""}
+        with self.assertLogs("channel_store", level="WARNING"):  # tmpdir は repo 外 = commit warning のみ
+            got = ytcheck.add_channel(entry)
+        self.assertEqual(got["channel_id"], UC3)
+        after = self.read_json()
+        self.assertEqual(len(after["channels"]), 3)
+        self.assertEqual(after["channels"][2]["name"], "新規")
+
+    def test_add_duplicate_raises(self):
+        entry = {"name": "重複", "channel_id": UC1, "check_days": 4,
+                 "genre": "indie", "favorite": 3, "note": ""}
+        with self.assertRaises(ValueError):
+            ytcheck.add_channel(entry)
+        self.assertEqual(len(self.read_json()["channels"]), 2)
+
+    def test_update_channel(self):
+        with self.assertLogs("channel_store", level="WARNING"):
+            got = ytcheck.update_channel(UC1, {"favorite": 5, "note": "推し"})
+        self.assertEqual(got["favorite"], 5)
+        ch = self.read_json()["channels"][0]
+        self.assertEqual((ch["favorite"], ch["note"]), (5, "推し"))
+        self.assertEqual(ch["name"], "チャンネルA")  # 非対象フィールドは不変
+
+    def test_update_missing_raises(self):
+        with self.assertRaises(KeyError):
+            ytcheck.update_channel(UC3, {"favorite": 5})
+
+    def test_remove_channel(self):
+        with self.assertLogs("channel_store", level="WARNING"):
+            got = ytcheck.remove_channel(UC2)
+        self.assertEqual(got["name"], "チャンネルB")
+        after = self.read_json()["channels"]
+        self.assertEqual([ch["channel_id"] for ch in after], [UC1])
+
+    def test_remove_missing_raises(self):
+        with self.assertRaises(KeyError):
+            ytcheck.remove_channel(UC3)
 
 
 if __name__ == "__main__":

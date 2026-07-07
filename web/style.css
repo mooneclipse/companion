@@ -308,6 +308,24 @@ mark{background:rgba(216,57,42,.12);color:var(--ink);padding:0 1px;}
 .yt-fb.on{background:var(--acc);border-color:var(--acc);color:#fff;}
 .yt-fb:active{background:var(--ink);color:var(--paper);}
 
+/* --- 巡回チャンネル編集(#71)。select は input[type=text] と同じ下線スタイル --- */
+select{width:100%;font-family:inherit;font-size:15px;color:var(--ink);
+  background:var(--paper);border:none;border-bottom:1px solid var(--hair);padding:11px 2px;
+  border-radius:0;-webkit-appearance:none;appearance:none;}
+select:focus{outline:none;border-bottom:2px solid var(--acc);}
+.yt-ch-item{border-top:1px solid var(--line);}
+.yt-channel + .yt-ch-item{border-top:none;}
+.yt-ch-head{display:block;width:100%;text-align:left;background:none;border:none;padding:12px 0;
+  cursor:pointer;font-family:inherit;color:var(--ink);}
+.yt-ch-form{padding:2px 0 14px;}
+.yt-ch-form label.fld{margin-top:14px;margin-bottom:2px;}
+.yt-ch-btns{margin-top:18px;}
+.yt-ch-add{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);}
+.yt-ch-add input{margin-bottom:6px;}
+.yt-ch-addrow{display:flex;gap:10px;margin-top:12px;align-items:stretch;}
+.yt-ch-addrow select{flex:1;}
+.yt-ch-addrow .btn{flex:0 0 auto;width:auto;min-height:44px;font-size:11px;padding:0 18px;}
+
 /* --- 共通余白 / 文言 --- */
 .mt{margin-top:18px;}
 .mt8{margin-top:8px;}

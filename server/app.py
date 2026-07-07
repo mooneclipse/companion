@@ -462,6 +462,118 @@ def api_ytcheck_feedback(handler):
         return 404, {"error": "not found"}
 
 
+def api_ytcheck_channels(handler):
+    """GET /api/ytcheck/channels — 巡回チャンネルリスト (genres + channels)。Bearer 必須。
+
+    ytcheck/tasks/youtube-channels.json を channel_store 経由でそのまま返す (read-only、
+    atomic write 前提でロック不要)。
+    """
+    return 200, ytcheck.list_channels()
+
+
+def _channel_fields(data):
+    """favorite / check_days / note / genre を検証して (fields, None) か (None, (code, obj))。
+
+    channel_id / name は主キー・追加時必須で扱いが違うため対象外 (add / update の共通部のみ)。
+    genre の有効値は JSON の genres キーから引く (state を持つ側が正、コード側に定数を持たない)。
+    """
+    fields = {}
+    favorite = data.get("favorite")
+    if favorite is not None:
+        lo, hi = ytcheck.FAVORITE_RANGE
+        if not isinstance(favorite, int) or isinstance(favorite, bool) or not lo <= favorite <= hi:
+            return None, (400, {"error": "favorite must be an integer 1-5"})
+        fields["favorite"] = favorite
+    check_days = data.get("check_days")
+    if check_days is not None:
+        lo, hi = ytcheck.CHECK_DAYS_RANGE
+        if not isinstance(check_days, int) or isinstance(check_days, bool) or not lo <= check_days <= hi:
+            return None, (400, {"error": "check_days must be an integer 1-30"})
+        fields["check_days"] = check_days
+    note = data.get("note")
+    if note is not None:
+        if not isinstance(note, str) or len(note) > ytcheck.MAX_NOTE:
+            return None, (400, {"error": "note must be a string"})
+        fields["note"] = note.strip()
+    genre = data.get("genre")
+    if genre is not None:
+        if not isinstance(genre, str) or genre not in ytcheck.genre_ids():
+            return None, (400, {"error": "unknown genre"})
+        fields["genre"] = genre
+    return fields, None
+
+
+def api_ytcheck_channel_add(handler):
+    """POST /api/ytcheck/channel/add {channel_id, name, genre, check_days?, favorite?, note?} — Bearer 必須。
+
+    channel_id は素の UC ID か youtube.com/channel/UC... URL のみ受理 (@handle は
+    yt-dlp なしに解決できないため 400)。重複 channel_id は 409。書き込み実体
+    (flock / atomic write / ytcheck repo への git 自動 commit) は channel_store 側。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    channel_id = ytcheck.parse_channel_id(data.get("channel_id"))
+    if channel_id is None:
+        return 400, {"error": "channel_id must be a UC id or /channel/ url"}
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip() or len(name) > ytcheck.MAX_NAME:
+        return 400, {"error": "name required"}
+    if data.get("genre") is None:
+        return 400, {"error": "genre required"}
+    fields, err = _channel_fields(data)
+    if err:
+        return err
+    entry = {
+        "name": name.strip(),
+        "channel_id": channel_id,
+        "check_days": fields.get("check_days", ytcheck.DEFAULT_CHECK_DAYS),
+        "genre": fields["genre"],
+        "favorite": fields.get("favorite", ytcheck.DEFAULT_FAVORITE),
+        "note": fields.get("note", ""),
+    }
+    try:
+        return 200, ytcheck.add_channel(entry)
+    except ValueError:
+        return 409, {"error": "duplicate channel_id"}
+
+
+def api_ytcheck_channel_update(handler):
+    """POST /api/ytcheck/channel/update {channel_id, favorite?/check_days?/note?/genre?} — Bearer 必須。
+
+    channel_id は主キー指定のみ (書き換えは channel_store 側でも禁止)。不在は 404。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    channel_id = data.get("channel_id")
+    if not ytcheck.valid_channel_id(channel_id):
+        return 400, {"error": "invalid channel_id"}
+    fields, err = _channel_fields(data)
+    if err:
+        return err
+    if not fields:
+        return 400, {"error": "no editable fields"}
+    try:
+        return 200, ytcheck.update_channel(channel_id, fields)
+    except KeyError:
+        return 404, {"error": "not found"}
+
+
+def api_ytcheck_channel_delete(handler):
+    """POST /api/ytcheck/channel/delete {channel_id} — Bearer 必須。不在は 404。"""
+    data, err = _read_json(handler)
+    if err:
+        return err
+    channel_id = data.get("channel_id")
+    if not ytcheck.valid_channel_id(channel_id):
+        return 400, {"error": "invalid channel_id"}
+    try:
+        return 200, ytcheck.remove_channel(channel_id)
+    except KeyError:
+        return 404, {"error": "not found"}
+
+
 def api_screensaver_state(handler):
     """GET /api/screensaver/state — Bearer 必須。"""
     return 200, {"active": screensaver.is_active()}
@@ -545,6 +657,12 @@ ROUTES = {
     # feedback は remote 初の外部 write(vault/notes/ytcheck/、flock cross-process ロック下)。
     ("GET", "/api/ytcheck/viewing"): (api_ytcheck_viewing, True),
     ("POST", "/api/ytcheck/feedback"): (api_ytcheck_feedback, True),
+    # F-ytcheck(#71): 巡回チャンネル編集。書き込みは ytcheck 側 channel_store (flock +
+    # atomic write + ytcheck repo への git 自動 commit) へ委譲、remote は検証と HTTP 写像のみ。
+    ("GET", "/api/ytcheck/channels"): (api_ytcheck_channels, True),
+    ("POST", "/api/ytcheck/channel/add"): (api_ytcheck_channel_add, True),
+    ("POST", "/api/ytcheck/channel/update"): (api_ytcheck_channel_update, True),
+    ("POST", "/api/ytcheck/channel/delete"): (api_ytcheck_channel_delete, True),
     # F-screensaver(ジェネラティブアートスクリーンセーバーのオン/オフ)。全て Bearer 必須。
     ("GET", "/api/screensaver/state"): (api_screensaver_state, True),
     ("POST", "/api/screensaver/toggle"): (api_screensaver_toggle, True),

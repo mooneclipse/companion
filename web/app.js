@@ -1728,10 +1728,254 @@ function toggleYtReport() {
   $("yt-report-caret").textContent = open ? "▾" : "▸";
 }
 
+// ===== 巡回チャンネル編集（#71） =====
+// 折りたたみを開いた時のみ GET /api/ytcheck/channels。行タップで編集フォームを 1 件だけ
+// 展開し、保存/削除/追加 → POST → 一覧を再取得して全再描画（56ch 程度、差分更新は持たない）。
+// 書き込み実体は ytcheck 側 channel_store（flock + git 自動 commit）で、PWA は表示と入力のみ。
+let ytChData = null;    // {genres, channels}。null = 未取得
+let ytChOpenId = null;  // 編集フォーム展開中の channel_id（1 件のみ）
+let ytChBusy = false;   // POST 多重発火ガード
+
+async function refreshYtChannels() {
+  if (!getToken()) return;
+  const msg = $("yt-ch-msg");
+  msg.textContent = "読み込み中…";
+  try {
+    const r = await api("/api/ytcheck/channels");
+    if (!r.ok) { msg.textContent = "取得に失敗しました"; return; }
+    ytChData = await r.json();
+    msg.textContent = "";
+    renderYtChannels();
+  } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
+}
+
+// genres の select を組み立てる（外部由来の表示名は textContent 経由）。
+// genres 定義に無い現値（JSON 手編集後の「その他」行）は保存で無警告に先頭ジャンルへ
+// 落とさないよう、現値の option を足して維持する（未知値のままの保存は genre を
+// ペイロードから省く = 他フィールドは更新でき、genre は不変。ytChEditForm 参照）。
+function ytChGenreSelect(selected) {
+  const sel = document.createElement("select");
+  const genres = (ytChData && ytChData.genres) || {};
+  Object.keys(genres).forEach((id) => {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = genres[id];
+    if (id === selected) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (selected && !(selected in genres)) {
+    const opt = document.createElement("option");
+    opt.value = selected;
+    opt.textContent = selected + "（未定義）";
+    opt.selected = true;
+    sel.appendChild(opt);
+  }
+  return sel;
+}
+
+function renderYtChannels() {
+  const box = $("yt-ch-list");
+  box.textContent = "";
+  const chs = (ytChData && ytChData.channels) || [];
+  const genres = (ytChData && ytChData.genres) || {};
+  $("yt-ch-count").textContent = chs.length ? String(chs.length) + "ch" : "";
+  // 追加フォームのジャンル select を最新の genres で作り直す（選択は維持）
+  const addGenre = $("yt-ch-add-genre");
+  const prevGenre = addGenre.value;
+  addGenre.textContent = "";
+  Object.keys(genres).forEach((id) => {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = genres[id];
+    addGenre.appendChild(opt);
+  });
+  if (prevGenre) addGenre.value = prevGenre;
+  if (!chs.length) {
+    const p = document.createElement("p");
+    p.className = "todo-empty";
+    p.textContent = "巡回チャンネルはありません";
+    box.appendChild(p);
+    return;
+  }
+  // ジャンル定義順にグループ表示。genres に無い genre 値は末尾に「その他」でまとめる
+  const groups = Object.keys(genres).map((id) => [genres[id], chs.filter((c) => c.genre === id)]);
+  const known = new Set(Object.keys(genres));
+  groups.push(["その他", chs.filter((c) => !known.has(c.genre))]);
+  groups.forEach(([label, list]) => {
+    if (!list.length) return;
+    const h = document.createElement("div");
+    h.className = "yt-channel";
+    h.textContent = label;
+    box.appendChild(h);
+    list.forEach((ch) => box.appendChild(ytChRow(ch)));
+  });
+}
+
+// チャンネル 1 行。タップで編集フォームを開閉（開くのは常に 1 件だけ）。
+function ytChRow(ch) {
+  const wrap = document.createElement("div");
+  wrap.className = "yt-ch-item";
+
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "yt-ch-head";
+  const name = document.createElement("div");
+  name.className = "yt-title";
+  name.textContent = ch.name || ch.channel_id;
+  const meta = document.createElement("div");
+  meta.className = "yt-meta";
+  meta.textContent = "★" + ch.favorite + " · " + ch.check_days + "日" + (ch.note ? " · " + ch.note : "");
+  head.appendChild(name);
+  head.appendChild(meta);
+  head.addEventListener("click", () => {
+    ytChOpenId = ytChOpenId === ch.channel_id ? null : ch.channel_id;
+    renderYtChannels();
+  });
+  wrap.appendChild(head);
+
+  if (ytChOpenId === ch.channel_id) wrap.appendChild(ytChEditForm(ch));
+  return wrap;
+}
+
+// 編集フォーム（favorite / check_days / genre / note + 保存・削除）。
+function ytChEditForm(ch) {
+  const form = document.createElement("div");
+  form.className = "yt-ch-form";
+
+  const fld = (labelText, control) => {
+    const label = document.createElement("label");
+    label.className = "fld";
+    label.textContent = labelText;
+    form.appendChild(label);
+    form.appendChild(control);
+    return control;
+  };
+
+  const fav = document.createElement("select");
+  for (let i = 1; i <= 5; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = "★" + i;
+    if (i === ch.favorite) opt.selected = true;
+    fav.appendChild(opt);
+  }
+  fld("好き度", fav);
+
+  const days = document.createElement("input");
+  days.type = "number";
+  days.min = "1";
+  days.max = "30";
+  days.value = String(ch.check_days);
+  fld("巡回日数", days);
+
+  const genre = fld("ジャンル", ytChGenreSelect(ch.genre));
+
+  const note = document.createElement("input");
+  note.type = "text";
+  note.maxLength = 500;  // server 側 MAX_NOTE と同値 = 400 経路を UI で先に塞ぐ
+  note.value = ch.note || "";
+  note.placeholder = "メモ";
+  fld("メモ", note);
+
+  const row = document.createElement("div");
+  row.className = "row tight yt-ch-btns";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "btn small";
+  save.textContent = "保存";
+  save.addEventListener("click", async () => {
+    const checkDays = Number(days.value);
+    if (!Number.isInteger(checkDays) || checkDays < 1 || checkDays > 30) {
+      $("yt-ch-msg").textContent = "巡回日数は 1〜30 の整数です";
+      return;
+    }
+    const body = {
+      channel_id: ch.channel_id,
+      favorite: Number(fav.value),
+      check_days: checkDays,
+      note: note.value,
+    };
+    // 未知 genre（「（未定義）」option）のままなら genre を送らない = server 400 を踏まずに
+    // 他フィールドだけ更新、genre は不変。既知ジャンルへ変えたときのみ送る。
+    const genres = (ytChData && ytChData.genres) || {};
+    if (genre.value in genres) body.genre = genre.value;
+    const ok = await ytChPost("/api/ytcheck/channel/update", body, "保存に失敗しました");
+    if (ok) { ytChOpenId = null; refreshYtChannels(); }
+  });
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "btn danger small";
+  del.textContent = "削除";
+  del.addEventListener("click", async () => {
+    if (!confirm("「" + (ch.name || ch.channel_id) + "」を巡回リストから削除しますか？")) return;
+    const ok = await ytChPost("/api/ytcheck/channel/delete", { channel_id: ch.channel_id },
+      "削除に失敗しました");
+    if (ok) { ytChOpenId = null; refreshYtChannels(); }
+  });
+  row.appendChild(save);
+  row.appendChild(del);
+  form.appendChild(row);
+  return form;
+}
+
+// 編集系 POST を 1 本化。成功で応答 JSON、失敗で null（失敗文言は fallbackMsg、409 のみ重複と明示）。
+async function ytChPost(path, body, fallbackMsg) {
+  if (!getToken() || ytChBusy) return null;
+  ytChBusy = true;
+  const msg = $("yt-ch-msg");
+  try {
+    const r = await api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      msg.textContent = r.status === 409 ? "既に登録済みのチャンネルです" : fallbackMsg;
+      return null;
+    }
+    msg.textContent = "";
+    return await r.json();
+  } catch (e) {
+    if (e.message !== "unauthorized") msg.textContent = fallbackMsg;
+    return null;
+  } finally {
+    ytChBusy = false;
+  }
+}
+
+async function ytChAdd() {
+  const idInput = $("yt-ch-add-id");
+  const nameInput = $("yt-ch-add-name");
+  const msg = $("yt-ch-msg");
+  if (!idInput.value.trim()) { msg.textContent = "チャンネル ID / URL を入力してください"; return; }
+  if (!nameInput.value.trim()) { msg.textContent = "チャンネル名を入力してください"; return; }
+  const ok = await ytChPost("/api/ytcheck/channel/add", {
+    channel_id: idInput.value.trim(),
+    name: nameInput.value.trim(),
+    genre: $("yt-ch-add-genre").value,
+  }, "追加に失敗しました（ID/URL の形式を確認）");
+  if (ok) {
+    idInput.value = "";
+    nameInput.value = "";
+    refreshYtChannels();
+  }
+}
+
+function toggleYtChannels() {
+  const body = $("yt-ch-body");
+  const open = body.hidden;
+  body.hidden = !open;
+  $("yt-ch-toggle").setAttribute("aria-expanded", String(open));
+  $("yt-ch-caret").textContent = open ? "▾" : "▸";
+  if (open) refreshYtChannels();  // 開いた時のみ取得（ポーリングには乗せない）
+}
+
 function initYtcheck() {
   $("yt-prev").addEventListener("click", () => ytMove(-1));
   $("yt-next").addEventListener("click", () => ytMove(1));
   $("yt-report-toggle").addEventListener("click", toggleYtReport);
+  $("yt-ch-toggle").addEventListener("click", toggleYtChannels);
+  $("yt-ch-add-btn").addEventListener("click", ytChAdd);
 }
 
 // ===== スクリーンセーバー(即トグル、画面遷移なし) =====
