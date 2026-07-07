@@ -19,7 +19,7 @@ YouTube 巡回・字幕解析・AI 推薦システム。チャンネルリスト
 | チャンネルリスト | `tasks/youtube-channels.json` (repo 内固定。書き込みは `channel_store.py` 経由 = flock + atomic write + git 自動 commit、#69) |
 | 評価キャッシュ | `python/youtube_checker/data/evaluated_cache.json` (gitignore。翌日以降は既評価スキップ) |
 
-**外部流用の注意**: `tools/feedback_report.py` の `build_report` / `parse_viewing_text` / `_LINE_RE` / `_VIDEO_ID_RE` / `_FEEDBACK_RE` は companion-remote (`remote/server/ytcheck.py`) が sys.path 追加の import で流用中 (#65)。`channel_store.py` も同じく remote の巡回チャンネル編集 API (#69 後段、未接続) が import する前提で stdlib のみ・config 非依存。いずれも改名・移動・シグネチャ変更・stdlib 外依存の追加は remote サーバの起動を壊すため、変更時は remote 側の追随が必要 (詳細 = remote/docs/STATUS.md F-ytcheck エントリ)。
+**外部流用の注意**: `tools/feedback_report.py` の `build_report` / `parse_viewing_text` / `_LINE_RE` / `_VIDEO_ID_RE` / `_FEEDBACK_RE` は companion-remote (`remote/server/ytcheck.py`) が sys.path 追加の import で流用中 (#65)。`channel_store.py` も同じく remote の巡回チャンネル編集 API (**#71 で 2026-07-07 接続済み** = `load` / `add_channel` / `update_channel` / `remove_channel` を import、remote commit d92241f) が import する前提で stdlib のみ・config 非依存。いずれも改名・移動・シグネチャ変更・stdlib 外依存の追加は remote サーバの起動を壊すため、変更時は remote 側の追随が必要 (詳細 = remote/docs/STATUS.md F-ytcheck エントリ)。
 
 ## youtube-channels.json への機械書き込みの git 運用 (2026-07-07 決定、#69)
 
