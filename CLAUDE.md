@@ -12,6 +12,10 @@ Telegram 経由セッション (bot 経由、CWD = `~/companion/bot-workspace/`)
 
 `PROJECT.md` がこのワークスペース全体の地図（Phase 1〜4 の構成、各フェーズの台帳パス、「続きお願い」運用ルール）。新しいタスクに着手する前に必ず一読する。フェーズの現在地・着手時のディレクトリ作成手順・1 セッション 1 タスクのリズムはここに記載。
 
+## チケット番号 (#N) の受け方
+
+メッセージが `#N`（共用 TODO のチケット番号、例 `#68`）で始まるときは、意図や本文を推測せず `python3 ~/companion/remote/server/tickets.py show N` で実物を引いてから動く。番号単独でも補足付きでも同じ（リモコン PWA のコピーボタンは `#N` だけをコピーする仕様。2026-07-07 確定）。着手時は `start N`、完了時は `done N`。
+
 ## Workspace 直下の git 方針
 
 workspace 直下は **(C) ローカル git のみ（remote なし、rollback 専用）** で管理する。当初は「git 化しない」方針だったが、想定していた `workspace/<project-name>/` 配下のサブプロジェクトは実際には `~/companion/` 直下に兄弟配置され、`workspace/` には複数セッション/agent team で大幅改稿される設計台帳（`PROJECT.md` / `redesign/` / `review-*/`）しか残らなかった。他プロジェクトの履歴が混ざる懸念がなくなり、rollback の価値が大きいためローカル git を導入した。**GitHub remote は意図的に付けない**（マシン外バックアップ不要、上げ忘れではない）。git 化 3 階層の詳細は `~/companion/CLAUDE.md` git 運用方針 / `PROJECT.md`「git 化の 3 階層」、破壊的 git 操作の deny / commit ルール / Co-Authored-By trailer の扱い等も上位 `~/companion/CLAUDE.md` を参照。
