@@ -320,8 +320,8 @@ select:focus{outline:none;border-bottom:2px solid var(--acc);}
 .yt-ch-form{padding:2px 0 14px;}
 .yt-ch-form label.fld{margin-top:14px;margin-bottom:2px;}
 .yt-ch-btns{margin-top:18px;}
-.yt-ch-add{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);}
-.yt-ch-add input{margin-bottom:6px;}
+.yt-ch-link{margin:18px 0 22px;}
+#ytchannels .card input[type=text]{margin-bottom:6px;}
 .yt-ch-addrow{display:flex;gap:10px;margin-top:12px;align-items:stretch;}
 .yt-ch-addrow select{flex:1;}
 .yt-ch-addrow .btn{flex:0 0 auto;width:auto;min-height:44px;font-size:11px;padding:0 18px;}

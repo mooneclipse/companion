@@ -35,7 +35,7 @@ function showApp() {
 
 // ===== 画面ナビゲーション(section.active 切替。mock の show/open_/home 方式) =====
 // ホーム(タイルランチャー)⇄ 各機能詳細。詳細は左上「‹ 戻る」でホームへ。
-const SCREENS = ["home", "video", "todo", "games", "os", "vault", "thoughts", "ytcheck"];
+const SCREENS = ["home", "video", "todo", "games", "os", "vault", "thoughts", "ytcheck", "ytchannels"];
 
 function showScreen(id) {
   for (const s of SCREENS) {
@@ -52,6 +52,7 @@ function openScreen(id) {
   if (id === "vault") openVault();
   if (id === "thoughts") refreshThoughts();
   if (id === "ytcheck") refreshYtcheck();
+  if (id === "ytchannels") refreshYtChannels();
   if (id === "video" && dlOpen()) refreshDl();
 }
 function goHome() { showScreen("home"); }
@@ -1728,10 +1729,12 @@ function toggleYtReport() {
   $("yt-report-caret").textContent = open ? "▾" : "▸";
 }
 
-// ===== 巡回チャンネル編集（#71） =====
-// 折りたたみを開いた時のみ GET /api/ytcheck/channels。行タップで編集フォームを 1 件だけ
+// ===== 巡回チャンネル編集（#71、実機フィードバックで独立画面 #ytchannels 化） =====
+// 画面を開いた時のみ GET /api/ytcheck/channels。行タップで編集フォームを 1 件だけ
 // 展開し、保存/削除/追加 → POST → 一覧を再取得して全再描画（56ch 程度、差分更新は持たない）。
 // 書き込み実体は ytcheck 側 channel_store（flock + git 自動 commit）で、PWA は表示と入力のみ。
+// 追加の結果/エラーは追加ボタン直下の #yt-ch-add-msg に出す（最上部の #yt-ch-msg だと
+// 長い一覧の下にある追加フォームから見えず「無反応」に見える、Pixel 6 実機で確認）。
 let ytChData = null;    // {genres, channels}。null = 未取得
 let ytChOpenId = null;  // 編集フォーム展開中の channel_id（1 件のみ）
 let ytChBusy = false;   // POST 多重発火ガード
@@ -1879,6 +1882,11 @@ function ytChEditForm(ch) {
 
   const row = document.createElement("div");
   row.className = "row tight yt-ch-btns";
+  // 保存/削除の結果表示はフォーム内 (一覧最上部の #yt-ch-msg だと下方の行を編集中に
+  // viewport 外 = 追加ボタンと同じ「無反応に見える」障害モードになる)。
+  const formMsg = document.createElement("p");
+  formMsg.className = "result";
+  formMsg.setAttribute("role", "status");
   const save = document.createElement("button");
   save.type = "button";
   save.className = "btn small";
@@ -1886,7 +1894,7 @@ function ytChEditForm(ch) {
   save.addEventListener("click", async () => {
     const checkDays = Number(days.value);
     if (!Number.isInteger(checkDays) || checkDays < 1 || checkDays > 30) {
-      $("yt-ch-msg").textContent = "巡回日数は 1〜30 の整数です";
+      formMsg.textContent = "巡回日数は 1〜30 の整数です";
       return;
     }
     const body = {
@@ -1899,7 +1907,7 @@ function ytChEditForm(ch) {
     // 他フィールドだけ更新、genre は不変。既知ジャンルへ変えたときのみ送る。
     const genres = (ytChData && ytChData.genres) || {};
     if (genre.value in genres) body.genre = genre.value;
-    const ok = await ytChPost("/api/ytcheck/channel/update", body, "保存に失敗しました");
+    const ok = await ytChPost("/api/ytcheck/channel/update", body, "保存に失敗しました", formMsg);
     if (ok) { ytChOpenId = null; refreshYtChannels(); }
   });
   const del = document.createElement("button");
@@ -1909,20 +1917,22 @@ function ytChEditForm(ch) {
   del.addEventListener("click", async () => {
     if (!confirm("「" + (ch.name || ch.channel_id) + "」を巡回リストから削除しますか？")) return;
     const ok = await ytChPost("/api/ytcheck/channel/delete", { channel_id: ch.channel_id },
-      "削除に失敗しました");
+      "削除に失敗しました", formMsg);
     if (ok) { ytChOpenId = null; refreshYtChannels(); }
   });
   row.appendChild(save);
   row.appendChild(del);
   form.appendChild(row);
+  form.appendChild(formMsg);
   return form;
 }
 
 // 編集系 POST を 1 本化。成功で応答 JSON、失敗で null（失敗文言は fallbackMsg、409 のみ重複と明示）。
-async function ytChPost(path, body, fallbackMsg) {
+// msgEl 省略時は一覧上部の #yt-ch-msg、追加系は呼び出し側がボタン直下の #yt-ch-add-msg を渡す。
+async function ytChPost(path, body, fallbackMsg, msgEl) {
   if (!getToken() || ytChBusy) return null;
   ytChBusy = true;
-  const msg = $("yt-ch-msg");
+  const msg = msgEl || $("yt-ch-msg");
   try {
     const r = await api(path, {
       method: "POST",
@@ -1946,35 +1956,33 @@ async function ytChPost(path, body, fallbackMsg) {
 async function ytChAdd() {
   const idInput = $("yt-ch-add-id");
   const nameInput = $("yt-ch-add-name");
-  const msg = $("yt-ch-msg");
-  if (!idInput.value.trim()) { msg.textContent = "チャンネル ID / URL を入力してください"; return; }
+  const msg = $("yt-ch-add-msg");
+  const raw = idInput.value.trim();
+  if (!raw) { msg.textContent = "チャンネル ID / URL を入力してください"; return; }
+  if (raw.includes("@")) {
+    // YouTube アプリの共有 URL は https://youtube.com/@handle 形式 = server では解決不可(400)。
+    // 貼った本人に「形式が違う」ことがその場で分かる文言を先に出す。
+    msg.textContent = "@ハンドル形式は使えません。UC〜 のチャンネル ID を貼ってください";
+    return;
+  }
   if (!nameInput.value.trim()) { msg.textContent = "チャンネル名を入力してください"; return; }
   const ok = await ytChPost("/api/ytcheck/channel/add", {
-    channel_id: idInput.value.trim(),
+    channel_id: raw,
     name: nameInput.value.trim(),
     genre: $("yt-ch-add-genre").value,
-  }, "追加に失敗しました（ID/URL の形式を確認）");
+  }, "追加に失敗しました（UC〜 の ID か /channel/ URL のみ使えます）", msg);
   if (ok) {
     idInput.value = "";
     nameInput.value = "";
+    msg.textContent = "追加しました";
     refreshYtChannels();
   }
-}
-
-function toggleYtChannels() {
-  const body = $("yt-ch-body");
-  const open = body.hidden;
-  body.hidden = !open;
-  $("yt-ch-toggle").setAttribute("aria-expanded", String(open));
-  $("yt-ch-caret").textContent = open ? "▾" : "▸";
-  if (open) refreshYtChannels();  // 開いた時のみ取得（ポーリングには乗せない）
 }
 
 function initYtcheck() {
   $("yt-prev").addEventListener("click", () => ytMove(-1));
   $("yt-next").addEventListener("click", () => ytMove(1));
   $("yt-report-toggle").addEventListener("click", toggleYtReport);
-  $("yt-ch-toggle").addEventListener("click", toggleYtChannels);
   $("yt-ch-add-btn").addEventListener("click", ytChAdd);
 }
 
@@ -2072,6 +2080,8 @@ function initNav() {
       refreshThoughts();
     } else if (s === "ytcheck") {
       refreshYtcheck();
+    } else if (s === "ytchannels") {
+      refreshYtChannels();
     } else if (s === "todo") {
       refreshTodo();
       if (!$("todo-history-list").hidden) refreshHistory();

@@ -335,6 +335,9 @@
       <div class="body">
         <div class="kicker">YouTube 巡回</div>
         <h1 class="h1">視聴フィードバック</h1>
+        <!-- 巡回チャンネル編集への入口(#71 実機フィードバック: 最下部の折りたたみは
+             存在を忘れるため、上部の遷移ボタン + 独立画面に変更)。initNav の data-open で結線。 -->
+        <button type="button" class="btn ghost yt-ch-link" data-open="ytchannels">巡回チャンネルの編集 ›</button>
         <div class="card">
           <div class="yt-monthrow">
             <button id="yt-prev" type="button" class="btn ghost small">‹ 前月</button>
@@ -354,30 +357,36 @@
           <div class="ctitle">動画一覧 <span id="yt-count" class="muted"></span></div>
           <div id="yt-entries"></div>
         </div>
-        <!-- 巡回チャンネル編集(#71)。折りたたみ内にジャンル別一覧(行タップで編集フォーム
-             展開)+ 追加フォーム。開いた時のみ GET、保存/追加/削除 → POST → 再取得。
-             追加の channel_id は UC ID か /channel/ URL のみ(@handle 非対応、server 側 400)。 -->
+      </div>
+    </section>
+
+    <!-- ============ 巡回チャンネル編集（#71、実機フィードバックで独立画面化） ============
+         入口はフィードバック画面上部の data-open ボタン(ホームタイルは増やさない)。
+         ジャンル別一覧(行タップで編集フォーム展開)+ 追加フォーム。開いた時のみ GET、
+         保存/追加/削除 → POST → 再取得。追加の channel_id は UC ID か /channel/ URL のみ
+         (@handle 非対応、server 側 400)。追加の結果表示はボタン直下(#yt-ch-add-msg)。 -->
+    <section id="ytchannels" class="screen">
+      <div class="dhead"><button class="back" type="button">‹ 戻る</button><span class="dtitle">10 / YT Check</span></div>
+      <div class="body">
+        <div class="kicker">YouTube 巡回</div>
+        <h1 class="h1">巡回チャンネル</h1>
         <div class="card">
-          <button id="yt-ch-toggle" type="button" class="todo-history-toggle" aria-expanded="false" aria-controls="yt-ch-body">
-            <span class="ctitle">巡回チャンネル <span id="yt-ch-count" class="muted"></span></span>
-            <span id="yt-ch-caret" class="todo-history-caret" aria-hidden="true">▸</span>
-          </button>
-          <div id="yt-ch-body" hidden>
-            <p id="yt-ch-msg" class="result" role="status"></p>
-            <div id="yt-ch-list"></div>
-            <div class="yt-ch-add">
-              <div class="ctitle">チャンネル追加</div>
-              <input id="yt-ch-add-id" type="text" autocomplete="off"
-                     placeholder="UC〜 の ID か https://www.youtube.com/channel/UC〜">
-              <input id="yt-ch-add-name" type="text" autocomplete="off" maxlength="200" placeholder="チャンネル名">
-              <div class="yt-ch-addrow">
-                <select id="yt-ch-add-genre" aria-label="ジャンル"></select>
-                <button id="yt-ch-add-btn" type="button" class="btn">追加</button>
-              </div>
-              <p class="note">@ハンドル形式の URL は使えません(チャンネルページ →
-                概要 → チャンネルを共有 → チャンネル ID をコピー)。</p>
-            </div>
+          <div class="ctitle">登録チャンネル <span id="yt-ch-count" class="muted"></span></div>
+          <p id="yt-ch-msg" class="result" role="status"></p>
+          <div id="yt-ch-list"></div>
+        </div>
+        <div class="card">
+          <div class="ctitle">チャンネル追加</div>
+          <input id="yt-ch-add-id" type="text" autocomplete="off"
+                 placeholder="UC〜 の ID か https://www.youtube.com/channel/UC〜">
+          <input id="yt-ch-add-name" type="text" autocomplete="off" maxlength="200" placeholder="チャンネル名">
+          <div class="yt-ch-addrow">
+            <select id="yt-ch-add-genre" aria-label="ジャンル"></select>
+            <button id="yt-ch-add-btn" type="button" class="btn">追加</button>
           </div>
+          <p id="yt-ch-add-msg" class="result" role="status"></p>
+          <p class="note">@ハンドル形式の URL は使えません(チャンネルページ →
+            概要 → チャンネルを共有 → チャンネル ID をコピー)。</p>
         </div>
       </div>
     </section>
