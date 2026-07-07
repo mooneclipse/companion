@@ -35,7 +35,7 @@ function showApp() {
 
 // ===== 画面ナビゲーション(section.active 切替。mock の show/open_/home 方式) =====
 // ホーム(タイルランチャー)⇄ 各機能詳細。詳細は左上「‹ 戻る」でホームへ。
-const SCREENS = ["home", "video", "todo", "games", "os", "vault", "thoughts"];
+const SCREENS = ["home", "video", "todo", "games", "os", "vault", "thoughts", "ytcheck"];
 
 function showScreen(id) {
   for (const s of SCREENS) {
@@ -51,6 +51,7 @@ function openScreen(id) {
   if (id === "os") refreshGlance();
   if (id === "vault") openVault();
   if (id === "thoughts") refreshThoughts();
+  if (id === "ytcheck") refreshYtcheck();
   if (id === "video" && dlOpen()) refreshDl();
 }
 function goHome() { showScreen("home"); }
@@ -1584,6 +1585,155 @@ async function refreshThoughts() {
   } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
 }
 
+// ===== YT巡回 視聴フィードバック（F-ytcheck、#65 案 B） =====
+// 月次集計レポート(サーバ生成テキストをそのまま pre 表示) + チャンネル別動画一覧。
+// 各行の 視聴チェック([ ]/[x] トグル) / ○×(再タップで取り消し) は POST → 返却 entry で
+// 手元の一覧を更新して再描画する。開いた時 / popstate / 月ナビでのみ取得
+// (15s ポーリングには乗せない = 思考ログと同型)。外部由来文字列は必ず textContent。
+let ytMonth = null;      // 表示中の月(YYYY-MM)。null は未初期化 = 当月から始める
+let ytEntries = [];      // 表示中の月のエントリ(POST 返却で該当分を差し替え)
+let ytBusy = false;      // POST 多重発火ガード
+
+function ytCurrentMonth() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+
+function ytShiftMonth(month, offset) {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  const total = y * 12 + (m - 1) + offset;
+  return String(Math.floor(total / 12)).padStart(4, "0") + "-" + String((total % 12) + 1).padStart(2, "0");
+}
+
+async function refreshYtcheck() {
+  if (!getToken()) return;
+  if (!ytMonth) ytMonth = ytCurrentMonth();
+  $("yt-month").textContent = ytMonth;
+  const msg = $("yt-msg");
+  msg.textContent = "読み込み中…";
+  try {
+    const r = await api("/api/ytcheck/viewing?month=" + encodeURIComponent(ytMonth));
+    if (!r.ok) { msg.textContent = "取得に失敗しました"; return; }
+    const data = await r.json();
+    msg.textContent = "";
+    ytEntries = data.entries || [];
+    $("yt-report").textContent = data.report || "";
+    renderYtEntries();
+  } catch (e) { /* unauthorized は api() が token クリア + 再 paste 誘導 */ }
+}
+
+// エントリ一覧をチャンネル見出し付きで全再描画(件数は多くて数十行、全再描画で足りる)。
+function renderYtEntries() {
+  const box = $("yt-entries");
+  box.textContent = "";
+  $("yt-count").textContent = ytEntries.length ? String(ytEntries.length) + "本" : "";
+  if (!ytEntries.length) {
+    const p = document.createElement("p");
+    p.className = "todo-empty";
+    p.textContent = "この月の巡回結果はありません";
+    box.appendChild(p);
+    return;
+  }
+  let lastChannel = null;
+  ytEntries.forEach((e) => {
+    if (e.channel !== lastChannel) {
+      lastChannel = e.channel;
+      const h = document.createElement("div");
+      h.className = "yt-channel";
+      h.textContent = e.channel;
+      box.appendChild(h);
+    }
+    box.appendChild(ytRow(e));
+  });
+}
+
+// 動画 1 行。視聴チェック / ○ / × の 3 ボタン + タイトル + score。
+function ytRow(e) {
+  const row = document.createElement("div");
+  row.className = "yt-item";
+
+  const chk = document.createElement("button");
+  chk.type = "button";
+  chk.className = "yt-check" + (e.checked ? " on" : "");
+  chk.textContent = e.checked ? "✓" : "";
+  chk.setAttribute("aria-label", e.checked ? "視聴済み(タップで解除)" : "未視聴(タップで視聴済みに)");
+  chk.addEventListener("click", () => ytPost(e.video_id, { checked: !e.checked }));
+
+  const main = document.createElement("div");
+  main.className = "yt-main";
+  const title = document.createElement("div");
+  title.className = "yt-title";
+  title.textContent = e.title || e.video_id;
+  const meta = document.createElement("div");
+  meta.className = "yt-meta";
+  meta.textContent = "score " + e.score + "/10";
+  main.appendChild(title);
+  main.appendChild(meta);
+
+  // ○/× は排他でなく「同じ印の再タップで取り消し(空文字送信)」。
+  const fb = document.createElement("div");
+  fb.className = "yt-fbs";
+  [["○", "当たり"], ["×", "外れ"]].forEach(([mark, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "yt-fb" + (e.feedback === mark ? " on" : "");
+    b.textContent = mark;
+    b.setAttribute("aria-label", label + (e.feedback === mark ? "(タップで取り消し)" : ""));
+    b.addEventListener("click", () => ytPost(e.video_id, { feedback: e.feedback === mark ? "" : mark }));
+    fb.appendChild(b);
+  });
+
+  row.appendChild(chk);
+  row.appendChild(main);
+  row.appendChild(fb);
+  return row;
+}
+
+async function ytPost(videoId, patch) {
+  if (!getToken() || ytBusy) return;
+  ytBusy = true;
+  const msg = $("yt-msg");
+  const month = ytMonth;  // POST 中に月ナビされても表示中だった月へ書く
+  try {
+    const r = await api("/api/ytcheck/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ month, video_id: videoId }, patch)),
+    });
+    if (!r.ok) { msg.textContent = "記入に失敗しました"; return; }
+    const entry = await r.json();
+    if (month !== ytMonth) return;  // 別の月へ移動済みなら表示は触らない
+    ytEntries = ytEntries.map((e) => (e.video_id === entry.video_id ? entry : e));
+    msg.textContent = "";
+    renderYtEntries();
+  } catch (e) {
+    if (e.message !== "unauthorized") msg.textContent = "記入に失敗しました";
+  } finally {
+    ytBusy = false;
+  }
+}
+
+function ytMove(offset) {
+  if (!ytMonth) ytMonth = ytCurrentMonth();
+  ytMonth = ytShiftMonth(ytMonth, offset);
+  refreshYtcheck();
+}
+
+function toggleYtReport() {
+  const pre = $("yt-report");
+  const open = pre.hidden;
+  pre.hidden = !open;
+  $("yt-report-toggle").setAttribute("aria-expanded", String(open));
+  $("yt-report-caret").textContent = open ? "▾" : "▸";
+}
+
+function initYtcheck() {
+  $("yt-prev").addEventListener("click", () => ytMove(-1));
+  $("yt-next").addEventListener("click", () => ytMove(1));
+  $("yt-report-toggle").addEventListener("click", toggleYtReport);
+}
+
 // ===== スクリーンセーバー(即トグル、画面遷移なし) =====
 
 async function refreshScreensaver() {
@@ -1676,6 +1826,8 @@ function initNav() {
       refreshGlance();
     } else if (s === "thoughts") {
       refreshThoughts();
+    } else if (s === "ytcheck") {
+      refreshYtcheck();
     } else if (s === "todo") {
       refreshTodo();
       if (!$("todo-history-list").hidden) refreshHistory();
@@ -1703,6 +1855,7 @@ function init() {
   initGames();
   initTodo();
   initVault();
+  initYtcheck();
 
   if (getToken()) showApp(); else showTokenSetup();
   goHome();

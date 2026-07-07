@@ -59,7 +59,7 @@
         <div class="np-time"><span id="nowbar-time"></span></div>
       </button>
 
-      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">9</span></div>
+      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">10</span></div>
 
       <!-- タイルグリッド(2列)。
            将来機能拡張: この .grid 内に <button class="tile" data-open="xxx"> を 1 枚足し、
@@ -110,6 +110,12 @@
              (data-href → window.open _blank noopener、remote は proxy しない)。 -->
         <button class="tile" type="button" data-href="https://miho-inspiron-3521.tail5e989b.ts.net:8447/">
           <span class="t-mark">♪ 09</span><span class="t-name">KIKITORI</span><span class="t-sub">英語リスニング</span>
+        </button>
+        <!-- YT巡回 (#65 案 B): ytcheck の月次集計レポート閲覧 + viewing への視聴チェック/○× 記入。
+             開いた時 / popstate で取得、15s ポーリングには乗せない (思考ログタイルと同型)。 -->
+        <button class="tile" type="button" data-open="ytcheck">
+          <span class="t-mark">✓ 10</span><span class="t-name">YT巡回</span>
+          <span class="t-sub">視聴チェック・集計</span>
         </button>
       </div>
     </section>
@@ -315,6 +321,38 @@
         <div class="card">
           <p id="thoughts-msg" class="note">読み込み中…</p>
           <ol id="thoughts-timeline" class="thoughts-timeline"></ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ YTCHECK（視聴フィードバック、#65 案 B） ============ -->
+    <!-- 月ナビ + 月次集計レポート(折りたたみ、テキストそのまま) + チャンネル別動画一覧。
+         各行に 視聴チェック([ ]/[x] トグル)と ○/× ボタン(再タップで取り消し)。
+         タップ → POST /api/ytcheck/feedback → 返却 entry で再描画。外部由来文字列
+         (title/channel)は必ず textContent(innerHTML 不使用の規律)。 -->
+    <section id="ytcheck" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">10 / YT Check</span></div>
+      <div class="body">
+        <div class="kicker">YouTube 巡回</div>
+        <h1 class="h1">視聴フィードバック</h1>
+        <div class="card">
+          <div class="yt-monthrow">
+            <button id="yt-prev" type="button" class="btn ghost small">‹ 前月</button>
+            <span id="yt-month" class="yt-month"></span>
+            <button id="yt-next" type="button" class="btn ghost small">翌月 ›</button>
+          </div>
+          <p id="yt-msg" class="result" role="status"></p>
+        </div>
+        <div class="card">
+          <button id="yt-report-toggle" type="button" class="todo-history-toggle" aria-expanded="false" aria-controls="yt-report">
+            <span class="ctitle">月次集計レポート</span>
+            <span id="yt-report-caret" class="todo-history-caret" aria-hidden="true">▸</span>
+          </button>
+          <pre id="yt-report" class="yt-report" hidden></pre>
+        </div>
+        <div class="card">
+          <div class="ctitle">動画一覧 <span id="yt-count" class="muted"></span></div>
+          <div id="yt-entries"></div>
         </div>
       </div>
     </section>

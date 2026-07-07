@@ -278,6 +278,36 @@ details[open] > .vault-folder::before{content:"▾";}
    --acc(#d8392a) の 12% 淡色地、文字色は本文 --ink 維持 */
 mark{background:rgba(216,57,42,.12);color:var(--ink);padding:0 1px;}
 
+/* --- YT巡回 視聴フィードバック(F-ytcheck) ---
+   月ナビ + 集計レポート(折りたたみ pre) + チャンネル別一覧。行は 視聴チェック(左) +
+   タイトル/score(中) + ○×(右)。記入済みの印は --acc、未記入はヘアライン枠で控えめに。 */
+.yt-monthrow{display:flex;align-items:center;gap:10px;}
+.yt-monthrow .btn{flex:0 0 auto;}
+.yt-month{flex:1;text-align:center;font-size:15px;font-weight:800;letter-spacing:.08em;
+  font-variant-numeric:tabular-nums;}
+.yt-report{margin:14px 0 0;font-family:inherit;font-size:12.5px;line-height:1.7;color:var(--ink);
+  letter-spacing:.01em;white-space:pre-wrap;word-break:break-word;}
+.yt-channel{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--grey-6);
+  font-weight:800;margin-top:18px;padding:14px 0 4px;border-top:1px solid var(--line);word-break:break-word;}
+.yt-channel:first-child{margin-top:0;padding-top:0;border-top:none;}
+.yt-item{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line);}
+.yt-channel + .yt-item{border-top:none;}
+.yt-check{flex:0 0 auto;width:34px;height:34px;background:var(--paper);border:1px solid var(--hair);
+  color:var(--acc);font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;
+  display:flex;align-items:center;justify-content:center;padding:0;}
+.yt-check.on{border-color:var(--acc);}
+.yt-check:active{background:var(--ink);}
+.yt-main{flex:1;min-width:0;}
+.yt-title{font-size:13.5px;line-height:1.45;letter-spacing:.005em;word-break:break-word;}
+.yt-meta{font-size:10px;color:var(--grey-4);font-variant-numeric:tabular-nums;
+  letter-spacing:.06em;margin-top:3px;}
+.yt-fbs{flex:0 0 auto;display:flex;gap:6px;}
+.yt-fb{width:34px;height:34px;background:var(--paper);border:1px solid var(--hair);
+  color:var(--grey-6);font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;
+  display:flex;align-items:center;justify-content:center;padding:0;}
+.yt-fb.on{background:var(--acc);border-color:var(--acc);color:#fff;}
+.yt-fb:active{background:var(--ink);color:var(--paper);}
+
 /* --- 共通余白 / 文言 --- */
 .mt{margin-top:18px;}
 .mt8{margin-top:8px;}

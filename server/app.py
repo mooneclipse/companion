@@ -29,6 +29,7 @@ import urlguard
 import vault
 import version
 import video
+import ytcheck
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("REMOTE_PORT", "47824"))
@@ -417,6 +418,50 @@ def api_thoughts(handler):
     return 200, thoughts.list_entries()
 
 
+def api_ytcheck_viewing(handler):
+    """GET /api/ytcheck/viewing?month=YYYY-MM — 月次集計 + 動画エントリ一覧。Bearer 必須。
+
+    month 省略時は当月。month はパス組み立てに使うため fullmatch 検証が必須
+    (traversal 防止)。ファイル不在月は entries 空 + report は集計 0 で 200 (404 にしない
+    = 月ナビで過去月へ自由に動ける)。read のみでロックは取らない (ytcheck.py 冒頭参照)。
+    """
+    month = _query(handler).get("month", "") or ytcheck.current_month()
+    if not ytcheck.valid_month(month):
+        return 400, {"error": "invalid month"}
+    return 200, ytcheck.get_month(month)
+
+
+def api_ytcheck_feedback(handler):
+    """POST /api/ytcheck/feedback {month, video_id, checked?, feedback?} — 視聴チェック/○× 記入。Bearer 必須。
+
+    **remote 初の外部 write** (書き込み先は検証済み month から組み立てた viewing ファイル
+    1 点のみ、ytcheck.py が flock 下で行書き換え)。分岐は state を引く前に確定:
+    month/video_id/checked/feedback を先に検証して 400、その後の YtcheckError は
+    「ファイルなし / 該当 video_id 行なし」= 404 と一意に決まる (文言マッチで分岐しない)。
+    """
+    data, err = _read_json(handler)
+    if err:
+        return err
+    month = data.get("month")
+    if not ytcheck.valid_month(month):
+        return 400, {"error": "invalid month"}
+    video_id = data.get("video_id")
+    if not isinstance(video_id, str) or not video_id.strip() or len(video_id) > ytcheck.MAX_VIDEO_ID:
+        return 400, {"error": "video_id required"}
+    checked = data.get("checked")
+    if checked is not None and not isinstance(checked, bool):
+        return 400, {"error": "checked must be a boolean"}
+    feedback = data.get("feedback")
+    if feedback is not None and feedback not in ytcheck.FEEDBACKS:
+        return 400, {"error": "feedback must be ○ / × / empty"}
+    if checked is None and feedback is None:
+        return 400, {"error": "checked or feedback required"}
+    try:
+        return 200, ytcheck.set_feedback(month, video_id.strip(), checked=checked, feedback=feedback)
+    except ytcheck.YtcheckError:
+        return 404, {"error": "not found"}
+
+
 def api_screensaver_state(handler):
     """GET /api/screensaver/state — Bearer 必須。"""
     return 200, {"active": screensaver.is_active()}
@@ -496,6 +541,10 @@ ROUTES = {
     ("GET", "/api/vault/image"): (api_vault_image, True),
     # 思考ログ(bot の私的観察を read-only で時系列閲覧)。GET / Bearer 必須。書き込み endpoint なし。
     ("GET", "/api/thoughts"): (api_thoughts, True),
+    # F-ytcheck(#65 案 B): 月次集計 read + viewing への視聴チェック/○× 記入 write。全て Bearer 必須。
+    # feedback は remote 初の外部 write(vault/notes/ytcheck/、flock cross-process ロック下)。
+    ("GET", "/api/ytcheck/viewing"): (api_ytcheck_viewing, True),
+    ("POST", "/api/ytcheck/feedback"): (api_ytcheck_feedback, True),
     # F-screensaver(ジェネラティブアートスクリーンセーバーのオン/オフ)。全て Bearer 必須。
     ("GET", "/api/screensaver/state"): (api_screensaver_state, True),
     ("POST", "/api/screensaver/toggle"): (api_screensaver_toggle, True),
