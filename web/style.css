@@ -162,7 +162,7 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--acc)
 /* --- やること(共用 TODO/inbox) --- */
 #todo-list{list-style:none;margin:0;padding:0;}
 .todo-empty{padding:16px 0;color:var(--grey-4);font-size:13px;}
-.todo-item{display:flex;align-items:center;gap:12px;padding:16px 0;border-top:1px solid var(--line);}
+.todo-item{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 0;border-top:1px solid var(--line);}
 .todo-item:first-child{border-top:none;}
 .todo-id{font-size:11px;font-weight:800;color:var(--grey-4);font-variant-numeric:tabular-nums;letter-spacing:.04em;min-width:24px;flex:none;}
 .todo-by{font-size:13px;flex:none;}
@@ -177,7 +177,9 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--acc)
 .todo-edit-input{flex:1;font-family:inherit;font-size:14px;color:var(--ink);
   background:var(--paper);border:none;border-bottom:2px solid var(--acc);padding:6px 2px;letter-spacing:.005em;}
 .todo-edit-input:focus{outline:none;}
-.todo-actions{display:flex;gap:6px;flex:none;}
+/* コピー/編集/完了 の 3 ボタンは本文と同行だと 412px 幅で本文を圧迫するため、
+   常に 2 行目へ落として右寄せ (本文が 1 行目の全幅を使える)。dl-item はボタン直付けで対象外。 */
+.todo-actions{display:flex;gap:6px;flex:0 0 100%;justify-content:flex-end;}
 /* 完了履歴(折りたたみ、閲覧専用)。done は active と区別するため grey 系でトーンダウン。 */
 .todo-history-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;
   background:var(--paper);border:none;padding:0;cursor:pointer;font-family:inherit;color:inherit;}
