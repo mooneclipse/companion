@@ -1,0 +1,11 @@
+[Unit]
+Description=companion-ytcheck: YouTube 56ch 巡回・字幕解析・AI 推薦レポートを vault に書く
+
+[Service]
+Type=oneshot
+# パス解決 (.env / tasks/ / claude CLI) は run.sh が自己完結で行う。
+# main.py は __file__ 基準で cwd 非依存だが、既存 unit の慣習に合わせて明示する。
+WorkingDirectory=/home/miho/companion/ytcheck
+ExecStart=/home/miho/companion/ytcheck/run.sh
+# 56ch 巡回 + claude -p 評価で長時間になり得る。無限ハングだけ止める
+TimeoutStartSec=2h

@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily YouTube check and AI recommendation report (05:00 JST)
+
+[Timer]
+# 毎日 05:00 JST (host tz = Asia/Tokyo)。dashboard 5:30 起動より前に
+# レポートを vault に出しておく。
+OnCalendar=*-*-* 05:00:00
+# マシンが寝ていた分を起床後に補完。同日の重複は evaluation_cache で
+# 既評価スキップされるため実害なし (レポートは同日連番 -N で増える)。
+Persistent=true
+# 定刻ぴったりの集中を避けるゆらぎ
+RandomizedDelaySec=5min
+Unit=companion-ytcheck.service
+
+[Install]
+WantedBy=timers.target
