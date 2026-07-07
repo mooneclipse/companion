@@ -16,10 +16,19 @@ YouTube 巡回・字幕解析・AI 推薦システム。チャンネルリスト
 | ログ | journald のみ (`journalctl --user -u companion-ytcheck.service`) |
 | レポート出力先 | `~/companion/vault/notes/ytcheck/ytcheck-YYYYMMDD-N.md` (`YTCHECK_WRITING_DIR`) |
 | viewing 履歴 | `~/companion/vault/notes/ytcheck/viewing-YYYY-MM.md` (`YTCHECK_VIEWING_DIR`)。視聴後 `[x]` + 行末 ○/× を記入 → `tools/feedback_report.py` で月次集計 |
-| チャンネルリスト | `tasks/youtube-channels.json` (repo 内固定。main.py が登録者数キャッシュを毎回更新 = repo に diff が出るのは正常) |
+| チャンネルリスト | `tasks/youtube-channels.json` (repo 内固定。書き込みは `channel_store.py` 経由 = flock + atomic write + git 自動 commit、#69) |
 | 評価キャッシュ | `python/youtube_checker/data/evaluated_cache.json` (gitignore。翌日以降は既評価スキップ) |
 
-**外部流用の注意**: `tools/feedback_report.py` の `build_report` / `parse_viewing_text` / `_LINE_RE` / `_VIDEO_ID_RE` / `_FEEDBACK_RE` は companion-remote (`remote/server/ytcheck.py`) が sys.path 追加の import で流用中 (#65)。改名・移動・シグネチャ変更・stdlib 外依存の追加は remote サーバの起動を壊すため、変更時は remote 側の追随が必要 (詳細 = remote/docs/STATUS.md F-ytcheck エントリ)。
+**外部流用の注意**: `tools/feedback_report.py` の `build_report` / `parse_viewing_text` / `_LINE_RE` / `_VIDEO_ID_RE` / `_FEEDBACK_RE` は companion-remote (`remote/server/ytcheck.py`) が sys.path 追加の import で流用中 (#65)。`channel_store.py` も同じく remote の巡回チャンネル編集 API (#69 後段、未接続) が import する前提で stdlib のみ・config 非依存。いずれも改名・移動・シグネチャ変更・stdlib 外依存の追加は remote サーバの起動を壊すため、変更時は remote 側の追随が必要 (詳細 = remote/docs/STATUS.md F-ytcheck エントリ)。
+
+## youtube-channels.json への機械書き込みの git 運用 (2026-07-07 決定、#69)
+
+repo 管理下の `tasks/youtube-channels.json` には 2 系統の機械書き込みが入る (毎朝 05:00 の subscriber_count 書き戻し + 将来の remote 編集 API)。運用は **書き込み成功後に git 自動 commit** (OWNER 裁定 2026-07-07):
+
+- 根拠: (C) repo は rollback 専用。diff を working tree に溜める方式だと編集前スナップショットが commit されず、remote からの誤編集を戻せない期間が生じる。自動 commit なら 1 操作単位で rollback 可能
+- commit は `channel_store._git_commit()` が flock 保持中に pathspec 付き (`git commit -m msg -- <json>`) で実行 = 他ファイルの staged 変更を巻き込まない + channel_store 同士の 2 プロセス同時 commit の index.lock 競合は構造的に排除 (手動 git 操作との競合は warning に落ちるのみ)。頻度は登録者数キャッシュ 7 日期限 + 編集時のみ
+- commit 失敗 (hook 拒否等) は warning ログのみで書き込みは成功扱い。リトライ・分岐なし (エラーループ防止ルール準拠)
+- 変更ゼロ (同値書き戻し) は write も commit もスキップ = 空 commit・無意味な mtime 更新なし
 
 ## 移行時の判断 (2026-07-07)
 
@@ -41,6 +50,7 @@ YouTube 巡回・字幕解析・AI 推薦システム。チャンネルリスト
 
 ## Done
 
+- 2026-07-07: **youtube-channels.json の flock 排他 + 1ch 単位 CRUD を先行実装** (共用 TODO **#69** = #65 後段、remote 編集 UI 接続の前提整備)。`channel_store.py` 新設 (stdlib のみ・config 非依存 = remote が sys.path import する前提): `tasks/.channels.lock` の flock(LOCK_EX) で read→modify→write 全体を排他 (`.viewing.lock` と同パターン、blocking・リトライなし) + 同ディレクトリ tmp + `os.replace` の atomic write (途中クラッシュの JSON 破損 → 翌朝巡回全滅を防止) + 書き込み後 git 自動 commit (上記運用セクション参照)。CRUD は `load` / `get_channel` / `add_channel` (重複 ValueError) / `update_channel` (channel_id 不変・同値スキップ) / `remove_channel` / `merge_subscriber_counts`。**調査で判明した設計問題も同時に解消**: 従来の `main._refresh_subscriber_cache` は load 時点のメモリ上 channels 全体を `data["channels"] = channels` で上書きしており、flock を足すだけでは load〜書き戻し間 (pending リトライを挟み数秒〜数分) の並行編集が消える lost update が残る → 書き戻しを `merge_subscriber_counts` (ロック下 re-read + subscriber_count / subscriber_count_updated_at の 2 フィールドのみ merge) に置き換えて解消。`.gitignore` に `tasks/.channels.lock` / `tasks/*.tmp` 追加。検証 = pytest **250 件全パス** (新規 21 件: CRUD / lost update 防止 / lock 保持中ブロック / atomic / git commit 実弾 / repo 外 graceful) + system python3 (venv 外 = remote 相当の stdlib-only 環境) で本番 56ch JSON への read + no-op merge 実弾確認 (mtime 不変・merged=0)。remote 側編集 UI の接続は別チケットで起票 (2 段構えの後段)
 - 2026-07-07: **viewing 履歴書き込みに cross-process flock を追加** (共用 TODO #65 = companion-remote の視聴フィードバック連携に伴う ytcheck 側唯一の改修)。remote の PWA が `viewing-YYYY-MM.md` の該当行 (`[ ]`→`[x]` / `[feedback: ○|×]`) を書き換える API を持ったため、`output_formatter.update_viewing_history()` の read→全文再構成→write を viewing ディレクトリ直下の共有ロックファイル `.viewing.lock` の flock(LOCK_EX) で囲んだ (remote/server/ytcheck.py と同一パス導出。remote 側だけのロックでは 05:00 巡回との lost update を防げない = remote/docs/STATUS.md R3)。blocking 取得・timeout リトライなし。本体は `_update_viewing_history_locked()` に切り出し、既存ロジック無改変。pytest 229 件全パス (tests は mock.patch の tmp_path 上で回帰なし)。remote 側の実装・検証詳細は remote/docs/STATUS.md 2026-07-07 F-ytcheck エントリ参照
 - 2026-07-07: 移行完了 — zip 展開 (Windows 製 zip のバックスラッシュ区切りを Python zipfile で正規化)、(C) git 化 + gitleaks hook (検出 2 件は gitignore 済み .env 内キーで想定通り)、パス環境変数化、venv + pytest 229 パス、timer 登録 (次回 07-08 05:04 JST)
 - 2026-07-07: 初回実行 (並列 5、34/71 失敗) → 並列 2 に機差調整 → 再実行で 33 件キャッシュスキップ + 失敗 7 件まで改善。レポート `ytcheck-20260707-1.md` / `-2.md` と `viewing-2026-07.md` が vault に出力されたのを確認。code-reviewer レビュー済み (修正必須なし、mkdir 追加 + feedback_report の env 前置注記を反映)

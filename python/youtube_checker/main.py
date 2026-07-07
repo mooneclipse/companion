@@ -16,6 +16,7 @@ from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
 import ai_evaluator
+import channel_store
 import output_formatter
 import subtitle_fetcher
 import youtube_client
@@ -136,30 +137,27 @@ def _refresh_subscriber_cache(
         return
 
     now_iso = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    updated = 0
     for ch in channels:
         ch_id = ch.get("channel_id")
         if ch_id in counts:
             ch["subscriber_count"] = counts[ch_id]
             ch["subscriber_count_updated_at"] = now_iso
-            updated += 1
 
     # 取得対象だが counts に含まれないチャンネル（=バッチ失敗）
     missing = [c for c in targets if c not in counts]
     if missing:
         logger.warning(f"登録者数を取得できなかったチャンネル: {len(missing)} 件（古い値を保持）")
 
-    # JSON 全体を上書き保存（既存スタイル: indent=2, ensure_ascii=False）
+    # JSON への書き戻しは channel_store 経由（flock + atomic write + 自動 commit、#69）。
+    # load_channel_list 後に他プロセス (companion-remote の編集 API) が行った
+    # 追加・削除・編集を消さないよう、メモリ上の channels 全体は書かず
+    # subscriber_count / subscriber_count_updated_at の 2 フィールドだけ merge する
     try:
-        with open(channel_list_path, encoding="utf-8") as f:
-            data = json.load(f)
-        # channels リストはインプレース更新済みなので、そのまま戻す
-        data["channels"] = channels
-        with open(channel_list_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        logger.info(f"登録者数キャッシュを更新しました（更新: {updated} 件、保存先: {channel_list_path}）")
-    except OSError as e:
+        merged = channel_store.merge_subscriber_counts(
+            counts, now_iso, path=channel_list_path
+        )
+        logger.info(f"登録者数キャッシュを更新しました（更新: {merged} 件、保存先: {channel_list_path}）")
+    except (OSError, json.JSONDecodeError) as e:
         logger.warning(f"チャンネルリスト JSON の書き戻しに失敗: {e}")
 
 

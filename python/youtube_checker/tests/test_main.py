@@ -101,6 +101,50 @@ class TestLoadChannelList:
             path.unlink(missing_ok=True)
 
 
+class TestRefreshSubscriberCache:
+    """_refresh_subscriber_cache の書き戻しテスト（#69: channel_store merge 経由）"""
+
+    def _make_json(self, tmp_path: Path) -> Path:
+        data = {
+            "genres": {"indie": "個人勢"},
+            "channels": [
+                {
+                    "name": "Ch1",
+                    "channel_id": "UC_1",
+                    "subscriber_count": 1000,
+                    "subscriber_count_updated_at": "2020-01-01T00:00:00Z",
+                },
+            ],
+        }
+        path = tmp_path / "youtube-channels.json"
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return path
+
+    def test_書き戻しが並行編集を消さない(self, tmp_path: Path):
+        """load 後に JSON へ入った追加・編集が書き戻しで失われない（lost update 防止）"""
+        import channel_store
+
+        path = self._make_json(tmp_path)
+        genres, channels = load_channel_list(path)
+        # load 後の並行編集を模擬（remote の編集 API 相当）
+        channel_store.add_channel(
+            {"name": "Ch2", "channel_id": "UC_2"}, path=path, commit=False
+        )
+        # tmp_path は git repo 外 → 自動 commit は warning のみで書き込みは成功する
+        with mock.patch(
+            "main.youtube_client.fetch_subscriber_counts", return_value={"UC_1": 5000}
+        ):
+            main_module._refresh_subscriber_cache(
+                youtube=mock.Mock(), channels=channels, channel_list_path=path
+            )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        ids = [c["channel_id"] for c in data["channels"]]
+        assert ids == ["UC_1", "UC_2"]  # 並行追加が生き残る
+        assert data["channels"][0]["subscriber_count"] == 5000  # 書き戻しは反映
+        # メモリ上の channels も巡回用に更新されている
+        assert channels[0]["subscriber_count"] == 5000
+
+
 class TestProcessSingleChannel:
     """process_single_channel の tier 連携テスト"""
 

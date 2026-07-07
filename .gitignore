@@ -11,3 +11,6 @@ venv/
 data/
 pending_evaluations/*.json
 writing/
+# channel_store の排他ロック・atomic write の一時ファイル (#69)
+tasks/.channels.lock
+tasks/*.tmp
