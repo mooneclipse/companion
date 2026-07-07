@@ -39,6 +39,7 @@ YouTube 巡回・字幕解析・AI 推薦システム。チャンネルリスト
 
 ## Done
 
+- 2026-07-07: **viewing 履歴書き込みに cross-process flock を追加** (共用 TODO #65 = companion-remote の視聴フィードバック連携に伴う ytcheck 側唯一の改修)。remote の PWA が `viewing-YYYY-MM.md` の該当行 (`[ ]`→`[x]` / `[feedback: ○|×]`) を書き換える API を持ったため、`output_formatter.update_viewing_history()` の read→全文再構成→write を viewing ディレクトリ直下の共有ロックファイル `.viewing.lock` の flock(LOCK_EX) で囲んだ (remote/server/ytcheck.py と同一パス導出。remote 側だけのロックでは 05:00 巡回との lost update を防げない = remote/docs/STATUS.md R3)。blocking 取得・timeout リトライなし。本体は `_update_viewing_history_locked()` に切り出し、既存ロジック無改変。pytest 229 件全パス (tests は mock.patch の tmp_path 上で回帰なし)。remote 側の実装・検証詳細は remote/docs/STATUS.md 2026-07-07 F-ytcheck エントリ参照
 - 2026-07-07: 移行完了 — zip 展開 (Windows 製 zip のバックスラッシュ区切りを Python zipfile で正規化)、(C) git 化 + gitleaks hook (検出 2 件は gitignore 済み .env 内キーで想定通り)、パス環境変数化、venv + pytest 229 パス、timer 登録 (次回 07-08 05:04 JST)
 - 2026-07-07: 初回実行 (並列 5、34/71 失敗) → 並列 2 に機差調整 → 再実行で 33 件キャッシュスキップ + 失敗 7 件まで改善。レポート `ytcheck-20260707-1.md` / `-2.md` と `viewing-2026-07.md` が vault に出力されたのを確認。code-reviewer レビュー済み (修正必須なし、mkdir 追加 + feedback_report の env 前置注記を反映)
 

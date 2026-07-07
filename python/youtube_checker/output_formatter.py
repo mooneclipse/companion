@@ -2,6 +2,7 @@
 出力フォーマッタ（JSON / Markdown / viewing履歴）
 ジャンル別レポート生成・好き度閾値判定に対応
 """
+import fcntl
 import json
 import os
 import re
@@ -812,6 +813,24 @@ def update_viewing_history(all_results: list[dict[str, Any]]) -> str | None:
     # _TASKS_DIR が _WRITING_DIR と別の場所に向いた場合でも自前で作れるようにする
     _TASKS_DIR.mkdir(parents=True, exist_ok=True)
 
+    # cross-process ロック: companion-remote の視聴フィードバック記入 API が同ファイルを
+    # 書き換えるため、read→全文再構成→write の全体を viewing ディレクトリ直下の共有
+    # ロックファイル .viewing.lock の flock(LOCK_EX) で囲む（remote/server/ytcheck.py と
+    # 同じパスを両プロセスが導出する）。blocking で取る（書き込みは ms オーダー、
+    # 競合は実質 05:00 の一瞬のみ。timeout リトライは作らない）
+    lock_fd = os.open(_TASKS_DIR / ".viewing.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return _update_viewing_history_locked(all_results, month_str, history_file)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def _update_viewing_history_locked(
+    all_results: list[dict[str, Any]], month_str: str, history_file: Path
+) -> str | None:
+    """update_viewing_history の本体（呼び出し元が .viewing.lock を保持している前提）"""
     # 既存ファイルの読み込みまたは新規作成
     if history_file.exists():
         existing_text = history_file.read_text(encoding="utf-8")
