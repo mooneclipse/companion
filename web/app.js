@@ -930,6 +930,12 @@ function renderTodo(tickets) {
     const actions = document.createElement("span");
     actions.className = "todo-actions";
 
+    const copy = document.createElement("button");
+    copy.className = "todo-done";
+    copy.type = "button";
+    copy.textContent = "コピー";
+    copy.addEventListener("click", () => copyTodo(copy, t));
+
     const edit = document.createElement("button");
     edit.className = "todo-done";
     edit.type = "button";
@@ -942,6 +948,7 @@ function renderTodo(tickets) {
     done.textContent = "完了";
     done.addEventListener("click", () => doneTodo(t.id));
 
+    actions.appendChild(copy);
     actions.appendChild(edit);
     actions.appendChild(done);
 
@@ -951,6 +958,19 @@ function renderTodo(tickets) {
     li.appendChild(actions);
     list.appendChild(li);
   });
+}
+
+// チケットを「#N 本文」形式でクリップボードへ。ターミナル側 (claude セッション) へ
+// 番号ごと貼り付けて「#N やって」と渡す用途。tailscale serve の HTTPS 配信なので
+// secure context 前提 (navigator.clipboard が使える)。結果はボタン文言で短く返す。
+async function copyTodo(btn, t) {
+  try {
+    await navigator.clipboard.writeText("#" + t.id + " " + t.text);
+    btn.textContent = "済";
+  } catch (e) {
+    btn.textContent = "失敗";
+  }
+  setTimeout(() => { btn.textContent = "コピー"; }, 1200);
 }
 
 function startEditTodo(li, t) {
