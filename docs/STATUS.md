@@ -19,6 +19,8 @@ YouTube 巡回・字幕解析・AI 推薦システム。チャンネルリスト
 | チャンネルリスト | `tasks/youtube-channels.json` (repo 内固定。main.py が登録者数キャッシュを毎回更新 = repo に diff が出るのは正常) |
 | 評価キャッシュ | `python/youtube_checker/data/evaluated_cache.json` (gitignore。翌日以降は既評価スキップ) |
 
+**外部流用の注意**: `tools/feedback_report.py` の `build_report` / `parse_viewing_text` / `_LINE_RE` / `_VIDEO_ID_RE` / `_FEEDBACK_RE` は companion-remote (`remote/server/ytcheck.py`) が sys.path 追加の import で流用中 (#65)。改名・移動・シグネチャ変更・stdlib 外依存の追加は remote サーバの起動を壊すため、変更時は remote 側の追随が必要 (詳細 = remote/docs/STATUS.md F-ytcheck エントリ)。
+
 ## 移行時の判断 (2026-07-07)
 
 - **出力先を vault へ** (MIGRATION-NOTES §5 の最優先推奨どおり): `output_formatter.py` / `tools/feedback_report.py` の出力パスを環境変数 (`YTCHECK_WRITING_DIR` / `YTCHECK_VIEWING_DIR`) で上書き可能にし、`run.sh` で vault/notes/ytcheck/ に固定。**デフォルト値は repo 相対のまま** (テスト 229 件が mock.patch 前提で無改変パス)。チャンネルリストは repo 内固定 (feedback_report の `_CHANNEL_LIST_PATH` は `_TASKS_DIR` から分離)
