@@ -44,8 +44,8 @@ YouTube 巡回・字幕解析・AI 推薦システム。チャンネルリスト
 
 ## TODO
 
-- [ ] 明朝 05:00 の定常実行のサマリー確認 (AI失敗数。残るようなら上記「残課題」の設計レベル対処へ)
-- [ ] 数日安定稼働を確認したら Windows 側原本の削除タイミングを OWNER に案内 (削除後はこの repo が唯一のコード実体。USB バックアップが companion/ を含むか確認してから案内する)
+- [ ] 明朝 05:00 の定常実行のサマリー確認 (AI失敗数。残るようなら上記「残課題」の設計レベル対処へ) — 共用 TODO **#66**
+- [ ] Windows 側原本の削除 GO 判断 — 共用 TODO **#67**。条件: 定常 2〜3 日安定 + companion 込み新設定での USB バックアップ成功 1 回 (usb-backup.sh への companion 追加は maintenance repo `255e872` で対応済み・push は OWNER 待ち)
 - [ ] google api_core が 2026-10-04 以降 Python 3.11+ 要求 (FutureWarning)。Mint の python3 は 3.10 — 警告が実害化したら requirements 側を固定するか python3.11 venv を検討
 - [ ] 視聴フィードバック 3 ヶ月分 (2026-08 頃) で月次集計を回す。viewing は vault にあるため env 前置が必須: `YTCHECK_VIEWING_DIR=~/companion/vault/notes/ytcheck .venv/bin/python python/youtube_checker/tools/feedback_report.py`
 
