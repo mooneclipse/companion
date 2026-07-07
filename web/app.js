@@ -1243,15 +1243,25 @@ function vaultLoadImages(doc) {
 // markdown → サニタイズ済み HTML を本文要素へ。innerHTML はここだけ（DOMPurify 通過後）。
 function vaultRenderMarkdown(body) {
   vaultRevokeImageUrls();  // 前ノートの object URL を解放してから描画
-  const html = marked.parse(body, { gfm: true, breaks: false });
+  // breaks: true — Obsidian の「1改行=改行表示」に合わせる（日本語ノートの行分けを潰さない）。
+  const html = marked.parse(body, { gfm: true, breaks: true });
   // DOMPurify: 生 HTML を無害化。wikilink の data 属性 + ローカル画像マーカ + class のみ追加許可。
+  // input はタスクリスト checkbox（- [ ] / - [x]）のため許可し、下の後処理で checkbox 以外を落とす。
   const clean = DOMPurify.sanitize(html, {
     ADD_ATTR: ["data-vault-link", "data-vault-img", "target", "rel"],
-    FORBID_TAGS: ["style", "form", "input", "textarea", "button"],
+    FORBID_TAGS: ["style", "form", "textarea", "button"],
     FORBID_ATTR: ["style", "onerror", "onload"],
   });
   const doc = $("vault-doc");
   doc.innerHTML = clean;  // XSS 対策: 直前で DOMPurify.sanitize 済み。生 markdown 由来の唯一の例外。
+  // タスクリスト checkbox: type=checkbox 以外の input は残さない（FORBID_TAGS から外した代償）。
+  // vendored marked は li に task-list-item class を付けない（node で実挙動確認済み）ため JS で付与。
+  doc.querySelectorAll("input").forEach((input) => {
+    if (input.type !== "checkbox") { input.remove(); return; }
+    input.disabled = true;  // read-only ビューア。marked も disabled を付けるが明示的に強制
+    const li = input.closest("li");
+    if (li) li.classList.add("task-list-item");
+  });
   // wikilink クリック → 同ビューア内でジャンプ。外部リンクは別タブ + noopener。
   doc.querySelectorAll("a[data-vault-link]").forEach((a) => {
     a.addEventListener("click", (e) => {
@@ -1263,6 +1273,24 @@ function vaultRenderMarkdown(body) {
     const href = a.getAttribute("href") || "";
     if (/^https?:\/\//i.test(href)) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
     else a.addEventListener("click", (e) => e.preventDefault());  // 相対リンクは無効化
+  });
+  // 外部画像（![](https://...)、wikilink 由来の blob 画像は対象外）: ロード失敗時は壊れアイコンを
+  // 残さず「別タブで開く」リンクへ置換する。動画 URL を img 化した記法（YouTube/x.com）の救済も兼ねる。
+  doc.querySelectorAll("img:not([data-vault-img])").forEach((img) => {
+    img.addEventListener("error", () => {
+      const src = img.getAttribute("src") || "";
+      // http(s) 以外（data: 等）はリンク化せず除去（上の a と同じスキーム限定）。
+      if (!/^https?:\/\//i.test(src)) { img.remove(); return; }
+      let host = "リンク";
+      try { host = new URL(src).hostname; } catch (e) { /* 不正 URL は汎用表記 */ }
+      const a = document.createElement("a");
+      a.href = src;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "vault-img-fallback";
+      a.textContent = "▶ " + host + " で開く";
+      img.replaceWith(a);
+    }, { once: true });
   });
   vaultLoadImages(doc);  // ローカル画像（![[...]]）を Bearer fetch → blob で表示
 }
@@ -1280,7 +1308,10 @@ function vaultShowDoc() {
   window.scrollTo(0, 0);
 }
 
-// フォルダ別の一覧を描画（DOM 構築のみ、innerHTML 不使用）。
+// 開いているフォルダ名の記録（再描画で復元。既定は全フォルダ閉じ = 一覧を短く保つ）。
+const vaultOpenFolders = new Set();
+
+// フォルダ別の一覧を描画（DOM 構築のみ、innerHTML 不使用）。フォルダは details/summary で折りたたみ。
 function vaultRenderList(data) {
   const root = $("vault-list");
   root.textContent = "";
@@ -1291,22 +1322,51 @@ function vaultRenderList(data) {
   }
   $("vault-list-msg").hidden = true;
   data.folders.forEach((grp) => {
-    const h = document.createElement("div");
-    h.className = "vault-folder";
-    h.textContent = grp.folder === "" ? "（ルート）" : grp.folder;
-    root.appendChild(h);
+    const det = document.createElement("details");
+    det.className = "vault-folder-group";
+    det.open = vaultOpenFolders.has(grp.folder);
+    const sum = document.createElement("summary");
+    sum.className = "vault-folder";
+    sum.textContent = grp.folder === "" ? "（ルート）" : grp.folder;
+    const cnt = document.createElement("span");
+    cnt.className = "vault-folder-count";
+    cnt.textContent = String(grp.notes.length);
+    sum.appendChild(cnt);
+    det.appendChild(sum);
+    det.addEventListener("toggle", () => {
+      if (det.open) vaultOpenFolders.add(grp.folder);
+      else vaultOpenFolders.delete(grp.folder);
+    });
     grp.notes.forEach((n) => {
       const item = document.createElement("button");
       item.type = "button";
       item.className = "vault-item";
       item.textContent = n.name;
       item.addEventListener("click", () => vaultNavDoc(n.path));
-      root.appendChild(item);
+      det.appendChild(item);
     });
+    root.appendChild(det);
   });
 }
 
-// 検索結果を一覧領域に描画（フォルダ別の代わりに path + snippet を列挙）。
+// text 中のクエリ一致箇所（大文字小文字無視、全出現）を <mark> で強調しつつ el へ流し込む。
+// textNode + mark の appendChild のみで構築（innerHTML 不使用の規律を守る）。
+function vaultAppendHighlighted(el, text, query) {
+  const q = query.toLowerCase();
+  if (!q) { el.textContent = text; return; }
+  const lower = text.toLowerCase();
+  let i = 0;
+  for (let hit = lower.indexOf(q); hit >= 0; hit = lower.indexOf(q, i)) {
+    if (hit > i) el.appendChild(document.createTextNode(text.slice(i, hit)));
+    const mark = document.createElement("mark");
+    mark.textContent = text.slice(hit, hit + q.length);
+    el.appendChild(mark);
+    i = hit + q.length;
+  }
+  if (i < text.length) el.appendChild(document.createTextNode(text.slice(i)));
+}
+
+// 検索結果を一覧領域に描画（フォルダ別の代わりに path + snippet を列挙、折りたたみなしのフラット）。
 function vaultRenderSearch(data) {
   const root = $("vault-list");
   root.textContent = "";
@@ -1317,18 +1377,19 @@ function vaultRenderSearch(data) {
     return;
   }
   msg.textContent = data.count + " 件ヒット";
+  const query = data.query || "";
   data.results.forEach((r) => {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "vault-item vault-result";
     const name = document.createElement("span");
     name.className = "vault-result-name";
-    name.textContent = r.name;
+    vaultAppendHighlighted(name, r.name, query);
     item.appendChild(name);
     if (r.snippet) {
       const sn = document.createElement("span");
       sn.className = "vault-result-snip";
-      sn.textContent = r.snippet;
+      vaultAppendHighlighted(sn, r.snippet, query);
       item.appendChild(sn);
     }
     item.addEventListener("click", () => vaultNavDoc(r.path));
@@ -1370,7 +1431,12 @@ function vaultNavDoc(path) {
 
 async function vaultOpenDoc(path) {
   vaultShowDoc();
-  $("vault-doc-title").textContent = path;
+  // ヘッダ2段: フォルダ(小、ルート直下は省略) + ノート名(大、.md を外す)。textContent のみで構築。
+  const slash = path.lastIndexOf("/");
+  const dir = slash >= 0 ? path.slice(0, slash) : "";
+  $("vault-doc-path").textContent = dir;
+  $("vault-doc-path").hidden = !dir;
+  $("vault-doc-title").textContent = (slash >= 0 ? path.slice(slash + 1) : path).replace(/\.md$/, "");
   $("vault-doc").textContent = "";
   $("vault-frontmatter").hidden = true;
   $("vault-doc-msg").textContent = "読み込み中…";

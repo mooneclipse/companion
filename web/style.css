@@ -214,9 +214,17 @@ dl.os dd{font-size:15px;font-weight:800;letter-spacing:.01em;margin:0 0 15px;pad
 
 /* --- ノート閲覧(F-vault, read-only) --- */
 #vault-search{margin-bottom:4px;}
+/* フォルダ見出し(details/summary 折りたたみのトグル)。既定の三角マーカーは消して ▸/▾ を自前で置く。
+   summary は常に details の first-child なので、先頭判定は .vault-folder-group 側で行う。 */
 .vault-folder{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--grey-6);
-  font-weight:800;margin:18px 0 6px;padding-top:14px;border-top:1px solid var(--line);}
-.vault-folder:first-child{margin-top:0;padding-top:0;border-top:none;}
+  font-weight:800;margin:18px 0 6px;padding:14px 0 8px;border-top:1px solid var(--line);
+  cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:8px;user-select:none;}
+.vault-folder::-webkit-details-marker{display:none;}
+.vault-folder::before{content:"▸";color:var(--grey-4);font-size:9px;flex:0 0 auto;}
+details[open] > .vault-folder::before{content:"▾";}
+.vault-folder-group:first-child > .vault-folder{margin-top:0;padding-top:0;border-top:none;}
+.vault-folder-count{color:var(--grey-4);font-weight:700;font-variant-numeric:tabular-nums;
+  letter-spacing:.04em;text-transform:none;}
 .vault-item{display:block;width:100%;text-align:left;background:var(--paper);border:none;
   border-top:1px solid var(--line);padding:13px 0;font-size:15px;font-weight:700;color:var(--ink);
   letter-spacing:.005em;cursor:pointer;font-family:inherit;word-break:break-word;}
@@ -246,6 +254,27 @@ dl.os dd{font-size:15px;font-weight:800;letter-spacing:.01em;margin:0 0 15px;pad
 .vault-doc th,.vault-doc td{border:1px solid var(--hair);padding:6px 10px;text-align:left;}
 .vault-doc img{max-width:100%;height:auto;}
 .vault-doc hr{border:none;border-top:1px solid var(--line);margin:24px 0;}
+/* 本文ヘッダ2段: フォルダ(小、ctitle トーン) + ノート名(大)。ルート直下は path 非表示 */
+.vault-doc-path{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--grey-4);
+  font-weight:800;margin-bottom:4px;word-break:break-word;}
+.vault-doc-name{font-size:21px;font-weight:800;line-height:1.25;letter-spacing:.005em;
+  margin-bottom:16px;word-break:break-word;}
+/* タスクリスト(- [ ]/- [x])。checkbox が行頭マーカーを兼ねるので list-style を消す。
+   チェック済み行の減光はしない(原文尊重) */
+.vault-doc li.task-list-item{list-style:none;}
+.vault-doc li.task-list-item input[type=checkbox]{pointer-events:none;accent-color:var(--acc);
+  margin-right:8px;vertical-align:-2px;}
+/* 外部画像のロード失敗をリンク化した控えめなボックス(壊れアイコンを残さない) */
+.vault-doc a.vault-img-fallback{display:inline-block;font-size:12px;font-weight:700;color:var(--acc);
+  text-decoration:none;border:1px solid var(--line);background:var(--paper);padding:9px 12px;
+  margin:4px 0;letter-spacing:.03em;word-break:break-all;}
+.vault-doc a.vault-img-fallback:active{border-color:var(--acc);}
+/* ローカル画像(![[...]])の取得失敗プレースホルダ。alt 文言を破線枠で控えめに見せる */
+.vault-doc img.vault-img-missing{min-height:40px;border:1px dashed var(--grey-2);
+  color:var(--grey-4);font-size:12px;padding:10px 12px;}
+/* 検索ヒット語の強調(.vault-doc 外の一覧/検索結果でも効かせる)。
+   --acc(#d8392a) の 12% 淡色地、文字色は本文 --ink 維持 */
+mark{background:rgba(216,57,42,.12);color:var(--ink);padding:0 1px;}
 
 /* --- 共通余白 / 文言 --- */
 .mt{margin-top:18px;}

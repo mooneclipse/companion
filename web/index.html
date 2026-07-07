@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- CSP: 既定は同一オリジンのみ。inline script/style 不許可(外部 app.js/style.css)で XSS 面を絞る。
-     画像のみ img-src を明示緩和: blob:(ローカル画像の object URL)/
-     pbs.twimg.com(既存 clips のリモート画像、host 限定でワイルドカード https: にはしない)。 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: https://pbs.twimg.com; object-src 'none'; base-uri 'none'">
+     画像のみ img-src を明示緩和: blob:(ローカル画像の object URL)/https:(vault ノートの外部画像。
+     st-note 等ホストが多岐で列挙保守が続かないため https 全体を許可、script/style 等は 'self' のまま)。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: https:; object-src 'none'; base-uri 'none'">
 <meta name="theme-color" content="#f4f2ea">
 <title>リモコン</title>
 <link rel="manifest" href="/manifest.json">
@@ -290,7 +290,9 @@
         <!-- 本文ビュー: markdown 描画(クライアント側 marked+DOMPurify) -->
         <div id="vault-doc-view" hidden>
           <div class="card">
-            <div class="ctitle" id="vault-doc-title"></div>
+            <!-- ヘッダ2段: フォルダ(小、ルート直下は非表示)+ ノート名(大)。app.js が textContent で入れる -->
+            <div class="vault-doc-path" id="vault-doc-path" hidden></div>
+            <div class="vault-doc-name" id="vault-doc-title"></div>
             <div id="vault-frontmatter" class="vault-fm" hidden></div>
             <!-- 描画本文。owner 自身の vault 由来 markdown を DOMPurify で無害化してから
                  ここへ流す唯一の innerHTML 例外(app.js のコメント参照)。 -->
