@@ -28,6 +28,9 @@ BACKUP_PATHS=(
     "${OWNER_HOME}/.bashrc"
     "${OWNER_HOME}/.profile"
     "${OWNER_HOME}/.claude"
+    # (C) ローカル git のみの repo 群 (workspace/ytcheck 等) のマシン外コピー確保
+    # (2026-07-07 追加。ytcheck の Windows 原本削除の前提。除外は下の EXCLUDES 参照)
+    "${OWNER_HOME}/companion"
     /etc
 )
 
@@ -37,6 +40,15 @@ EXCLUDES=(
     --exclude "${OWNER_HOME}/.claude/file-history"
     --exclude "${OWNER_HOME}/.claude/cache"
     --exclude "${OWNER_HOME}/.claude/paste-cache"
+    # companion 配下の再取得・再生成可能な大物 (photos 35G は Takeout 原本 zip が別在、
+    # voice/engine 3.8G は VOICEVOX 再 DL 可)
+    --exclude "${OWNER_HOME}/companion/photos"
+    --exclude "${OWNER_HOME}/companion/voice/engine"
+    # 名前一致でどこでも除外 (再生成可能物)
+    --exclude ".venv"
+    --exclude "venv"
+    --exclude "node_modules"
+    --exclude "__pycache__"
 )
 
 if [[ $EUID -ne 0 ]]; then

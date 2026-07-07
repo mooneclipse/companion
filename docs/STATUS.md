@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-06-25 (claude-status: Telegram 通知本文の状態ラベル enum (component status / incident status / impact) のみ日本語化、Anthropic の自由文 name/latest_body は英語原文維持。todo#38。詳細は Done 先頭 entry)
+最終更新: 2026-07-07 (usb-backup: `~/companion` をバックアップ対象に追加。詳細は Done 先頭 entry)
 
 ## 設計メモ
 
@@ -73,6 +73,11 @@ machine-audit PLAN.md S6-6 の 7 作業項目。計測→powertop 適用→DPMS 
 （なし）
 
 ## Done
+
+- 2026-07-07 usb-backup: `~/companion` を BACKUP_PATHS に追加 (OWNER 依頼)
+  - **動機**: ytcheck 移行 (2026-07-07、(C) ローカル git のみ) で Windows 側原本を将来削除する前提になり、(C) repo 群のコードにマシン外コピーが 1 つもない状態を解消する
+  - **除外**: photos (35G、Takeout 原本 zip が別在) / voice/engine (3.8G、VOICEVOX 再 DL 可) / 名前一致で .venv・venv・node_modules・__pycache__ (再生成可能物)。正味の追加量は約 0.7G
+  - **注意**: 次回の手動 USB バックアップ (`sudo ~/companion/maintenance/scripts/usb-backup.sh`) から反映。前回実行は 2026-06-12 で、ytcheck の Windows 原本削除はこの新設定での成功実行が済んでから
 
 - 2026-06-25 claude-status: Telegram 通知の状態ラベル enum を日本語化 (todo#38、自由文は英語原文維持)
   - **動機**: 共用 TODO #38「claude state のアラートを可能なら日本語訳してほしい」。Statuspage 仕様で値が固定の状態ラベルだけを日本語化し、Anthropic が書く自由文 (incident の `name` / `latest_body`) は機械翻訳でニュアンスが変わるのを避けて英語原文のまま維持する (OWNER が原文維持を明示選択)
