@@ -73,6 +73,22 @@ implementer 完了 → 続けて `Task` ツールで `subagent_type: code-review
 
 これら以外は確認不要。
 
+## 委譲時のルーティング規則
+
+タスクをサブエージェントに委譲するときは、性質で振り分ける:
+
+- **読み取り中心・独立可能なタスク**（コードベース探索 / ログ・設定の調査 / ドキュメント・Web の調べ物）→ `researcher`。**複数の独立した調査があれば、1 つの researcher に列挙して渡さず、並列で複数インスタンスに分ける**（1 メッセージ内で複数 Agent 呼び出し）。§1 の「委任前の裏取り」も同様に researcher（または Explore）で行う
+- **依存関係のある実装のまとまり**（複数ファイルにまたがる実装・リファクタ・設計判断を含む一連の作業）→ `deep-worker`。一つの文脈でまとめて 1 インスタンスに任せる
+
+**implementer との境界**: orc 本流（§2）の「意図が固まった単発改修」は従来どおり `implementer`（commit まで自走）。`deep-worker` は設計判断を含む複数ファイル横断のまとまりを一括で任せる場合に使い、commit は委任 prompt で明示的に指示する（deep-worker の既定の完了報告に commit は含まれない）。どちらの経路でも §3 のレビュー必須・§4 の完了報告フォーマットは同じ。
+
+**model の渡し方**（呼び出し側で意図を固定する）:
+
+- `researcher` → Agent tool の `model` パラメータに `"sonnet"` を明示して渡す
+- `deep-worker` → `model` パラメータを渡さない（親モデルを継承させる、という選択の明示）
+
+frontmatter の `model:` 指定は動作検証済み（2026-07-08、researcher = claude-sonnet-5 / deep-worker = 親と同一を確認）で、明示渡しはその保険。矛盾時は明示渡しが優先（Agent tool の `model` パラメータ仕様に「エージェント定義の frontmatter より優先」と明記。実測はしていないので食い違う構成自体を作らない）。
+
 ## agent team との関係
 
 orc 内では agent team は **使わない**。理由:
