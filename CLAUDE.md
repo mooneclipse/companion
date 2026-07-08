@@ -6,7 +6,7 @@ Telegram 経由セッション (bot 経由、CWD = `~/companion/bot-workspace/`)
 
 ## Repository State
 
-このリポジトリにはコードはなく、設計台帳（`PROJECT.md` / `redesign/` / `review-*/`）と claude 設定（`.claude/settings.json`、skills: `orc` / `newgame`、agents: code-reviewer / implementer / game-designer / game-critic / playtester）を置いている。ビルド・lint・テストコマンド、アーキテクチャに関する記述は、コードが追加され次第このファイルに追記すること。
+このリポジトリにはコードはなく、設計台帳（`PROJECT.md` / `redesign/` / `review-*/`）と claude 設定（`.claude/settings.json`、skills: `orc` / `newgame`、agents: code-reviewer / implementer / game-designer / game-critic / playtester / deep-worker / researcher）を置いている。ビルド・lint・テストコマンド、アーキテクチャに関する記述は、コードが追加され次第このファイルに追記すること。
 
 ## Project Roadmap
 
