@@ -288,6 +288,9 @@ mark{background:rgba(216,57,42,.12);color:var(--ink);padding:0 1px;}
 /* --- YT巡回 視聴フィードバック(F-ytcheck) ---
    月ナビ + 集計レポート(折りたたみ pre) + チャンネル別一覧。行は 視聴チェック(左) +
    タイトル/score(中) + ○×(右)。記入済みの印は --acc、未記入はヘアライン枠で控えめに。 */
+.yt-url-row{display:flex;align-items:stretch;gap:8px;}
+.yt-url-row input[type=text]{flex:1;min-width:0;}
+.yt-url-row .yt-fb{flex:0 0 auto;}
 .yt-monthrow{display:flex;align-items:center;gap:10px;}
 .yt-monthrow .btn{flex:0 0 auto;}
 .yt-month{flex:1;text-align:center;font-size:15px;font-weight:800;letter-spacing:.08em;

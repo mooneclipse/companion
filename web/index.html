@@ -342,6 +342,16 @@
         <!-- 巡回チャンネル編集への入口(#71 実機フィードバック: 最下部の折りたたみは
              存在を忘れるため、上部の遷移ボタン + 独立画面に変更)。initNav の data-open で結線。 -->
         <button type="button" class="btn ghost yt-ch-link" data-open="ytchannels">巡回チャンネルの編集 ›</button>
+        <!-- URL で記入(#77): YouTube URL を貼り付けて ○/× を即記入 -->
+        <div class="card">
+          <div class="ctitle">URL で記入</div>
+          <div class="yt-url-row">
+            <input type="text" id="yt-url-input" placeholder="YouTube URL を貼り付け" autocomplete="off">
+            <button type="button" class="yt-fb" id="yt-url-hit" aria-label="当たり">○</button>
+            <button type="button" class="yt-fb" id="yt-url-miss" aria-label="外れ">×</button>
+          </div>
+          <p id="yt-url-msg" class="result" role="status"></p>
+        </div>
         <div class="card">
           <div class="yt-monthrow">
             <button id="yt-prev" type="button" class="btn ghost small">‹ 前月</button>

@@ -1647,6 +1647,64 @@ let ytMonth = null;      // 表示中の月(YYYY-MM)。null は未初期化 = �
 let ytEntries = [];      // 表示中の月のエントリ(POST 返却で該当分を差し替え)
 let ytBusy = false;      // POST 多重発火ガード
 
+function ytParseVideoId(input) {
+  const s = input.trim();
+  let m;
+  m = s.match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+  if (m) return m[1];
+  m = s.match(/[?&]v=([A-Za-z0-9_-]{11})/);
+  if (m) return m[1];
+  m = s.match(/(?:shorts|live|embed)\/([A-Za-z0-9_-]{11})/);
+  if (m) return m[1];
+  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+  return null;
+}
+
+async function ytUrlSubmit(mark) {
+  const input = $("yt-url-input");
+  const msg = $("yt-url-msg");
+  const videoId = ytParseVideoId(input.value);
+  if (!videoId) { msg.textContent = "YouTube URL を認識できません"; return; }
+  if (!getToken() || ytBusy) return;
+  ytBusy = true;
+  msg.textContent = "記入中…";
+  const cur = ytCurrentMonth();
+  const months = [cur, ytShiftMonth(cur, -1)];
+  let entry = null;
+  let hitMonth = null;
+  let netErr = false;
+  for (let i = 0; i < months.length; i++) {
+    try {
+      const r = await api("/api/ytcheck/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: months[i], video_id: videoId, checked: true, feedback: mark }),
+      });
+      if (r.ok) {
+        entry = await r.json();
+        hitMonth = months[i];
+        break;
+      }
+    } catch (e) {
+      if (e.message === "unauthorized") { ytBusy = false; return; }
+      netErr = true;
+    }
+  }
+  ytBusy = false;
+  if (entry) {
+    if (hitMonth === ytMonth) {
+      ytEntries = ytEntries.map((e) => e.video_id === entry.video_id ? entry : e);
+      renderYtEntries();
+    }
+    msg.textContent = (entry.title || videoId) + " → " + mark;
+    input.value = "";
+  } else if (netErr) {
+    msg.textContent = "記入に失敗しました";
+  } else {
+    msg.textContent = "この動画は推薦一覧にありません";
+  }
+}
+
 function ytCurrentMonth() {
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
@@ -2035,6 +2093,8 @@ function initYtcheck() {
   $("yt-prev").addEventListener("click", () => ytMove(-1));
   $("yt-next").addEventListener("click", () => ytMove(1));
   $("yt-report-toggle").addEventListener("click", toggleYtReport);
+  $("yt-url-hit").addEventListener("click", () => ytUrlSubmit("○"));
+  $("yt-url-miss").addEventListener("click", () => ytUrlSubmit("×"));
   $("yt-ch-add-btn").addEventListener("click", ytChAdd);
 }
 
