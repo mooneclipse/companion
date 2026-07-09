@@ -89,12 +89,16 @@ def list_notes():
     folder はルート直下を "" とし、それ以外は POSIX 区切りの相対ディレクトリ。
     """
     groups = {}
-    for rel, _abspath in _iter_md_files():
+    for rel, abspath in _iter_md_files():
         rel_posix = rel.replace(os.sep, "/")
         folder = os.path.dirname(rel_posix)  # ルート直下は ""
         name = os.path.basename(rel_posix)
         stem = name[: -len(MD_EXT)]
-        groups.setdefault(folder, []).append({"path": rel_posix, "name": stem})
+        try:
+            mtime = int(os.stat(abspath).st_mtime)
+        except OSError:
+            mtime = 0
+        groups.setdefault(folder, []).append({"path": rel_posix, "name": stem, "mtime": mtime})
     folders = []
     count = 0
     for folder in sorted(groups):

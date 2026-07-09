@@ -216,6 +216,13 @@ dl.os dd{font-size:15px;font-weight:800;letter-spacing:.01em;margin:0 0 15px;pad
 
 /* --- ノート閲覧(F-vault, read-only) --- */
 #vault-search{margin-bottom:4px;}
+.vault-sort-bar{display:flex;gap:6px;margin:12px 16px 0;padding:0;}
+.vault-sort-btn{flex:1;padding:6px 0;border:1px solid var(--line);border-radius:6px;
+  background:var(--paper);color:var(--grey-6);font-size:12px;font-weight:700;
+  font-family:inherit;cursor:pointer;letter-spacing:.04em;}
+.vault-sort-btn.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+.vault-item-date{font-size:10px;font-weight:700;color:var(--grey-4);
+  font-variant-numeric:tabular-nums;letter-spacing:.02em;white-space:nowrap;}
 /* フォルダ見出し(details/summary 折りたたみのトグル)。既定の三角マーカーは消して ▸/▾ を自前で置く。
    summary は常に details の first-child なので、先頭判定は .vault-folder-group 側で行う。 */
 .vault-folder{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--grey-6);

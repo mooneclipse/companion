@@ -78,6 +78,25 @@ class TestList(VaultTestBase):
         self.assertIn("notes", folders)
         self.assertIn("clips", folders)
 
+    def test_notes_have_mtime(self):
+        data = vault.list_notes()
+        for grp in data["folders"]:
+            for n in grp["notes"]:
+                self.assertIn("mtime", n)
+                self.assertIsInstance(n["mtime"], int)
+                self.assertGreater(n["mtime"], 0)
+
+    def test_mtime_reflects_modification(self):
+        import time
+        time.sleep(1.1)
+        self._write("notes/alpha.md", "updated content")
+        data = vault.list_notes()
+        mtimes = {}
+        for grp in data["folders"]:
+            for n in grp["notes"]:
+                mtimes[n["path"]] = n["mtime"]
+        self.assertGreater(mtimes["notes/alpha.md"], mtimes["notes/beta.md"])
+
     def test_name_is_stem(self):
         data = vault.list_notes()
         for grp in data["folders"]:

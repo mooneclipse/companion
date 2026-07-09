@@ -1176,6 +1176,8 @@ function initTodo() {
 // （app.js は本来 innerHTML を使わない規律。本文描画はその唯一の例外。下記コメント参照）。
 let vaultLoaded = false;        // 一覧を一度取得したか（再入で再フェッチしない）
 let vaultSearchTimer = null;    // 検索 debounce
+let vaultSortMode = localStorage.getItem("vault_sort") || "folder";
+let vaultListData = null;
 
 // 属性値内の特殊文字を実体化（marked は raw HTML を素通しするため自前でエスケープ）。
 function vaultEscAttr(s) {
@@ -1372,6 +1374,37 @@ function vaultRenderList(data) {
   });
 }
 
+function vaultRenderRecent(data) {
+  const root = $("vault-list");
+  root.textContent = "";
+  $("tile-vault-sub").textContent = (data.count || 0) + " 件";
+  if (!data.folders || !data.folders.length) {
+    $("vault-list-msg").textContent = "ノートがありません";
+    return;
+  }
+  $("vault-list-msg").hidden = true;
+  const all = [];
+  data.folders.forEach((grp) => grp.notes.forEach((n) => all.push(n)));
+  all.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+  all.forEach((n) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "vault-item vault-result";
+    const name = document.createElement("span");
+    name.className = "vault-result-name";
+    name.textContent = n.name;
+    item.appendChild(name);
+    if (n.mtime) {
+      const dt = document.createElement("span");
+      dt.className = "vault-item-date";
+      dt.textContent = fmtDateTime(n.mtime);
+      item.appendChild(dt);
+    }
+    item.addEventListener("click", () => vaultNavDoc(n.path));
+    root.appendChild(item);
+  });
+}
+
 // text 中のクエリ一致箇所（大文字小文字無視、全出現）を <mark> で強調しつつ el へ流し込む。
 // textNode + mark の appendChild のみで構築（innerHTML 不使用の規律を守る）。
 function vaultAppendHighlighted(el, text, query) {
@@ -1428,16 +1461,25 @@ async function vaultLoadList() {
     const r = await api("/api/vault/list");
     if (!r.ok) { $("vault-list-msg").textContent = "一覧の取得に失敗しました"; return; }
     const data = await r.json();
-    vaultRenderList(data);
-    vaultBuildIndex(data);  // wikilink 解決辞書も同時に構築（追加フェッチ不要）
+    vaultListData = data;
+    vaultApplySort();
+    vaultBuildIndex(data);
     vaultLoaded = true;
   } catch (e) {
     if (e.message !== "unauthorized") $("vault-list-msg").textContent = "通信エラー";
   }
 }
 
+function vaultApplySort() {
+  if (!vaultListData) return;
+  if (vaultSortMode === "recent") vaultRenderRecent(vaultListData);
+  else vaultRenderList(vaultListData);
+  $("vault-sort-folder").classList.toggle("active", vaultSortMode !== "recent");
+  $("vault-sort-recent").classList.toggle("active", vaultSortMode === "recent");
+}
+
 async function vaultSearch(q) {
-  if (!q) { if (vaultLoaded) vaultLoadList(); return; }
+  if (!q) { if (vaultListData) vaultApplySort(); return; }
   try {
     const r = await api("/api/vault/search?q=" + encodeURIComponent(q));
     if (!r.ok) return;
@@ -1518,6 +1560,16 @@ function initVault() {
     clearTimeout(vaultSearchTimer);
     const q = search.value.trim();
     vaultSearchTimer = setTimeout(() => vaultSearch(q), 250);
+  });
+  $("vault-sort-folder").addEventListener("click", () => {
+    vaultSortMode = "folder";
+    localStorage.setItem("vault_sort", "folder");
+    vaultApplySort();
+  });
+  $("vault-sort-recent").addEventListener("click", () => {
+    vaultSortMode = "recent";
+    localStorage.setItem("vault_sort", "recent");
+    vaultApplySort();
   });
 }
 
