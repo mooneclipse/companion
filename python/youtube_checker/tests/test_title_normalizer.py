@@ -55,7 +55,7 @@ class TestIsExcludedVideoMvProtection:
 
 
 class TestIsExcludedVideoCoverWordBoundary:
-    """"cover"/"MV" 等英数字キーワードの単語境界判定（#74 誤爆修正）"""
+    """"cover"/"MV" 等英数字キーワードの単語境界判定（誤爆修正、2026-07-09）"""
 
     def test_is_excluded_video_substring_false_positive_not_excluded(self):
         """"cover" を内包するだけの無関係な単語では除外されない（False）"""
