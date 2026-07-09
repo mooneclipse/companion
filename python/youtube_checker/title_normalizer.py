@@ -6,11 +6,32 @@
 """
 import re
 
-# 歌・踊り検出キーワード（タイトルにマッチで除外）
+# 歌・踊り検出キーワード（タイトル部分一致で除外）
+# 分かち書きされない日本語は単語境界判定ができないため部分一致のまま。
 EXCLUDE_TITLE_KEYWORDS: tuple[str, ...] = (
-    "歌ってみた", "踊ってみた", "Covered by", "covered by",
-    "cover", "Cover", "MV", "オリジナル曲", "original song",
-    "踊", "歌枠",
+    "歌ってみた", "踊ってみた", "オリジナル曲", "踊", "歌枠",
+)
+
+# 歌・踊り検出キーワード（タイトル単語境界一致で除外、大文字小文字無視）
+# 部分一致だと "discovering"/"recovered"/"MVP" 等の無関係な単語に
+# "cover"/"MV" が誤爆するため、英数字キーワードのみ単語境界を必須にする。
+# Python の \b は日本語の漢字/かな/カナも word 文字とみなすため
+# 「公式MV公開」のような正当な埋め込みまで境界扱いされず漏れてしまう。
+# ASCII 英数字の前後だけを境界とみなす lookaround で判定する。
+# "Covered by" は "covered" より前に置く（先にマッチさせ exclude_reason を
+# 意味の狭い方に固定するため、実害は表示上の理由文字列のみだが順序を保つ）。
+EXCLUDE_TITLE_KEYWORDS_WORD_BOUNDARY: tuple[str, ...] = (
+    "Covered by", "covered", "cover", "MV", "original song", "original songs",
+)
+_WORD_BOUNDARY_PATTERNS: tuple[tuple[str, re.Pattern], ...] = tuple(
+    (
+        kw,
+        re.compile(
+            r"(?<![A-Za-z0-9])" + re.escape(kw) + r"(?![A-Za-z0-9])",
+            re.IGNORECASE,
+        ),
+    )
+    for kw in EXCLUDE_TITLE_KEYWORDS_WORD_BOUNDARY
 )
 
 # MV 同時視聴/リアクション企画の保護パターン
@@ -91,10 +112,15 @@ def is_excluded_video(title: str, ai_genre: str, channel_name: str) -> tuple[boo
             if g == ai_genre.strip():
                 return True, g
 
-    # タイトルベース判定（部分一致、大文字小文字無視）
+    # タイトルベース判定（部分一致、大文字小文字無視）— 日本語キーワード
     title_lower = title.lower()
     for kw in EXCLUDE_TITLE_KEYWORDS:
         if kw.lower() in title_lower:
+            return True, kw
+
+    # タイトルベース判定（単語境界一致、大文字小文字無視）— 英数字キーワード
+    for kw, pattern in _WORD_BOUNDARY_PATTERNS:
+        if pattern.search(title):
             # MV キーワードは同時視聴/リアクション企画の場合は保護してスキップ
             if kw == "MV" and MV_REACTION_PROTECTION.search(title):
                 continue

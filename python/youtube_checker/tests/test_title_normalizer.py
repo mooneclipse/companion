@@ -54,6 +54,43 @@ class TestIsExcludedVideoMvProtection:
             assert reason == expected_reason
 
 
+class TestIsExcludedVideoCoverWordBoundary:
+    """"cover"/"MV" 等英数字キーワードの単語境界判定（#74 誤爆修正）"""
+
+    def test_is_excluded_video_substring_false_positive_not_excluded(self):
+        """"cover" を内包するだけの無関係な単語では除外されない（False）"""
+        cases = [
+            "【#NIJIENChanted2】minecraft stream discovering the nether"
+            " in MC Eternal 2 with Nijisanji EN friends!!",
+            "配信中にPCが recovered した話",
+            "MVP を獲得しました",
+        ]
+        for title in cases:
+            excluded, reason = is_excluded_video(title, "", "テストチャンネル")
+            assert excluded is False, f"誤って除外された: {title} (reason={reason})"
+
+    def test_is_excluded_video_real_cover_still_excluded(self):
+        """独立した単語としての cover は引き続き除外される（True、真陽性維持）"""
+        cases = [
+            ("【加賀美ハヤト Cover】", "cover"),
+            ("新曲 Covered by 鈴木", "Covered by"),
+        ]
+        for title, expected_reason in cases:
+            excluded, reason = is_excluded_video(title, "", "テストチャンネル")
+            assert excluded is True, f"除外されなかった: {title}"
+            assert reason.lower() == expected_reason.lower()
+
+    def test_is_excluded_video_inflected_forms_still_excluded(self):
+        """"by" を伴わない covered や複数形 songs も引き続き除外される（True）"""
+        cases = [
+            "夜に駆ける covered",
+            "My Original Songs",
+        ]
+        for title in cases:
+            excluded, reason = is_excluded_video(title, "", "テストチャンネル")
+            assert excluded is True, f"除外されなかった: {title} (reason={reason})"
+
+
 class TestExtractCollabKeyFallback:
     """コラボキーのフォールバック（バグ1）"""
 
