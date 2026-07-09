@@ -85,7 +85,7 @@ def list_notes():
     """vault 配下の全 .md をフォルダ別にグルーピングして返す。
 
     返り値: {"root": <str>, "count": int, "folders": [
-      {"folder": "<rel dir or ''>", "notes": [{"path": rel, "name": stem}, ...]}, ...]}
+      {"folder": "<rel dir or ''>", "notes": [{"path": rel, "name": stem, "mtime": int}, ...]}, ...]}
     folder はルート直下を "" とし、それ以外は POSIX 区切りの相対ディレクトリ。
     """
     groups = {}
