@@ -5,6 +5,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 ## 改版履歴
 
+- **v0.10 (2026-07-10)**: v1「傾向と対策」実装完了 (#61 続き、user が v0 検証クリア扱いで GO) に伴う実装確定差分。**§3.4 実装確定** — `pipeline/analyze.py` 新設 (集計→ claude -p 1 回→検証→保存、失敗 3 態 rc≠0/JSON 不正/スキーマ NG は 1 回確定 fallback)。確定差分: (1) ペアキー未ソートは**ソートに正規化して受理** (キー欠落・型不正・`|` 1 個でない・空要素・重みが非数値/bool/非有限/≤0 のみ NG)、(2) 窓内 attempts 0 件は**何も書かず正常終了** (claude 呼び出しもしない、analysis 行なし = カード非表示のまま)、(3) fallback の weights は feature_tag 誤答率のみ (`1 + 誤答率` 小数 2 桁)・**pairs は常に空** (混同ペアの洞察は LLM の付加価値に限定)、(4) claude バイナリ解決は `$ENGLISH_CLAUDE` → PATH → nvm glob (ytcheck run.sh と同手順、systemd PATH 問題の手当)・timeout 300 秒、(5) CLI は `--db` / `--date` / `--fallback` (強制 fallback、動作確認・クォータ節約用)。**§4.2** — `/api/home` に `analysis:{date,report_md,source}|null` を追加 (weights は選定用内部情報で UI 契約に含めない)。ホームは trend の下にレポートカード、fallback は「· 定型」表示、行なしは非表示。**systemd** — `companion-english-analyze.service/.timer` (03:10 JST + RandomizedDelay 30 分、Persistent、WorkingDirectory=english/ 固定、Nice 19 + IOSchedulingClass idle)。drill.py の weights 受け口 (`_load_weights`/`_clip_weight`/`_rank_key`) は v0 実装のままズレなし。検証: pipeline 42 本 (analyze 18 本追加)・test_api 88 チェック・実弾 llm/fallback 両経路・systemd 経由実走・DB コピーで weights の選定効果を実測
 - **v0.9 (2026-07-08)**: user 要望 (#72)「出題が本編のどのへんか・どこまでやれば通しで見ていいか」。**(1) 本編内の位置バー** — drill クリップ応答に `episode_duration_s` を追加し (episode_id はクライアント未使用のためレビュー指摘で不採用)、出題・答え合わせ両画面のクリップ直下に位置マーカー (`.ep-pos`、start_s〜end_s を全長比で描画、最小幅 2%) + `本編 MM:SS / MM:SS` ラベルを表示。**(2) エピソード消化カバレッジ** — answer 応答に `episode_progress:{attempted,total}` を追加 (そのエピソードの全クリップ数と**全期間** DISTINCT 回答済みクリップ数、集計は drill.episode_clip_progress)。答え合わせ画面に `Ep1 の問題 N / M 回答済み` バーを表示し、全問到達で緑の `全 M 問 回答済み — 通しで見てOK` に切替。「通しで見ていい」の判定ゲートは設計上存在しない (出題プールは視聴済み範囲優先) ため、到達点の**目安表示**であってロックではない
 - **v0.8 (2026-07-03)**: user 要望 2 件。**(1) 答え合わせ時の日本語訳** — `clips.translation` 列を追加 (store.init_db の PRAGMA table_info → ALTER の冪等マイグレーション)。訳は YouTube **手動 ja 字幕のみ** (automatic_captions 不使用、機械翻訳/LLM 不使用 = 学習ループ全ローカル原則の維持)。クリップ時間範囲との半開交差 (`cue.start < end_s and cue.end > start_s`) で ja キューを空白結合、無ければ NULL。answer 応答に `translation: string|null` を追加、**drill/today には含めない** (出題時ネタバレ防止)。ingest は ja を best-effort 1 回確定で取得、`clips.py --fill-translations <ep>` は mp4 非接触の UPDATE のみバックフィル。**(2) プレイヤー字幕の動画外表示** — `<track>` は常時 mode=hidden (標準オーバーレイ描画を止める)、cuechange で動画直下の `.sub-line` に textContent 描画。トグル OFF で行ごと非表示
 - **v0.7 (2026-07-02)**: v0 実装完了 (#63) に伴う実装確定差分の反映。UI は **D 融合案で user 確定** (A 字幕の骨格 + ドリルのみ C の可読性、モック生成元 `english-ui-mocks/build.py`)。§4.2 に追記 — `POST /api/drill/flag` (attempt_id 指定で attempts.flags を UPDATE、答え合わせ後のワンタップフラグ用)、`/api/drill/today` の各クリップに `done`/`episode_title`/`start_s`/`end_s`、`/api/library` の episode に `sub_kind`、answer 応答に `attempt_id`。answers 配列は blanks idx 昇順への位置対応。POST ボディは dispatch 層で必ず drain (keep-alive 混入対策)。§2 孤児対策に追記 — `clips.py --rebuild` は attempts を**意図的に残す** (streak/正答率履歴の源泉のため。rebuild 時のみ FK OFF で clips を削除、DB 確定後に media を消す)
@@ -262,7 +263,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 
 | Method/Path | 内容 |
 |---|---|
-| GET `/api/home` | `{streak, today:{done,total,completed}, continue:{episode_id,title,position_s,duration_s}\|null, trend:[{date,acc}]×14}` |
+| GET `/api/home` | `{streak, today:{done,total,completed}, continue:{episode_id,title,position_s,duration_s}\|null, trend:[{date,acc}]×14, analysis:{date,report_md,source}\|null}` — (v0.10) analysis は §3.4 最新 1 行 (weights は UI 契約に含めない)。null ならレポートカード非表示 |
 | GET `/api/drill/today` | 今日のセット (daily_sets を引き、なければ生成して固定)。クリップごとに `{id, video_url, tokens:[...], blanks:[{idx,choices}]}` — **tokens の blank 位置は null に置換して返す** (原文語のまま返すと正解漏れ)。answer は answer API まで返さない。(v0.9) `episode_duration_s` を追加 (本編内の位置バー用) |
 | POST `/api/drill/answer` | `{clip_id, answers:[...], flags:[...], replays, duration_ms}` → 採点し、空欄ごとの `{answer, chosen, correct}` を attempts.results に記録 (§2、傾向分析の材料)。`{results:[bool], text, blanks:[{idx,answer}]}` を返す。(v0.9) `episode_progress:{attempted,total}` を追加 (エピソード内クリップの全期間 DISTINCT 回答済みカバレッジ、#72) |
 | POST `/api/drill/extra` | 「もう 1 セット」: 3 本追加して extra_ids に固定 |
@@ -304,7 +305,7 @@ photos の app.py と同系の stdlib `ThreadingHTTPServer`。**HTTP Range は p
 
 - 夜間バッチ化 (systemd timer、03:00 + RandomizedDelay。新エピソード自動巡回)
 - 入力式解答モード (設定でチップ式と切替)
-- **「傾向と対策」夜間分析 (analyze.py §3.4)**: claude -p で誤答傾向の文章化 + 出題重み生成 (ルールベースフォールバック必須)。ホームにレポートカード追加、drill.py の選定に weights 反映
+- **「傾向と対策」夜間分析 (analyze.py §3.4)**: claude -p で誤答傾向の文章化 + 出題重み生成 (ルールベースフォールバック必須)。ホームにレポートカード追加、drill.py の選定に weights 反映 — **実装済み 2026-07-10 (v0.10)、timer 稼働中**
 - 弱点タグ集計 (weak_form / 混同ペア / 速度帯別 正答率) + 統計画面、理解度推移
 - english.db を USB バックアップ運用に追加
 
