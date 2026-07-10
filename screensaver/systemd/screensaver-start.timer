@@ -1,0 +1,10 @@
+[Unit]
+Description=Start screensaver at 09:05
+
+[Timer]
+OnCalendar=*-*-* 09:05:00
+AccuracySec=1s
+Unit=screensaver.service
+
+[Install]
+WantedBy=timers.target
