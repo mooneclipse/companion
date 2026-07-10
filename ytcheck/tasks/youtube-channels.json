@@ -1,0 +1,551 @@
+{
+  "updated": "2026-04-26",
+  "genres": {
+    "corporate_female": "企業勢女子",
+    "corporate_male": "企業勢男子",
+    "indie": "個人勢",
+    "english": "英語圏"
+  },
+  "channels": [
+    {
+      "name": "佐伯イッテツ / Saiki Ittetsu【にじさんじ】",
+      "channel_id": "UCy8P3o5XlMpJGQY4WugzdNA",
+      "check_days": 4,
+      "genre": "corporate_male",
+      "favorite": 4,
+      "note": "",
+      "subscriber_count": 394000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Axel Syrios Ch. HOLOSTARS-EN",
+      "channel_id": "UC2hx0xVkMoHGWijwr_lA01w",
+      "check_days": 3,
+      "genre": "english",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 246000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "不破 湊 / Fuwa Minato【にじさんじ】",
+      "channel_id": "UC6wvdADTJ88OfIbJYIpAaDA",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 5,
+      "note": "",
+      "subscriber_count": 1200000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "ミラン・ケストレル / Milan Kestrel 【にじさんじ】",
+      "channel_id": "UCFtyinR2ZdvKK_Xgy07qXUg",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 4,
+      "note": "",
+      "subscriber_count": 302000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "星導ショウ / Hoshirube Sho【にじさんじ】",
+      "channel_id": "UCgZ0pH7j6c9z-pkOG3PYw1Q",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 4,
+      "note": "",
+      "subscriber_count": 469000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "七次元生徒会",
+      "channel_id": "UCHRCp0CSacVnTVS2Z4x9xYg",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 4,
+      "note": "",
+      "subscriber_count": 553000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "holostars ホロスターズ - VTuber Group",
+      "channel_id": "UCWsfcksUUpoEvhia0_ut0bA",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 287000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "やさしさパークタウン劇場",
+      "channel_id": "UCXCVVJUI6K50DLoJb3-sbsg",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 56300,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "おめがシスターズ [Ω Sisters]",
+      "channel_id": "UCNjTjd2-PMC8Oo_-dCEss7A",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 415000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "FUWAMOCO Ch. hololive-EN",
+      "channel_id": "UCt9H_RpQzhxzlyBxFqrdHqA",
+      "check_days": 3,
+      "genre": "english",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 1340000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Oga Ch.荒咬オウガ",
+      "channel_id": "UCwL7dgTxKo8Y4RFIKWaf8gA",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 202000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "ChroNoiR",
+      "channel_id": "UCz6vnIbgiqFT9xUcD6Bp65Q",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "くろのわーるがなんかやるだけ好き",
+      "subscriber_count": 1330000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "壱百満天原サロメ / Hyakumantenbara Salome",
+      "channel_id": "UCgIfLpQvelloDi8I0Ycbwpg",
+      "check_days": 3,
+      "genre": "corporate_female",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 1800000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Polka Ch. 尾丸ポルカ",
+      "channel_id": "UCK9V2B22uJYu3N7eR_BT9QA",
+      "check_days": 3,
+      "genre": "corporate_female",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 1360000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "青桐エイト",
+      "channel_id": "UC4Xuz67FNRr69ILv2b7ZRBA",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 50300,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "加賀美 ハヤト/Hayato Kagami",
+      "channel_id": "UCmovZ2th3Sqpd00F5RdeigQ",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 951000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "レオス・ヴィンセント / Leos.Vincent【にじさんじ】",
+      "channel_id": "UC-6rZgmxZSIbq786j3RD5ow",
+      "check_days": 4,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 510000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Marine Ch. 宝鐘マリン",
+      "channel_id": "UCCzUftO8KOVkV4wQG1vkUvg",
+      "check_days": 3,
+      "genre": "corporate_female",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 4370000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "なまほしちゃん",
+      "channel_id": "UCv5ndlKn_HNPySHP7mL1TTA",
+      "check_days": 3,
+      "genre": "corporate_female",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 34300,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Oriensオリエンス【にじさんじ】",
+      "channel_id": "UCwNNw9kUM-Bo0n2ktXOPB7Q",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 238000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "ROF-MAO / ろふまおチャンネル【にじさんじ】",
+      "channel_id": "UCwi4P78SVunSYAGrvC9aKcw",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 5,
+      "note": "",
+      "subscriber_count": 1340000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "HOLOSTARS English",
+      "channel_id": "UCJxZpzx4wHzEYD-eCiZPikg",
+      "check_days": 3,
+      "genre": "english",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 137000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Cellmates",
+      "channel_id": "UC0NvtZTT8OR6F5uKYTU8zsA",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 4,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 396000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "塚原大地 / Tsukahara Daichi【にじさんじ】",
+      "channel_id": "UC9HYkiQZ1_b3J_F8gc12eaA",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 4,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 98800,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "教育にいいゲーム",
+      "channel_id": "UCD9AcHQPY0bEEaqGBOFQK-A",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 41900,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Shu Yamino【NIJISANJI EN】",
+      "channel_id": "UCG0rzBZV_QMP4MtWg6IjhEA",
+      "check_days": 3,
+      "genre": "english",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 979000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "バーチャルねこ",
+      "channel_id": "UCKDHdDpoE9lurDuyAGAuNnw",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 22400,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Yoruno Neon Project",
+      "channel_id": "UCLQIMDHNE0ZGAiHIdMbq7dw",
+      "check_days": 4,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 25300,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "マフィア梶田と中村悠一の「わしゃがなTV」",
+      "channel_id": "UCReBAqqC-hc9d70gOftfitg",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 937000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "日雇礼子チャンネル",
+      "channel_id": "UCc5BawFmb7aNHck7HFtSKvw",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 77500,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "篠宮ゆの / Shinomiya Yuno 【 にじさんじ 】",
+      "channel_id": "UCo96eJdTpPOrxHFztYajbtg",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 98800,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "のじゃおじ@VRChat",
+      "channel_id": "UCt8tmsv8kL9Nc1sxvCo9j4Q",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 2,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 167000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "由持もにちゃんねる",
+      "channel_id": "UCup2TSNKxDM_SNCF9xuXSNg",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 19300,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "剣持刀也",
+      "channel_id": "UCv1fFr156jc65EMiLbaLImw",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 1240000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Nate Ch. 鴉森ネイト",
+      "channel_id": "UC6or1dwrJM97AH8KHeQ3S2A",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 2730,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "原佐 ハル / Parasa Hal",
+      "channel_id": "UCAYov6JrSLy8NQwd71TGLtA",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 476,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "ドロール・ワタリガラス",
+      "channel_id": "UCYxEiNMZsziZBLz27t-epkg",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 854,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Itoyuu Ch. 糸遊",
+      "channel_id": "UCbaxN5WD1W7SJbT4Bwv7MWg",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 2150,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "となりのCH",
+      "channel_id": "UCc2Ki0CanJMM1p3DmWNpXfQ",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 3710,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "牧奈ロイド-Machina Roid-",
+      "channel_id": "UCc6noEvAoj2X-bJjySwzLwQ",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 2,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 1020,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "日下部イッサのとてもやわらかチャンネル",
+      "channel_id": "UCd2ZMPrt6HIxRXDXgmyqdtg",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 2,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 1050,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "天雲ナガト / Amakumo Nagato☁️👁️",
+      "channel_id": "UCdeXlqRiqVvEMgQmfLi0uNQ",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 511,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "あいのり!死神茜ちゃんのゲームチャンネル-バヤリス-",
+      "channel_id": "UChru_92_dOQFo4c0JBP85Vg",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 1,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 2120,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "𓆊",
+      "channel_id": "UClFEg8QPQCbBkRjt3_W6QFA",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 1,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 2250,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "綿貫曜 watanuki Ch",
+      "channel_id": "UClfIaqzrQUdDW3dqSb6O8qA",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 1000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "リリィ・アンデウス / Lilyan Ch.",
+      "channel_id": "UCoX5KFqr-15Qcd-ogdGu4bg",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 2,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 2730,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "紅桃あると kurumi Alto",
+      "channel_id": "UCokPLeC81ZbMm_xf7V7I4rA",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 2,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 2450,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Sleeping Phorest",
+      "channel_id": "UCp_9BZzsoyIykDIPv1Q9GBw",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 2,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 82,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "シンスヴィアシスターズ【Synthvia Sisters】",
+      "channel_id": "UCs3v3MmPQL0xjD2QbyqFsEw",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 2,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 12200,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "災月龍朧呂",
+      "channel_id": "UCtKOP5vy8-LCN8Q8eJC5nWQ",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 3,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 105,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "起源種子",
+      "channel_id": "UCtjaQBYokvxA44f3MJigqWA",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 2,
+      "note": "auto-added 2026-04-25 from Takeout CSV",
+      "subscriber_count": 165,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "真黒アカミ-Makuro Akami-",
+      "channel_id": "UCfy6v70K1SXcITzqDJD9GPg",
+      "check_days": 3,
+      "genre": "indie",
+      "favorite": 4,
+      "note": "",
+      "subscriber_count": 272,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "Fuma Ch. 夜十神封魔 - UPROAR!! -",
+      "channel_id": "UCc88OV45ICgHbn3ZqLLb52w",
+      "check_days": 3,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 186000,
+      "subscriber_count_updated_at": "2026-07-06T23:20:04Z"
+    },
+    {
+      "name": "すぷれあ",
+      "channel_id": "UC0nC50_Q8qvLbtFe6FtXpuw",
+      "check_days": 4,
+      "genre": "corporate_male",
+      "favorite": 3,
+      "note": "",
+      "subscriber_count": 169000,
+      "subscriber_count_updated_at": "2026-07-07T20:05:30Z"
+    }
+  ]
+}
