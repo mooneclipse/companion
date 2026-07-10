@@ -31,6 +31,10 @@
 - gitleaks pre-commit hook 必須（`.git/hooks/` 配下＝git 管理外なので、clone / 再 init 時は再配置する）。
 - commit メッセージは既存ログスタイル（`feat(games):` / `docs(games):` / `refactor(games):`）に揃える。Co-Authored-By trailer は付けない。
 
+## 報告・引き継ぎ
+
+引き継ぎ／作業報告に書くコミットハッシュ・未追跡ファイル・件数・PASS／完了状態は、記憶から清書せず**書く直前に `git log --oneline` / `git status` 等の実出力を貼る**（過去に存在しないハッシュ・件数違い・未作成成果物の「作成済み」断定が発生。詳細はメモリ `feedback_fabricated_tool_results.md`）。見ていない値は断定せず「未確認」と明示する。
+
 ## 対象ユーザー
 
 miho 個人のみ（完全個人利用、外部公開なし）。スコア / マルチプレイ / 課金は不要。発注趣旨は「要望を聞かず AI が判断して作る」＝感想の解釈・次手の判断は AI 側で確定する（ユーザーは管理を委任済み）。
