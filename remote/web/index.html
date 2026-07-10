@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- CSP: 既定は同一オリジンのみ。inline script/style 不許可(外部 app.js/style.css)で XSS 面を絞る。
+     画像のみ img-src を明示緩和: blob:(ローカル画像の object URL)/https:(vault ノートの外部画像。
+     st-note 等ホストが多岐で列挙保守が続かないため https 全体を許可、script/style 等は 'self' のまま)。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: https:; object-src 'none'; base-uri 'none'">
+<meta name="theme-color" content="#f4f2ea">
+<title>リモコン</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="pal-vermil">
+
+<div class="wrap">
+
+  <!-- トークン未設定 / 失効時。ホーム/詳細とは独立に最前面に出す(他は #app 配下)。 -->
+  <section id="token-setup" class="token-screen" hidden>
+    <header class="mast">
+      <div class="brand">Home Server / Remote</div>
+    </header>
+    <div class="body">
+      <div class="kicker">Setup</div>
+      <h1 class="h1">トークン設定</h1>
+      <div class="card">
+        <label class="fld" for="token-input">アクセストークン</label>
+        <p id="token-msg" class="note">SSH で発行したトークンを貼り付けてください。</p>
+        <input type="password" id="token-input" autocomplete="off" inputmode="text" placeholder="トークン">
+        <button class="btn mt" id="token-save" type="button">保存</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 操作本体(token 設定済みのとき表示)。ホーム + 各機能詳細を section.screen で切替。 -->
+  <div id="app" hidden>
+
+    <!-- ============ HOME ============ -->
+    <section id="home" class="screen active">
+      <header class="mast">
+        <div class="brand">Home Server / Remote</div>
+        <div class="ver" id="app-version">Remote</div>
+      </header>
+
+      <!-- glance: 接続ドット + OS health 要約(要約専門。詳細は OS状態タイル)。タップで OS詳細へ。 -->
+      <div class="glance" id="glance" role="button" tabindex="0"
+           aria-label="接続状態と OS health（タップで詳細）">
+        <span class="dot" id="conn-dot" aria-hidden="true"></span>
+        <span class="ok" id="glance-text">接続確認中…</span>
+        <span class="metrics" id="glance-metrics" hidden></span>
+      </div>
+
+      <!-- 再生中バー: 再生中のみ表示。タップで動画詳細へ(現行 renderNow を昇格)。 -->
+      <button class="nowbar" id="nowbar" type="button" hidden aria-label="再生中（タップで動画を操作）">
+        <div class="np-kicker">Now Playing</div>
+        <div class="np-title"><span class="play" id="nowbar-icon">▶</span><span id="nowbar-title"></span></div>
+        <div class="np-time"><span id="nowbar-time"></span></div>
+      </button>
+
+      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">10</span></div>
+
+      <!-- タイルグリッド(2列)。
+           将来機能拡張: この .grid 内に <button class="tile" data-open="xxx"> を 1 枚足し、
+           対応する <section id="xxx" class="screen"> を下に追加するだけで増やせる。
+           GAMES のような単純リンク集なら配列駆動が綺麗だが、動画等は状態を持つので
+           一律配列化はしない。タイル追加が局所(この grid + 1 section)で済めばよい。
+           未実装の vault閲覧 / done履歴 は「押せないものは出さない」方針で今は出さない。 -->
+      <div class="grid" id="tile-grid">
+        <button class="tile" type="button" data-open="video">
+          <span class="t-mark">▶ 01</span><span class="t-name">動画</span><span class="t-sub">URL再生・事前DL</span>
+        </button>
+        <!-- 写真は別ポート(:8446)の独立フォト PWA を開くランチャ。data-href のタイルは
+             SPA 画面遷移せず外部 URL を開く。games の単純リンク集と動機は同じ(別オリジン導線)
+             だが、games は a@href の同タブ遷移なのに対し写真は別タブ(window.open _blank)で
+             戻りやすくする点が異なる。単一行先なので 1 タップ直行。tailscale 境界で保護。 -->
+        <button class="tile" type="button" data-href="https://miho-inspiron-3521.tail5e989b.ts.net:8446/">
+          <span class="t-mark">▦ 02</span><span class="t-name">写真</span><span class="t-sub">Google フォト閲覧</span>
+        </button>
+        <button class="tile" type="button" data-open="todo">
+          <span class="badge" id="tile-todo-badge" hidden></span>
+          <span class="t-mark">□ 03</span><span class="t-name">やること</span>
+          <span class="t-sub" id="tile-todo-sub">共用 inbox</span>
+        </button>
+        <button class="tile" type="button" data-open="games">
+          <span class="t-mark">◇ 04</span><span class="t-name">ゲーム</span>
+          <span class="t-sub" id="tile-games-sub">タイトル一覧</span>
+        </button>
+        <button class="tile" type="button" data-open="os">
+          <span class="t-mark"># 05</span><span class="t-name">OS状態</span><span class="t-sub">disk / mem / temp</span>
+        </button>
+        <button class="tile" type="button" data-open="vault">
+          <span class="t-mark">¶ 06</span><span class="t-name">ノート</span>
+          <span class="t-sub" id="tile-vault-sub">vault 閲覧</span>
+        </button>
+        <!-- 思考ログ: bot の私的観察を read-only で時系列に覗くだけのタイル。
+             新着バッジ / 未読件数 / push は意図的に付けない(軸4拡張 機構1 = 読まれない前提で
+             書く領域。「見て見て」装置を足すと不在の核を自分で壊す)。他 read タイルと同じ
+             控えめな佇まいに揃える。 -->
+        <button class="tile" type="button" data-open="thoughts">
+          <span class="t-mark">… 07</span><span class="t-name">思考ログ</span>
+          <span class="t-sub">そっと覗く</span>
+        </button>
+        <button class="tile" type="button" id="tile-ss" data-action="screensaver-toggle">
+          <span class="t-mark">◈ 08</span><span class="t-name">アート</span>
+          <span class="t-sub" id="tile-ss-sub">TV スクリーンセーバー</span>
+        </button>
+        <!-- KIKITORI (英語リスニング) は別ポート(:8447)の独立英語学習 PWA を開くランチャ。写真タイルと同型
+             (data-href → window.open _blank noopener、remote は proxy しない)。 -->
+        <button class="tile" type="button" data-href="https://miho-inspiron-3521.tail5e989b.ts.net:8447/">
+          <span class="t-mark">♪ 09</span><span class="t-name">KIKITORI</span><span class="t-sub">英語リスニング</span>
+        </button>
+        <!-- YT巡回 (#65 案 B): ytcheck の月次集計レポート閲覧 + viewing への視聴チェック/○× 記入。
+             開いた時 / popstate で取得、15s ポーリングには乗せない (思考ログタイルと同型)。 -->
+        <button class="tile" type="button" data-open="ytcheck">
+          <span class="t-mark">✓ 10</span><span class="t-name">YT巡回</span>
+          <span class="t-sub">視聴チェック・集計</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ============ VIDEO ============ -->
+    <section id="video" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">01 / Video</span></div>
+      <div class="body">
+        <div class="kicker">Video Player</div>
+        <h1 class="h1">動画</h1>
+
+        <!-- idle: URL 投入。close≠stop ゆえ再生中でも「閉じる」でこの view に戻れる(TV 継続)。
+             URL 欄は 1 本で「再生」(今すぐ TV) と「あとでDL」(事前DLキュー投入) に分岐。
+             仕様: remote/docs/video-ui.md -->
+        <div id="video-idle">
+          <!-- 「閉じる」で transport を畳んだが TV 再生継続中のとき、操作へ戻る導線 -->
+          <button id="video-reopen" type="button" class="btn secondary" hidden>操作に戻る</button>
+          <p id="video-ended" class="result" role="status" hidden></p>
+          <div class="card">
+            <div class="ctitle">動画を再生</div>
+            <label class="fld" for="video-url">URL</label>
+            <textarea id="video-url" rows="2" maxlength="2000" placeholder="YouTube / ニコニコ / TVer の URL"></textarea>
+            <div class="row mt">
+              <button id="video-play" type="button" class="btn">再生</button>
+              <button id="dl-add" type="button" class="btn secondary">あとでDL</button>
+              <button id="video-clear" type="button" class="btn secondary">クリア</button>
+            </div>
+            <p id="video-msg" class="result" role="status"></p>
+          </div>
+        </div>
+
+        <!-- resolving: yt-dlp 解決中(通常10秒前後、2026-06-12 実測)。経過秒 + 目安 + キャンセル -->
+        <div id="video-resolving" hidden>
+          <div class="card">
+            <p class="resolving"><span class="spinner" aria-hidden="true"></span>
+              <span id="video-resolve-text">読み込み中…</span></p>
+            <p class="note" id="video-resolve-note">読み込みには10秒ほどかかります</p>
+            <button id="video-cancel" type="button" class="btn secondary mt">キャンセル</button>
+          </div>
+        </div>
+
+        <!-- transport: 再生中 / 一時停止 -->
+        <div id="video-transport" hidden>
+          <div class="card">
+            <div class="ctitle">Now Playing</div>
+            <p id="video-title" class="now-title"></p>
+            <div id="video-seekrow" class="seekrow">
+              <input type="range" id="video-seek" min="0" max="100" value="0" aria-label="再生位置">
+              <div class="timeline"><span id="video-time"></span></div>
+            </div>
+            <!-- ±N 秒スキップ + ステップ可変(RV-7)。seekable=VOD のみ表示(live は §5.1 で非表示) -->
+            <div id="video-skiprow" class="row tight" hidden>
+              <button id="video-skip-back" type="button" class="btn ghost small">−10s</button>
+              <span class="step-ctl">
+                <button id="video-step-down" type="button" class="btn ghost small step-btn"
+                        aria-label="スキップ秒数を短く">−</button>
+                <span id="video-step-label" class="muted">10s</span>
+                <button id="video-step-up" type="button" class="btn ghost small step-btn"
+                        aria-label="スキップ秒数を長く">＋</button>
+              </span>
+              <button id="video-skip-fwd" type="button" class="btn ghost small">＋10s</button>
+            </div>
+            <p id="video-live-badge" class="live-badge" hidden>● LIVE</p>
+            <button id="video-toggle" type="button" class="btn mt">一時停止</button>
+            <label class="fld mt" for="video-volume">Volume</label>
+            <input type="range" id="video-volume" min="0" max="130" value="100" aria-label="音量">
+          </div>
+          <!-- 再生キュー(RV-12): playlist_count>1 のとき表示。前/次 + 曲タップで jump。
+               title は PWA 保持(vQueueTitles と playlist-pos を index で突き合わせ、契約 C2) -->
+          <div id="video-queue" class="card" hidden>
+            <div class="ctitle">再生リスト <span id="video-queue-count" class="muted"></span></div>
+            <div class="row tight">
+              <button id="video-prev" type="button" class="btn ghost small">‹ 前へ</button>
+              <button id="video-next" type="button" class="btn ghost small">次へ ›</button>
+            </div>
+            <p id="video-queue-live" class="note" hidden>LIVE は自動で次に進みません。「次へ」で送ってください</p>
+            <ol id="video-queue-list" class="queue-list"></ol>
+          </div>
+          <!-- 「閉じる」(可逆・TV 継続)と「停止」(不可逆・破壊的)を語彙/位置で分離(§5.1) -->
+          <div class="row mt">
+            <button id="video-close" type="button" class="btn secondary">閉じる</button>
+            <button id="video-stop" type="button" class="btn danger">停止</button>
+          </div>
+        </div>
+
+        <!-- 事前DLリスト(RV-10): 投入は上の URL 欄「あとでDL」に一本化、ここは一覧と再生/削除のみ。
+             主要動線(即時再生)の従なので todo の完了履歴と同型の折りたたみ同居(別タイルにしない)。
+             idle/transport と独立に表示 -->
+        <div class="card">
+          <button id="dl-toggle" type="button" class="todo-history-toggle" aria-expanded="false" aria-controls="dl-body">
+            <span class="ctitle">事前DLリスト</span>
+            <span id="dl-caret" class="todo-history-caret" aria-hidden="true">▸</span>
+          </button>
+          <div id="dl-body" hidden>
+            <p id="dl-result" class="result" role="status"></p>
+            <ul id="dl-list"></ul>
+            <p id="dl-usage" class="note"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TODO ============ -->
+    <section id="todo" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">03 / To-Do</span></div>
+      <div class="body">
+        <div class="kicker">Shared Inbox</div>
+        <h1 class="h1">やること</h1>
+        <div class="card">
+          <label class="fld" for="todo-input">新規追加</label>
+          <input type="text" id="todo-input" maxlength="2000" placeholder="頼みたいことを書く">
+          <button id="todo-add" type="button" class="btn mt">追加</button>
+          <p id="todo-result" class="result" role="status"></p>
+        </div>
+        <div class="card">
+          <div class="ctitle">List</div>
+          <ul id="todo-list"></ul>
+        </div>
+        <div class="card">
+          <button id="todo-history-toggle" type="button" class="todo-history-toggle" aria-expanded="false" aria-controls="todo-history-list">
+            <span class="ctitle">完了履歴</span>
+            <span id="todo-history-caret" class="todo-history-caret" aria-hidden="true">▸</span>
+          </button>
+          <ul id="todo-history-list" hidden></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ GAMES ============ -->
+    <section id="games" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">04 / Games</span></div>
+      <div class="body">
+        <div class="kicker" id="games-kicker">Titles</div>
+        <h1 class="h1">ゲーム</h1>
+        <div class="card">
+          <div id="games-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ OS ============ -->
+    <section id="os" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">05 / System</span></div>
+      <div class="body">
+        <div class="kicker">Host Metrics</div>
+        <h1 class="h1">OS状態</h1>
+        <div class="card">
+          <dl class="os" id="status-detail"></dl>
+          <button id="status-refresh" type="button" class="btn mt">更新</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ VAULT（ノート閲覧、read-only） ============ -->
+    <!-- 一覧(フォルダ別)→ タップで本文。本文中は同ビューア内ナビ(戻る/wikilink ジャンプ)。 -->
+    <section id="vault" class="screen">
+      <div class="dhead">
+        <!-- 戻るは history.back() に一本化(initNav の .back 結線)。doc→一覧→ホームと段階的に戻る -->
+        <button class="back" type="button" id="vault-back" data-home>‹ 戻る</button>
+        <span class="dtitle">06 / Notes</span>
+      </div>
+      <div class="body">
+        <div class="kicker">Vault（閲覧専用）</div>
+        <h1 class="h1">ノート</h1>
+
+        <!-- 一覧ビュー: 検索 + フォルダ別リスト -->
+        <div id="vault-list-view">
+          <div class="card">
+            <label class="fld" for="vault-search">検索</label>
+            <input type="search" id="vault-search" maxlength="200" placeholder="ファイル名・本文を検索">
+            <p id="vault-list-msg" class="note">読み込み中…</p>
+          </div>
+          <div class="vault-sort-bar">
+            <button type="button" class="vault-sort-btn active" id="vault-sort-folder">フォルダ</button>
+            <button type="button" class="vault-sort-btn" id="vault-sort-recent">更新順</button>
+          </div>
+          <div class="card">
+            <div id="vault-list"></div>
+          </div>
+        </div>
+
+        <!-- 本文ビュー: markdown 描画(クライアント側 marked+DOMPurify) -->
+        <div id="vault-doc-view" hidden>
+          <div class="card">
+            <!-- ヘッダ2段: フォルダ(小、ルート直下は非表示)+ ノート名(大)。app.js が textContent で入れる -->
+            <div class="vault-doc-path" id="vault-doc-path" hidden></div>
+            <div class="vault-doc-name" id="vault-doc-title"></div>
+            <div id="vault-frontmatter" class="vault-fm" hidden></div>
+            <!-- 描画本文。owner 自身の vault 由来 markdown を DOMPurify で無害化してから
+                 ここへ流す唯一の innerHTML 例外(app.js のコメント参照)。 -->
+            <div id="vault-doc" class="vault-doc"></div>
+            <p id="vault-doc-msg" class="result" role="status"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ THOUGHTS（思考ログ、read-only） ============ -->
+    <!-- bot の私的観察を時系列タイムラインで「そっと読む」だけ。編集・削除・既読・お気に入り等の
+         双方向操作は付けない(read-only 厳守)。観察行はサーバ無加工で透過し、ここでも本文は
+         触らない(timestamp だけ読みやすく整形)。発火前は静かな空表示。 -->
+    <section id="thoughts" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">07 / Thoughts</span></div>
+      <div class="body">
+        <div class="kicker">Private Notes（閲覧専用）</div>
+        <h1 class="h1">思考ログ</h1>
+        <div class="card">
+          <p id="thoughts-msg" class="note">読み込み中…</p>
+          <ol id="thoughts-timeline" class="thoughts-timeline"></ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ YTCHECK（視聴フィードバック、#65 案 B） ============ -->
+    <!-- 月ナビ + 月次集計レポート(折りたたみ、テキストそのまま) + チャンネル別動画一覧。
+         各行に 視聴チェック([ ]/[x] トグル)と ○/× ボタン(再タップで取り消し)。
+         タップ → POST /api/ytcheck/feedback → 返却 entry で再描画。外部由来文字列
+         (title/channel)は必ず textContent(innerHTML 不使用の規律)。 -->
+    <section id="ytcheck" class="screen">
+      <div class="dhead"><button class="back" type="button" data-home>‹ 戻る</button><span class="dtitle">10 / YT Check</span></div>
+      <div class="body">
+        <div class="kicker">YouTube 巡回</div>
+        <h1 class="h1">視聴フィードバック</h1>
+        <!-- 巡回チャンネル編集への入口(#71 実機フィードバック: 最下部の折りたたみは
+             存在を忘れるため、上部の遷移ボタン + 独立画面に変更)。initNav の data-open で結線。 -->
+        <button type="button" class="btn ghost yt-ch-link" data-open="ytchannels">巡回チャンネルの編集 ›</button>
+        <!-- URL で記入(#77): YouTube URL を貼り付けて ○/× を即記入 -->
+        <div class="card">
+          <div class="ctitle">URL で記入</div>
+          <div class="yt-url-row">
+            <input type="text" id="yt-url-input" placeholder="YouTube URL を貼り付け" autocomplete="off">
+            <button type="button" class="yt-fb" id="yt-url-hit" aria-label="当たり">○</button>
+            <button type="button" class="yt-fb" id="yt-url-miss" aria-label="外れ">×</button>
+          </div>
+          <p id="yt-url-msg" class="result" role="status"></p>
+        </div>
+        <div class="card">
+          <div class="yt-monthrow">
+            <button id="yt-prev" type="button" class="btn ghost small">‹ 前月</button>
+            <span id="yt-month" class="yt-month"></span>
+            <button id="yt-next" type="button" class="btn ghost small">翌月 ›</button>
+          </div>
+          <p id="yt-msg" class="result" role="status"></p>
+        </div>
+        <div class="card">
+          <button id="yt-report-toggle" type="button" class="todo-history-toggle" aria-expanded="false" aria-controls="yt-report">
+            <span class="ctitle">月次集計レポート</span>
+            <span id="yt-report-caret" class="todo-history-caret" aria-hidden="true">▸</span>
+          </button>
+          <pre id="yt-report" class="yt-report" hidden></pre>
+        </div>
+        <div class="card">
+          <div class="ctitle">動画一覧 <span id="yt-count" class="muted"></span></div>
+          <div id="yt-entries"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 巡回チャンネル編集（#71、実機フィードバックで独立画面化） ============
+         入口はフィードバック画面上部の data-open ボタン(ホームタイルは増やさない)。
+         ジャンル別一覧(行タップで編集フォーム展開)+ 追加フォーム。開いた時のみ GET、
+         保存/追加/削除 → POST → 再取得。追加の channel_id は UC ID か /channel/ URL のみ
+         (@handle 非対応、server 側 400)。追加の結果表示はボタン直下(#yt-ch-add-msg)。 -->
+    <section id="ytchannels" class="screen">
+      <div class="dhead"><button class="back" type="button">‹ 戻る</button><span class="dtitle">10 / YT Check</span></div>
+      <div class="body">
+        <div class="kicker">YouTube 巡回</div>
+        <h1 class="h1">巡回チャンネル</h1>
+        <div class="card">
+          <div class="ctitle">登録チャンネル <span id="yt-ch-count" class="muted"></span></div>
+          <p id="yt-ch-msg" class="result" role="status"></p>
+          <div id="yt-ch-list"></div>
+        </div>
+        <div class="card">
+          <div class="ctitle">チャンネル追加</div>
+          <input id="yt-ch-add-id" type="text" autocomplete="off"
+                 placeholder="UC〜 の ID か https://www.youtube.com/channel/UC〜">
+          <input id="yt-ch-add-name" type="text" autocomplete="off" maxlength="200" placeholder="チャンネル名">
+          <div class="yt-ch-addrow">
+            <select id="yt-ch-add-genre" aria-label="ジャンル"></select>
+            <button id="yt-ch-add-btn" type="button" class="btn">追加</button>
+          </div>
+          <p id="yt-ch-add-msg" class="result" role="status"></p>
+          <p class="note">@ハンドル形式の URL は使えません(チャンネルページ →
+            概要 → チャンネルを共有 → チャンネル ID をコピー)。</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- F-vault: markdown 描画ライブラリ(同一オリジン vendored、CSP default-src 'self' を満たす)。
+     app.js より前に読み込み marked / DOMPurify をグローバルに用意する。 -->
+<script src="/marked.min.js"></script>
+<script src="/purify.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

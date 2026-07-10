@@ -1,0 +1,72 @@
+[Unit]
+Description=companion remote F-video 常駐 mpv (idle, IPC リモコン制御専用)
+Documentation=file://%h/companion/remote/docs/STATUS.md
+Documentation=file://%h/companion/workspace/redesign/video-design.md
+
+[Service]
+Type=simple
+WorkingDirectory=%h/companion/remote
+
+# --- 環境隔離 (video-design §4.2 / §2 lead 実証: 最小 env rc=0) ---
+# user shell env / PROXY 系は systemd user unit が既定で継承しない。
+# PATH は yt-dlp(/home/miho/bin)を先頭に固定。HOME / XDG_RUNTIME_DIR は user unit が自動付与。
+Environment=PATH=/home/miho/bin:/usr/bin:/bin
+# 動画出力先(TV=HDMI)。dashboard.service と同じく明示。
+Environment=DISPLAY=:0
+# IPC socket を 0o600 で作らせる(同一 GUI uid からのみ到達 = video-design §3.4 / 契約2,3)。
+UMask=0077
+
+# stale socket 掃除を systemd 任せ(remote.service に supervise 責務を足さない、§3.2)。
+ExecStartPre=-/bin/rm -f %t/companion-video-mpv.sock
+
+# resident idle mpv。null 起動で常駐し、HTTP 経由の loadfile replace を待つ。
+#  --idle=yes              : ファイル無しでも常駐(再生 state を mpv が所有 → ジョブ基盤不要)
+#  --force-window=no       : idle 中は窓を占有しない(V-A1 で TV 黒画面化しないこと確認)
+#  --fullscreen --fs-screen-name: 再生時のみ TV(HDMI-1)へ全画面。出力名指定で Xinerama
+#                       index の脆さを回避(V-A1 確定 2026-05-20: index 0 は LVDS-1=ノート本体
+#                       を掴むため出力名 HDMI-1 で一意指定。xrandr: HDMI-1 1920x1080 820x460mm)
+#  --no-config             : ~/.config/mpv を読まない(SG-3 ハードニング)
+#  --ytdl=no + --scripts   : 組み込み 0.34.1 ytdl_hook を無効化し、vendored v0.37.0 hook
+#       (remote/vendor/ytdl_hook.lua、upstream 無改変 sha256=4f2e2a2a...) を外部 script と
+#       して読む。0.34.1 hook は yt-dlp の per-format cookies フィールド未対応でニコニコ
+#       domand HLS が 403 (RV-9)。v0.37 hook は cookies 対応済みで、0.34.1 core 上での
+#       動作はニコニコ sm9 8s playing + YouTube VOD 回帰なしを実機検証済 (2026-06-12)。
+#       設計判断 (video-design §8 手続き) は video-design.md 改版履歴 2026-06-12 参照。
+#       ファイル名は ytdl_hook.lua 必須 (script-opts の prefix がファイル名由来のため、
+#       リネームすると ytdl_hook-* オプションが届かなくなる)
+#  --ytdl-raw-options      : yt-dlp に --ignore-config / --no-playlist / --force-ipv4 を強制。
+#       force-ipv4 はこの網の IPv6 100% loss (RV-8 実測) × CDN の AAAA 応答で接続 timeout を
+#       踏む問題の回避 (DL 経路 dlqueue.py の -4 と同根拠、2026-06-12 実測 90 倍)
+#  ytdl_hook-ytdl_path     : yt-dlp 実体を固定パスで解決(PATH 依存にしない)
+#  ytdl_hook-try_ytdl_first: 最初から yt-dlp を呼ぶ(既定 no は youtube を ffmpeg 直開き→
+#       必ず失敗→on_load_fail フォールバックする。実 vo 環境では解決の遅いアーカイブで
+#       直開き失敗後に load が idle 中断され再生不能になる。V-A3 build 検証 2026-05-21 で確定)
+#  --ytdl-format           : 720p 上限(AVX1+HDD で 4K ソフトデコード自己DoS 回避。数値は1回確定)
+#  --hwdec=vaapi           : ハードウェアデコード有効化(Intel HD Graphics 4000=Ivy Bridge GEN7
+#                       + i965-va-driver 利用可)。Live 60fps で hwdec=no による frame-drop 690 /
+#                       estimated-vf-fps 27.3 (container 60.0) を観測したため有効化。新規オプション
+#                       追加 = 既存条件分岐の延長や数値だけ動かす対症療法 2 周目に該当せず、1 周目。
+#  --video-zoom=-0.05      : TV オーバースキャン補正(画面端の見切れ解消、user 実機で「ちょうどいい」確認済)
+#  --input-ipc-server      : リモコン制御の唯一の入口(verb whitelist は server/video.py 側)
+ExecStart=/usr/bin/mpv \
+    --idle=yes \
+    --no-terminal \
+    --force-window=no \
+    --fullscreen \
+    --fs-screen-name=HDMI-1 \
+    --no-config \
+    --ytdl=no \
+    --scripts=%h/companion/remote/vendor/ytdl_hook.lua \
+    --ytdl-raw-options=ignore-config=,no-playlist=,force-ipv4= \
+    --script-opts=ytdl_hook-ytdl_path=/home/miho/bin/yt-dlp,ytdl_hook-try_ytdl_first=yes \
+    --ytdl-format=bestvideo[height<=?720]+bestaudio/best[height<=?720]/best \
+    --hwdec=vaapi \
+    --video-zoom=-0.05 \
+    --input-ipc-server=%t/companion-video-mpv.sock
+
+# 単一インスタンス = 単一 lane を物理保証(409/lane ガード不要、§3.2)。クラッシュ時のみ再起動。
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
