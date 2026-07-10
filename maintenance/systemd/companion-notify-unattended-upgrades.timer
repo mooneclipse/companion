@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily run of unattended-upgrades notifier
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+RandomizedDelaySec=15min
+Unit=companion-notify-unattended-upgrades.service
+
+[Install]
+WantedBy=timers.target

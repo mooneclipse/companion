@@ -1,0 +1,73 @@
+# AI 技術トレンド週次収集レポート — 収集ソース設定
+#
+# この YAML は手編集する素朴な設定ファイル。lib/trends_fetch.py が pyyaml で
+# 読み込む。週 1 回 systemd timer (companion-trends.timer) から
+# scripts/trends-weekly.sh 経由で使われる。
+#
+# 将来 SQLite 等でソースを自動進化させたくなったら、lib/trends_fetch.py の
+# この YAML を読む箇所 (load_config) だけ差し替えればよい。fetch / parse /
+# filter / dedup のロジックは入力ソースの形式に依存しないので、ソース供給を
+# YAML → DB に切り替えても下流は無改修で済む。
+#
+# ----------------------------------------------------------------------------
+# keywords: filter:true のフィードで記事を採否判定するキーワード。
+#   title + summary に (大文字小文字を無視して) いずれかが含まれれば採用。
+#   filter:false のフィードはトピック自体が AI なので keywords を見ず全採用。
+keywords:
+  - LLM
+  - 生成AI
+  - Claude
+  - GPT
+  - エージェント
+  - RAG
+  - 推論
+  - ファインチューニング
+  - プロンプト
+
+# lookback_days: 何日前までの記事を採用するか。pubDate/updated が
+#   この日数以内のものだけ採用する。日付がパースできない記事は
+#   採用し、重複排除 (seen-urls.json) に委ねる。
+lookback_days: 8
+
+# feeds: 収集対象の RSS/Atom フィード。
+#   name   … レポート上のソース表示名
+#   url    … フィード URL (RSS2.0 / Atom どちらも可、パーサが自動判別)
+#   filter … false = トピック自体が AI なので無条件採用
+#            true  = keywords のいずれかに一致した記事だけ採用
+#
+# 企業ブログ候補は実装時に
+#   curl -sS -m15 -A "Mozilla/5.0" -o /dev/null -w "%{http_code}"
+# で 200 を確認したものだけ入れている (確認日 2026-06-04)。
+feeds:
+  # --- 日本語コミュニティ (トピック自体が AI = filter:false) ---
+  - name: Zenn AI
+    url: https://zenn.dev/topics/ai/feed
+    filter: false
+
+  - name: Zenn LLM
+    url: https://zenn.dev/topics/llm/feed
+    filter: false
+
+  - name: Qiita 生成AI
+    url: https://qiita.com/tags/生成ai/feed
+    filter: false
+
+  # --- 企業ブログ (2026-06-04 時点で 200 を確認したもの) ---
+  - name: OpenAI News
+    url: https://openai.com/news/rss.xml
+    filter: false
+
+  - name: Google DeepMind
+    url: https://deepmind.google/blog/rss.xml
+    filter: false
+
+  - name: Hugging Face Blog
+    url: https://huggingface.co/blog/feed.xml
+    filter: false
+
+  # --- URL 要確認 / 公開 RSS が見つからなかったもの ---
+  # Anthropic: 公開 RSS フィードは未提供 (2026-06-04 時点で
+  #   https://www.anthropic.com/rss.xml /news/rss.xml とも 404)。
+  #   公式 RSS が用意されたらここに filter:false で追加する。
+  # OpenAI Blog (旧パス): https://openai.com/blog/rss.xml は 307 redirect。
+  #   上の OpenAI News (/news/rss.xml) が現行の正規フィード。

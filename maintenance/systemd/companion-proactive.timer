@@ -1,0 +1,20 @@
+[Unit]
+Description=Periodic proactive companion messaging trigger (9-22 JST window)
+
+[Timer]
+# 発火帯 9-22 JST 内で複数回起こす。実際の発火判定 (沈黙 4h / 週ローリング上限
+# PROACTIVE_WEEKLY_MAX 回 (デフォルト 8、過去 168h) / 種有無 / 確率) は
+# proactive-companion.sh が state を 1 回引いて確定するので、timer は「判定を
+# 試みる機会」を撒くだけ。
+# host tz = Asia/Tokyo (OnCalendar は JST)。
+OnCalendar=*-*-* 09,11,13,15,17,19,21:00:00
+# マシンが寝ていた分を起床後に補完。連続 catch-up 発火は state file の週ローリング
+# 上限 (proactive_fire_epochs の過去 168h カウント) と沈黙閾値 (自発発話自体が
+# last_prompt_at を更新する) で抑止する。
+Persistent=true
+# 発火時刻のゆらぎ (不意打ち感の緩和、毎時ぴったりを避ける)。
+RandomizedDelaySec=40min
+Unit=companion-proactive.service
+
+[Install]
+WantedBy=timers.target

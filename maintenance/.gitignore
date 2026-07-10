@@ -1,0 +1,8 @@
+.env
+.env.*
+.state/
+venv/
+__pycache__/
+*.pyc
+*.swp
+*~

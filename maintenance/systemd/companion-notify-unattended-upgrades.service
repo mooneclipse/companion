@@ -1,0 +1,9 @@
+[Unit]
+Description=companion-maintenance: notify unattended-upgrades result to Discord
+# bot 起動順だけ後ろに寄せる。bot が落ちていても本体スクリプトは
+# socket 不在として skip するので Wants=/Requires= は付けない。
+After=companion-bot.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/miho/companion/maintenance/scripts/notify-unattended-upgrades.sh
