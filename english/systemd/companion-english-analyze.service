@@ -1,0 +1,13 @@
+[Unit]
+Description=companion english analyze (夜間の「傾向と対策」バッチ, claude -p + ルールベース fallback)
+
+[Service]
+Type=oneshot
+# 設計 §3.4: cwd 惰性の罠回避のため english/ に固定 (analyze.py 自体は cwd 非依存)
+WorkingDirectory=%h/companion/english
+ExecStart=/usr/bin/python3 %h/companion/english/pipeline/analyze.py
+# HDD/2 コア機で他プロセスと競合させない (pipeline/run_all.sh の nice 19 + ionice -c3 と同方針)
+Nice=19
+IOSchedulingClass=idle
+# claude -p は analyze.py 側で 300 秒 timeout 済み。unit は無限ハングだけ止める (ytcheck と同方針)
+TimeoutStartSec=15min

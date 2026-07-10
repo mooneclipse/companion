@@ -1,0 +1,21 @@
+[Unit]
+Description=companion english (英語リスニングドリル + 全話ライブラリ, 127.0.0.1:47827)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/companion/english
+ExecStart=%h/companion/english/server/app.py
+Restart=on-failure
+RestartSec=3
+# tailnet 露出は tailscale serve 前段のみ。本プロセスは loopback 限定。
+# photos の unit と同方針 (rootless user サービスで有効化できる mount 名前空間系のみ)。
+# ただし server は SQLite (data/english.db + WAL/SHM) に書くため data/ のみ書き込み許可。
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/companion/english/data
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

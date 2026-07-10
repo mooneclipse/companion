@@ -1,0 +1,9 @@
+{
+  "name": "KIKITORI",
+  "short_name": "KIKITORI",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbfbf9",
+  "theme_color": "#fbfbf9"
+}
