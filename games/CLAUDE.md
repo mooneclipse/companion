@@ -27,8 +27,8 @@
 
 ## git
 
-- **(C) ローカル git のみ**（remote なし、rollback 専用）。GitHub remote は意図的に付けない（マシン外バックアップ不要、上げ忘れではない）。
-- gitleaks pre-commit hook 必須（`.git/hooks/` 配下＝git 管理外なので、clone / 再 init 時は再配置する）。
+- 2026-07-11 から **`~/companion/` モノレポ配下**（チケット #82）。commit はパス明示（`git add <対象パス>`、`-A`/`.` 禁止）、push は OWNER のみ。運用の正は上位 `~/companion/CLAUDE.md` git 運用方針。
+- gitleaks pre-commit hook はモノレポ 1 本（`~/companion/.git/hooks/pre-commit`、git 管理外なので再配置時は要コピー）。
 - commit メッセージは既存ログスタイル（`feat(games):` / `docs(games):` / `refactor(games):`）に揃える。Co-Authored-By trailer は付けない。
 
 ## 報告・引き継ぎ

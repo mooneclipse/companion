@@ -3,7 +3,7 @@
 YouTube 巡回・字幕解析・AI 推薦システム。チャンネルリスト 56ch を毎日巡回し、新着動画の字幕を yt-dlp で取得、`claude -p` で「見る価値があるか」を評価して優先度別 Markdown レポートを Obsidian vault に出す。
 
 - **出自**: Windows 11 機の別 claude code ワークスペースで開発、2026-07-06 の zip (`ytcheck-migration-20260706.zip`) で本機へ移行。引き継ぎの正は `../MIGRATION-NOTES.md`
-- **git**: (C) ローカル git のみ・remote なし・rollback 専用。Windows 側原本はこちらが軌道に乗ったら削除予定 (OWNER 判断 2026-07-07)
+- **git**: 2026-07-11 から `~/companion/` モノレポ配下 (チケット #82、旧ローカル git は分割時代履歴ごと取り込み済み。自動 commit はパス限定方式でモノレポ適合、index.lock 衝突が頻発したらモノレポから外すことを OWNER に相談 — 2026-07-10 の約束)。Windows 側原本はこちらが軌道に乗ったら削除予定 (OWNER 判断 2026-07-07)
 - **台帳**: このファイル。コード詳細は `python/youtube_checker/README.md`
 
 ## 実行系

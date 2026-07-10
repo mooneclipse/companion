@@ -651,7 +651,7 @@ games/
 └── systemd/companion-games.service
 ```
 
-git: **(C) ローカル git のみ(remote なし、rollback 専用)**。GitHub remote は意図的に付けない(マシン外バックアップ不要)。gitleaks pre-commit hook 導入済み。
+git: 2026-07-11 から **`~/companion/` モノレポ配下** (チケット #82、旧ローカル git は分割時代履歴ごと取り込み済み)。commit はパス明示、gitleaks hook はモノレポ 1 本。運用の正は `~/companion/CLAUDE.md` git 運用方針。
 
 ## 起動手順（SETUP）
 

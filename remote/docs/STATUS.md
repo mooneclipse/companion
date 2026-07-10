@@ -44,7 +44,7 @@ remote/
 └── .state/   tokens.json(0o600) / jobs/(v1-β)
 ```
 
-git の扱い: 現在 **(C) ローカル git のみ (remote なし、rollback 専用)**。**(B) GitHub バックアップ付きへの昇格**(= `remote add` + `push`)は voice/ パターンに揃え「実装着手と同時」(RA-7 で判断)。
+git の扱い: 2026-07-11 から **`~/companion/` モノレポ配下** (チケット #82、旧 (C) ローカル git は分割時代履歴ごと取り込み済み)。push されれば GitHub (mooneclipse/companion) にバックアップされるため、旧「(B) 昇格」判断 (RA-7) は不要になった。運用の正は `~/companion/CLAUDE.md` git 運用方針。
 
 ## TODO
 

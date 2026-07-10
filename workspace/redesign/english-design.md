@@ -123,7 +123,7 @@ YouTube / ローカルファイル持ち込み (inbox/)
 └── docs/STATUS.md
 ```
 
-- **git**: **(C) ローカル git のみ** (remote/games と同判断: 実装コードは rollback が効けば十分)。学習ログ (english.db) はマシン外価値があるため、v1 で既存 USB バックアップ運用 (maintenance usb-backup) への db 追加を検討する
+- **git**: 設計時は (C) ローカル git のみ (remote/games と同判断: 実装コードは rollback が効けば十分) → **2026-07-11 から `~/companion/` モノレポ配下** (チケット #82)。学習ログ (english.db) は .gitignore のマシン内 DB のままマシン外価値があるため、v1 で既存 USB バックアップ運用 (maintenance usb-backup) への db 追加を検討する
 - **認証なし** (photos と同じ tailnet 内前提 + loopback bind が第一防御)
 
 ---
