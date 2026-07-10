@@ -9,7 +9,7 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 - systemd user timer `companion-english-analyze` → 毎晩 03:10 JST + ゆらぎ 30 分で `pipeline/analyze.py` (傾向と対策、claude -p + fallback)。enable 済み 2026-07-10
 - 公開: `https://miho-inspiron-3521.tail5e989b.ts.net:8447/` (tailscale serve、2026-07-02 設定)
 - リモコン PWA タイル「♪ 09 KIKITORI」から遷移 (remote repo 側)
-- 教材: TADC Ep1 (HwAPLk_sQ3w、手動 en 字幕、クリップ 40 本) 取込済み
+- 教材: 18 話・クリップ 377 本 (TADC Ep1-9 の 8 話 — Ep4 は DL 403 失敗で未取込 / Bee and PuppyCat Ep1-10 の 10 話、2026-07-10 取込)
 
 ## 構成 (設計 §1)
 
@@ -28,10 +28,12 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 
 ## TODO
 
-- [ ] TADC 残り 8 話 + Bee and PuppyCat (個別動画 URL) を sources.json に追加して ingest
+- [ ] TADC Ep 4 (Q9KWcWKo2T8) の再取込 — 2026-07-10 の一括 ingest で唯一 DL 失敗 (HTTP 403 Forbidden、yt-dlp impersonation 案内。設計契約どおり 1 回確定・リトライせず)。yt-dlp 更新 or impersonation 依存導入後に run_all.sh 再走で冪等に拾える
 - [ ] v1 残り: 新エピソード自動巡回の夜間バッチ化 / 入力式解答 / 弱点タグ統計画面 / english.db の USB バックアップ追加
 
 ## Done
+
+- 2026-07-10: **教材一括追加 — TADC Ep2-9 + Bee and PuppyCat Ep1-10 (18 本) を sources.json に追記して ingest** (TODO「TADC 残り 8 話 + Bee and PuppyCat」消化、設計 v0.11)。結果: added=17 / failed=1 (TADC Ep4 Q9KWcWKo2T8 が HTTP 403、1 回確定でログのみ・リトライなし)、subs cleaned=17/17、clips made=337 (総計 377 本)。既存 TADC Ep1 は冪等 skip を実測確認。BPC は Ep5/6/8/9/10 が auto 字幕 (設計どおり sub_kind=auto)。**auto 字幕 3 話 (BPC Ep5/6/9) はクリップ 0 本** — 2018 再アップの自動字幕に句読点がなく文分割が 4〜12 秒 / 5〜25 語基準を全て外れるため (視聴専用ではなく sub_kind=auto のままライブラリ視聴可、クリップ選定基準による自然な結果として許容)。media 総量 1.4GB (+1.3GB)。あわせて**表示順タイブレーク修正**: 単一動画 URL は playlist_index がなく upload_date フォールバックが BPC Ep1/Ep2 (同日 20141107 公開) で同値タイ → sources.json のエントリ順を 0 埋めサフィックスで sort_key に焼き込み (state 側 1 回確定、server 無変更・video_id 辞書順は不採用)。検証: pipeline 49 本 (sort_key 7 本追加)・test_api 全 PASS、/api/library 実レスポンスで BPC Ep1→Ep2 正順、クリップ 3 本 ffprobe 健全 (h264+aac)
 
 - 2026-07-10: **v0 検証 (1〜2 週間毎日使うか、設計 §6 v0 完了条件) は user 判断でクリア扱い**、v1 GO。TODO から検証項目を除去 (code-reviewer 指摘への判断記録)
 
