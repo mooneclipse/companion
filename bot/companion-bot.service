@@ -1,0 +1,31 @@
+[Unit]
+Description=Companion Telegram bot (bridges Telegram supergroup to `claude -p`)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/companion/bot
+EnvironmentFile=%h/companion/bot/.env
+# Make sure node (and therefore the `claude` CLI) is on PATH.
+Environment=PATH=%h/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
+# /play で xdg-open がこの PC の GUI セッションへブラウザを開けるよう X11 接続情報を渡す。
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+# /vault_push の git push で SSH 鍵 (GNOME keyring agent) を使えるよう socket path を
+# 固定で明示する。%t = XDG_RUNTIME_DIR = /run/user/1000。GUI ログインセッション起動順
+# への継承依存を排除し、cold boot 経路でも path を常に固定解決させる (socket 不在 /
+# ロック時は BatchMode=yes で git push が即 fail し報告される)。
+Environment=SSH_AUTH_SOCK=%t/keyring/ssh
+ExecStart=%h/companion/bot/venv/bin/python %h/companion/bot/bot.py
+# bot 起動完了の 15 秒後に maintenance 通知 oneshot を 1 回ずつ catch-up 発火 (design.md §7.2)。
+# 既存の日次 companion-notify-*.service を経由するため起動経路は一元化。
+# notify scripts は state_matches で同日二重通知を抑止するため、日次 timer と併走しても重複しない。
+# 失敗無視 (- prefix) + transient unit auto cleanup (--collect) で bot.service の起動を妨げない。
+ExecStartPost=-/usr/bin/systemd-run --user --on-active=15s --unit=companion-bot-catchup-unattended-upgrades --collect /usr/bin/systemctl --user start --no-block companion-notify-unattended-upgrades.service
+ExecStartPost=-/usr/bin/systemd-run --user --on-active=15s --unit=companion-bot-catchup-system-report --collect /usr/bin/systemctl --user start --no-block companion-notify-system-report.service
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=default.target
