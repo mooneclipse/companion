@@ -214,19 +214,24 @@ def validate_output(data):
         return (not isinstance(v, bool) and isinstance(v, (int, float))
                 and math.isfinite(v) and v > 0)
 
+    def _clamp(v):
+        # プロンプト指示レンジ (0.5〜3.0) を検証側でも強制。範囲逸脱は NG でなく
+        # クランプで受ける (極端値 1 つで analysis 全体を fallback に落とさない)
+        return min(3.0, max(0.5, float(v)))
+
     norm_tags = {}
     for k, v in tags.items():
         if not isinstance(k, str) or not k or not _valid_weight(v):
             return None
-        norm_tags[k] = float(v)
+        norm_tags[k] = _clamp(v)
     norm_pairs = {}
     for k, v in pairs.items():
         if not isinstance(k, str) or not _valid_weight(v):
             return None
-        parts = k.split("|")
+        parts = [p.strip() for p in k.split("|")]
         if len(parts) != 2 or not parts[0] or not parts[1]:
             return None
-        norm_pairs["|".join(sorted(parts))] = float(v)
+        norm_pairs["|".join(sorted(parts))] = _clamp(v)
     return report.strip(), {"feature_tags": norm_tags, "pairs": norm_pairs}
 
 

@@ -242,6 +242,20 @@ class ValidateOutputUnitTest(unittest.TestCase):
         _, weights = analyze.validate_output(data)
         self.assertEqual(weights["pairs"], {"their|they're": 1.5})
 
+    def test_clamps_out_of_range_weights(self):
+        data = self._base(weights={"feature_tags": {"weak_form": 100.0, "speed": 0.01},
+                                   "pairs": {"can|can't": 50.0}})
+        _, weights = analyze.validate_output(data)
+        self.assertEqual(weights["feature_tags"], {"weak_form": 3.0, "speed": 0.5})
+        self.assertEqual(weights["pairs"], {"can|can't": 3.0})
+
+    def test_strips_spaces_in_pair_key(self):
+        data = self._base(weights={"feature_tags": {}, "pairs": {"can | can't": 1.5}})
+        _, weights = analyze.validate_output(data)
+        self.assertEqual(weights["pairs"], {"can|can't": 1.5})
+        self.assertIsNone(analyze.validate_output(
+            self._base(weights={"feature_tags": {}, "pairs": {"can | ": 1.5}})))
+
 
 if __name__ == "__main__":
     unittest.main()
