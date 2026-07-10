@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- title は dashboard-start.sh の wmctrl 窓同定キー。一意な合言葉にする（全画面では非表示）。変更時は start.sh の WIN_TITLE_MATCH も合わせる。 -->
+<title>COMPANION-DASH</title>
+<link rel="stylesheet" href="style.css">
+<!-- dashboard-config.js は <script src> で読む（file:// だと fetch() は弾かれるが script src は通る） -->
+<script src="dashboard-config.js"></script>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- 2 列 3 行グリッド:
+         row 1: [時計]          [今日の天気 + 3 時間ごとの天気]
+         row 2: [ごみ予告]      [キャラ + セリフ]
+         row 3: [再生中の曲]    [（空欄／将来「おすすめ」用の予約セル）]
+       既存 id (wx-*, gb-*, np-text, companion, hh/mm/date, wx-hourly) は維持し app.js / index 内 inline script を変更しない。 -->
+  <main class="grid">
+
+    <!-- (1, left) 時計 -->
+    <section class="cell cell-clock">
+      <div class="panel clock">
+        <div class="time"><span id="hh">07</span><span class="colon">:</span><span id="mm">42</span></div>
+        <div class="date" id="date">5月13日 (火)</div>
+      </div>
+    </section>
+
+    <!-- (1, right) 今日の天気 + 3 時間ごとの天気 -->
+    <section class="cell cell-weather">
+      <div class="panel weather" id="weather">
+        <div class="weather-now">
+          <div class="wx-icon" id="wx-icon">
+            <svg viewBox="0 0 64 64" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="22" cy="22" r="11" fill="none"/>
+              <g class="ray"><line x1="22" y1="3" x2="22" y2="9"/><line x1="22" y1="35" x2="22" y2="41"/><line x1="3" y1="22" x2="9" y2="22"/><line x1="35" y1="22" x2="41" y2="22"/><line x1="8.8" y1="8.8" x2="13" y2="13"/><line x1="31" y1="31" x2="35.2" y2="35.2"/><line x1="35.2" y1="8.8" x2="31" y2="13"/><line x1="13" y1="31" x2="8.8" y2="35.2"/></g>
+              <path d="M20 44a11 11 0 0 1 21-4 8 8 0 0 1 1 16H22a9 9 0 0 1-2-12z" fill="none"/>
+            </svg>
+          </div>
+          <div class="weather-text">
+            <div class="wx-temp" id="wx-temp">18°</div>
+            <div class="wx-label" id="wx-label">くもり時々晴れ</div>
+            <div class="wx-sub">
+              <span class="wx-hilo" id="wx-hilo">今日 <span class="hi">↑22°</span> <span class="lo">↓14°</span></span>
+              <span class="wx-pop" id="wx-pop">降水 20%</span>
+            </div>
+            <div class="wx-stamp" id="wx-stamp"></div>
+          </div>
+        </div>
+        <!-- 3 時間ごと予報（6/9/12/15/18/21時）。HOURLY_SLOTS=[6,9,12,15,18,21] は 3 時間刻みなのでそのまま流用。 -->
+        <div class="wx-hourly" id="wx-hourly" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <!-- (2, left) ごみ予告 -->
+    <section class="cell cell-garbage">
+      <div class="panel garbage" id="garbage">
+        <div class="gb-icon">
+          <svg viewBox="0 0 64 64" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 18h36l-3 36a4 4 0 0 1-4 4H21a4 4 0 0 1-4-4z"/>
+            <path d="M10 18h44"/><path d="M25 18l2-6h10l2 6"/>
+            <line x1="27" y1="28" x2="28" y2="50"/><line x1="37" y1="28" x2="36" y2="50"/>
+          </svg>
+        </div>
+        <div class="gb-when" id="gb-when">あす <span class="dow">(水)</span></div>
+        <div class="gb-type" id="gb-type">燃やすごみ</div>
+        <div class="gb-next" id="gb-next">次: プラ容器 5/16 (金)</div>
+      </div>
+    </section>
+
+    <!-- (2, right) キャラ（セル左端寄せ）+ セリフ枠 -->
+    <section class="cell cell-companion">
+      <div class="companion-row">
+        <!-- 小箱キャラ。既存 SVG/アニメーション/data-state 機構は不変、配置だけ flow に戻す（旧 absolute → grid セル内）。 -->
+        <div class="companion" id="companion" data-state="normal" aria-hidden="true">
+          <div class="companion-sway">
+            <svg class="companion-svg" viewBox="0 0 160 200" width="100%" height="100%">
+              <rect class="cmp-body" x="28" y="28" width="104" height="150" rx="20"/>
+              <ellipse class="cmp-shadow" cx="80" cy="188" rx="46" ry="6"/>
+              <rect class="cmp-screen" x="44" y="56" width="72" height="74" rx="14"/>
+              <g class="cmp-eyes">
+                <circle class="cmp-eye" cx="67" cy="88" r="6.5"/>
+                <circle class="cmp-eye" cx="93" cy="88" r="6.5"/>
+              </g>
+              <rect class="cmp-mouth" x="71" y="110" width="18" height="4.5" rx="2.25"/>
+            </svg>
+          </div>
+        </div>
+        <!-- セリフ枠（30 秒ごとに 1 言ずつフェード切替。文言は app.js の buildQuoteQueue で動的生成）。 -->
+        <!-- quote-progress: セリフ切替の 30 秒メーター。span が 0→100% に伸びて切替タイミングを可視化。 -->
+        <div class="quote" id="quote" aria-live="polite">
+          <div class="quote-text" id="quote-text">…</div>
+          <div class="quote-progress" id="quote-progress" aria-hidden="true"><span></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- (3, left) 再生中の曲 -->
+    <section class="cell cell-nowplaying">
+      <div class="now-playing" id="now-playing">
+        <span class="np-note">♪</span>
+        <span class="np-text" id="np-text">—</span>
+      </div>
+    </section>
+
+    <!-- (3, right) 空欄（将来「おすすめ」表示用の予約セル。現状ロジック未実装＝何も描かない） -->
+    <section class="cell cell-suggestion" aria-hidden="true">
+      <!-- 将来: おすすめがあればここに描く。今は意図的に空。 -->
+    </section>
+
+  </main>
+
+</div>
+
+<script>
+  // 時計だけは絶対に欠けてはいけない。fetch 系より前・隔離して登録。app.js が throw しても刻み続ける。
+  (function () {
+    var hh = document.getElementById('hh'),
+        mm = document.getElementById('mm'),
+        dateEl = document.getElementById('date');
+    var WD = ['日', '月', '火', '水', '木', '金', '土'];
+    var p2 = function (n) { return n < 10 ? '0' + n : '' + n; };
+    var lastDay = null;
+    function tick() {
+      var d = new Date();
+      hh.textContent = p2(d.getHours());
+      mm.textContent = p2(d.getMinutes());
+      var dayKey = d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+      if (dayKey !== lastDay) {
+        lastDay = dayKey;
+        dateEl.textContent = (d.getMonth() + 1) + '月' + d.getDate() + '日 (' + WD[d.getDay()] + ')';
+        if (window.__refreshGarbage) { try { window.__refreshGarbage(); } catch (e) {} }
+      }
+    }
+    tick();
+    setInterval(tick, 1000);
+  })();
+</script>
+<!-- 本番データ配線。モック段階では存在しなくても時計と静的ダミーは表示される。 -->
+<script src="app.js" onerror="/* app.js 未実装でも可 */"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+[Unit]
+Description=Stop morning dashboard at 09:00
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+AccuracySec=1s
+Unit=dashboard-stop.service
+
+[Install]
+WantedBy=timers.target

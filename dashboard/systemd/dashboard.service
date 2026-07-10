@@ -1,0 +1,25 @@
+[Unit]
+Description=Morning dashboard (TV display + mpv music)
+# graphical-session.target は user systemd に存在しないので After=/PartOf= には使わない。
+# X が上がっているかは ExecStartPre で確認する。
+# このユニットは dashboard-start.timer / dashboard-stop.service から駆動されるので [Install] は持たない。
+
+[Service]
+Type=simple
+Restart=no
+Environment=DISPLAY=:0
+WorkingDirectory=%h/companion/dashboard
+
+# X (:0) が立ち上がるまで最大 ~20s 待つ（5:25 reboot → 5:30 timer 発火のような edge で firefox を死んだ display に投げない）。
+# bounded・clean fail。retry-loop ではなく observable state（X11 socket）への readiness gate。
+ExecStartPre=/bin/sh -c 'i=0; while [ "$i" -lt 20 ]; do [ -e /tmp/.X11-unix/X0 ] && exit 0; i=$((i+1)); sleep 1; done; echo "X11 socket /tmp/.X11-unix/X0 not present" >&2; exit 1'
+
+ExecStart=%h/companion/dashboard/bin/dashboard-start.sh
+
+# 停止後: 起動時に保存した sink 音量・mute 状態を復元。手動 stop / 9:00 自動 stop / 異常終了どれでも経由する。
+# ExecStopPost は main 終了状態に関わらず実行されるため、復元の取りこぼしを防ぐ。
+ExecStopPost=%h/companion/dashboard/bin/dashboard-restore-volume.sh
+
+# 停止: systemctl --user stop が main(sleep) + cgroup 全体に SIGTERM、15s 後 SIGKILL。
+KillMode=control-group
+TimeoutStopSec=15s
