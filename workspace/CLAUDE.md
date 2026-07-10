@@ -16,9 +16,9 @@ Telegram 経由セッション (bot 経由、CWD = `~/companion/bot-workspace/`)
 
 メッセージが `#N`（共用 TODO のチケット番号、例 `#68`）で始まるときは、意図や本文を推測せず `python3 ~/companion/remote/server/tickets.py show N` で実物を引いてから動く。番号単独でも補足付きでも同じ（リモコン PWA のコピーボタンは `#N` だけをコピーする仕様。2026-07-07 確定）。着手時は `start N`、完了時は `done N`。
 
-## Workspace 直下の git 方針
+## git 構成 (モノレポ)
 
-workspace 直下は **(C) ローカル git のみ（remote なし、rollback 専用）** で管理する。当初は「git 化しない」方針だったが、想定していた `workspace/<project-name>/` 配下のサブプロジェクトは実際には `~/companion/` 直下に兄弟配置され、`workspace/` には複数セッション/agent team で大幅改稿される設計台帳（`PROJECT.md` / `redesign/` / `review-*/`）しか残らなかった。他プロジェクトの履歴が混ざる懸念がなくなり、rollback の価値が大きいためローカル git を導入した。**GitHub remote は意図的に付けない**（マシン外バックアップ不要、上げ忘れではない）。git 化 3 階層の詳細は `~/companion/CLAUDE.md` git 運用方針 / `PROJECT.md`「git 化の 3 階層」、破壊的 git 操作の deny / commit ルール / Co-Authored-By trailer の扱い等も上位 `~/companion/CLAUDE.md` を参照。
+workspace は独立 repo ではなく **`~/companion/` モノレポの 1 サブディレクトリ** (2026-07-11 切替、チケット #82)。commit は従来どおりこのセッションから打てるが、repo root は `~/companion/`、commit は**パス明示** (`git add <対象パス>`、`-A`/`.` 禁止)。push・境界外 (vault/photos/logs)・旧 3 階層区分の廃止など運用の正は上位 `~/companion/CLAUDE.md` git 運用方針と `redesign/monorepo-migration.md` を参照。
 
 新しいコードやツールを導入する際は、その時点で:
 - 主要なコマンド（実行・テスト・lint・ビルド）
@@ -55,7 +55,7 @@ workspace 直下は **(C) ローカル git のみ（remote なし、rollback 専
 2. **実装** — 必要な編集・テスト
 3. **レビュー** — `code-reviewer` subagent を呼び差分を点検（`.claude/agents/code-reviewer.md`）。修正必須が出れば反映 → 再レビュー
 4. **コミット** — 適切な粒度（1 論理単位 = 1 commit）で `git add` → `git commit`。`permissions.allow` で確認なく通る
-5. **プッシュ** — claude 側で `git push` を実行しない。**(B) GitHub remote 付き repo のみ** `cd <repo> && git push origin <branch>` を 1 行表示し、ユーザーが自分のターミナルで叩く（誤りの最終ゲート）。**(C) ローカル git のみ repo（workspace / web / remote / bot-workspace / games 等）は commit で完結**、push 行も出さない。判別は `git remote -v`（空 = (C)）。auto mode classifier は push を構造的に block するため claude 側で試みること自体が無駄ターン（2026-06-16 協働判断で確定）
+5. **プッシュ** — claude 側で `git push` を実行しない。commit 後、push 行 `cd ~/companion && git push origin main` を 1 行表示し、ユーザーが自分のターミナルで叩く（誤りの最終ゲート）。頻度はユーザーの任意（溜めても push 1 発で全域バックアップ）。auto mode classifier は push を構造的に block するため claude 側で試みること自体が無駄ターン（2026-06-16 協働判断で確定）。例外: vault は独立 repo のままで本ルールの対象外
 6. **STATUS.md / PROJECT.md 更新** — Done エントリ追加、最終更新日時更新
 
 ### コミット粒度の指針
