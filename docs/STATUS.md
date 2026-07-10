@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-07-07 (usb-backup: `~/companion` をバックアップ対象に追加。詳細は Done 先頭 entry)
+最終更新: 2026-07-10 (NTP 時刻同期を導入 — マシンの時計 2 分遅れ解消、チケット #79。詳細は Done 先頭 entry)
 
 ## 設計メモ
 
@@ -73,6 +73,11 @@ machine-audit PLAN.md S6-6 の 7 作業項目。計測→powertop 適用→DPMS 
 （なし）
 
 ## Done
+
+- 2026-07-10 NTP 時刻同期の導入 (チケット #79「ダッシュボードの時計が2分遅い」)
+  - **原因**: マシンに時刻同期が丸ごと不在だった (systemd-timesyncd 未インストール、ntp.service は masked、`timedatectl` = synchronized: no / NTP service: n/a)。RTC ドリフトが蓄積し、HTTP Date ヘッダ比較で実測 2 分 1 秒の遅れ。dashboard 側は `new Date()` のシステム時刻直読みでコードに問題なし
+  - **対処**: `systemd-timesyncd` を apt install + `timedatectl set-ntp true` (sudo スクリプトをユーザー実行)。適用後 synchronized: yes / 実時刻と秒単位一致を確認。以後は自動同期で再発しない (RTC もカーネルが定期書き戻し)
+  - **記録**: チケット #79 に解決内容を追記して done 済み
 
 - 2026-07-07 usb-backup: `~/companion` を BACKUP_PATHS に追加 (OWNER 依頼)
   - **動機**: ytcheck 移行 (2026-07-07、(C) ローカル git のみ) で Windows 側原本を将来削除する前提になり、(C) repo 群のコードにマシン外コピーが 1 つもない状態を解消する
