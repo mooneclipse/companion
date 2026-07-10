@@ -10,7 +10,8 @@ Design highlights wired in here:
 - send_text: AIORateLimiter (framework) 委譲、素手 sleep なし (N-T12)
 - parse_mode = 指定しない (素文字列送信、MarkdownV2 escape は W-6 で永続不採用)
 - slash command を BotCommandScopeChat(chat_id=NOTIFY_CHAT_ID) にスコープ限定
-- edited_message を filter で物理取りこぼし (§4.5 / N-T7)
+- edited_message を filter で物理取りこぼし (§4.5 / N-T7)。例外は memo topic
+  (#84) の編集同期のみ (on_memo_edited、他 topic の編集は従来どおり無視)
 - long polling stall_check_job (§4.6) で 5 分 × 3 連続 fail → sys.exit(1)
 - `_handle_notify` は asyncio.Queue + 1 worker で順序保証 (§5.2)、`[critical] `
   完全一致のみ disable_notification 反転 (W-6 上限ルール)
@@ -39,6 +40,7 @@ from dotenv import load_dotenv
 from telegram import (
     BotCommand,
     BotCommandScopeChat,
+    ReactionTypeEmoji,
     ReplyParameters,
     Update,
 )
@@ -244,6 +246,26 @@ VAULT_SYNC_LOCK_FILE = Path(
 ) / "companion-vault-sync.lock"
 VAULT_LOCK_TIMEOUT_S = 15.0
 
+# 個人メモ捕獲 topic (ticket #84): BOT_THREAD_ID_MEMO topic の生テキスト投稿を
+# claude セッション無しで bot が直接 vault notes/ に日付ファイル保存する。
+# メッセージは投稿から 48h 後に定期 cleanup job が Telegram から削除する。それ
+# までは Telegram のユーザー編集ウィンドウ (48h) がそのまま生きるので、
+# edited_message を受けて保存済みファイルを上書き同期する (2026-07-11 設計改訂)。
+# message_id → 保存ファイルの対応は sessions/memo_state.json に永続化し、bot が
+# 保存したメッセージだけを削除・同期の対象にする。この直接書き込みは notes/ 限定
+# (上位 CLAUDE.md の vault 書き込み境界の内側)。
+MEMO_NOTES_DIR = VAULT_DIR / "notes"
+MEMO_STATE_PATH = Path(__file__).resolve().parent / "sessions" / "memo_state.json"
+# 48h = Telegram のユーザー編集ウィンドウを丸ごと活かしてから消す (#84)。
+MEMO_RETENTION_S = 48 * 3600.0
+MEMO_CLEANUP_INTERVAL_S = 3600.0
+# 削除が失敗し続けるエントリ (ユーザー手動削除済み等) を諦めて state から落とす
+# 時間上限。失敗理由の文言では分岐せず、saved_at (state) だけで打ち切りを確定する
+# (`~/companion/CLAUDE.md` 2 周目ルール準拠)。vault のノート自体は消さない。
+MEMO_PURGE_S = 7 * 86400.0
+# 保存/同期 ack のリアクション (best-effort、失敗しても保存は成立)。
+MEMO_ACK_REACTION = "👌"
+
 # stall 検知 (§4.6): 5 分間隔で getMe(), 連続 3 回失敗で sys.exit(1)。
 STALL_CHECK_INTERVAL_S = 300.0
 STALL_FAIL_THRESHOLD = 3
@@ -445,6 +467,8 @@ def _thread_id_env(name: str) -> int | None:
 BOT_THREAD_ID_MAINTENANCE = _thread_id_env("BOT_THREAD_ID_MAINTENANCE")
 # BOT_THREAD_ID_CHAT は自発発話 (proactive) の投げ先 = #chat。確定済パラメータ。
 BOT_THREAD_ID_CHAT = _thread_id_env("BOT_THREAD_ID_CHAT")
+# BOT_THREAD_ID_MEMO は個人メモ捕獲 topic (#84)。未設定なら memo 機能は無効。
+BOT_THREAD_ID_MEMO = _thread_id_env("BOT_THREAD_ID_MEMO")
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # bot.log は OWNER 限定経路の URL 等を含む。本プロセスが作る file は 0o600 にする
@@ -458,6 +482,7 @@ for _existing in [
     LOG_FILE, *LOG_DIR.glob(f"{LOG_FILE.name}.*"),
     _LEDGER_PATH, _PROACTIVE_LEDGER_PATH,
     INTERESTS_INDEX_PATH, THOUGHTS_LOG_PATH,
+    MEMO_STATE_PATH,
 ]:
     try:
         os.chmod(_existing, 0o600)
@@ -2095,6 +2120,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     thread_id = msg.message_thread_id
     chat_id = update.effective_chat.id
 
+    # 個人メモ捕獲 topic (#84): claude セッションを経由せず直接 vault へ保存する。
+    if BOT_THREAD_ID_MEMO is not None and thread_id == BOT_THREAD_ID_MEMO:
+        await _save_memo(context.bot, msg, chat_id)
+        return
+
     try:
         async with _typing_action(context.bot, chat_id, thread_id):
             output = await run_claude(prompt, chat_id, thread_id)
@@ -2182,6 +2212,15 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     thread_id = msg.message_thread_id
     chat_id = update.effective_chat.id
 
+    # memo topic (#84) はテキスト専用。画像を claude に流して topic を汚さない。
+    if BOT_THREAD_ID_MEMO is not None and thread_id == BOT_THREAD_ID_MEMO:
+        await send_text(
+            context.bot, chat_id, thread_id,
+            "[memo] 画像は未対応です (テキストのみ保存)",
+            reply_to=msg.message_id,
+        )
+        return
+
     photo = msg.photo[-1]  # 最大サイズ
     topic_dir = INCOMING_DIR / sessions.topic_key(chat_id, thread_id)
     topic_dir.mkdir(parents=True, exist_ok=True)
@@ -2259,6 +2298,213 @@ class _typing_action:
                 # typing は best-effort、失敗しても本筋に伝播させない
                 logger.debug("send_chat_action failed", exc_info=True)
             await asyncio.sleep(4.0)
+
+
+# ---------------------------------------------------------------------------
+# 個人メモ捕獲 topic (ticket #84)
+# ---------------------------------------------------------------------------
+
+
+def memo_note_filename(now: datetime, message_id: int) -> str:
+    """Return ``YYYY-MM-DD_memo-<message_id>.md`` for a captured personal memo.
+
+    message_id は chat 内で一意な int なので同日複数メモでも衝突しない。日付
+    prefix で Obsidian 上は時系列に並ぶ。純関数 → unit-test。
+    """
+    return f"{now.strftime('%Y-%m-%d')}_memo-{message_id}.md"
+
+
+def build_memo_note(text: str, created: str, edited: str | None = None) -> str:
+    """Render the memo note Markdown (frontmatter + 生テキスト本文)。
+
+    本文は加工しない (生テキスト保存が #84 の要件)。frontmatter は investigate
+    ノートの慣習と同系 (source / type / created)。編集同期時は edited を追記して
+    全文を再構築する (created は初回保存時の値を state から引き継ぐ)。
+    純関数 → unit-test。
+    """
+    fm = [
+        "---",
+        "source: companion-bot",
+        "type: memo",
+        f"created: {created}",
+    ]
+    if edited:
+        fm.append(f"edited: {edited}")
+    fm.append("---")
+    return "\n".join(fm) + "\n\n" + text + "\n"
+
+
+def select_memo_cleanup(state: dict, now_epoch: float) -> tuple[list[str], list[str]]:
+    """Return ``(to_delete, to_purge)`` message_id keys from the memo state.
+
+    48h (MEMO_RETENTION_S) 超 → Telegram 削除対象、7 日 (MEMO_PURGE_S) 超 →
+    諦めて state から落とす対象。判定は saved_at (state を持つ側) と現在時刻
+    だけで確定する。削除失敗の理由文字列では分岐しない — 失敗は次周期の再試行に
+    自然に乗り、7 日超で打ち切る。純関数 → unit-test。
+    """
+    to_delete: list[str] = []
+    to_purge: list[str] = []
+    for mid, entry in state.items():
+        age = now_epoch - float(entry.get("saved_at", 0.0))
+        if age > MEMO_PURGE_S:
+            to_purge.append(mid)
+        elif age > MEMO_RETENTION_S:
+            to_delete.append(mid)
+    return to_delete, to_purge
+
+
+def _load_memo_state() -> dict:
+    try:
+        data = json.loads(MEMO_STATE_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_memo_state(state: dict) -> None:
+    MEMO_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MEMO_STATE_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, MEMO_STATE_PATH)
+
+
+async def _memo_ack(bot, chat_id: int, message_id: int) -> None:
+    """保存/同期の ack リアクション。best-effort — 失敗しても保存は成立済み。"""
+    try:
+        await bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=ReactionTypeEmoji(MEMO_ACK_REACTION),
+        )
+    except Exception:
+        logger.debug("memo ack reaction failed", exc_info=True)
+
+
+async def _save_memo(bot, msg, chat_id: int) -> None:
+    """memo topic の生テキストを vault notes/ に直接保存する (claude 非経由)。
+
+    個人情報込みメモ前提なので 0o600 (umask 0o077 に加えて明示 chmod)。
+    message_id → 保存ファイルの対応を memo_state.json に永続化する (編集同期と
+    48h cleanup の削除対象特定に使う = bot が保存したメッセージだけを扱う)。
+    """
+    text = msg.text or ""
+    if not text.strip():
+        return
+    now = datetime.now(quota.JST)
+    created = now.isoformat(timespec="seconds")
+    path = MEMO_NOTES_DIR / memo_note_filename(now, msg.message_id)
+    try:
+        MEMO_NOTES_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(build_memo_note(text, created), encoding="utf-8")
+        os.chmod(path, 0o600)
+    except Exception:
+        logger.exception("memo save failed")
+        await send_text(
+            bot, chat_id, BOT_THREAD_ID_MEMO,
+            "[memo] 保存に失敗しました — see bot.log",
+            reply_to=msg.message_id,
+        )
+        return
+    state = _load_memo_state()
+    state[str(msg.message_id)] = {
+        "path": str(path),
+        "saved_at": time.time(),
+        "created": created,
+    }
+    _save_memo_state(state)
+    logger.info("memo saved: %s", path.name)
+    await _memo_ack(bot, chat_id, msg.message_id)
+
+
+async def on_memo_edited(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """memo topic のメッセージ編集を保存済みノートへ上書き同期する (#84)。
+
+    edited_message はこのハンドラだけが受ける (allowed_updates に追加)。他 topic
+    の編集は thread 判定で無視 = 従来の物理取りこぼし挙動 (§4.5 / N-T7) を維持。
+    state に無い message_id (保存前 / purge 済み) は黙って無視する。
+    """
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    if msg is None:
+        return
+    if BOT_THREAD_ID_MEMO is None or msg.message_thread_id != BOT_THREAD_ID_MEMO:
+        return
+    text = msg.text or ""
+    if not text.strip():
+        return
+    entry = _load_memo_state().get(str(msg.message_id))
+    if entry is None:
+        return
+    now = datetime.now(quota.JST)
+    path = Path(entry["path"])
+    # state は bot 自身しか書かないが、書き込み先が notes/ 境界内であることを
+    # 一行で担保する (vault 手書きエリアへの誤書き込みを構造的に不可能にする)。
+    if not path.resolve().is_relative_to(MEMO_NOTES_DIR.resolve()):
+        logger.warning("memo edit sync refused: path outside notes/ %s", path)
+        return
+    try:
+        path.write_text(
+            build_memo_note(
+                text, entry.get("created", ""),
+                edited=now.isoformat(timespec="seconds"),
+            ),
+            encoding="utf-8",
+        )
+        os.chmod(path, 0o600)
+    except Exception:
+        logger.exception("memo edit sync failed")
+        await send_text(
+            context.bot, update.effective_chat.id, BOT_THREAD_ID_MEMO,
+            "[memo] 編集の同期に失敗しました — see bot.log",
+            reply_to=msg.message_id,
+        )
+        return
+    logger.info("memo edited: %s", path.name)
+    await _memo_ack(context.bot, update.effective_chat.id, msg.message_id)
+
+
+async def memo_cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """48h 超の memo メッセージを Telegram から削除する定期突合 job (#84)。
+
+    state (memo_state.json) と現在時刻だけで対象を確定し、bot が保存した
+    メッセージのみ削除する。削除失敗は個別検知せず次周期の再試行に自然に乗せる
+    (チケット要件の突合型)。7 日超は最後に 1 回試行してから state を purge する
+    (恒久失敗の無限再試行を時間上限で打ち切る。vault のノート自体は消さない)。
+    前提: supergroup で bot に can_delete_messages 管理者権限 (Bot API 公式:
+    この権限があれば 48h 超・他ユーザーのメッセージも削除可、2026-07-11 確認)。
+    """
+    state = _load_memo_state()
+    if not state:
+        return
+    to_delete, to_purge = select_memo_cleanup(state, time.time())
+    processed: list[str] = []
+    for mid in to_delete + to_purge:
+        deleted = False
+        try:
+            await context.bot.delete_message(
+                chat_id=NOTIFY_CHAT_ID, message_id=int(mid)
+            )
+            deleted = True
+        except Exception:
+            logger.warning(
+                "memo cleanup delete failed message_id=%s", mid, exc_info=True
+            )
+        if deleted or mid in to_purge:
+            if not deleted:
+                logger.warning("memo cleanup purge (giving up) message_id=%s", mid)
+            processed.append(mid)
+    if processed:
+        # delete_message の await 中に _save_memo が追加した新規エントリを
+        # 潰さないよう、書き戻しは再ロードして処理済み key だけ pop する
+        # (job は update 処理と同一ループ上の並行タスク)。
+        latest = _load_memo_state()
+        for mid in processed:
+            latest.pop(mid, None)
+        _save_memo_state(latest)
+    logger.info(
+        "memo cleanup: delete=%d purge=%d", len(to_delete), len(to_purge)
+    )
 
 
 async def slash_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2974,6 +3220,16 @@ async def post_init(application: Application) -> None:
         name="stall_check",
     )
 
+    # memo 48h cleanup job (#84)。topic 未設定なら登録しない (機能ごと無効)。
+    # first=60s で再起動またぎの取りこぼしも起動直後に突合する。
+    if BOT_THREAD_ID_MEMO is not None:
+        application.job_queue.run_repeating(
+            memo_cleanup_job,
+            interval=MEMO_CLEANUP_INTERVAL_S,
+            first=60.0,
+            name="memo_cleanup",
+        )
+
     # /remind 再スケジュール
     now = time.time()
     reminders = _load_reminders()
@@ -3069,13 +3325,22 @@ def build_application() -> Application:
             on_photo,
         )
     )
+    # memo topic の編集同期 (#84)。edited_message を受けるのはこのハンドラだけで、
+    # memo topic 以外の編集はハンドラ内 thread 判定で無視 = 従来の取りこぼし挙動を維持。
+    app.add_handler(
+        MessageHandler(
+            filters.UpdateType.EDITED_MESSAGE & filters.TEXT & ~filters.COMMAND,
+            on_memo_edited,
+        )
+    )
     return app
 
 
 def main() -> None:
     app = build_application()
-    # §4.5 allowlist: 受信そのものを message に絞る (handler 未登録 type の getUpdates 帯域 / log ノイズを削減、callback_query は §7.4 sentinel 経路採用時に追加)
-    app.run_polling(allowed_updates=["message"])
+    # §4.5 allowlist: message + edited_message (#84 memo 編集同期のため追加。
+    # edited は on_memo_edited だけが受け、他 topic の編集は従来どおり無視される)
+    app.run_polling(allowed_updates=["message", "edited_message"])
 
 
 if __name__ == "__main__":

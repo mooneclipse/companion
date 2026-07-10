@@ -2815,5 +2815,202 @@ class TestParseRemindDuration(unittest.TestCase):
         assert self.bot.parse_remind_duration("8d") is None
 
 
+class MemoNoteFilenameTest(unittest.TestCase):
+    """memo ファイル名: YYYY-MM-DD_memo-<message_id>.md (#84)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_format(self) -> None:
+        from datetime import datetime as dt
+        now = dt(2026, 7, 11, 9, 30, 0, tzinfo=self.bot.quota.JST)
+        self.assertEqual(
+            self.bot.memo_note_filename(now, 12345),
+            "2026-07-11_memo-12345.md",
+        )
+
+    def test_unique_per_message_id(self) -> None:
+        from datetime import datetime as dt
+        now = dt(2026, 7, 11, tzinfo=self.bot.quota.JST)
+        a = self.bot.memo_note_filename(now, 1)
+        b = self.bot.memo_note_filename(now, 2)
+        self.assertNotEqual(a, b)
+
+
+class BuildMemoNoteTest(unittest.TestCase):
+    """memo ノート本文: frontmatter (source/type/created) + 生テキスト (#84)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_initial_note(self) -> None:
+        note = self.bot.build_memo_note("秘密のメモ\n2行目", "2026-07-11T09:30:00+09:00")
+        self.assertTrue(note.startswith("---\n"))
+        self.assertIn("source: companion-bot", note)
+        self.assertIn("type: memo", note)
+        self.assertIn("created: 2026-07-11T09:30:00+09:00", note)
+        self.assertNotIn("edited:", note)
+        # 本文は加工しない (生テキスト保存)
+        self.assertIn("\n\n秘密のメモ\n2行目\n", note)
+
+    def test_edited_note_appends_edited(self) -> None:
+        note = self.bot.build_memo_note(
+            "改稿後", "2026-07-11T09:30:00+09:00",
+            edited="2026-07-12T10:00:00+09:00",
+        )
+        self.assertIn("created: 2026-07-11T09:30:00+09:00", note)
+        self.assertIn("edited: 2026-07-12T10:00:00+09:00", note)
+        self.assertIn("改稿後", note)
+
+
+class SelectMemoCleanupTest(unittest.TestCase):
+    """cleanup 対象選定: saved_at + 現在時刻だけで delete/purge を確定する (#84)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _state(self, ages: dict[str, float], now: float) -> dict:
+        return {
+            mid: {"path": f"/x/{mid}.md", "saved_at": now - age}
+            for mid, age in ages.items()
+        }
+
+    def test_fresh_entries_untouched(self) -> None:
+        now = 1_800_000_000.0
+        state = self._state({"1": 0.0, "2": self.bot.MEMO_RETENTION_S - 1}, now)
+        self.assertEqual(self.bot.select_memo_cleanup(state, now), ([], []))
+
+    def test_over_48h_marked_for_delete(self) -> None:
+        now = 1_800_000_000.0
+        state = self._state({"1": self.bot.MEMO_RETENTION_S + 1}, now)
+        self.assertEqual(self.bot.select_memo_cleanup(state, now), (["1"], []))
+
+    def test_over_7d_marked_for_purge(self) -> None:
+        now = 1_800_000_000.0
+        state = self._state({"1": self.bot.MEMO_PURGE_S + 1}, now)
+        self.assertEqual(self.bot.select_memo_cleanup(state, now), ([], ["1"]))
+
+    def test_mixed(self) -> None:
+        now = 1_800_000_000.0
+        state = self._state({
+            "10": 60.0,
+            "20": self.bot.MEMO_RETENTION_S + 60,
+            "30": self.bot.MEMO_PURGE_S + 60,
+        }, now)
+        to_delete, to_purge = self.bot.select_memo_cleanup(state, now)
+        self.assertEqual(to_delete, ["20"])
+        self.assertEqual(to_purge, ["30"])
+
+    def test_missing_saved_at_purged(self) -> None:
+        # 壊れたエントリ (saved_at 欠落) は age 巨大扱い → purge 側に落ちる
+        now = 1_800_000_000.0
+        state = {"1": {"path": "/x/1.md"}}
+        self.assertEqual(self.bot.select_memo_cleanup(state, now), ([], ["1"]))
+
+
+class MemoStateRoundtripTest(unittest.TestCase):
+    """memo_state.json の load/save roundtrip (tmpdir、atomic replace) (#84)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig = self.bot.MEMO_STATE_PATH
+        self.bot.MEMO_STATE_PATH = Path(self._tmp.name) / "memo_state.json"
+
+    def tearDown(self) -> None:
+        self.bot.MEMO_STATE_PATH = self._orig
+        self._tmp.cleanup()
+
+    def test_missing_file_returns_empty(self) -> None:
+        self.assertEqual(self.bot._load_memo_state(), {})
+
+    def test_roundtrip(self) -> None:
+        state = {"123": {"path": "/v/n/2026-07-11_memo-123.md",
+                         "saved_at": 1_800_000_000.0,
+                         "created": "2026-07-11T09:30:00+09:00"}}
+        self.bot._save_memo_state(state)
+        self.assertEqual(self.bot._load_memo_state(), state)
+
+    def test_corrupt_file_returns_empty(self) -> None:
+        self.bot.MEMO_STATE_PATH.write_text("{not json", encoding="utf-8")
+        self.assertEqual(self.bot._load_memo_state(), {})
+
+    def test_non_dict_json_returns_empty(self) -> None:
+        self.bot.MEMO_STATE_PATH.write_text("[1, 2]", encoding="utf-8")
+        self.assertEqual(self.bot._load_memo_state(), {})
+
+
+class MemoCleanupJobTest(unittest.IsolatedAsyncioTestCase):
+    """memo_cleanup_job: delete await 中の新規保存を潰さない (lost-update 回帰) (#84)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig = self.bot.MEMO_STATE_PATH
+        self.bot.MEMO_STATE_PATH = Path(self._tmp.name) / "memo_state.json"
+
+    def tearDown(self) -> None:
+        self.bot.MEMO_STATE_PATH = self._orig
+        self._tmp.cleanup()
+
+    def _context_with_delete(self, side_effect):
+        from unittest import mock
+        context = mock.MagicMock()
+        context.bot.delete_message = mock.AsyncMock(side_effect=side_effect)
+        return context
+
+    async def test_concurrent_save_survives_cleanup(self) -> None:
+        import time as _time
+        old = _time.time() - self.bot.MEMO_RETENTION_S - 60
+        self.bot._save_memo_state(
+            {"1": {"path": "/v/n/a.md", "saved_at": old, "created": "x"}}
+        )
+
+        async def delete_and_inject(chat_id, message_id):
+            # delete の await 中に _save_memo が新規メモを書き込む状況を再現
+            state = self.bot._load_memo_state()
+            state["2"] = {"path": "/v/n/b.md", "saved_at": _time.time(), "created": "y"}
+            self.bot._save_memo_state(state)
+            return True
+
+        await self.bot.memo_cleanup_job(self._context_with_delete(delete_and_inject))
+        remaining = self.bot._load_memo_state()
+        self.assertNotIn("1", remaining)   # 削除成功分は state から除去
+        self.assertIn("2", remaining)      # 並行保存された新規メモは生き残る
+
+    async def test_delete_failure_keeps_entry(self) -> None:
+        import time as _time
+        old = _time.time() - self.bot.MEMO_RETENTION_S - 60
+        self.bot._save_memo_state(
+            {"1": {"path": "/v/n/a.md", "saved_at": old, "created": "x"}}
+        )
+        await self.bot.memo_cleanup_job(
+            self._context_with_delete(RuntimeError("api down"))
+        )
+        # 失敗分は残す = 次周期の再試行に自然に乗る (突合型)
+        self.assertIn("1", self.bot._load_memo_state())
+
+    async def test_purge_removes_entry_even_on_failure(self) -> None:
+        import time as _time
+        old = _time.time() - self.bot.MEMO_PURGE_S - 60
+        self.bot._save_memo_state(
+            {"1": {"path": "/v/n/a.md", "saved_at": old, "created": "x"}}
+        )
+        await self.bot.memo_cleanup_job(
+            self._context_with_delete(RuntimeError("gone"))
+        )
+        # 7 日超は削除失敗でも purge で打ち切る (無限再試行しない)
+        self.assertNotIn("1", self.bot._load_memo_state())
+
+
 if __name__ == "__main__":
     unittest.main()
