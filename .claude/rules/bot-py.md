@@ -29,6 +29,11 @@ paths:
 ## photo 受信（`on_photo`）
 - 保存は `INCOMING_DIR`（= bot-workspace/incoming/<topic>/、vault 無接触）。ファイル名は安全化 + timestamp prefix（traversal 防止）。最新 10 件超は filename timestamp 辞書順で自動 prune。document/album/video はスコープ外。
 
+## 個人メモ捕獲 topic（`_save_memo` / `on_memo_edited` / `memo_cleanup_job`、#84）
+- `BOT_THREAD_ID_MEMO` topic の生テキストを claude 非経由で vault `notes/` に直接保存（`YYYY-MM-DD_memo-<message_id>.md`、0o600）。notes/ 以外へは書かない（編集同期は resolve + `is_relative_to` で境界検証）。
+- state は `sessions/memo_state.json`（message_id→ファイル対応、bot が保存したメッセージのみ削除・同期対象）。cleanup の書き戻しは**再ロードして処理済み key のみ pop**（job は並行タスク、丸ごと save は lost-update）。
+- cleanup は突合型: 48h 超で `delete_message`、失敗は次周期再試行、7 日超は purge 打ち切り（saved_at だけで確定、失敗文言マッチ分岐を作らない）。edited_message を受けるのは `on_memo_edited` のみ（他 topic の編集は従来どおり無視、§4.5 の例外はこの 1 点に限る）。
+
 ## proactive 3 分岐（investigate / ticket / remind）
 - 各 env スイッチ `PROACTIVE_*_ENABLED`（既定 1）+ `PROACTIVE_*_INTERVAL_DAYS`（既定 7）。毎回新規 ephemeral session（resume なし）で `#chat` セッションを汚さない。budget gate 必須。
 - **境界はプロンプトで強制**（bot-workspace settings は変えない）: investigate は vault `notes/` 新規生成のみ（既存/手書きノート上書き禁止）。ticket は `tickets.py add --by ai` 1 件のみ（OWNER 分は不可触、list/show は読み取り）。remind は read-only（tickets list/show のみ、起票・編集なし）。
