@@ -1,0 +1,12 @@
+# root 所有のアップグレードログ (rollback 対象外のノイズ)
+mintupgrade-*.log
+
+# Claude Code ローカル設定・lock (machine 固有 / secret 懸念)
+.claude/settings.local.json
+.claude/*.lock
+
+# 一般
+.env
+.env.*
+__pycache__/
+*.pyc
