@@ -6,17 +6,18 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 ## 稼働情報
 
 - systemd user service `companion-english` → 127.0.0.1:47827
+- systemd user timer `companion-english-analyze` → 毎晩 03:10 JST + ゆらぎ 30 分で `pipeline/analyze.py` (傾向と対策、claude -p + fallback)。enable 済み 2026-07-10
 - 公開: `https://miho-inspiron-3521.tail5e989b.ts.net:8447/` (tailscale serve、2026-07-02 設定)
 - リモコン PWA タイル「♪ 09 KIKITORI」から遷移 (remote repo 側)
 - 教材: TADC Ep1 (HwAPLk_sQ3w、手動 en 字幕、クリップ 40 本) 取込済み
 
 ## 構成 (設計 §1)
 
-- `pipeline/` — ingest (yt-dlp) → subs (字幕クリーニング) → clips (切り出し+穴埋め生成)。v0 は手動実行 (`run_all.sh`)
-- `server/` — ThreadingHTTPServer (静的 + JSON API + /media Range)。テスト: `python3 server/tests/test_api.py` (69 チェック)
+- `pipeline/` — ingest (yt-dlp) → subs (字幕クリーニング) → clips (切り出し+穴埋め生成) は手動実行 (`run_all.sh`)。analyze (傾向と対策、§3.4) は夜間 timer
+- `server/` — ThreadingHTTPServer (静的 + JSON API + /media Range)。テスト: `python3 server/tests/test_api.py` (88 チェック)
 - `web/` — vanilla SPA (D 案)。SW なし (photos と同じ、キャッシュ版すれ違い回避)
 - `data/english.db` — SQLite (WAL)。`media/` `inbox/` とも .gitignore
-- pipeline テスト: `python3 -m unittest discover -s pipeline/tests -p "test_*.py"` (19 本)
+- pipeline テスト: `python3 -m unittest discover -s pipeline/tests -p "test_*.py"` (42 本)
 
 ## 運用メモ・設計判断の記録
 
@@ -28,10 +29,13 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 ## TODO
 
 - [ ] TADC 残り 8 話 + Bee and PuppyCat (個別動画 URL) を sources.json に追加して ingest
-- [ ] 1〜2 週間 毎日使うか検証 (v0 完了条件、設計 §6)
-- [ ] v1: 夜間バッチ化 / analyze.py (claude -p 傾向と対策) / 入力式解答 / english.db の USB バックアップ追加
+- [ ] v1 残り: 新エピソード自動巡回の夜間バッチ化 / 入力式解答 / 弱点タグ統計画面 / english.db の USB バックアップ追加
 
 ## Done
+
+- 2026-07-10: **v0 検証 (1〜2 週間毎日使うか、設計 §6 v0 完了条件) は user 判断でクリア扱い**、v1 GO。TODO から検証項目を除去 (code-reviewer 指摘への判断記録)
+
+- 2026-07-10: **v1「傾向と対策」実装・稼働開始** (#61 続き、設計 §3.4 / v0.10)。`pipeline/analyze.py` 新設 — 直近 14 日の attempts×clips を JSON 集計し `claude -p --output-format json` 1 回で report_md + weights (契約スキーマ `{"feature_tags":{...},"pairs":{...}}`、ペアキーはソート済み `|` 連結・未ソートは正規化受理) を生成、失敗 (rc≠0/JSON 不正/スキーマ NG) は 1 回確定でルールベース fallback (feature_tag 誤答率→weights、pairs は LLM 限定で常に空)、analysis へ INSERT OR REPLACE。窓内 attempts 0 件は何も書かない。`/api/home` に `analysis:{date,report_md,source}|null` を追加しホームにレポートカード (行なしは非表示 = v0 挙動)。drill.py の weights 受け口は v0 実装済みで無変更。夜間 timer (03:10+ゆらぎ 30 分、WorkingDirectory=english/ 固定、Nice 19/ionice idle) install/enable 済み。検証: pipeline 42 本 (analyze 18 本追加)・test_api 88 チェック全 PASS、実弾 llm/fallback 両経路 + systemd 経由実走 OK、DB コピーで weights が選定順位に効くこと (we're/were 誤答クリップの繰り上がり) を実測
 
 - 2026-07-08: **本編内の位置バー + エピソード消化カバレッジ** (#72、設計 v0.9)。drill クリップ応答に `episode_duration_s`、answer 応答に `episode_progress:{attempted,total}` (全期間 DISTINCT、drill.episode_clip_progress) を追加。出題・答え合わせ画面のクリップ直下に本編内位置マーカー + `本編 MM:SS / MM:SS`、答え合わせ画面に `N / M 回答済み` バー (全問到達で緑「通しで見てOK」— 目安表示でありロックではない)。テスト: test_api 83 チェック全 PASS + 隔離 fixture の Playwright E2E (実プレイ経路で 1/4→4/4、位置バー描画・complete 切替を実観測)
 

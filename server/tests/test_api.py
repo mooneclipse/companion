@@ -271,6 +271,25 @@ def _run_checks(base, root, db_path):
     check("home today.done==0", home["today"]["done"] == 0, home["today"])
     check("home continue.episode_id==ep1", home["continue"] and home["continue"]["episode_id"] == "ep1", home["continue"])
     check("home trend has 14 entries", len(home["trend"]) == 14, len(home["trend"]))
+    check("home analysis==null (analysis 行なし = カード非表示)", home["analysis"] is None, home.get("analysis"))
+
+    # analysis 行を入れると /api/home に最新 1 行が載る (§3.4 レポートカード)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT OR REPLACE INTO analysis (date, report_md, weights, source) VALUES (?,?,?,?)",
+        ("2026-01-01", "古いレポート", '{"feature_tags":{},"pairs":{}}', "fallback"))
+    conn.execute(
+        "INSERT OR REPLACE INTO analysis (date, report_md, weights, source) VALUES (?,?,?,?)",
+        ("2026-01-02", "can/can't の聞き分けで落としています。",
+         '{"feature_tags":{"weak_form":1.5},"pairs":{"can|can\'t":2.0}}', "llm"))
+    conn.commit()
+    conn.close()
+    status, _, body = http("GET", base, "/api/home")
+    home_a = json.loads(body)
+    check("home analysis は最新 1 行 (date 降順)", home_a["analysis"] and home_a["analysis"]["date"] == "2026-01-02", home_a.get("analysis"))
+    check("home analysis.report_md", home_a["analysis"]["report_md"] == "can/can't の聞き分けで落としています。", home_a["analysis"])
+    check("home analysis.source==llm", home_a["analysis"]["source"] == "llm", home_a["analysis"])
+    check("home analysis に weights を含まない (UI 契約外)", "weights" not in home_a["analysis"], home_a["analysis"])
 
     # /api/drill/today: daily_sets が固定されていること (DB 直読みと突合)
     status, _, body = http("GET", base, "/api/drill/today")

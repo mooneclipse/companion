@@ -103,6 +103,18 @@ def _load_weights(conn):
     return w
 
 
+def get_latest_analysis(conn):
+    """analysis 最新 1 行のホーム表示用フィールド (§3.4「傾向と対策」レポートカード)。
+    行が無ければ None (v0 挙動のままカード非表示)。weights はここでは返さない
+    (選定用の内部情報で UI 契約に含めない)。"""
+    row = conn.execute(
+        "SELECT date, report_md, source FROM analysis ORDER BY date DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return None
+    return {"date": row["date"], "report_md": row["report_md"], "source": row["source"]}
+
+
 def _clip_weight(weights, clip_row):
     """feature_tags / 混同ペアの一致で重みを乗算するスコア (weights が無ければ常に 1.0)。"""
     if not weights:

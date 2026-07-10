@@ -283,7 +283,9 @@ class Handler(BaseHTTPRequestHandler):
             today = drill.compute_today_summary(conn)
             cont = drill.get_continue_episode(conn)
             trend = drill.compute_trend(conn)
-        self._send_json(200, {"streak": streak, "today": today, "continue": cont, "trend": trend})
+            analysis = drill.get_latest_analysis(conn)
+        self._send_json(200, {"streak": streak, "today": today, "continue": cont,
+                              "trend": trend, "analysis": analysis})
 
     def _api_drill_today(self):
         with contextlib.closing(get_conn()) as conn:

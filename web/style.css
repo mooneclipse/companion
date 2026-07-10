@@ -46,6 +46,10 @@ main{padding:22px 24px 32px}
 .bar{fill:#d6d5cf}
 .bar.today{fill:var(--accent)}
 
+.report-card{padding:18px 22px}
+.report-date{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.report-body{font-size:13.5px;line-height:1.75;margin-top:2px}
+
 .resume-card{padding:18px 22px}
 .resume-row{display:flex;gap:14px;margin-top:12px}
 .thumb{flex:0 0 104px;height:58px;display:flex;align-items:center;justify-content:center;

@@ -155,6 +155,9 @@ async function renderHome() {
   const trend = Array.isArray(home.trend) ? home.trend : [];
   if (trend.length) main.append(renderTrendGraph(trend));
 
+  // 傾向と対策 (夜間 analyze.py の analysis 最新 1 行)。行が無ければカード自体を出さない (v0 挙動)。
+  if (home.analysis && home.analysis.report_md) main.append(renderReportCard(home.analysis));
+
   if (home.continue) main.append(renderResumeCard(home.continue));
 
   const libLink = el("a", "lib-link");
@@ -194,6 +197,25 @@ function renderTrendGraph(trend) {
   });
   gc.append(svg);
   return gc;
+}
+
+function renderReportCard(analysis) {
+  const rc = el("section", "report-card card");
+  const head = el("div", "graph-head");
+  head.append(el("span", "graph-label", "傾向と対策"));
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(analysis.date || "");
+  let meta = m ? `${Number(m[2])}月${Number(m[3])}日` : "";
+  // fallback (ルールベース定型文) は控えめに区別する。llm 時は日付のみ
+  if (analysis.source === "fallback") meta = meta ? `${meta} · 定型` : "定型";
+  if (meta) head.append(el("span", "report-date", meta));
+  rc.append(head);
+  const body = el("p", "report-body");
+  String(analysis.report_md).split("\n").forEach((line, i) => {
+    if (i) body.append(document.createElement("br"));
+    body.append(document.createTextNode(line));
+  });
+  rc.append(body);
+  return rc;
 }
 
 function renderResumeCard(cont) {

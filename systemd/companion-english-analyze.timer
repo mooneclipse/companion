@@ -1,0 +1,14 @@
+[Unit]
+Description=companion english analyze 夜間実行 (03:10 JST + ゆらぎ)
+
+[Timer]
+# 夜間 1 回 (設計 §3.4)。ytcheck 05:00 / dashboard 05:30 より前に済ませる
+OnCalendar=*-*-* 03:10:00
+# 定刻ぴったりの集中を避けるゆらぎ (03:10〜03:40 に収まる)
+RandomizedDelaySec=30min
+# マシンが寝ていた分は起床後に補完。同日再実行は INSERT OR REPLACE (date PK) で冪等
+Persistent=true
+Unit=companion-english-analyze.service
+
+[Install]
+WantedBy=timers.target
