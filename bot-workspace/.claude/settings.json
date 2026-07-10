@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "language": "japanese",
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf ~/*)",
+      "Bash(rm -rf $HOME*)",
+      "Bash(sudo rm:*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/credentials)",
+      "Read(~/.aws/config)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.netrc)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(~/.mozilla/**)",
+      "Read(~/.config/google-chrome/**)",
+      "Read(~/.config/chromium/**)",
+      "Read(~/.local/share/keyrings/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.bash_history)",
+      "Read(~/companion/**/.env)",
+      "Read(~/companion/**/.env.*)",
+      "Bash(curl * | sh*)",
+      "Bash(curl * | bash*)",
+      "Bash(wget * | sh*)",
+      "Bash(wget * | bash*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push --force-with-lease*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git rebase -i:*)",
+      "Bash(git checkout --:*)",
+      "Bash(git restore --source*)"
+    ],
+    "ask": [
+      "Bash(git push:*)"
+    ],
+    "allow": [
+      "WebSearch",
+      "WebFetch",
+      "Read(~/companion/**)",
+      "Edit(~/companion/vault/notes/**)",
+      "Write(~/companion/vault/notes/**)",
+      "Bash(git status:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git diff)",
+      "Bash(git log:*)",
+      "Bash(git pull --ff-only:*)",
+      "Bash(git add notes/*:*)",
+      "Bash(git commit:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(claude --version)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(df:*)",
+      "Bash(du:*)",
+      "Bash(free:*)",
+      "Bash(ps:*)",
+      "Bash(uptime)",
+      "Bash(sensors)",
+      "Bash(apt-mark showhold)",
+      "Bash(apt list --upgradable)",
+      "Bash(python3 /home/miho/companion/remote/server/tickets.py *)",
+      "Bash(systemctl --user status:*)",
+      "Bash(systemctl --user list-units:*)",
+      "Bash(systemctl --user list-timers:*)",
+      "Bash(journalctl --user:*)"
+    ],
+    "additionalDirectories": [
+      "/home/miho/companion"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/miho/companion/web/scripts/vault-sync-from-transcript.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
