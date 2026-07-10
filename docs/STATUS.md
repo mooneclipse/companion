@@ -29,6 +29,7 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 ## TODO
 
 - [ ] TADC Ep 4 (Q9KWcWKo2T8) の再取込 — 2026-07-10 の一括 ingest で唯一 DL 失敗 (HTTP 403 Forbidden、yt-dlp impersonation 案内。設計契約どおり 1 回確定・リトライせず)。yt-dlp 更新 or impersonation 依存導入後に run_all.sh 再走で冪等に拾える
+  (注: sources.json は**追記のみ**。既存エントリの前に行を挿入すると未取込分の source_order がずれ、同日公開の既存行と sort_key 衝突 (順序不定) の余地がある — 2026-07-10 レビュー指摘)
 - [ ] v1 残り: 新エピソード自動巡回の夜間バッチ化 / 入力式解答 / 弱点タグ統計画面 / english.db の USB バックアップ追加
 
 ## Done
