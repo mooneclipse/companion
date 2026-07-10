@@ -5,6 +5,7 @@ photos / remote と同列の **独立サブプロジェクト** (`~/companion/en
 
 ## 改版履歴
 
+- **v0.11 (2026-07-10)**: 表示順タイブレーク修正 (§3.1 / §2 sort_key)。単一動画 URL は playlist_index が無く upload_date フォールバックに落ちるが、同日公開 (Bee and PuppyCat Ep1/Ep2 = 20141107 実測) で同値タイになり `ORDER BY sort_key` の表示順が不定 → sources.json のエントリ順 (話数順に列挙する運用) を 0 埋めサフィックスとして sort_key に焼き込む方式で確定 (state 側 1 回確定、server 無変更。video_id 辞書順は偶然依存のため不採用、既存行は再計算せず字句順互換)。あわせて TADC Ep2-9 + Bee and PuppyCat Ep1-10 (計 18 本、BPC Ep5/6/8/9/10 は auto 字幕のみ = §3.1 フォールバックどおり) を sources.json に追加して ingest
 - **v0.10 (2026-07-10)**: v1「傾向と対策」実装完了 (#61 続き、user が v0 検証クリア扱いで GO) に伴う実装確定差分。**§3.4 実装確定** — `pipeline/analyze.py` 新設 (集計→ claude -p 1 回→検証→保存、失敗 3 態 rc≠0/JSON 不正/スキーマ NG は 1 回確定 fallback)。確定差分: (1) ペアキー未ソートは**ソートに正規化して受理** (キー欠落・型不正・`|` 1 個でない・空要素・重みが非数値/bool/非有限/≤0 のみ NG)、(2) 窓内 attempts 0 件は**何も書かず正常終了** (claude 呼び出しもしない、analysis 行なし = カード非表示のまま)、(3) fallback の weights は feature_tag 誤答率のみ (`1 + 誤答率` 小数 2 桁)・**pairs は常に空** (混同ペアの洞察は LLM の付加価値に限定)、(4) claude バイナリ解決は `$ENGLISH_CLAUDE` → PATH → nvm glob (ytcheck run.sh と同手順、systemd PATH 問題の手当)・timeout 300 秒、(5) CLI は `--db` / `--date` / `--fallback` (強制 fallback、動作確認・クォータ節約用)。**§4.2** — `/api/home` に `analysis:{date,report_md,source}|null` を追加 (weights は選定用内部情報で UI 契約に含めない)。ホームは trend の下にレポートカード、fallback は「· 定型」表示、行なしは非表示。**systemd** — `companion-english-analyze.service/.timer` (03:10 JST + RandomizedDelay 30 分、Persistent、WorkingDirectory=english/ 固定、Nice 19 + IOSchedulingClass idle)。drill.py の weights 受け口 (`_load_weights`/`_clip_weight`/`_rank_key`) は v0 実装のままズレなし。検証: pipeline 42 本 (analyze 18 本追加)・test_api 88 チェック・実弾 llm/fallback 両経路・systemd 経由実走・DB コピーで weights の選定効果を実測
 - **v0.9 (2026-07-08)**: user 要望 (#72)「出題が本編のどのへんか・どこまでやれば通しで見ていいか」。**(1) 本編内の位置バー** — drill クリップ応答に `episode_duration_s` を追加し (episode_id はクライアント未使用のためレビュー指摘で不採用)、出題・答え合わせ両画面のクリップ直下に位置マーカー (`.ep-pos`、start_s〜end_s を全長比で描画、最小幅 2%) + `本編 MM:SS / MM:SS` ラベルを表示。**(2) エピソード消化カバレッジ** — answer 応答に `episode_progress:{attempted,total}` を追加 (そのエピソードの全クリップ数と**全期間** DISTINCT 回答済みクリップ数、集計は drill.episode_clip_progress)。答え合わせ画面に `Ep1 の問題 N / M 回答済み` バーを表示し、全問到達で緑の `全 M 問 回答済み — 通しで見てOK` に切替。「通しで見ていい」の判定ゲートは設計上存在しない (出題プールは視聴済み範囲優先) ため、到達点の**目安表示**であってロックではない
 - **v0.8 (2026-07-03)**: user 要望 2 件。**(1) 答え合わせ時の日本語訳** — `clips.translation` 列を追加 (store.init_db の PRAGMA table_info → ALTER の冪等マイグレーション)。訳は YouTube **手動 ja 字幕のみ** (automatic_captions 不使用、機械翻訳/LLM 不使用 = 学習ループ全ローカル原則の維持)。クリップ時間範囲との半開交差 (`cue.start < end_s and cue.end > start_s`) で ja キューを空白結合、無ければ NULL。answer 応答に `translation: string|null` を追加、**drill/today には含めない** (出題時ネタバレ防止)。ingest は ja を best-effort 1 回確定で取得、`clips.py --fill-translations <ep>` は mp4 非接触の UPDATE のみバックフィル。**(2) プレイヤー字幕の動画外表示** — `<track>` は常時 mode=hidden (標準オーバーレイ描画を止める)、cuechange で動画直下の `.sub-line` に textContent 描画。トグル OFF で行ごと非表示
@@ -144,7 +145,7 @@ CREATE TABLE episodes (
   video_path TEXT NOT NULL,      -- media/episodes/<id>.mp4
   sub_path TEXT,                 -- media/subs/<id>.vtt (プレイヤー用クリーン済 WebVTT)
   sub_kind TEXT NOT NULL,        -- manual | auto | local | none
-  sort_key TEXT NOT NULL,        -- 話数順 (playlist index / ファイル名)
+  sort_key TEXT NOT NULL,        -- 話数順 (playlist index / upload_date+sources エントリ順 / ファイル名、§3.1)
   ingested_at INTEGER NOT NULL
 );
 CREATE TABLE watch (
@@ -202,6 +203,7 @@ CREATE TABLE daily_sets (
 - yt-dlp は **remote/dlqueue と同一実体 `~/bin/yt-dlp`・同一フォーマット文字列** (`bestvideo[height<=?720]+bestaudio/best[height<=?720]/best`、AVX1+HDD 自己 DoS 回避の実績値) を流用。720p 上限で確定 (残量 320GB 実測済、§8)
 - 字幕: `--write-subs --sub-langs en` 優先、なければ `--write-auto-subs`。どちらを使ったか `sub_kind` に記録。**両方ないエピソードは「視聴専用」として登録** (clips を作らない、ライブラリでは見られる)
 - 冪等: DB に同 id があれば skip。失敗は 1 回確定でログに残し、リトライ・stderr 文言分岐をしない (dlqueue 設計契約と同じ)
+- `sort_key` (話数順、INSERT 時 1 回確定・既存行は再計算しない): playlist_index があれば 4 桁 0 埋め。なければ `upload_date + "-" + sources.json エントリ順 4 桁 0 埋め` (v0.11 — 単一動画 URL は playlist_index が無く、同日公開の実測ケース Bee and PuppyCat Ep1/Ep2 = 20141107 で upload_date 単独だと同値タイ → server の `ORDER BY sort_key` で表示順が不定になる。sources.json を話数順に列挙する運用を安定タイブレークとして焼き込む。video_id 辞書順のような偶然依存キーは使わない)。upload_date も無ければ `~` prefix + エントリ順で末尾確定。サフィックスなしの旧形式行 (TADC Ep1 = `20231013`) は字句順で新形式と互換
 - ローカル持ち込み: `inbox/` に動画 + 同名 `.srt`/`.vtt` を置いて `ingest.py --inbox --series <slug>` → media へ移動 + 登録
 
 ### 3.2 subs.py — 字幕クリーニング
