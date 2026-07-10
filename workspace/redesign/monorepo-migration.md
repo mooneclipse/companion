@@ -1,8 +1,15 @@
 # companion モノレポ移行手順書
 
-**status**: 手順書確定・実行待ち
+**status**: Phase 0〜4 実行済み (2026-07-11 深夜、チケット #82) — 残り = OWNER 3 コマンド (初回 push / 旧 4 repo アーカイブ / .migration 削除) + Phase 5 翌日以降検証
 **決定記録**: 2026-07-10 OWNER 承認 — ① モノレポ化 GO、② bot-workspace / ytcheck を含める (運用後に問題が出たら OWNER に「外す相談」をする約束)、③ 分割時代の履歴を取り込む
 **実行単位**: Phase 0〜3 は 1 セッションで通す (切替を中途で止めない)。Phase 4 は同日中、Phase 5 は翌日以降
+
+**実行記録 (2026-07-11 02:00〜02:20 JST、05:00 窓回避)**:
+- Phase 0: 全 (B) repo ahead 0 実測 (maintenance の「ahead 2」は実行時点で push 済みだった)。dirty は games のみ → 切替前に 2 commit で解消 (docs e99e215 / test 86375a3)。pre-status.txt は 0 行 (全 repo clean)
+- Phase 1: 12 repo すべて tree hash 一致 OK。spot check で merge 第 2 親から旧履歴 reachable を確認
+- Phase 2: 切替完了。pre/post 突合差分は想定 3 点 (.gitignore / CLAUDE.md / persona/) のみ。初回 commit 5e82e39、gitleaks hook 稼働確認済み
+- Phase 3: remote add 済み (`git@github.com:mooneclipse/companion.git`、空 repo への SSH 到達確認済み)。**初回 push と旧 4 repo アーカイブは OWNER 未実施**
+- Phase 4: 共通 CLAUDE.md (b1bbb63) / workspace CLAUDE.md (fdb7739) / PROJECT.md (5a234c2) / closing SKILL.md (2424739) / 取りこぼし 6 箇所 (501ec11) + memory 5 ファイル同期済み。photos 側は独立 repo に別 commit (07e507b)
 
 ---
 
