@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<!-- CSP: 同一オリジン + 和文フォント CDN のみ。inline script 不許可(外部 app.js)。
+     style は Google Fonts の <link> 取得のため fonts.googleapis.com を許可、
+     font 本体は fonts.gstatic.com。それ以外の外向きは塞ぐ。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'">
+<meta name="theme-color" content="#2b2d52">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>みちゆき</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icons/icon-192.png">
+<!-- 和文 mincho。取得失敗時は style.css の serif フォールバックで成立する。 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;500&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<canvas id="scene" aria-label="みちゆき。歩行ゲーム"></canvas>
+
+<!-- 歩き方のヒント。止まっている間だけ薄く出し、歩き出すと消える。タップは canvas に通す。 -->
+<div id="walkhint" class="walkhint" hidden>押しているあいだ、歩く</div>
+
+<!-- 断章オーバーレイ(半透明の暗幕 + 上品なタイポグラフィ) -->
+<div id="overlay" class="overlay" hidden>
+  <div class="frag">
+    <h1 id="frag-title" class="frag-title" hidden></h1>
+    <div id="frag-text" class="frag-text"></div>
+    <p id="hint" class="hint" hidden>タップでつづける</p>
+    <!-- バージョン番号。トップ(opening)画面にだけ小さく薄く出す。キャッシュの
+         残りか検証不足かを切り分けるため、ゲームを変えるたびに app.js の VERSION を上げる。 -->
+    <p id="frag-version" class="frag-version" hidden></p>
+  </div>
+</div>
+
+<script src="/fragments.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

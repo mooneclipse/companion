@@ -1,0 +1,15 @@
+{
+  "name": "なごり",
+  "short_name": "なごり",
+  "start_url": "/nagori/",
+  "scope": "/nagori/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#e8e6df",
+  "theme_color": "#e8e6df",
+  "icons": [
+    { "src": "/nagori/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/nagori/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/nagori/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

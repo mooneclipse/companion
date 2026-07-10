@@ -1,0 +1,561 @@
+/* あかり — デッキ構築ローグライク。文字・カード・HUD は全て DOM(canvas に文字を焼かない
+   = なごり「文字がはみ出して読めない」真因の直接対策)。emoji 不可。 */
+:root {
+  --ink: #f4eee2;
+  --mincho: "Zen Old Mincho", "Shippori Mincho", "Hiragino Mincho ProN",
+    "Yu Mincho", "Noto Serif JP", serif;
+  /* 種別バッジ色(攻/灯/守/技)。 */
+  --c-atk: #d8552e;
+  --c-light: #e6b25a;
+  --c-block: #4a8fb0;
+  --c-tech: #9a7fc0;
+  /* 白文字 + 黒縁(4 方向 text-shadow)。暗ターンでも数値が読める。 */
+  --txt-edge: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
+    0 2px 3px rgba(0, 0, 0, 0.7);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  /* はみ出しを構造的に封じる(画面外スクロール禁止)。 */
+  overflow: hidden;
+  background: #0b0e1a;
+  color: var(--ink);
+  font-family: var(--mincho);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#scene {
+  display: block;
+  width: 100vw;
+  /* 背景はフルブリードでよい(ツールバー裏まで塗られても可)。dvh で動的に追従。
+     canvas の内部解像度は app.js resize() が window.innerHeight を使うので実視高に追従。 */
+  height: 100vh;
+  height: 100dvh;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  /* 画面を覆う canvas 自身にも touch-action:none(なごり/みちゆきの真因対策の保険)。 */
+  touch-action: none;
+}
+
+/* ===== 戦闘 UI: 3 領域 CSS Grid 固定 ===== */
+.battle {
+  position: fixed;
+  /* 上基準で配置する(inset:0 の bottom アンカーはモバイル Chrome のツールバー裏
+     ＝大ビューポート下端になり、最下部のターン終了ボタンが画面外へ押し出される)。 */
+  top: 0;
+  left: 0;
+  z-index: 2;
+  display: grid;
+  /* 上 35% 敵 / 中 自動 / 下 38% 手札。safe-area を下端へ確保。 */
+  grid-template-rows: 35fr 27fr 38fr;
+  width: 100vw;
+  /* 可視領域に収める。svh = 小ビューポート(ツールバー表示時の最小高)基準なので、
+     アドレスバーが出ていてもターン終了ボタンが必ず収まる。svh 非対応は vh にフォールバック。 */
+  height: 100vh;
+  height: 100svh;
+  padding: calc(env(safe-area-inset-top) + 0.3rem) 0.4rem
+    calc(env(safe-area-inset-bottom) + 0.4rem);
+  overflow: hidden;
+}
+.battle[hidden] {
+  display: none !important;
+}
+
+/* ---- 上: 敵 ---- */
+.enemy-area {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1.2rem;
+  overflow: hidden;
+  min-height: 0;
+}
+.enemy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  position: relative;
+  cursor: pointer;
+  max-width: 46%;
+}
+.enemy.targetable {
+  /* 対象選択中、タップ可能な敵を縁取りで示す。 */
+  outline: 2px solid var(--c-light);
+  outline-offset: 4px;
+  border-radius: 0.6rem;
+}
+/* 敵手番の見える化: いま動いている敵を前進 + 光輪で強調。 */
+.enemy.acting {
+  transform: translateY(-8px);
+  transition: transform 0.18s ease;
+  outline: 2px solid #fff0c8;
+  outline-offset: 4px;
+  border-radius: 0.6rem;
+  filter: drop-shadow(0 0 10px rgba(255, 240, 200, 0.7));
+}
+.enemy.dead {
+  opacity: 0.18;
+  pointer-events: none;
+}
+.enemy-intent {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: clamp(0.85rem, 4.2vw, 1.1rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  background: rgba(0, 0, 0, 0.42);
+  padding: 0.12em 0.5em;
+  border-radius: 0.5em;
+  white-space: nowrap;
+}
+.enemy-intent .ico {
+  font-size: 1.1em;
+}
+.enemy-name {
+  font-size: clamp(0.78rem, 3.6vw, 0.98rem);
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.06em;
+}
+.enemy-sprite {
+  width: clamp(64px, 22vw, 110px);
+  height: clamp(64px, 22vw, 110px);
+}
+.enemy-hp {
+  width: clamp(70px, 26vw, 130px);
+  height: 0.62rem;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 0.4rem;
+  overflow: hidden;
+  position: relative;
+}
+.enemy-hp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #c83a2a, #e0654a);
+  transition: width 0.25s ease;
+}
+.enemy-hp-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.56rem;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.04em;
+}
+.enemy-block {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.2rem;
+  font-size: 0.66rem;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  background: rgba(74, 143, 176, 0.85);
+  padding: 0.05em 0.4em;
+  border-radius: 0.5em;
+}
+/* 数値ポップ(被ダメ等)。背後に半透明プレート(なごりの暗幕方式)。 */
+.popup {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  font-size: clamp(1rem, 5vw, 1.4rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.05em 0.4em;
+  border-radius: 0.4em;
+  pointer-events: none;
+  animation: popup-rise 0.9s ease-out forwards;
+  white-space: nowrap;
+  max-width: 92vw;
+}
+/* Dim/Charge 等の cue。被ダメの赤と区別し暖色寄りで「あかり -N」「ためる」を見せる。 */
+.popup.cue {
+  color: #ffe6a0;
+}
+@keyframes popup-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0.6rem);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -1.6rem);
+  }
+}
+
+/* ---- 中央: LIGHT ゲージ + プレイヤー ---- */
+.mid-area {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0 0.4rem;
+  min-height: 0;
+}
+.floor-label {
+  text-align: center;
+  font-size: clamp(0.72rem, 3.4vw, 0.92rem);
+  letter-spacing: 0.14em;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  opacity: 0.9;
+}
+.light-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.light-cap {
+  font-size: clamp(0.7rem, 3.2vw, 0.86rem);
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.light-bar {
+  flex: 1;
+  height: 0.85rem;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+.light-fill {
+  height: 100%;
+  /* 暗(青黒) → 明(暖色)へ。JS が幅と色を毎回更新。 */
+  background: linear-gradient(90deg, #2a3358, #e6b25a, #fff0c8);
+  transition: width 0.3s ease;
+}
+.light-val {
+  font-size: clamp(0.8rem, 3.6vw, 1rem);
+  font-weight: 500;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  min-width: 1.8em;
+  text-align: right;
+}
+.player-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+.stat {
+  font-size: clamp(0.74rem, 3.4vw, 0.94rem);
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.stat.block {
+  color: #aee0ff;
+}
+.stat.mana {
+  color: #ffe6a0;
+}
+
+/* ---- 下: 手札 + ターン終了 ---- */
+.hand-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  min-height: 0;
+  overflow: hidden;
+}
+.hand {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.card {
+  flex: 1 1 0;
+  max-width: 5.4rem;
+  min-width: 0;
+  height: 100%;
+  max-height: 8.2rem;
+  background: linear-gradient(160deg, #1c1f2e, #0e1018);
+  border: 1px solid rgba(244, 238, 226, 0.25);
+  border-radius: 0.5rem;
+  padding: 0.3rem 0.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.card.playable {
+  box-shadow: 0 0 0 1px rgba(230, 178, 90, 0.5), 0 -2px 10px rgba(230, 178, 90, 0.18);
+}
+.card.unplayable {
+  opacity: 0.42;
+}
+.card.selected {
+  transform: translateY(-0.5rem);
+  box-shadow: 0 0 0 2px var(--c-light);
+}
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.card-badge {
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+  border-radius: 0.35em;
+  padding: 0.05em 0.32em;
+  letter-spacing: 0.02em;
+}
+.badge-atk {
+  background: var(--c-atk);
+}
+.badge-light {
+  background: var(--c-light);
+  color: #2a1c08;
+  text-shadow: none;
+}
+.badge-block {
+  background: var(--c-block);
+}
+.badge-tech {
+  background: var(--c-tech);
+}
+.card-cost {
+  width: 1.2em;
+  height: 1.2em;
+  border-radius: 50%;
+  background: #e6b25a;
+  color: #2a1c08;
+  font-size: 0.7rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-name {
+  font-size: clamp(0.62rem, 3vw, 0.8rem);
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  text-align: center;
+  white-space: nowrap;
+}
+.card-text {
+  font-size: clamp(0.52rem, 2.5vw, 0.66rem);
+  color: rgba(244, 238, 226, 0.82);
+  line-height: 1.35;
+  text-align: center;
+  /* 文言は 12 字以内をデータ側で保証。万一に備え折返しは許すがはみ出しは封じる。 */
+  overflow: hidden;
+}
+/* battle 内ヒント行。手札とボタンの間に薄く出す。canvas でなく DOM・白文字+黒縁。 */
+.battle-hint {
+  flex: 0 0 auto;
+  font-size: clamp(0.74rem, 3.4vw, 0.92rem);
+  letter-spacing: 0.06em;
+  color: #fff;
+  text-shadow: var(--txt-edge);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.battle-hint[hidden] {
+  display: none !important;
+}
+.end-turn {
+  flex: 0 0 auto;
+  font-family: var(--mincho);
+  font-size: clamp(0.82rem, 4vw, 1rem);
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  /* 平常時も一段ボタンらしく(背景を濃く・枠を強め・影で浮かせる)。 */
+  background: rgba(230, 178, 90, 0.32);
+  border: 1.5px solid rgba(230, 178, 90, 0.85);
+  border-radius: 0.6rem;
+  padding: 0.5rem 1.8rem;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.end-turn:active {
+  background: rgba(230, 178, 90, 0.5);
+}
+/* 使えるカードが無いときの強調(濃色 + 脈動)。詰まり感の直接対策。 */
+.end-turn.emphasize {
+  background: rgba(230, 178, 90, 0.6);
+  border-color: #fff0c8;
+  color: #2a1c08;
+  box-shadow: 0 0 14px rgba(230, 178, 90, 0.6);
+  animation: breathe 1.8s ease-in-out infinite;
+}
+
+/* ===== オーバーレイ(title / howto / reward / defeat / clear) ===== */
+.overlay {
+  position: fixed;
+  /* battle と同じく上基準 + 可視領域(svh)。中身(パネル+ボタン)がツールバー内に収まる。 */
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100svh;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.4rem calc(2rem + env(safe-area-inset-bottom));
+  background: rgba(8, 8, 16, 0.78);
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+.overlay.visible {
+  opacity: 1;
+}
+/* hidden を確実に効かせる(.overlay{display:flex} に UA の [hidden] が負ける罠の対策)。 */
+.overlay[hidden] {
+  display: none !important;
+}
+/* フェードアウト中はタッチを下へ通さない(誤タップ防止)。 */
+.overlay:not(.visible) {
+  pointer-events: none;
+}
+.panel {
+  max-width: 30rem;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  /* あそびかた等で内容が増えても画面外へはみ出さない保険(なごり真因の再発防止)。 */
+  max-height: 100%;
+  overflow-y: auto;
+}
+/* あそびかた説明。縦並び・左寄せ・読みやすい行間。DOM のみ。 */
+.ov-howto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: 100%;
+  text-align: left;
+}
+.ov-howto[hidden] {
+  display: none !important;
+}
+.howto-line {
+  font-size: clamp(0.86rem, 4vw, 1.04rem);
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.ov-title {
+  font-weight: 500;
+  font-size: clamp(2.6rem, 14vw, 4.4rem);
+  letter-spacing: 0.32em;
+  text-indent: 0.32em;
+  color: var(--ink);
+  text-shadow: 0 0 24px rgba(230, 178, 90, 0.5);
+}
+/* reward / defeat / clear の見出しは title ほど巨大にしない。 */
+.ov-title.reward-title {
+  font-size: clamp(1.5rem, 7vw, 2.2rem);
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+  text-shadow: 0 0 16px rgba(230, 178, 90, 0.35);
+}
+.ov-sub {
+  font-size: clamp(0.9rem, 4.4vw, 1.1rem);
+  letter-spacing: 0.12em;
+  color: rgba(244, 238, 226, 0.85);
+}
+.ov-cards {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  width: 100%;
+}
+.ov-cards .card {
+  height: 8.6rem;
+  max-height: 8.6rem;
+  flex: 1 1 0;
+}
+.ov-action {
+  font-family: var(--mincho);
+  font-size: clamp(0.9rem, 4.4vw, 1.1rem);
+  letter-spacing: 0.18em;
+  color: var(--ink);
+  background: rgba(230, 178, 90, 0.18);
+  border: 1px solid rgba(230, 178, 90, 0.65);
+  border-radius: 0.7rem;
+  padding: 0.6rem 2rem;
+  cursor: pointer;
+  animation: breathe 3.2s ease-in-out infinite;
+}
+.ov-action2 {
+  background: rgba(244, 238, 226, 0.08);
+  border-color: rgba(244, 238, 226, 0.3);
+  animation: none;
+}
+.ov-action[hidden],
+.ov-action2[hidden],
+.ov-title[hidden],
+.ov-sub[hidden],
+.ov-cards[hidden],
+.ov-version[hidden] {
+  display: none !important;
+}
+.ov-version {
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  opacity: 0.35;
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov-action,
+  .overlay {
+    animation: none;
+  }
+}

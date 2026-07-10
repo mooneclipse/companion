@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<!-- CSP: 同一オリジン + 和文フォント CDN のみ。inline script 不許可(外部 js)。
+     style は Google Fonts の <link> 取得のため fonts.googleapis.com を許可、
+     font 本体は fonts.gstatic.com。それ以外の外向きは塞ぐ。みちゆき/なごりと同方針。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'">
+<meta name="theme-color" content="#0b0e1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>あかり</title>
+<link rel="manifest" href="/akari/manifest.json">
+<link rel="icon" href="/akari/icons/icon-192.png">
+<!-- 和文 mincho。取得失敗時は style.css の serif フォールバックで成立する。 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;500&display=swap">
+<link rel="stylesheet" href="/akari/style.css">
+</head>
+<body>
+<!-- 背景の光と敵シルエットだけ canvas に焼く。文字・カード・HUD は全て DOM(なごり真因の直接対策)。 -->
+<canvas id="scene" aria-label="あかり。明度をリソースにするデッキ構築ローグライク"></canvas>
+
+<!-- 戦闘 UI。3 領域 CSS Grid 固定(上=敵 / 中=ゲージ / 下=手札)。canvas の上に重ねる。 -->
+<div id="battle" class="battle" hidden>
+  <!-- 上 35%: 敵 -->
+  <section id="enemy-area" class="enemy-area" aria-label="敵"></section>
+
+  <!-- 中央: LIGHT ゲージ + プレイヤーステータス -->
+  <section class="mid-area">
+    <div class="floor-label" id="floor-label"></div>
+    <div class="light-row">
+      <span class="light-cap">あかり</span>
+      <div class="light-bar"><div id="light-fill" class="light-fill"></div></div>
+      <span id="light-val" class="light-val">50</span>
+    </div>
+    <div class="player-row">
+      <span class="stat hp" id="player-hp">HP 50/50</span>
+      <span class="stat block" id="player-block" hidden>ブロック 0</span>
+      <span class="stat mana" id="player-mana">灯 3/3</span>
+    </div>
+  </section>
+
+  <!-- 下 38%: 手札 + ヒント + ターン終了 -->
+  <section class="hand-area">
+    <div id="hand" class="hand"></div>
+    <div id="battle-hint" class="battle-hint" hidden></div>
+    <button id="end-turn" class="end-turn" type="button">ターン終了</button>
+  </section>
+</div>
+
+<!-- 各種オーバーレイ(title / reward / defeat / clear)。hidden で完全非表示。 -->
+<div id="overlay" class="overlay" hidden>
+  <div class="panel">
+    <h1 id="ov-title" class="ov-title" hidden></h1>
+    <p id="ov-sub" class="ov-sub" hidden></p>
+    <!-- あそびかた説明(初回自動 + title からいつでも再読)。縦並び・左寄せ。 -->
+    <div id="ov-howto" class="ov-howto" hidden></div>
+    <div id="ov-cards" class="ov-cards" hidden></div>
+    <button id="ov-action" class="ov-action" type="button" hidden></button>
+    <button id="ov-action2" class="ov-action ov-action2" type="button" hidden></button>
+    <p id="ov-version" class="ov-version" hidden></p>
+  </div>
+</div>
+
+<script src="/akari/cards.js"></script>
+<script src="/akari/enemies.js"></script>
+<script src="/akari/fragments.js"></script>
+<script src="/akari/app.js"></script>
+</body>
+</html>

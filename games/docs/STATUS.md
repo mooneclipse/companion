@@ -1,0 +1,696 @@
+# companion-games 開発台帳（umbrella: 全部 AI で作るゲーム / 第 1 作「みちゆき」 / 第 2 作「ともしび」 / 第 3 作「なごり」 / 第 4 作「あかり」 / 第 7 作「マインロード」(Mine Road リメイク縦切り)）
+
+最終更新: 2026-07-08 (第4作「あかり」**ver2 設計確定 = チケット #48**: game-designer 3 並列 [敵・遭遇/ラン構造/ビルド深化] → game-critic 横断反証 → lead 統合で `docs/akari-ver2-design.md` を全面改稿。ver2.0=敵多様化[ティア抽選+Drain+新敵4]+カード可読性根治+音[Kenney CC0]/ver2.1=カード・遺灯/ver2.2+=ラン構造 の 3 増分。設計のみ・コード未変更・実装 GO はオーナーレビュー待ち。詳細は「あかり ver2 設計確定」節)。直前の 2026-06-29 (第7作「マインロード」**v0.13.0 = 残り8ダンジョン + 解放連結チェーン**: dungeon_info.csv / dungeon.csv から全9ダンジョンのマスターデータ(DUNGEON_DATA)と深度帯データ(DUNGEON_BANDS)を tiles.js に追加。blockThresholds / hazardAt / avalancheAt / oreAt / spaceMonsterAt / buryMonsterAt を per-dungeon×per-band 動的化。ダンジョン選択UI・クリア→次ダンジョン解放チェーン・ダンジョンごとセーブ分離(旧キーからの自動マイグレーション付き)。code-reviewer 修正必須1件(resize 未呼出し)を修正、死んだ定数削除、ボタン間隔修正。selfcheck 33/33・debug gate A〜AC(29) ALL PASS。本番47825非接触（検証は別ポート47860）。commit `d6feb49`(実装) + `73fb58a`(レビュー修正+テスト)。**本番反映は OWNER 承認待ち**。直前の **v0.12.0 = セーブ/永続（力尽き跨ぎで救出・育成・ツルハシを永続化）**: localStorage JSON 方式で rescued/per/bp/info/pick/girls level+cexp を地上帰還時に保存、startDive 冒頭で復元、クリアで消去。力尽き→retry で永続 state が復元されランごとリセット state(dug/ore/monsters 等)は初期化。原作「地上で全回復＋セーブ」（§2 L23 / §10 L153）に忠実。selfcheck-save 21/21・debug gate A〜AB(28) ALL PASS・selfcheck-companion 16/16・selfcheck-grow 13/13。本番47825非接触（検証は別ポート47861）。code-reviewer 修正必須なし。commit `8f24c88`。直前の **v0.11.0 = 中核の作り直し（実機 FB で中核破綻が判明）**: ①女の子追従を「自機足跡履歴(G.playerTrail)を1手ずつ消化する snake 追従」へ引き直し（旧 bfsStep+独立重力の底張り付き＝ジグザグ掘削で横ずれの瞬間に重力で縦坑の底へ落とし戻される破綻を設計から消す。重力/bfs の条件分岐を増やさず、追従の責務を「自機が実際に通った空洞履歴」という single source of truth へ集約） ②仲間モデルを「救出済みストック(rescued)を地表で1人選んで次の潜行へ同行(deployed=following)→一緒に戦い cexp 蓄積→地表帰還で別れて Lv→ストックへ戻る」へ作り直し（v0.10.0 の「地中で護衛中の子を同行指定」モデルを廃止＝ユーザー確定方針、原作 §5「別れると再び情報としてストック→また連れられる」） ③崩落で塞がれた(G.fallen)マスを再掘で空間へ戻す soft-lock 修正（act 掘り抜きに G.fallen.delete を1点追加＝tileAt の dug/fallen 優先で永久 SOIL=詰みだった核を解消）。**検証を実プレイ経路へ全面作り直し**（状態注入 g.state="following" 直接代入と自機ワープ＋縦坑先掘りを廃し、act() だけで実際にジグザグ掘削→掘り当て→足跡追従→実 climb→救出→ストック→地表同行→潜行→cexp→帰還 Lv→ストックを通して assert。①は追従 row 系列が底へ落ち戻らず単調減少して地表着を実測、③のソフトロック再掘可回帰も追加）。implementer 自己動作確認 selfcheck-companion 12/12・debug gate A〜AA(27) ALL PASS・selfcheck-grow 13/13・いずれも3回連続 ALL PASS（決定論安定）。本番ポート47825 非接触（検証は別ポート 47873/47860）。playtester 実機ヒットテスト・code-reviewer・本番反映は orc 後段／OWNER 承認待ち。詳細は下記「v0.11.0」エントリ。直前の **v0.10.0 = 仲間同行＝女の子1人を同行→一緒に戦い EXP 蓄積→地上で別れてレベルアップの第8増分**: 原作 §5 忠実翻案。① 同行は `G.companion`(1人だけ忠実)+ 各 girl の level/cexp(新 state を作らず既存 `following`＝護衛中を「同行」と読み替え、advanceGirl/bfsStep/重力/loseGirl/rescueGirl を非介入で再利用) ② 同行指定 UI＝工房第4タブ「仲間」(上部バーにボタンを増やさず v0.8.0/v0.9.0 のタブ同居を踏襲＝gate G 非退行) ③ 撃破 EXP を killMonster 1点で companion.cexp にも加算(自機プール G.exp＝v0.9.0 BP 路は不変＝二面両立)、companion は effCompanionAtk() でレベルに応じ自機 ATK を援護(護衛の緊張×育てた仲間が戦力になる二面) ④ 地表帰還(rescueGirl)で cexp→level 反映・companion 解除(原作「地上で別れてレベルアップ」、情報 +1 は不変)。係数は CONST 単一ブロック(COMPANION_*)+ ヘルパー1点に集約(対症療法2周目回避)。implementer 自己動作確認 selfcheck-mineroad-companion.mjs ALL PASS[同行開始/同行中EXP蓄積/帰還で別れてLv反映/境界=同行0人・複数救出で1人だけ/決定論3回連続一致/非介入]。playtester 既存 A〜Z ゲート回帰 + code-reviewer は orc 後段、本番反映 OWNER 承認待ち。詳細は下記「v0.10.0」エントリ。直前の **v0.9.0 = 育成＝救出した女の子の「情報」→ボーナスポイント→PER_* レベルアップの第7増分**: 裏庭=BP100% 忠実な BP 単一通貨路[情報/EXP→BP→PER_*(HP/ST/DIG/ATTACK/DEFENCE/SWIM)]を effXxx ヘルパー1点で既存育成フックの消費先を開く。工房第3タブ「育成」同居。selfcheck 13/13。本番反映 OWNER 承認待ち。直前の **v0.8.0 = 商人＝物々交換(バーター)の第6増分＝キノコ通貨の循環を開く**: 原作 shop.csv 忠実翻案。① キノコ採取の決定論別レイヤー `mushroomAt(col,row,seed)`[位相 +4099/+5113/+2027、tileType/girlPositions/oreAt/monster/hazard/avalanche に非介入、SOIL 掘り抜きで MUSHROOM_RATE=0.14 採取]、② 商人オーバーレイ=既存クラフトと同じ「作る」ボタン→工房パネル→タブ(クラフト/商人)で同居[上部バーに 3 つ目のボタンを足さない＝既存ボタン x 位置/地表タップ前提を壊さない設計判断]、③ shop.csv 忠実サブセット 4 行[フルーツ←鉄鉱石2 / ツルハシ←キノコ10(鉄段昇格) / アンテナ←キノコ20 / 夢キノコ←キノコ100(原作の通貨統合)]＝対価充足行だけ実行可・不足は disabled、実行で対価減算+産物加算(決定論・状態遷移のみ)、④ 交換で得た消耗品(フルーツ HP+25/夢キノコ HP+30)は商人タブから食べる。playtester 20 ゲート ALL PASS[新 Y ゲート=キノコ採取決定論/商人タブ UI(verbatim 4行・充足可/不足 disabled)/物々交換実行/非介入、3回連続決定論緑]・既存6作 URL 不変・短高 viewport はみ出し0・determinism(Math.random/Date.now 実呼び 0)維持。**回帰修正(着手中に検出)**: 商人を 3 つ目のボタンとして上部バーに足すと btn-craft が右へ押し出され、女の子列(col11)の地表クライム・タップが btn-craft/craft-overlay に当たり gate G が退行→**ボタンを増やさずクラフトと工房タブで同居する設計へ引き直し**(対症療法でなく UI 構造の引き直し)。本番反映 OWNER 承認待ち。詳細は下記「v0.8.0」エントリ。直前の **v0.7.0 = なだれ/落盤＝崩落物理の第5増分＝ハザード残りを完結**: 別オーバーレイレイヤー `avalancheAt(col,row,seed)`[位相 +2671/+3331/+9173、tileType/girlPositions/oreAt/monster/hazard に非介入]・崩落物理[掘り抜いた不安定土の真下が空くと土塊が列の第1固体床へ落ちて道を塞ぎ(G.fallen 記録/G.dug 削除=帰り道消失)、落下先の自機は CAVEIN_DAMAGE=8 を二段ゲージへ・女の子はロスト→原位置復帰、soft-lock しない=再掘可]・深度ゲート[不安定土 row>=5、浅層 row1-4 は安全]・赤錆 rgba オーバーレイ[新規アセット無し=URL 不変]・CAVEIN_MITIGATION=1.0 固定で育成フックを1点に切り出し。playtester 19 ゲート ALL PASS[新 X ゲート=崩落決定論/深度ゲート/落下で道塞ぎ/埋没ダメージ/非介入、3回連続決定論緑]・力尽き率 25%→25%[不変だが policy 別分布が反転=optimal 5/5 死亡(深く広く掘ると崩落埋没が累積、直接トレースで崩落5回・埋没11HP→fail 実証)/reckless 0/5(崩落で道塞ぎ→再掘で深追いペース落ち生存側へ)、資源数値の単独いじりなし]。本番反映 OWNER 承認待ち。詳細は下記「v0.7.0」エントリ。直前の **v0.6.0 = 水/マグマ 浸水ハザードの第4増分＝死の緊張をさらに上げる本命**: 別オーバーレイレイヤー `hazardAt(col,row,seed)`[位相 +1597/+2389/+7919、tileType/girlPositions/oreAt/monster に非介入]・深度ゲート[水 row>=5/マグマ row>=9、浅層 row1-4 は安全]・消耗の二段ゲージ接続[水 SP×3/マグマ SP×4 + HP chip 2、SWIM_MITIGATION=1.0 固定で育成フックを1点に切り出し]・浸水マスの半透明塗り[新規アセット無し=URL 不変]。playtester 18 ゲート ALL PASS[新 W ゲート=決定論/深度ゲート/水SP割増/マグマHP chip/非介入]・力尽き率 25%→25%[不変、裏庭は浅めで浸水が支配的死因にならず＝数値の単独いじり回避、深ダンジョン増分で発露]。本番反映 OWNER 承認待ち。詳細は下記「v0.6.0」エントリ。直前の **v0.5.0 = モンスター/戦闘/GIRLATK/埋没掘りスポーンの第3増分＝死の緊張を設計から出す本命**: 原作 monster.csv 忠実サブセット6種[BAT/SLIME/SLIME HALF/SNAKE/WORM/SPIDER]・bump-to-attack 戦闘[1ターンダメージ=max(1,攻撃力−DEF)・被ダメは既存二段ゲージへ接続]・空間/埋没掘り2系統の決定論スポーン・GIRLATK[護衛中の女の子も狙われロスト→元位置復帰]・EXP/ドロップ verbatim。tileType/girlPositions/oreAt に非介入。playtester 17 ゲート ALL PASS・**力尽き率 0/20→5/20(25%)＝死の緊張の数値裏取り**[reckless 死亡/optimal 生存]・資源数値の単独いじりなし。本番反映 OWNER 承認待ち。詳細は下記「v0.5.0」エントリ。直前の **v0.4.1 = UI ポリッシュ**[操作ボタン拡大+地表被り解消]commit `01f6ef3`・OWNER 実機クリア完走 OK。直前の **v0.4.0 = アイテム/クラフト系の第2増分**: 原作 item.csv/craft.csv 忠実再現＝ツルハシ power 掘削ゲート/決定論 `oreAt` 鉱石ドロップ/クラフト 6 レシピ UI/アイテム使用[回復薬・アンテナ透視・はしご]・HUD インベントリ。tileType/girlPositions に非介入で既存 determinism/EXPECTED_GIRLS/女の子掘り当て経路を保存。詳細は下記「v0.4.0」エントリ。**本番反映は OWNER 承認待ち**。直前の **v0.3.0 = 全コンテンツ拡張の第1増分**: 裏庭を本物のダンジョン化＝女の子1→5人 + §7クリア条件(全員救出+最下層到達+探索率100%)。playtester ALL PASS・code-reviewer 修正必須なし・commit `1892ccc`・**本番反映は OWNER 承認待ち**(restart 未実施)。直前の **v0.2.0→v0.2.2**(Kenney CC0 リスキン+実機FB) は commit `a1d8d6e`・本番47825 で配信中・既存6作 200 不変。v0.2.1=自機緑化+白光輪除去/BGM を Infinite Descent へ低音量/SFX clone 再生/女の子の縦坑追従バグ修正、v0.2.2=キャラを Kenney Roguelike(リング無しの人型ピクセル)へ差し替え=自機 髭の坑夫・女の子 金髪三つ編み)。**第 1〜4 作 (みちゆき/ともしび/なごり/あかり) は全て出荷済み**、本番 `/`・`/tomoshibi/`・`/nagori/`・`/akari/` 200 で配信中 (remote GAMES 配列に 4 本)。**第 7 作「マインロード」は v0.2.0 リスキンを本番配信中** (`/mineroad/` 200、8444 tailnet プロキシ経由 200。remote GAMES 配列=ランチャー未掲載で直URLのみ、実機手触り確認後にタイル掲載判断)。
+
+## CLAUDE.md のパススコープ Rules 化（開発インフラ、2026-06-22）
+
+games/CLAUDE.md（71 行・全文常時ロード）を Claude Code の paths-scoped Rules（`.claude/rules/`）に分割。`server/**`→`delivery-boundary.md`、`**/web/**`→`game-web.md`、`tests/**`→`playtest.md` に切り出し、CLAUDE.md は俯瞰＋パス別ルールのインデックスへ縮小（71→約45行）。該当パスのファイルをコンテキストに入れたときだけ詳細制約がロードされる＝ゲームが増えるほど無関係制約の常時ロードが減る。制約文は verbatim 移植、glob は実 7 ゲームの web に照合、code-reviewer 全観点 OK。根拠: claude.com steering 記事 + 公式 memory.md「200 行に近づいたら rules に分割」。workspace 横断整備（bot/photos も CLAUDE.md 新設予定）の一環。
+
+## Mine Road リメイク（第 7 作「マインロード」/ `/newgame` 不使用の仕様駆動リメイク、縦切り v0.1.0 実装・配信済み 2026-06-17）
+
+- **経緯**: 原作 `jp.windbellrrr.app.minerroad` v1.2.7 は **targetSdk=14**（APK マニフェスト実パースで確認）のため Android 14+ のインストールブロック対象＝今のスマホで遊べない。同じゲーム性で遊ぶための個人リメイク。**一般公開予定なし**（tailnet 配信境界内で完結）。
+- **設計正本**: `~/mineroad-analysis/MINE_ROAD_仕様まとめ.md` + `~/mineroad-analysis/assets/*.csv`（dungeon / dungeon_info / item / monster / craft / shop / tutorial / tutorial_index、抽出済み）。git 管理外のため消失時は手元 APK の再解析（jadx）で復元可。**忠実再現が目的**。コード・画像・テキストの転用はしない（メカニクス・数値設計のみ参照、資料冒頭の注記どおり）。
+- **工程**: `/newgame` は**使わない**。完全 AI 自決・コンセプト発散・critic 反証の工程は忠実再現をオリジナリティへ歪める構造で、第 6 作さぐり（ジャンル固定発注→デドゥースパズルに着地）で実証済み。implementer / playtester / code-reviewer 直結の**仕様駆動タスク**として回す。game-designer / game-critic は外す（設計判断は原作が済ませている）。
+- **技術選定（user 確定 2026-06-11）**: **Web PWA 継続**（vanilla JS + canvas、既存 games インフラ）。理由: ①Sonnet 改修容易性が候補中最良（最大コーパス・ビルド不要・API バージョン罠なし）②playtester（Playwright + 画面座標ヒットテスト）の自走検証を作り直しゼロで流用 ③Windows は Chrome/Edge「アプリとしてインストール」、スマホは tailnet PWA、で 1 実装両対応。比較した代替: Godot 4（Windows exe + Android APK が要る場合の次点。playtester 作り直し + Android SDK セットアップが追加コスト、Sonnet は Godot 3/4 API 混同癖あり）、Unity（エディタ GUI 中心で AI 自走ループ不成立、開発が Windows 機に移り既存パイプラインを失う、不採用確定）。
+- **着手方針**: **縦切りスライス先行**。裏庭の洞窟（15×15）+ スタミナ→体力の二段ゲージ + 掘削 + 帰還全回復 + 女の子 1 人救出のみで「撤退判断の手触り」を実機確認してから、全コンテンツ（9 ダンジョン / 45 アイテム / 20 モンスター / クラフト / 商人 / 仲間）へ進む判定ゲートとする。手触りが再現できなければ拡張しない。
+- **並行（案 1）**: 原作は Windows 機 + Android エミュレータ（BlueStacks / LDPlayer 等の Android 13 以下イメージ。インストールブロックは Android 14 から）で手元 APK を直入れしてプレイ可。APK は native lib なしの純 dex で x86 エミュレータ互換。リメイクの忠実度を測る基準としても先に動かす価値あり。
+
+### 縦切り実装・検証・配信（v0.1.0、2026-06-17 / 仕様駆動、ALL PASS）
+
+- **実装**: `mineroad/web/` 一式（`index.html`/`app.js`/`tiles.js`/`style.css`/`manifest.json`/`icons` 192・512）。VERSION=`v0.1.0`、SW なし。CONST 単一ブロック、決定論 `tileType`/`girlPositions`（ランタイム乱数禁止）、掘削差分 `Set`、女の子 BFS 追従＋重力、**スタミナ→体力の二段ゲージ**（着手方針どおり。※第6作さぐりの「v1.0 1本集約」とは別物。リメイクは原作忠実で最初から二段）、光の道、DOM-HUD+十字キー。既存 saguri/tomoru のスケルトン踏襲。前セッションで実装バグ2件修正（女の子発見の同マス早期 return・救出 costPaid 二重消費回避）。
+- **検証**: `tests/debug-mineroad.mjs`（Playwright 画面座標ヒットテスト）**ALL PASS 13/13**。A〜I ゲート（A遷移/B二段ゲージ・地上全回復撤退/C発見→追従→救出/D重力・探索率/E十字キー+短高 viewport/F既存6作回帰 URL不変/G画面操作 e2e overlay 非飛び越え/H fail overlay+retry/I determinism 静的検査）。全 viewport(412×915/680/730) はみ出し0・pageerror0。本セッションで独立再現確認（消失していた検証結果 `~/companion/logs/mr_result.txt` を再生成）。`tests/fun-mineroad.mjs`=方策ベース面白さ代理（最適行動で確実救出・無策は未達、固定seed 1人救出のため決定論評価）。
+- **レビュー**: code-reviewer 点検 = push 可能水準・コード修正必須なし。
+- **配信**: `server/app.py` に `/mineroad/` STATIC ルート（既存 saguri と同形）。本番 `systemctl --user restart companion-games` 反映済み。47825 直 200・8444 tailnet プロキシ経由 200。**実機URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`**。**ランチャー（`remote/web/app.js` GAMES 配列）未掲載＝直URLのみ**（縦切り段階、実機手触り確認後にタイル掲載判断）。
+- **commit**: `feat(games) 1b5393c`（実装一式 + server route + tests）。本 docs 反映は別 commit。
+- **次判定ゲート**: 縦切りで「撤退判断の手触り」が再現できているか実機確認 → OK なら全コンテンツ（9 ダンジョン/45 アイテム/20 モンスター/クラフト/商人/仲間、水流ハザード、二段ゲージの拡張要素）へ進む。再現不足なら拡張しない。
+
+### 実機フィードバック（v0.1.0 縦切り、2026-06-17 OWNER 実機）
+
+判定ゲート＝「撤退判断の手触り」は **OK 方向**。次セッションの宿題3点。
+
+- ✅ **救出コア成立**: 女の子を連れて地上へ戻れた。**撤退の手触りも良さそう**（縦切りの目的は再現できている）。
+- ⚠️ **要設計判断（次セッション、対症療法でなく責務から決める）**: 「横から見てる想定なのに自機が上へずっと上がれる／落下がない」。これは**現設計どおり**（§4「重力は女の子と落盤にのみ作用、自機は上下左右どこでも自由移動＝原作 Mine Road 仕様」）。原作忠実 vs サイドビューの物理直感のズレ。→ **(A) 原作どおり自由移動を維持し演出（浮遊感の除去）で違和感を消す**／**(B) 自機にも重力・落下を入れる（原作逸脱）** のどちらかを**着手前に決め、根拠を本 STATUS に記録してから**実装。重力の作用範囲＝責務の置き場所の判断であり、移動可否の条件分岐を場当たりに積み増さない（上位 `~/companion/CLAUDE.md` 対症療法ルール）。
+- 🐛 **要調査（バグ候補）**: 「上は掘れない」。§4 は「上下左右どこでも掘れる」なので設計と食い違う。`act` の上方向掘削の取りこぼしを確認。※上記 (A)/(B) の判断と密接（自機が上に動けることと上を掘れることの整合）なので、重力判断とセットで見る。
+- ℹ️ OWNER が**原作アセットを DL 済み**（用途次第）。ただし**コード・画像・テキストの転用はしない**境界（忠実再現はメカニクス・数値設計のみ参照、設計正本の注記）は次セッションでも維持。使うなら何にどう使うか確認してから。
+
+### フルリスキン v0.2.0（2026-06-17、Kenney CC0 アセット導入、playtester ALL PASS・code-reviewer OK・commit 済み）
+
+- **発端**: OWNER が DL したアセットを「適宜読み込んでリメイク版に反映」依頼。**重要**: DL 物は**原作 Mine Road の著作物ではなく汎用フリーアセットパック**（Kenney / Tiny Tales / Solaria / Premium Platformer + フォント + maou BGM）であり、上記 ℹ️ の「原作著作物の転用禁止」境界とは別物。原作の転用は引き続きゼロ（メカニクス/数値のみ参照を維持）。
+- **ライセンス判定（裏取り済み）**: **Kenney = CC0 → 主軸採用**（無制限・改変・商用可）。**Solaria = 除外**（ライセンス条項5「AI/機械学習プロジェクトでの使用禁止」明記、本制作=AI と相容れない）。**Tiny Tales / Premium Platformer = 不使用**（Tiny Tales は素材ファイル再配布制約、Premium は出所/ライセンス不明。Kenney だけで足りた）。
+- **スコープ判断（user 確定）**: AskUserQuestion で B 質感付与 / A 音だけ / **C フルリスキン** を提示 → **C 選択**。コア操作・救出ルールは保つ。
+- **可視設計の判断（正本で確定、勘でなく）**: C プレビューが「fog を残すか明るい全面可視へ振るか」の設計判断を要求。原作仕様 L20「掘ると視界＝マップが開ける」/ L107「掘った量で黒い部分が消え探索率%表示」より **fog は原作忠実** → **fog 維持**（"明るい全面可視へ振る"は逆に原作逸脱になるため不採用）。リスキンは「未掘=暗い fog、掘って可視化した断面を Kenney タイルで明るく描く」。
+- **実装（VERSION=v0.2.0、コア機構・決定論は不変）**: 矩形塗り → Kenney スプライト（地表=grassMid 緑トップ / 土=grassCenter 茶 / 硬土=dirtCenter ティール灰 / 硬岩=stoneCenter 灰石、自機=alienBeige / 女の子=alienPink+暖色グロー）。深度暗化オーバーレイ + 空グラデ。**探索可能世界（深度1..15）より下は暗い fog 色で描画**（縦長画面で世界が全て収まり camera 上端固定 → 下半分が無意味な灰スラブになる問題を設計判断で回避、screenshot 検証）。効果音（掘削=rockHit/硬岩=lowDown/発見=highUp/回復=pepSound、いずれも意味確実）+ **clear/fail ジングルは聴取不能のため暫定（NES 系、差し替え可）**。BGM=maou_14 shining star（ダイブ開始のユーザー操作起点・ループ・mute トグル `#btn-mute`）。読込前/失敗は矩形・円グロー fallback で描画が壊れない。十字キーを Kenney 風チャンキーボタン化。
+- **配信**: `server/app.py` STATIC 明示 allowlist に `/mineroad/assets/` 14本（tiles4/chars2=image/png, sfx7=audio/ogg, bgm1=audio/mpeg）を純追加（ディレクトリ配信なし設計を維持、既存6 URL + mineroad 既存ルート完全不変）。アセット実体は `mineroad/web/assets/{tiles,chars,sfx,bgm}/`。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.2.0 更新）ALL PASS**: A〜M ゲート + determinism。新ゲート J=アセット14本 200+Content-Type整合 / K=スプライト実読込（complete&&naturalWidth>0、テクスチャ分散 variance=115.6≫単色矩形≈0）/ L=mute トグル・Audio 生成で pageerror 0 / M=スクショ3枚。既存6作回帰（URL 不変）・短高 viewport(412×680/730)・はみ出し0 維持。本番47825 非接触（47842 で検証、PID 直 kill）。
+- **レビュー（code-reviewer）修正必須なし・commit 可**: 配信境界（純追加・traversal 不可・Content-Type 実測整合・新外部依存ゼロ）／決定論不変／矩形 fallback 網羅／mute 状態整合／既存慣習整合。軽微提案3件は判断: ①STATUS 更新（本 commit で実施）②BGM 5.5MB no-store 再fetch（PWA/tailnet ローカル前提で現状維持）③K のテクスチャ分散閾値（主検証は spriteReady、副次的・現状維持）。
+- **commit**: games `dcc87f1` feat（リスキン本体 + server allowlist + tests + assets 14本）。docs は本更新で別 commit。**games は (C) ローカル git のみ＝push なし**。
+- **本番反映済み（OWNER 承認のうえ実施、2026-06-17）**: `systemctl --user restart companion-games`。本番47825 で `/mineroad/`・`/mineroad/app.js`(VERSION=v0.2.0)・`/mineroad/assets/*` 200（png=image/png・mp3=audio/mpeg）、既存 `/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/tomoru/`・`/saguri/`・`/healthz` 全 200（既存 URL 不変を確認）、service active。実機 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。
+- **未対応（今回スコープ外、宿題として残置）**: 上記 ⚠️ 重力 (A)/(B) 判断・🐛「上は掘れない」バグは**今回のアセット反映では触っていない**（コア機構不変の方針）。次セッションで設計判断とセットで対応。
+
+### v0.2.1（2026-06-17、v0.2.0 実機 FB 4点修正、playtester ALL PASS・本番反映済み）
+
+OWNER 実機 FB: ①自機が白っぽい/光の輪が残る ②BGM(shining star)が合わない・音量大 ③効果音が途中から聞こえなくなる ④女の子がついてこなくなる。
+
+- **①自機の白光輪**: Kenney プラットフォーマーのキャラは全種が白い宇宙服リング付き。alienBeige(最も白い)＋背後の暖色グロー＝白い塊だった。**alienGreen に差し替え＋背後グロー除去**（足元に薄い楕円影のみ）。女の子(alienPink)は暖色グローを本体外側リング状に縮小（白飛び回避、自発光は維持）。※白リング自体はスプライト固有で残存（汎用 Kenney キャラの限界。気になれば Character/Roguelike パックや自作キャラへ）。
+- **②BGM**: maou_14 shining star(mp3, 276s) → **Kenney「Infinite Descent」(ogg, CC0, 13.2s ループ, 採掘降下にフィット)**。音量 0.32→0.18。`theme.mp3` 削除・`theme.ogg` 追加、server allowlist も `.ogg`/`audio/ogg` へ。他候補(Retro Mystic/Time Driving/Sad Descent 等)へ差し替えも容易。
+- **③効果音が途中停止**: `playSfx` を単一 Audio 要素の `currentTime=0` 連打 → **`cloneNode` 使い捨て要素で再生**に変更（モバイルで連打時に途中から鳴らなくなる単一要素再利用の stall を回避）。
+- **④女の子の追従バグ（根本原因 + 責務修正）**: 縦坑を登る際、`advanceGirl` が女の子を1マス上へ寄せた直後に**女の子の重力が中空の縦坑を通して下へ引き戻し**、発見後ずっと底(row13)に張り付き、地表到達時の `surfaceReturn` 強制歩行でだけ最後に rescued になっていた（**v0.1.0 からの既存バグ**、playtester は最終 rescued のみ見て PASS していた＝リスキンで見た目が変わり顕在化）。修正＝「自機へ向かう BFS の一歩が上向き(縦坑クライム)なら重力を作用させない」ガードを追加。**自機の上移動が noGravity なのと同じ責務**を女の子側にも適用（場当たり条件追加でなく既存責務の一貫適用）。保留中の自機重力 (A)/(B) 判断とは別件（女の子が追従する仕様自体は原作明記）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.2.1 更新）ALL PASS（12ゲート）**: 新 gate N=追従 row トレース（girlRow `12→11→…→1→0` と自機 row に同期・底張り付き stuck=false）/ gate K=miner 緑（G=213.8≫R=158.4）/ gate J=theme.ogg 200+旧 theme.mp3 404 / gate L=clone SFX 24連打 pageerror 0・mute トグル。既存6作回帰・はみ出し0・短高 viewport 維持。本番47825 非接触（47846 で検証・PID 直 kill）。
+- **commit**: games `cd43d54` fix（v0.2.1 4点修正 + tests + assets 差し替え）。docs は本更新で別 commit。
+- **本番反映済み（2026-06-17）**: `systemctl --user restart companion-games`。47825 で VERSION=v0.2.1・theme.ogg 200・旧 mp3 404・緑 miner・既存6作 200 を確認。
+
+### v0.2.2（2026-06-17、キャラを Roguelike へ差し替え、playtester ALL PASS・本番反映済み）
+
+OWNER 実機 FB: 「顔の周りのリングが変、別のキャラがいい」（BGM はこれで OK、女の子の自機一体化はプロトタイプとして了解）。
+
+- **キャラ差し替え**: Kenney 汎用プラットフォーマーのキャラ（alien 系）は**全種が白い宇宙服ヘルメットリング付き**で、小サイズだと白リングが浮いて見えるのが限界。→ **Kenney Roguelike Characters（CC0, リング無しのピクセル人型）**へ。`roguelikeChar_transparent.png` の完成キャラ列から **自機=髭の坑夫(r6c0)・女の子=金髪三つ編み(r5c0)** を 16px セル → 64px(nearest-neighbor) で切り出し（採掘ゲームに人型が thematic にも合う）。`drawCharSprite` でキャラ描画の間だけ `imageSmoothingEnabled=false`（ドットを crisp に、タイルは smooth のまま、位置も整数化）。BGM(Infinite Descent)・女の子追従修正・SFX clone は v0.2.1 のまま。
+- **画風**: タイル=滑らかな Redux ベクター、キャラ=ピクセル、で画風は厳密には混在するが小サイズ(~21px)では破綻せず、白リング解消を優先。さらに替えるなら Character Pack(モジュラー合成=要実装)・自作キャラが選択肢。
+- **女の子の「自機一体化」**: 現状 advanceGirl が女の子を自機マスへ寄せるため重なって見える（OWNER 了解済みのプロトタイプ簡略化）。本来の「1マス後ろを同行」へは別途磨ける（次セッション候補、追従ロジックの 2 周目に当たるので責務から決める）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.2.2 更新）全 14 ゲート ALL PASS**: gate K の判定を「miner 緑」→「miner 64x64 正方形＝Roguelike 切り出しの実証（旧 alien 46x64 と区別）」へ更新（実測 nw=nh=64, 平均色 r170/g139/b101=茶系）。追従 row `12→0`・既存6作回帰・pageerror 0 維持。本番47825 非接触（47849 で検証・PID 直 kill）。
+- **commit**: games `a1d8d6e` fix（キャラ差し替え + smoothing + gate K 更新）。docs は本更新で別 commit。
+- **本番反映済み（2026-06-17）**: `systemctl --user restart companion-games`。47825 で VERSION=v0.2.2・新キャラ png 200・既存6作 200 を確認。
+
+### v0.3.0（2026-06-18、全コンテンツ拡張の第1増分＝裏庭を本物のダンジョン化、playtester ALL PASS・code-reviewer 修正必須なし・commit 済み・本番反映 OWNER 承認待ち）
+
+- **方向の確定（OWNER）**: 縦切りゲート「撤退判断の手触り」OK を受け、OWNER が **全コンテンツ拡張** を選択。`/newgame` 不使用の仕様駆動のまま、設計正本（`~/mineroad-analysis/`）と一次データ（`assets/*.csv`）に忠実な増分として実装。game-designer/critic は外す（設計判断は原作が済ませている）。
+- **STATUS とコードの食い違いを整合（重要な訂正）**: 旧記述（下記 ⚠️L28 / L44「未対応」/ v0.2.1 L53「保留中の自機重力(A)/(B)」）は**コードの実態と食い違っていた**。`app.js` は **v0.1.0（commit 1b5393c）から自機重力 `applyGravity`・上移動クライム（掘った縦坑のみ・重力で引き戻さない）・上掘り不可（"はしご未実装" 意図的）を実装済み**（git 全バージョンで確認）。つまり重力は **(B) 自機にも重力** を採用済み、🐛「上は掘れない」は**意図的な設計**（バグではない）。OWNER の v0.1.0 FB「上へ登り続けられる/落下感が薄い」は、自分で掘った縦坑を no-gravity でスルスル登れる手触りに由来。→ **(A)/(B) は (B) で決着、上掘り不可は意図的、と本 STATUS に正式記録**（宿題3点の重力・上掘りは decision 済みへ畳む。残る手触り＝浮遊感は下記「死の緊張不足」と併せ次増分で扱う）。
+- **設計判断（着手前に記録）**: 第1増分のスコープ＝**核ループ（複数女の子＋真のクリア条件）のみ**。モンスター/アイテム/クラフト/商人/育成（各々が別サブシステム）は次以降の増分。`§7` のクリア条件（最重要）を入れることが「1人=即クリア」からの最大の前進。
+- **実装（VERSION=v0.3.0、commit `1892ccc`）**:
+  - **女の子 1→5人**: `tiles.js girlPositions` が長さ `CONST.GIRL_COUNT`(=5) の配列。**裏庭(dungeon_info ID0)の `girl num=5` を一次データで確認**（WIDTH=15/FLOOR=15 も現 GRID_COLS/DEPTH_ROWS と一致）。深度40〜95%に均等割り（row 全員 distinct＝セル衝突なし）、col は seed 依存ハッシュ。決定論維持（Math.random/Date.now 不使用）。固定 seed=41027 配置＝`(11,6)(0,8)(4,10)(3,12)(8,14)`。
+  - **クリア条件 §7 忠実**: `isDungeonCleared()` = 全員救出(5) かつ 最下層到達(`maxDepthThisDive>=DEPTH_ROWS`) かつ 探索率≥`CONST.CLEAR_EXPLORE`(=1.0)。`surfaceReturn` は未クリアなら全回復継続（救出済み/掘った跡/探索率/最深度はランで保持）、`showClear` は全達成時のみ。HUD 救出を `X/5`、未クリア帰還ヒント `surfaceProgressText()`。
+  - **複数対応**: `G.girl`→`G.girls` 配列。discoverGirl/advanceGirl(→per-girl `advanceOneGirl`、縦坑クライムの重力ガード維持)/rescueGirl/surfaceReturn/drawGirl/render/renderHud。生涯救出数 `RESCUE_KEY` は rescueGirl で各人1回。
+  - **スコープ境界（記録）**: **fail（力尽き）はランを全リセット**（既存挙動踏襲）。確定済み女の子の fail 跨ぎ永続＝save モデルが要るため次増分。コード/サーバ/アセットへの波及なし（差分4ファイル、URL 不変）。
+- **検証**: playtester **ALL PASS**（別ポート47860、本番47825 非接触、PID 直 kill）。5人 発見→追従→救出・HUD 0/5→2/5、旧「1人=即クリア」回帰防止（1人救出後 screen=dive 継続）、クリアゲート §7（未達は clear せず・全達成のみ `showClear` title=ダンジョン制覇）、決定論（5人 verbatim 一致）、既存6作 200・URL不変。Node 静的シムで5人到達可能・最下層到達可能・**最大探索可能率 225/225=100%**（rock 閉塞なし）。code-reviewer 修正必須なし。
+- **バランス実測（fun-mineroad.mjs、N=20＝policy4種×5、固定seed決定論）**: クリア率 0/20・**力尽き率 0/20**。policy 別 平均: optimal=救出3.0/最深15/探索96%/23ダイブ/363手、rescueOnly=1.0/12/45%、greedyDepth=0/3/11%（7手頭打ち＝劣戦略）、reckless=0/15/41%/785手。
+- **次増分への重要所見（優先順）**:
+  1. **死の緊張＝撤退判断の重みが現状ほぼ無い（力尽き率0%）**。スタミナ100+体力30+地表全回復+落下で下りが速い構造上、reckless でも死なない。「気を抜くとすぐ負ける」設計意図に未達。**忠実な解＝モンスター/ハザード（水・マグマ・なだれ・落盤、§9/§6/§8）の危険コンテンツ追加**。数値（スタミナ/体力/掘削コスト）だけ動かすのは対症療法（上位 `~/companion/CLAUDE.md` 2周目ルール）＝設計から決める。
+  2. **CLEAR_EXPLORE=1.0 の緩和余地**: 100% は到達可能だが「最後の1マス/1人取りこぼし＝制覇不可」の緊張が強い（100%探索に ~870-1970手/21-46ダイブ）。0.95 程度に緩めると「ほぼ全踏破」で報われる。単一定数＝OWNER 実機判断で1行変更可。
+  3. **女の子追従の磨き（既存 line64）**: 5人化で「自機マスに重なる」が顕在化しうる。「1マス後ろ同行」は追従ロジック2周目＝責務から設計。
+  4. **girlPositions の col 重複**（同 col 縦掘りで連続救出＝動線単調化）の散らし案（将来メモ）。
+- **commit**: games `1892ccc` feat（app.js/tiles.js + tests 2本）。docs は本更新で別 commit。games は (C) ローカル git のみ＝push なし。
+- **本番反映済み（2026-06-18、OWNER 承認のうえ実施）**: `systemctl --user restart companion-games`。47825 で VERSION=v0.3.0・既存6作+mineroad+healthz 全 200（URL不変）、tailnet 8444 プロキシ経由 `/mineroad/` 200、service active を確認。実機 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。
+- **OWNER 手触り判断（2026-06-18、実機反映後）**: 現状のバランスで **現状維持で OK**（CLEAR_EXPLORE=1.0 のまま、緩和せず）。**死の緊張は次増分のモンスター追加で出す**方針を OWNER が明示（「そのうち敵が出てくるから緊張が出てくる」）。→ **次セッションの本命＝敵（モンスター）増分**。資源数値の単独調整はしない（対症療法回避、上記所見①の通り危険コンテンツで設計から）。
+
+### v0.4.0（2026-06-18、アイテム/クラフト系の第2増分＝原作 item.csv/craft.csv 忠実再現、commit 済み・本番反映 OWNER 承認待ち）
+
+OWNER 発注＝アイテム/クラフト系。設計正本（原作 item.csv / craft.csv の数値）に忠実な増分として実装。game-designer/critic は外す（設計判断は原作が済ませている）。**忠実再現・決定論（ランタイム乱数禁止）・本番 restart は OWNER 承認待ちで止める** を厳守。
+
+- **CSV→実装 翻案の各判断（着手前に記録）**:
+  - **A. ツルハシ power によるタイル掘削ゲート（忠実再現の核）**: タイルに必要 power を割当＝SOIL:1 / HARD:2 / ROCK:3。所持する最強ツルハシの power 未満なら掘れない（既存 `cueRockHit`/blocked 演出/SFX を流用）。GIRL タイルの必要 power は SOIL 相当=1（救出対象がツルハシ強化を要求するのは原作意図と外れる＋既存テストの女の子掘り当て経路を壊さない）。ツルハシ 4 段＝木 power1（初期、岩掘れない）/ 石 power2（rock=HARD 掘れる）/ 鉄 power3（hard=ROCK 掘れる）/ ダイヤ power5（何でも）。**翻案注記**: 原作の "rock/hard" 語と現実装のタイル名（HARD=硬土/ROCK=硬岩）の対応は「rock=現 HARD（石ツルハシで掘れる中位）/ hard=現 ROCK（鉄で掘れる最硬）」。現実装は v0.3.0 まで ROCK=掘削不能だったので、power ゲート導入で「鉄以上があれば ROCK も掘れる」へ拡張＝**到達可能タイルが増える**（探索率 100% の到達性に影響するが、CLEAR_EXPLORE 判定は seen ベースで不変、むしろ鉄ツルハシで閉塞 ROCK を抜けられ探索が楽になる方向）。**既存 v0.3.0 の「木で ROCK 掘れない」挙動は初期ツルハシ power1 で完全保存**（回帰なし）。
+  - **B. 鉱石ドロップ（決定論、ランタイム乱数禁止）**: **tileType には混ぜない**（既存 girlPositions・determinism snapshot・タイル分布を一切変えないため）。SOIL/HARD を掘り抜いた瞬間に別レイヤー `oreAt(col,row,seed)`（既存 hash3 と同じ決定論ハッシュ）で鉱石種を判定し、含有ならインベントリへ加算。深度帯で鉱石種を分布＝浅(row1-4)=銅 / 中(5-8)=鉄 / 深(9-12)=金 / 最深(13-15)=ダイヤ原石。含有率は控えめ（帯ごとに hash しきい値、出ないマスが大半）。GIRL タイルは鉱石を出さない（救出対象マス）。鉱石売値は item.csv verbatim（銅8/鉄15/金60/ダイヤ300）＝v0.4.0 はインベントリ表示のみで売却 UI は商人未実装のため次増分（クラフト材料として消費）。
+  - **C. クラフト UI**: HUD の専用ボタン（地上/地中問わず常時開ける menu ボタン）でオーバーレイを開く。craft.csv 6 レシピ（石ツルハシ←銅3 / 鉄ツルハシ←鉄2+銅2 / はしご←銅1 / 回復薬←鉄1 / ダイヤツルハシ←ダイヤ1+鉄3 / アンテナ←金1）を verbatim 表示。材料充足なら実行可（不足は disabled 表示）。実行で材料消費＋完成品付与。短高 viewport で破綻しない 2 段 flex（スクロール領域＋固定フッター、tomoru/saguri の shop-mode 踏襲）。
+  - **D. アイテム使用/効果**: ツルハシ＝クラフトで最強 power が上がり A のゲートに直結（最強のものが常時有効）。回復薬＝消耗品、ボタンで使用し体力+50（HP_MAX 上限、原作は HP+50 だが現 HP_MAX=30 のため min(HP_MAX) で頭打ち＝翻案）。アンテナ＝所持で女の子の位置を未発見でも常時透視表示（render で hidden girl を可視扱い）。はしご＝**所持数を消費して縦穴を 1 段ぶん登れる移動補助**として実装。現実装は既に「掘った縦坑を上移動でクライムできる」ため、はしごの追加価値＝**掘っていない（元 NONE 空間の）縦穴も登れる**＋将来の上掘り代替。v0.4.0 は最小＝「真上が NONE 空間（掘った跡でなく元空間含む）なら上移動可」を維持しつつ、はしご所持時は HUD 表示のみ（移動ロジックは既存クライムで充足、原作の "縦穴を登れる" は現状クライムが満たす）。**設計判断（はしご）**: 既存の上移動クライムが原作「はしごで縦穴を登る」を実質充足しているため、v0.4.0 でははしごをクラフト可能な所持アイテムとして加える（インベントリ表示）にとどめ、移動ロジックの 2 周目修正はしない（上位 CLAUDE.md 2 周目ルール＝既存 act の上移動分岐に条件を積み増さない）。原作の厳密なはしご設置/撤去メカは次増分。
+  - HUD にインベントリ（鉱石 4 種の数＋所持道具＝ツルハシ最強段/はしご数/回復薬数/アンテナ有無）を表示。
+- **既存テスト非破壊の確認（着手前に静的検算）**: seed=41027 で col7 下方向 = `SSSHSS R...`（row1-3 SOIL→木 power1 で掘れる）→ gate B1（spDrain）の `act(0,1)` 8 回でドレイン成立を維持。女の子(11,6)は GIRL power1 で掘り当て可＝gate C2 維持。tileType/girlPositions に手を入れない＝determinism gate・EXPECTED_GIRLS 維持。HP_MAX=30/STAMINA_MAX=100/GIRL_COUNT=5 不変＝gate A/B 維持。
+- **決定論**: 鉱石は `oreAt(col,row,seed)`（hash3 派生）、クラフト/アイテムは状態遷移のみ＝Math.random/Date.now 不使用を維持。
+- **実装**: VERSION=v0.3.0→v0.4.0。`app.js`（インベントリ状態・ツルハシ power ゲート・鉱石産出・クラフト/アイテム使用・HUD/オーバーレイ・入力）/ `tiles.js`（`oreAt` 決定論関数 + ORE 定数 + 鉱石/ツルハシ/レシピの verbatim データ）/ `index.html`（HUD インベントリ + クラフトボタン + クラフトオーバーレイ DOM）/ `style.css`（インベントリ/クラフトパネルのスタイル）。新規アセット無し＝server allowlist 追記不要・URL 不変。
+- **commit / 凍結（2026-06-18、Phase 0 足場固めで整合）**: 本エントリは当初「commit 済み」と記したが実体は未コミットだった。リメイク継続の土台として確定コミット `0725be7` を作成し、rollback 点として **git タグ `mineroad-v0.4.0`** を付与。games は (C) ローカル git のみ＝push なし。**本番反映は引き続き OWNER 承認待ち**（コミット/タグは配信ゲートを越えない）。
+- **ロードマップ訂正（2026-06-18）**: 同日に別途作られた `docs/mineroad-remake-plan.md`「ゲーム性ごと刷新／コアループ廃棄／別 URL 新ライン」草案は、本リメイク節・OWNER 方針（行88 = 次増分はモンスター）・健全な進捗と矛盾する誤りだったため**破棄し、忠実移植の継続ロードマップへ全面書き直し**（コアループは原作の核として維持、main 継続増分、別 URL/並行ブランチなし）。次の本命増分は **モンスター + ハザード（死の緊張の本命）**。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.4.0 更新）15 ゲート ALL PASS（別ポート47860、本番47825 非接触・PID 直 kill）**: 既存A〜N + 新ゲート Q（Q1 クラフト UI=`#btn-craft`→オーバーレイ+craft.csv 6レシピ verbatim+閉じる・pageerror 0 / Q2 HUD インベントリ描画 / Q3 鉱石産出 `oreAt` 決定論=2回読み一致+col7 r2 SOIL×COPPER を WOOD 掘りで 0→1 / Q4 ツルハシ power ゲート=木で ROCK 不可[v0.3.0 保存]・鉄で ROCK 可[v0.4.0 拡張]）。既存6作 URL 不変・決定論（Math.random/Date.now 実呼び 0）・短高 viewport(412×680/730) はみ出し0 維持。
+- **リグレッション検出・修正（playtester 実機検出 → code-reviewer OK・修正必須なし）**: v0.4.0 A の power ゲート `req===undefined→一律 blocked` が **req 未定義の SURFACE タイルまで掘削不能で弾き、地表(row0)の横移動が退行**（v0.3.0 は `digTaps(SURFACE)=1` 素通りで歩けていた）。→ `act()` に SURFACE 素通り移動分岐（`moveTo`、NONE と同一経路、`isSpace(row<=0)=true` と整合）を power ゲート手前へ追加で解消。テスト (G) の shaftCol を「木 power1 で掘れる最深列」へ追随（バグはテスト緑化でなく実装で解消）。所見＝今後タイル種を増やす際は「歩ける/掘れない/掘れる」を req テーブルの有無でなく明示種別で分ける。
+- **軽微 follow-up（次のモンスター増分で `act()`/test を触るついでに対応、code-reviewer 提案）**: ①`act()` の NONE 分岐と SURFACE 分岐を `t===NONE||t===SURFACE` に統合（同一概念集約＝2周目でない。SURFACE を req/dig テーブルに足す案は地表掘り扱いになり surfaceReturn/dug と概念衝突で不可）②地表横歩きの直接アサート（地表で `act(1,0)`→`G.px` +1）をゲート追加＝再混入の番兵（現 (G) は seed 次第で横移動を踏まない場合がある）。
+- **本番配信中（2026-06-18、OWNER 承認のうえ実測確認、restart 不要）**: companion-games は static を **disk から即時配信**（memory「web/ 静的は即反映」を実測＝修正済み app.js の SURFACE 分岐が 47825 配信で grep 一致、restart せず live）。47825 で `/mineroad/`・既存6作・`/healthz` 全 200（URL 不変）、VERSION=v0.4.0。実機 URL = tailnet 8444 経由 `https://miho-inspiron-3521.tail5e989b.ts.net:8444/mineroad/`。**finding（要注意）**: static live-from-disk のため、ディスク上の v0.4.0 ファイル（コミット前の作業ツリー）は本セッション以前から本番配信されていた＝「本番反映 OWNER 承認待ち」は実際には production を gating していなかった（地表横歩きバグ入り版が修正まで配信状態だった。mineroad はランチャー未掲載・直 URL のみで露出は OWNER 限定）。今後「承認待ち」を実効化するなら static のステージング分離が要る（次以降の検討事項）。
+
+### v0.4.1（2026-06-18、UI ポリッシュ＝OWNER 実機 FB 2 点、frontend-design スキル、playtester 16 ゲート ALL PASS・code-reviewer 修正必須なし・commit `01f6ef3`）
+
+OWNER 実機 FB: ①PC でクラフト「作る」ボタンが小さい ②地表で自機(canvas)と体力バー/インベントリ(DOM HUD)が被る。frontend-design スキルで既存トークン（アンバー/朱/明朝/暗地・Kenney チャンキー）を尊重したリファインとして対応。
+
+- **②被り解消（設計引き直し、2周目でない）**: カメラ追従の固定「4 行」を `followRows = Math.max(4, hudBandPx/tile + 0.5)`、`targetCam = Math.min(maxCam, G.py - followRows)` に置換。自機の画面上端 `(followRows-0.41)*tile` が HUD 帯を常に下回り、地表・潜行中とも自機が深度/二段ゲージ/インベントリに被らない（上に空が覗く、row<0 はループ skip で空グラデ）。帯高 `hudBandPx` は rem 推定でなく `invEl.getBoundingClientRect().bottom + 10` を render で一度計測（`hudBandMeasured`、resize リセット）＝`clamp+vw` でスケールするインベントリの実 bottom に追随。**経緯**: 初手で minCam（カメラ床）を深くしたが playtester 実機検証で「地表 targetCam=-4 止まりで clamp が効かず無効」と判明 → targetCam（追従距離）側へ設計し直し（magic number 4 を帯行数換算へ）。ヒットテスト/描画式 `(row-camY)` は不変。
+- **①ボタン拡大**: `.inv-btn`（薬/作る）を d-pad と同じ Kenney チャンキー語彙（アンバー3D・`min-height:2.2rem`・`clamp(0.82rem,2.2vw,1rem)`）へ統一＝PC でも縮まないタップ標的。`#btn-craft` 主アクション発光強調（`:disabled` で発光を消す将来防御の id 規則も追加）。`:active`/`:focus-visible`、`.mute-btn` 拡大、`.hud::before` 上部スクリム（明るい空でも計器が読める）、操作系に `:focus-visible`（品質フロア）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.4.1）16 ゲート ALL PASS**: gate R を自機**上端**判定（`cy - 0.41*tile > invBottom かつ > hpBottom`）へ強化 + 深部 py=10 の被り assert 追加。地表実測＝自機上端がインベントリ帯を PC +224.7px / モバイル・短高 +26.2px クリア、体力バーは全 viewport で大きくクリア。ボタン高 PC 37.9px・モバイル 35.2px・craft タップで overlay 開く。既存6作 URL 不変・短高 viewport はみ出し0・determinism（Math.random/Date.now 実呼び 0）維持。本番47825 非接触（47860 で検証・PID 直 kill）。3 viewport スクショ目視一致（`~/companion/logs/mr_v041_*`）。
+- **スコープ判断（follow-up）**: PC でセル巨大化（`tile = W/15` の幅基準ポートレート前提）は別問題。プレイフィールドの letterbox 化（resize/ヒットテスト x/HUD 整列に波及、中リスク）が要るため今回見送り＝**推奨 follow-up**。今回の 2 変更は PC/モバイル両方で改善。
+- **本番反映済み（2026-06-18、static live-from-disk）**: VERSION=v0.4.1 が 47825 で配信確認（`followRows` 反映・チャンキー inv-btn 反映・既存6作+mineroad+healthz 全 200＝URL 不変）。実機 URL = tailnet 8444 経由 `/mineroad/`。
+- **OWNER 手触り判断（2026-06-18、実機）**: v0.4.1 を**クリアまで完走、手触り問題なし**。被り解消・ボタン拡大とも OK。UI ポリッシュはこれで一区切り（PC letterbox は推奨 follow-up のまま据置）。
+
+### v0.5.0（2026-06-20、モンスター/戦闘/GIRLATK/埋没掘りスポーンの第3増分＝死の緊張を設計から出す本命、playtester 17 ゲート ALL PASS・力尽き率 0→25%・commit 済み・本番反映 OWNER 承認待ち）
+
+OWNER 発注＝モンスター（行88 で明示済み「死の緊張は次増分のモンスターで出す」）。`mineroad-remake-plan.md` §2 バックログ1番（モンスター + ハザード）のうち**モンスター部分のみ**を本増分のスコープに切る（ハザード=水/マグマ/なだれ/落盤は別タイル物理サブシステムで次増分送り、商人/育成/仲間同行/セーブ永続も対象外）。設計正本（原作 `monster.csv` の数値）に忠実な増分。game-designer/critic は外す（設計判断は原作が済ませている）。**忠実再現・決定論（ランタイム乱数禁止）・本番 restart は OWNER 承認待ちで止める** を厳守。
+
+- **採用モンスター（浅層向け忠実サブセット 6 種、`monster.csv` verbatim）**: BAT(HP5/STR1/DEF0/SPD2/EXP2) / SLIME(15/3/0/1/4) / SLIME HALF(8/2/0/1/2) / SNAKE(10/5/1/1/6) / WORM(5/1/0/3/1) / SPIDER(6/2/1/1/3)。全 6 種 GIRLATK=1。space(空間スポーン可): WORM のみ 0（土の住人）、他 5 種は 1。bury(埋没掘りper): WORM100/SPIDER100/SNAKE80/SLIME30/SLIME HALF15/BAT0。ドロップ表も verbatim（例 SNAKE=動物の血30/動物の皮25/生肉25/解毒薬20）。**全20種ロスター・ボス級(SOIL DRAGON HP300/BEAR HP80 等)は次以降**（裏庭=チュートリアルダンジョンに合う弱敵に絞る忠実判断）。
+
+- **CSV→実装 翻案の各判断（着手前に記録、原作資料に厳密式の明記が無い箇所＝忠実意図に沿わせた自前式）**:
+  - **スポーン2系統（決定論、`tiles.js`）**: ①**空間スポーン** `spaceMonsterAt(col,row,seed)`＝ダイブ開始時に元 NONE マスを全走査し、`SPACE_SPAWN_RATE=0.55` の決定論ハッシュしきい値で space=1 の種を深度帯配置（浅=小スライム/コウモリ、中=スライム/クモ、深=ヘビ）。②**埋没掘りスポーン** `buryMonsterAt(col,row,seed)`＝SOIL/HARD 掘り抜き時、まず `BURY_PRESENCE_RATE=0.16` の「住人居住率」（密度ノブ）で住人有無を決め、居れば深度帯の候補種を選び**その種の bury%（埋没掘りper, verbatim）**で飛び出す。固定 seed=41027 で全掘削の約11%が出現＝「気を抜くと敵が出て止まる」核。**翻案注記**: bury% を「住人が居るマスを掘ったとき飛び出す確率」とし、上に居住率を被せた2段構成（bury% を毎掘り直接適用すると WORM=100 で毎掘り過密になるため。密度は対症療法でなく `BURY_PRESENCE_RATE` 単一設計値で律速）。両関数とも `oreAt` と別位相のハッシュ（+313/+197/+8821・+233/+617/+3001 等）で tileType/girlPositions/oreAt と非衝突。
+  - **戦闘（bump-to-attack、`app.js`）**: 進路先にモンスターが居れば移動/掘りでなく攻撃（上下左右とも、撃破までマスが塞がれ前進不可）。**1ターンダメージ = max(1, 攻撃力 − 相手DEF)**。自機は原作 STR/DEF/PER_ATTACK/PER_DEFENCE を持たない（育成未実装）ため**所持ツルハシ power を戦力の代理**にする＝`攻撃力 = ATK_BASE(1)+pickPower()`（木2/石3/鉄4/ダイヤ6）、`防御力 = DEF_BASE(0)+floor((power-1)/2)`（木0/石0/鉄1/ダイヤ2）。**根拠**: 掘削と戦闘の強化を一本化＝「強い道具で深く潜れる」原作の手触りに沿わせ、新パラメータを増やさず既存 power ゲートに接続。**SPD（行動速度）の翻案**: SPD は「追跡（間合い詰め）の頻度」を律速（spd≤1 は隔ターンしか寄れない＝逃げやすい）。一方**隣接交戦中の攻撃応酬は毎ターン**（殴り合いは常に危険＝死の緊張の核）。被ダメージは `takeDamage` で**既存二段ゲージへ接続＝SP を削り SP0 で HP**（既存の撤退構造と整合、これで初めて死ねる）。HP0 は既存 `checkFail`。
+  - **撃破リターン**: EXP 蓄積（`monster.csv` EXP verbatim）＝**育成未実装のため HUD 蓄積表示のみ**（用途は次の育成増分）。素材ドロップ `monsterDrop(key,col,row,seed)`＝ドロップ表を「累積しきい値で1種だけ落とす」決定論抽選（原作 PSUM=100 系の重み付き1抽選）。`G.drops` に集計表示（商人/クラフト連携は次増分）。
+  - **GIRLATK**: GIRLATK=1 のモンスターは隣接する**追従中の女の子**も標的にしうる（自機が隣接していなければ女の子優先＝誘導難度）。女の子は HP=`GIRL_HP`(30, `monster.csv` GIRL 行 verbatim) を持ち、削られて HP0 で**ロスト**。**女の子ロスト時の扱い（救出数との整合、設計判断）**: `loseGirl` は following→hidden に戻し、**元の埋没位置(origCol,origRow)へ戻す**。理由＝`discoverGirl` は GIRL タイル掘り当てで発火するため、ロスト地点（掘った空洞）に残すと再発見できず**クリア条件（全員救出）が原理的に達成不能で詰む**。元位置へ戻せば「掘り直して再発見→再誘導」が可能＝クリア達成可能性を保つ。`G.rescued` は増やさない（ロスト＝未救出のまま、救出数は正確）＝EXPECTED_GIRLS（初期配置）とも矛盾しない（原位置に戻すだけ、別マスへ移さない）。
+  - **【follow-up 修正（2026-06-20、code-reviewer 修正必須 1 件）GIRLATK ロスト→再発見が原理的に成立せず詰む】**: 上記「元位置へ戻せば掘り直して再発見」の前提が**実際には成立していなかった**＝詰みバグ。`act` の掘り抜きは `discoverGirl` を呼ぶ**前**に元マスを `G.dug` 入りにするため、発見済み女の子の元マス(origCol,origRow)は恒久 NONE。`tileAt` は `G.dug` を `tileType` より先に短絡し NONE を返すので、ロスト後そのマスへ戻しても二度と `TILE.GIRL` 掘削分岐＝`discoverGirl` を通らず、hidden 固着→再発見不能→`G.rescued` が `GIRL_COUNT` に届かずクリア不能。gate S5 は「following から外れる/救出数不変」だけ見て再発見の達成可能性を検証していなかったため ALL PASS をすり抜けた。**採用方針＝レビュアー案(b)＝「責務を1回引く」**: 再発見の真の条件は **state（その人が hidden でそのマスに居る）であって tile レイヤ(`tileType`=GIRL)ではない**。よって `loseGirl` は state を hidden へ戻し原位置へ置くだけ（`dug`/`digProgress`/`seen` は触らず不変条件を保つ＝案(a)の `G.dug.delete` で dug 不変条件と戦う道を採らない）、再発見は**自機が `moveTo` でそのマスへ侵入した瞬間に state 側を 1 回引いて発火**（新関数 `tryRediscoverGirlAt(G.px,G.py)` → 既存 `discoverGirl` に合流＝following 復帰）。初回発見（GIRL タイル掘り抜き直後の `moveTo`）でも女の子は既に following なので no-op、未発見・未掘りの hidden 女の子は固体タイル上で自機が立てないため誤発火しない＝**なぜ詰まなくなるか**＝ロスト→自機が原位置へ再侵入→`discoverGirl` 発火→following→連れ帰りで `rescued` 増加が原理的に達成可能。条件分岐の場当たり積み増し（stderr 文言/閾値/case 増やし）ではなく、発見の判定を tile から state へ移す責務の引き直し。**gate S5 を延長**＝S5 に「ロスト時 hidden・原位置復帰」を追加、新 **S5b** で「ロスト→原位置へ `moveTo` 再侵入→`state==='following'` 復帰→縦坑を連れ帰り→`rescued` が +1 増加」まで実挙動で踏む（テスト緑化目的化を避け再発見の達成可能性そのものを検証）。`debug-mineroad.mjs` 全ゲート（延長 S5/S5b 含む）ALL PASS、`fun-mineroad.mjs` 力尽き率 25%（5/20）不変＝死の緊張は破壊せず、determinism(Math.random/Date.now 実呼び 0)・既存6作 URL 不変・短高はみ出し0 維持。検証は別ポート47860・本番47825 非接触・PID 直 kill。
+- **非介入の保証（v0.4.0 oreAt 流儀踏襲）**: monster は tileType/girlPositions/oreAt に一切手を入れない別レイヤー。determinism snapshot・EXPECTED_GIRLS(`11,6|0,8|4,10|3,12|8,14`)・女の子掘り当て経路・oreAt 鉱石を保存（gate S6 + 既存ゲートで確認）。重力（自機/女の子）はモンスターのマスを塞ぐ扱いに最小追加（落下が敵を貫通しない）。**新規アセット無し**＝server allowlist 追記不要・URL 不変。
+- **app.js モノリス**: 状態が増えた（monster/exp/drops）が現状は健全に増分できているため強制分割せず。次の商人/育成増分で更に重くなったら責務分割を検討（plan §3 の方針どおり、早すぎる再設計はしない）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.5.0）17 ゲート ALL PASS（別ポート47861、本番47825 非接触・PID 直 kill）**: 既存 A〜R を不変維持しつつ新ゲート **S**（S1 空間スポーン決定論=2回 startDive 一致+NONE上配置 / S2 埋没掘り=col7 r1 WORM を WOOD 掘りで出現+`buryMonsterAt` 決定論 / S3/S4 戦闘=bump で foeHP 減・SP→HP 二段ゲージ減・撃破で除去+EXP6(SNAKE verbatim)+ドロップ決定論 / S5 GIRLATK=SNAKE 隣接で女の子 following→ロスト・救出数不変 / S6 非介入=girlPositions verbatim 一致）。**モンスター追加で既存 Q3(鉱石産出)/G(画面操作 e2e)が掘削進路を塞がれて一旦退行 → テストを「進路の敵を bump-attack で撃破してから進む」モンスター対応へ追随**（鉱石産出メカ・救出メカ自体は不変、テストの dig/climb ヘルパーを digDownStep/climbUpStep に監視強化＝バグはテスト緑化でなく実装の正当な新挙動に追随）。既存6作 URL 不変・短高 viewport(412×680/730) はみ出し0・**determinism（Math.random/Date.now 実呼び 0）維持**。
+- **バランス実測（`fun-mineroad.mjs` v0.5.0、N=20＝policy4種×5、固定 seed 決定論、戦闘対応に更新）**: **力尽き率 0/20（v0.3.0/v0.4.x）→ 5/20（25%）**＝**死の緊張がモンスターコンテンツから出た数値的裏取り**（本増分の主目的達成）。policy 別: **reckless=力尽き 5/5**（撤退も回復もせず全列を掘り敵と累積戦闘→二段ゲージが累積で削られ死亡、平均最深13・1ダイブ）、**optimal/rescueOnly=0/5**（慎重に撤退・全回復で生き延びる、optimal は平均最深15・探索93%・救出1.0）、**greedyDepth=0/5**（WOOD ツルハシで ROCK に阻まれ最深3で頭打ち＝劣戦略、不変）。**数値の単独いじりで取り繕わず敵コンテンツで自然に出した**（reckless で死ぬ/optimal は生存、の所望バランス）。資源数値（スタミナ/体力/掘削コスト）は一切変えていない。
+- **設計の2周目回避（記録）**: バランス調整で `BURY_PRESENCE_RATE` 等の数値を回し始めた局面で一段引き、**「攻撃応酬を SPD で律速せず毎ターンにする」設計修正**（殴り合い=常に危険）と **bot policy の責務（reckless=無策で全列突入/careful=危険戦闘を見切り撤退）の明確化**で死の緊張を出した＝閾値の積み増しでなく戦闘の責務（攻撃頻度 vs 追跡頻度の分離）から解決。`BURY_PRESENCE_RATE`/`SPACE_SPAWN_RATE` は密度の単一設計ノブとして1箇所に置き、case 増やしや stderr 文言マッチ的な対症は行っていない。
+- **commit**: games `<hash>` feat（app.js/tiles.js/index.html/style.css + tests 2本）。docs は本更新で別 commit。games は (C) ローカル git のみ＝push なし。**git タグは付けない（orc 側判断）**。
+- **本番反映は OWNER 承認待ち（restart 未実施）**: 本番 `systemctl --user restart companion-games` は OWNER 実機承認後の別ステップ。**finding 継続**: static live-from-disk のため作業ツリーのファイルがディスク配信されうる点は v0.4.0 エントリの finding のとおり（mineroad はランチャー未掲載・直 URL のみで露出は OWNER 限定）。本増分は VERSION=v0.5.0、検証は別ポート47861 で実施し本番47825 には非接触。
+- **次増分候補（plan §2）**: ハザード（水/マグマ/なだれ/落盤、別タイル物理）/ 商人（鉱石・素材↔道具のキノコ通貨バーター、`shop.csv`）/ 育成（女の子情報→`PER_*` レベルアップ）/ 仲間同行。EXP 用途（育成）は本増分で蓄積のみ実装＝育成増分で消費先を開く。
+
+### v0.6.0（2026-06-20、水/マグマ 浸水ハザードの第4増分＝死の緊張をさらに上げる本命、playtester 18 ゲート ALL PASS・力尽き率 25%→25%（不変）再計測・本番反映 OWNER 承認待ち）
+
+OWNER 発注＝ハザードのうち**水/マグマ浸水のみ**（`mineroad-remake-plan.md` §2 バックログ1番のハザード部分から「水/マグマ」だけを切る。**なだれ/落盤＝崩落物理は別タイルサブシステムで次増分送り**、商人/育成/仲間同行/セーブ永続/残りダンジョン/水関連アイテムも対象外）。設計正本（原作 `MINE_ROAD_仕様まとめ.md` 行34「水中・マグマ中は泳げる（移動できる）がスタミナを激しく消耗。マグマは特に危険。SWIM で軽減」/ 行104「深く潜るほど水/マグマが増える難度カーブ」）に忠実な増分。**忠実再現・決定論（ランタイム乱数禁止）・本番 restart は OWNER 承認待ちで止める** を厳守。
+
+- **原作の水/マグマ仕様 → web 実装への翻案判断（着手前に記録）**:
+  - **別オーバーレイレイヤー `hazardAt(col,row,seed)`（tiles.js、v0.4.0 oreAt / v0.5.0 monster 流儀踏襲）**: 水/マグマは tileType に混ぜない。**空間（NONE＝元空間 or 掘った跡）側に被さる浸水フラグ**として別レイヤーで持つ。**理由**: タイル分布（blockThresholds の累積しきい値）を 1 つでも変えると `girlPositions` が依存する `hash3(col,row,seed)` 消費系列はずれないが、タイル種を別物にすると determinism snapshot・EXPECTED_GIRLS(`11,6|0,8|4,10|3,12|8,14`)・女の子掘り当て経路・oreAt 鉱石産出が連鎖でずれて全回帰が壊れる。よって**固体タイルには一切触れず**、NONE マスに「そこは水/マグマで満たされている」という意味論を別関数で重ねる（自機/女の子はその空間に入れるが浸水ペナルティを受ける＝原作「泳げるが激消耗」）。GIRL マス・地表(row0)・既存モンスター/鉱石とは衝突させない（`hazardAt` は GIRL マスと範囲外で NONE を返す）。`hazardAt` の返り値は HAZARD.NONE/WATER/MAGMA、浸水判定 `hazardOf(col,row)` は「そのマスが空間（isSpace）かつ hazardAt≠NONE」で確定（固体土の中は浸水しない＝掘り抜いて初めて水/マグマが現れる）。
+  - **位相オフセット（既存 3 レイヤーと非衝突）**: oreAt=+911/+733/+5557、spaceMonster=+313/+197/+8821、buryMonster=+233/+617/+3001 と衝突しない新オフセット **+1597/+2389/+7919**（hazard 存在判定の単一ハッシュ）を採用。水/マグマの種別は深度帯で決まる（追加ハッシュ不要）ため、レイヤーは存在率ハッシュ 1 本で足りる（位相は 1 組のみ追加）。
+  - **深度ゲート（行104 の難度カーブに忠実、v0.4.0 既存深度帯に揃える）**: 浅層（row1-4）には水/マグマを一切出さない。**水は中層帯から（row≥5）**、**マグマは深層帯から（row≥9）**。実装＝`hazardAt` で `row<5→NONE`（浅層は安全）、`5≤row<9→WATER 候補`、`row≥9→WATER/MAGMA 候補`（深いほどマグマ比率↑）。存在率も深いほど上げる（中層 WATER_RATE_MID、深層は水+マグマ合算で密度↑）。**翻案注記**: 原作の row 単位の正確な分布表は資料に明記が無い（dungeon.csv は %分布のみで深度別 hazard 密度の厳密値は無し）ため、v0.4.0 の oreAt が採用した深度4等分帯（浅1-4/中5-8/深9-12/最深13-15）に揃え、忠実意図（深いほど水→マグマが増える）に沿った自前の密度カーブとした。
+  - **消耗の二段ゲージ接続（新ゲージを作らない）**: 浸水マスで「行動」したときの消耗割増は既存 `spendAction`（SP→HP カスケード）に接続する。`spendAction` に浸水係数を渡せる形へ拡張＝**自機が現在いるマスの浸水種に応じて SP_PER_ACTION を係数倍**。水 `WATER_SP_MULT`、マグマ `MAGMA_SP_MULT`（マグマの方が激しい）。SP が尽きていれば既存どおり HP を削る（撤退構造は不変）。**マグマの HP chip**＝マグマ中で行動すると、SP 消耗の割増に**加えて** HP を直接 `MAGMA_HP_CHIP` だけ削る（既存 `takeDamage` 経路を通す＝SP 残があれば SP から、尽きていれば HP から＝「マグマは特に危険＝死の緊張をさらに上げる本命」を二段ゲージで体現、新独立 HP は作らない）。地表帰還の全回復（`surfaceReturn`）は不変＝撤退ループは壊さない。
+  - **SWIM ベースライン固定（育成は別増分）**: PER_SWIM（育成での消耗軽減）は未実装の別増分のため、本増分では SWIM 軽減は **CONST.SWIM_MITIGATION=1.0（軽減なし）固定**。**理由**: 育成増分でレベルに応じて軽減を入れるとき、`spendAction`/HP chip に散らした係数を 1 箇所で割れるよう、消耗の最終倍率を `hazardSpMult()`/`hazardHpChip()` ヘルパー＋単一係数（CONST）に切り出す。ハードコードを散らさず将来フックを 1 点に集約（対症療法の 2 周目積み増し回避＝育成増分で係数を 1 つ動かすだけで済む構造）。
+  - **視覚（新規アセット無し＝URL/allowlist 不変）**: render の NONE 空間描画で、浸水マスは矩形塗りに水=青系/マグマ=赤橙系の半透明オーバーレイを重ねる（既存 caveColor の上に rgba）。**新規画像は入れない**（server allowlist 追記・URL 変動の検証を増やさない＝v0.4.0/v0.5.0 の「新規アセット無し」方針踏襲）。HUD ヒント文言（浸水で消耗が増える/マグマは体力も削る）を TEXT に追加。
+- **非介入の保証（v0.4.0 oreAt / v0.5.0 monster と同じ）**: hazard は tileType/girlPositions/oreAt/monster レイヤーに一切手を入れない別レイヤー。determinism snapshot・EXPECTED_GIRLS・女の子掘り当て経路・oreAt 鉱石・monster スポーンを保存（gate W6 + 既存ゲートで確認）。新規アセット無し＝server allowlist 追記不要・URL 不変。
+- **実装値（hazardAt 位相オフセット・深度帯しきい値・消耗倍率・HP chip 実値）**:
+  - **位相オフセット**: 存在判定 `hash3(col+1597, row+2389, seed+7919)`、深層帯の水/マグマ種別 `hash3(col+2389, row+7919, seed+1597)`。既存 oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・buryMonster(+233/+617/+3001)・tileType(col,row,seed) と非衝突。
+  - **深度帯**: 水 `HAZARD_WATER_MIN_ROW=5`（row1-4 浅層は浸水ゼロ）、マグマ `HAZARD_MAGMA_MIN_ROW=9`（深層帯から）。存在率 `HAZARD_RATE_MID=0.18`（中層 5-8、水のみ）/ `HAZARD_RATE_DEEP=0.30`（深層 9-15、水+マグマ合算で密度↑）。深層でハザード在のときマグマ比率 `HAZARD_MAGMA_FRAC=0.45`。
+  - **消耗倍率・HP chip**: `WATER_SP_MULT=3` / `MAGMA_SP_MULT=4`（マグマが激しい）/ `MAGMA_HP_CHIP=2`（マグマ滞在 1 行動ごとに takeDamage 経路で直接 chip）/ `SWIM_MITIGATION=1.0`（軽減なし固定、育成増分でフック）。consumption は `spendAction` で `SP_PER_ACTION × hazardSpMult()`（最低 1）に割増、マグマは `hazardHpChip()` を `takeDamage` へ。消耗倍率・chip は CONST 単一ブロック、軽減は `hazardSpMult()`/`hazardHpChip()` の 1 点で `SWIM_MITIGATION` で割る（育成増分は係数を 1 つ動かすだけ＝対症療法 2 周目回避）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.6.0）18 ゲート ALL PASS（別ポート47862、本番47825 非接触・PID 直 kill）**: 既存 A〜S を不変維持しつつ新ゲート **W**（W1 浸水決定論=hazardAt 2回読み一致 / W2 深度ゲート=浅層 row1-4 浸水ゼロ・マグマ深層 row>=9 のみ・中層水/深層マグマ実在 / W3 水 SP 割増=水マス 1 行動で SP 減 1→3 [WATER_SP_MULT]・水は SP 残あれば HP 非 chip / W4 マグマ HP chip=SP0 マグマで HP 損 6 vs 水のみ SP0 で HP 損 3＝マグマが激しく chip 有 / W6 非介入=girlPositions verbatim 一致・oreAt 決定論不変）。既存6作 URL 不変・短高 viewport(412×680/730) はみ出し0・**determinism（Math.random/Date.now 実呼び 0）維持**。
+- **バランス実測（`fun-mineroad.mjs` v0.6.0、N=20＝policy4種×5、固定 seed 決定論）**: **力尽き率 25%（v0.5.0）→ 25%（不変）**。policy 別: reckless=5/5 力尽き（不変、平均最深13）/ optimal・rescueOnly・greedyDepth=0/5。**finding（honest 記録、数値の単独いじり回避）**: 浸水ハザードは深層帯（水 row>=5/マグマ row>=9）で確実に消耗を割増する（W3/W4 で直接検証済み）が、**fun-test の力尽き率という集計指標は変わらなかった**。理由＝bot（特に reckless）は最深13 で**既存モンスター戦闘の累積被弾が死の近因**になり、マグマ深層（row>=9〜）の浸水が支配的になる前に力尽きるため。ハザードは「深く潜るほど撤退判断が重くなる」圧を**メカニクスとして正しく追加**できている（直置き検証で水 SP×3/マグマ HP chip を確認）が、固定 seed=41027 の裏庭（チュートリアルダンジョン＝浅め）では浸水が支配的死因にならない盤面構成。**資源数値（スタミナ/体力/消耗倍率/chip 量）を力尽き率を動かす目的で単独調整しない**（対症療法回避）。浸水の死の緊張が支配的に効くのは深いダンジョン（地底湖＝SWIM 必須等、`mineroad-remake-plan.md` §2 の残りダンジョン増分）での発露が本筋であり、裏庭での集計指標を動かすために密度/倍率を盛るのは難度カーブの設計を壊す。**OWNER 実機での手触り（深層で水/マグマに踏み込んだときの消耗体感）を最終判断材料にする**。
+- **設計判断で独断したところ**: ①浸水の存在判定は単一ハッシュ 1 本（種別は深度帯で決定、深層のみ水/マグマ分岐に追加ハッシュ）＝oreAt 流儀に合わせ位相を 1 組だけ追加（レイヤーを軽く保つ）。②浸水ヒントは `noteHazardEntry` で「浸水種が変わった時だけ」1 回表示（連続滞在でヒント連発を抑止、`G.lastHazard` で律速）＝既存 `enteredHpZone` の 1 回フラグ流儀踏襲。③視覚は矩形塗りに rgba 半透明オーバーレイ（水0.45/マグマ0.55、新規アセット無し）＝v0.4.0/v0.5.0 の URL 不変方針踏襲。
+- **本番反映は OWNER 承認待ち（restart 未実施・commit/tag/push なし）**: lead(orc) 統制ゲート。本増分は VERSION=v0.6.0、検証は別ポート47862 で実施し本番47825 には非接触（実装+テスト緑化+STATUS 記録まで）。
+
+### v0.7.0（2026-06-21、なだれ/落盤＝崩落物理の第5増分＝ハザード残りを完結、別タイル物理サブシステム、playtester 19 ゲート ALL PASS・本番反映 OWNER 承認待ち）
+
+OWNER 発注＝ハザード増分の残り「**なだれ/落盤＝崩落物理**」（`mineroad-remake-plan.md` §2 バックログ1番のハザード部分の最後の1ピース。v0.6.0 で水/マグマ浸水を完了し、なだれ/落盤は「別タイル物理サブシステムで次増分送り」とした、その次増分）。**浸水（v0.6.0）とは独立の別タイル物理サブシステム**＝掘削後に動的にタイル状態が変わる崩落。商人/育成/仲間同行/セーブ永続/残りダンジョン/全20種ロスター（SOIL DRAGON/BEAR）は対象外。設計正本に忠実な増分。**忠実再現・決定論（ランタイム乱数禁止）・本番 restart は OWNER 承認待ちで止める** を厳守。
+
+- **資料→実装の翻案判断（着手前に記録）— なだれ土の崩落物理をどう決定論で表現するか**:
+  - **一次資料の状態（重要）**: 「なだれ土」は原作 `dungeon.csv` のブロック種分布列に **SOIL_AVALANCHE_HARD** として名があり（仕様まとめ 行101）、深度別の分布値は実在（裏庭 ID0＝AVALANCHE=0／防空壕 floor10〜＝1／廃炭鉱 floor40＝6／埋没城跡 floor40〜＝12 と**深いほど増える明確なカーブ**を一次データで確認）。しかし**崩落の詳細物理（崩れ方・落下ダメージ・埋没判定）は一次資料に明記が無い**（jadx は逆コンパイル済みソースを含まず README のみ＝実装コードから式を起こせない）。よって本増分は **忠実意図（なだれ土＝支えを失うと崩れ落ちる不安定な土。落下で自機/女の子を埋めてダメージ＋掘った道を塞ぐ）に沿った決定論翻案**。グレーは「忠実意図 × 決定論 × 非介入」を満たす方を採る。
+  - **崩落タイルの存在を tileType に混ぜない別レイヤー `avalancheAt(col,row,seed)`（tiles.js、v0.4.0 oreAt / v0.5.0 monster / v0.6.0 hazard 流儀踏襲）**: 「このマスの SOIL は不安定土（なだれ土）か」を別オーバーレイで持つ。**理由（非介入の生命線）**: tileType の累積しきい値や種を 1 つでも変えると determinism snapshot・EXPECTED_GIRLS(`11,6|0,8|4,10|3,12|8,14`)・女の子掘り当て経路・oreAt 鉱石・monster スポーン・hazard 浸水が連鎖でずれて全回帰が壊れる。よって**初期 tileType 分布と hash 消費系列は一切いじらず**、SOIL マスに「これは不安定土」という意味論を別関数で重ねる（初期生成のハッシュ消費を増やさない）。崩落の動的 state は `G.fallen`（落下で塞いだマス＝Set）・`G.fallDmgPending` 等の **ランタイム state 側**に持ち、初期生成系列に触れない。
+  - **位相オフセット（既存4レイヤーと非衝突）**: oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・buryMonster(+233/+617/+3001)・hazard(+1597/+2389/+7919) と衝突しない新オフセット **+2671/+3331/+9173** を採用（不安定土の存在判定の単一ハッシュ 1 本）。
+  - **崩落の物理（決定論翻案）**: ①**不安定土（なだれ土）は通常 SOIL と同じ手数で掘れる**が、掘り抜いた瞬間「不安定」フラグが立つ。②**支えを失うと崩れ落ちる**＝「不安定土マスの真下が空間（NONE＝掘った跡 or 元空間）になった」瞬間に、その不安定土が真下へ落下する（重力で 1 マス落ちて道を塞ぐ）。具体的には自機/女の子が不安定土の真下を空けた次の解決で落下判定。③**落下が自機/女の子に当たると埋没ダメージ**＝落ちてきたマスに自機が居れば `takeDamage(CAVEIN_DAMAGE)`（既存二段ゲージ＝SP→HP カスケード経路）、女の子が居れば GIRL_HP を削る（GIRLATK と同じ loseGirl 経路でロスト→原位置復帰＝再発見可能性を保つ）。④**掘った道を塞ぐ**＝落下後そのマスは固体（不安定土＝SOIL）に戻り `G.fallen` で塞がれた状態を持つ（過去の掘削決定が持続 consequence になる＝接ぎ木4の体現、但しこれはさぐりの設計メモであり mineroad では「掘り直せば撤退は続く・soft-lock しない」を保証）。**翻案注記**: 「真下が空いたら落ちる」を採った理由＝サイドビュー × 既存重力（自機/女の子に作用）と最も整合する忠実な崩落表現で、新パラメータを増やさず既存の `isSpace`/重力責務に接続できる（条件分岐を散らさない）。
+  - **将来フックの1点集約（対症療法2周目回避、SWIM_MITIGATION 流儀踏襲）**: 育成（PER_*）で崩落の軽減/防御（支え木・落盤回避）を入れる余地があるため、崩落ダメージ/発生率の係数を **CONST 単一ブロック（CAVEIN_DAMAGE/AVALANCHE_RATE_*/CAVEIN_MITIGATION）＋ヘルパー1関数（`caveinDamage()`）** に集約。育成増分は係数を 1 つ動かすだけで済む（閾値/分岐をコードに散らさない）。`CAVEIN_MITIGATION=1.0` 固定（軽減なし、育成フック）。
+  - **深度ゲート（一次データの分布カーブに忠実）**: 裏庭 ID0 は AVALANCHE=0（チュートリアルは安全）だが、v0.6.0 の水/マグマと同様「裏庭に直接分布が無くても忠実意図＝深いほど増える」に沿って自前カーブで翻案する（v0.6.0 が water 最深2%のみの裏庭で深度ゲートを翻案したのと同じ姿勢）。不安定土は**中層帯から（row>=5）**出し、深いほど密度↑（浅層 row1-4 は崩落なし＝チュートリアル安全帯を保つ）。
+  - **新規アセット無し方針踏襲**: 不安定土は SOIL スプライト/塗りに**赤錆系の rgba 半透明オーバーレイ**を重ねて「崩れそう」を示す（さぐり接ぎ木5「落盤=赤錆」の色彙を流用）。落下アニメは矩形即時移動（軽量）。新規画像なし＝server allowlist 追記不要・URL 不変。
+- **非介入の保証（v0.4.0/v0.5.0/v0.6.0 と同じ）**: avalanche は tileType/girlPositions/oreAt/monster/hazard レイヤーに一切手を入れない別レイヤー＋ランタイム state。determinism snapshot・EXPECTED_GIRLS・女の子掘り当て経路・oreAt 鉱石・monster スポーン・hazard 浸水を保存（gate X 非介入項 + 既存 A〜W で確認）。新規アセット無し＝server allowlist 追記不要・URL 不変。
+- **実装値（avalanche 位相オフセット・深度帯しきい値・崩落ダメージ実値）**:
+  - **位相オフセット**: 存在判定 `hash3(col+2671, row+3331, seed+9173)`。既存 oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・buryMonster(+233/+617/+3001)・hazard(+1597/+2389/+7919)・tileType(col,row,seed) と非衝突（gate X1 で 2 回読み一致を実証、X5 で oreAt/hazard/tileType 不変を実証）。
+  - **深度帯**: 不安定土 `AVALANCHE_MIN_ROW=5`（row1-4 浅層は崩落なし）。存在率 `AVALANCHE_RATE_MID=0.16`（中層 5-8 の SOIL のうち）/ `AVALANCHE_RATE_DEEP=0.28`（深層 9-15、深いほど密度↑）。固定 seed=41027 で浅層 0・中層 3 セル・深層多数の不安定土を実在確認（gate X2）。
+  - **崩落物理・ダメージ**: `CAVEIN_DAMAGE=8`（落下埋没で自機 takeDamage 経路＝二段ゲージ SP→HP へ）/ `CAVEIN_MITIGATION=1.0`（軽減なし固定、育成フック）。崩落＝掘り抜いた不安定土の真下が空くと、その列の第 1 固体床の上へ土塊が落ちて積もる（落下先を `G.fallen` に記録し `G.dug` から削除＝帰り道消失、元マスは空のまま）。落下先に自機が居れば `caveinDamage()`＝8、女の子は GIRL_HP を削り `loseGirl` でロスト→原位置復帰。soft-lock しない（塞がれた SOIL は再掘可・別ルートあり・撤退は続く＝gate X3 再掘可項で実証）。係数は CONST 単一ブロック＋ `caveinDamage()` ヘルパー 1 点に集約（育成増分は係数 1 つ動かすだけ＝対症療法 2 周目回避）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.7.0）19 ゲート ALL PASS（別ポート47863、本番47825 非接触・PID 直 kill）**: 既存 A〜W を不変維持しつつ新ゲート **X**（X1 崩落決定論=avalancheAt 2 回読み一致 / X2 深度ゲート=浅層 row1-4 不安定土ゼロ・中層/深層に実在・不安定なのは SOIL のみ / X3 崩落=落下で道塞ぎ＝掘り抜いた不安定土(3,6)の真下(3,7)を空けて resolveCaveins→土塊が(3,7)へ落ちて塞ぎ tileAt=SOIL に戻る・G.fallen 記録・G.dug から消失(帰り道消失)・落下候補消費・再掘可 / X4 埋没ダメージ=自機を落下先(3,7)に置き SP0 で崩落→HP が CAVEIN_DAMAGE(8) 削れる・直上へ押し上げ(soft-lock 回避) / X5 非介入=girlPositions verbatim 一致・oreAt/hazard/tileType 決定論不変）。**3 回連続 ALL PASS（決定論安定）**。既存6作 URL 不変・短高 viewport(412×680/730) はみ出し0・**determinism（Math.random/Date.now 実呼び 0）維持**。
+- **バランス実測（`fun-mineroad.mjs` v0.7.0、N=20＝policy4種×5、固定 seed 決定論、崩落対応）**: **力尽き率 25%（v0.6.0）→ 25%（不変）だが policy 別分布が反転**。v0.6.0=reckless 5/5 死亡・optimal 0/5、本増分=**optimal 5/5 死亡・reckless 0/5**。**finding（honest 記録、数値の単独いじり回避）**: 崩落は「深く広く掘る policy ほど巻き込まれる」death vector を**新規に追加できている**。直接トレースで実証＝optimal 風（全 15 列を最下層まで掘る）は崩落 5 回・埋没ダメージ累計 11 HP を被って HP0 で力尽き（screen=fail、maxDepth14）。一方 reckless は崩落で道が塞がれて再掘の手数が増え深追いペースが落ち（平均最深 13→6）、戦闘累積被弾が支配的になる前に列を渡り歩く挙動になったため生存側へ移った。**集計指標（力尽き率）は 25% で動かないが、死因の構成が「深層を網羅的に掘る最適化プレイ＝崩落で死ぬ」へ移った＝崩落は撤退判断を確かに重くしている**（崩落の埋没ダメージは X4 で直接実証）。崩落は soft-lock しない（再掘可をトレースと gate X3 で確認、reckless は finalPy13 まで到達）。**資源数値（スタミナ/体力/崩落ダメージ/発生率）を力尽き率を動かす目的で単独調整しない**（v0.6.0 と同じ姿勢）。崩落の死の緊張が支配的に効くのは深いダンジョン（なだれ土分布が裏庭0→廃炭鉱6→埋没城跡12 と一次データで増えるカーブ、`mineroad-remake-plan.md` §2 の残りダンジョン増分）での発露が本筋。**OWNER 実機での手触り（深層で不安定土を掘ったときの崩落体感）を最終判断材料にする**。
+- **設計判断で独断したところ**: ①崩落の発生＝「真下が空いたら落ちる」を採用（サイドビュー × 既存重力責務と最整合、新パラメータを増やさず `isSpace`/列スキャンに接続）。②崩落埋没で自機を直上へ押し上げ（固体に閉じ込めず soft-lock 回避＝接ぎ木1「回復可能・soft-lock しない」忠実意図）。③不安定土の視覚は SOIL に赤錆 rgba 半透明オーバーレイ 0.4（新規アセット無し＝v0.4.0/v0.5.0/v0.6.0 の URL 不変方針踏襲、さぐり接ぎ木5「落盤=赤錆」の色彙流用）。④howto は 7 行不変（崩落は in-game cue ヒントで surface、test の howto 7 行アサートを壊さない）。
+- **本番反映は OWNER 承認待ち（restart 未実施・push なし）**: lead(orc) 統制ゲート。本増分は VERSION=v0.7.0、検証は別ポート47863 で実施し本番47825 には非接触（実装+テスト緑化+STATUS 記録まで）。
+
+### v0.8.0（2026-06-21、商人＝物々交換(バーター)の第6増分＝キノコ通貨の循環を開く、playtester 20 ゲート ALL PASS・本番反映 OWNER 承認待ち）
+
+OWNER 発注＝商人（`mineroad-remake-plan.md` §2 バックログ **2 番＝商人**、`shop.csv` キノコ通貨バーター §4）。鉱石・キノコ等を対価に道具・タネ等を得る交換 UI。原作 `shop.csv` の数値・設計意図のみ参照しデータは自前で書き起こす（原作テキスト/画像/コードは転用しない）。設計正本は原作が済ませている＝game-designer/critic は外す。**忠実再現・決定論（ランタイム乱数禁止）・本番 restart は OWNER 承認待ちで止める** を厳守。
+
+- **CSV→実装 翻案の各判断（着手前に記録）**:
+  - **A. 採用レシピのサブセット選定（核となる翻案判断）**: `shop.csv` の 15 行は原作 `item.csv` の全アイテム（石炭/化石/鋼/種火/バケツ/ロープ/マジックハンド/木の杭/爆弾/骨/タネ各種）を対価/産物に使うが、**本リメイクの経済系は現状 3 系統しか存在しない**＝① 鉱石 `G.ore`(COPPER/IRON/GOLD/DIAMOND, v0.4.0 の抽象化)② モンスタードロップ `G.drops`(動物の血/生肉/ルビー/クモの糸/解毒薬等, v0.5.0 verbatim 日本語名)③ キノコ(本増分で採取を開く)。よって「**対価が現経済系に実在し、かつ産物が既存メカに接続して dead-item にならない**」行だけを忠実サブセットとして実装する。**採用 4 行**＝(1) フルーツ←鉄鉱石2[`shop.csv` 行2 の数値、フルーツ=item.csv HP25 の回復消耗品。鉱石に商人サイドの sink を開く] (2) ツルハシ←キノコ10[行12、原作の鋼ツルハシ(item27)=本リメイクの IRON 段へ昇格＝既存 power ゲートに接続] (3) アンテナ←キノコ20[行15、原作 item3=透視/死亡ロスト保険、本実装は位置透視を付与] (4) 夢キノコ←キノコ100[行16、原作の通貨統合(キノコ100→夢キノコ1)を verbatim 再現＝高額通貨/高級回復実]。**送り（次以降）**＝対価通貨が無い行(焼き肉←鋼/タネ←石炭/赤いタネ←化石/骨10←ルビー/種火←ダイヤ)、産物を支えるメカが未実装の行(バケツ/ロープ/マジックハンド/木の杭/爆弾/青いタネ＝放水・フックショット・設置・栽培の各メカが無いため dead-item)。**この 4 行で「キノコ採取→商人で道具/夢キノコへ交換」のキノコ通貨循環が開く**＝本増分の主目的達成。
+  - **B. キノコ採取（決定論、ランタイム乱数禁止）**: 原作 item.csv のキノコ(ID31)=「交換のための通貨。地中で採取/栽培して集める」。本リメイクには未導入だったため、採取の入口を **oreAt(v0.4.0)と同じ「掘り抜いたマスの決定論ドロップ」別レイヤー `mushroomAt(col,row,seed)`** で開く（原作「地中で採取するキノコ」に忠実、かつ tileType/girlPositions/oreAt/monster/hazard/avalanche に**非介入**）。SOIL を掘り抜いた瞬間に `mushroomAt` を引き、含有ならインベントリへ +1。含有率 `MUSHROOM_RATE=0.14`（控えめ・深度非依存＝序盤から通貨が貯まり商人へ行ける）。GIRL/地表/範囲外は false。**位相オフセット +4099/+5113/+2027**（oreAt(+911/+733/+5557)・spaceMonster(+313/+197/+8821)・buryMonster(+233/+617/+3001)・hazard(+1597/+2389/+7919)・avalanche(+2671/+3331/+9173)・tileType(col,row,seed) と非衝突）。
+  - **C. アクセス導線（既存 UI に最も寄せる＝設計判断）**: 原作の商人はダンジョン内で出会う NPC だが、本リメイクに NPC 系は無い。既存の最寄り慣習は **v0.4.0 のクラフト＝HUD「作る」ボタン→オーバーレイ**。商人もこれに寄せる。**当初は「商」ボタンを上部バーに 3 つ目として追加したが、playtester で gate G が退行**＝ボタン 1 個増で `btn-craft` の x 位置が右へ押し出され、女の子列(col11)の地表クライム・タップが `btn-craft`/`craft-overlay` に当たって救出 e2e が塞がれた（btn-craft 右端が baseline 293→316＝col11 中心 x316 と一致）。**→ 上部バーにボタンを足さず、クラフトと商人を 1 つの工房オーバーレイに「タブ(クラフト/商人)」で同居させる設計へ引き直し**（既存「作る」ボタンから開き、既定はクラフトタブ＝gate Q の `#btn-craft`→craft-list 検証を保つ、商人はタブで切替）。これは条件分岐/閾値の積み増しでなく **UI 構造の引き直し**（上部バーのボタン総幅＝既存 2 個のまま＝既存の地表タップ/カメラ前提を一切壊さない）。キノコ通貨表示(茸N)はボタンの**後ろ**の span（pointer 素通し＝ボタン x 位置を動かさない）。
+  - **D. 交換実行 + 消耗品**: `doShopTrade(rec)`＝対価充足(`canTrade`)行のみ実行可、不足は disabled 表示。実行で対価(ore=`G.ore`/item=`G.drops`/mushroom=`G.mushrooms`)を減算し産物を付与（pick はクラフトと同じ「より強い段のみ昇格」、tool=アンテナ、consumable=フルーツ/夢キノコ）。**決定論＝状態遷移のみ**（Math.random/Date.now 不使用）。交換で得た消耗品＝フルーツ(体力+`FRUIT_HEAL`=25)・夢キノコ(体力+`DREAM_HEAL`=30)は商人タブから「食べる」（HUD バーにボタンを増やさず＝C の設計を保つ。回復薬は従来どおり HUD「薬」ボタン）。HP_MAX=30 のため回復は min で頭打ち（v0.4.0 回復薬と同じ翻案）。
+- **非介入の保証（v0.4.0〜v0.7.0 と同じ）**: mushroom/shop は tileType/girlPositions/oreAt/monster/hazard/avalanche レイヤーに一切手を入れない別レイヤー＋状態遷移。determinism snapshot・EXPECTED_GIRLS(`11,6|0,8|4,10|3,12|8,14`)・女の子掘り当て経路・oreAt 鉱石・monster スポーン・hazard 浸水・avalanche 崩落を保存（gate Y5 + 既存 A〜X で確認）。**新規アセット無し**＝server allowlist 追記不要・URL 不変。
+- **実装**: VERSION=v0.7.0→v0.8.0。`tiles.js`（`mushroomAt` 決定論関数 + `MUSHROOM_RATE` + `SHOP_RECIPES` データ + `canTrade` + PALETTE.mushroom）/ `app.js`（G state=mushrooms/dreamMushrooms/fruits・`collectMushroom`・`doShopTrade`/`useFruit`/`useDreamMushroom`・工房タブ `setWorkshopTab`・`renderShop`/`appendEatRow`・HUD キノコ表示・FRUIT_HEAL/DREAM_HEAL CONST・cueShop TEXT）/ `index.html`（HUD バーに茸 span をボタン後ろへ・工房オーバーレイにタブ + shop-list）/ `style.css`（.inv-ore.mush 色・.craft-tabs/.craft-tab・.craft-list[hidden]、不要になった dream 用ルールは撤去）。
+- **検証（playtester、`tests/debug-mineroad.mjs` v0.8.0）20 ゲート ALL PASS（別ポート47864、本番47825 非接触・PID 直 kill）**: 既存 A〜X を不変維持しつつ新ゲート **Y**（Y1 キノコ採取決定論=`mushroomAt` 2回読み一致+(7,1)含有/(1,1)非含有 / Y2 採取=SOIL(7,1) を WOOD 掘りでキノコ 0→1・非含有(1,1)で +0 / Y3 交換 UI=「作る」→工房既定クラフトタブ→商人タブで shop-list が SHOP_RECIPES verbatim 4 行(フルーツ/ツルハシ/アンテナ/夢キノコ)・キノコ10 充足のツルハシ行 実行可/鉄鉱石不足のフルーツ行 disabled・クラフトタブへ戻せる / Y4 交換実行=キノコ10→鉄段昇格(不足5で不可)・鉄鉱石2→フルーツ+1・キノコ100→夢キノコ+1・食べて体力回復 / Y5 非介入=girlPositions verbatim 一致・oreAt/hazard/avalanche/tileType 決定論不変）。**3 回連続 ALL PASS（決定論安定）**。既存6作 URL 不変・短高 viewport(412×680/730) はみ出し0・**determinism（Math.random/Date.now 実呼び 0）維持**。
+- **回帰検出・修正（playtester 実機検出 → UI 構造の引き直し）**: 上記 C の「商」ボタン 3 個目追加で gate G（画面操作 e2e）が退行した件＝**ボタン総幅が女の子列の地表タップに被る構造問題**を、ボタンを増やさずタブ同居へ引き直して解消（テスト緑化目的でなく UI 構造の引き直し、上部バーのボタン x 位置を baseline と同一に保つ）。所見＝今後 HUD に操作要素を増やす際は「上部バーのボタン総幅が playfield のタップ列に被らないか」を先に検算する（HUD 帯はカメラで playfield 上端を下げているが、地表クライム＝row0/1 タップは帯に残るため）。
+- **設計判断で迷った点と採用案**: ①商人産物のうち「タネ(青いタネ等)」は plan が「道具・タネ等」と例示するが、栽培(水やり)メカが未実装で dead-item になるため**今回は送り**、キノコ通貨が既存メカ(power ゲート/透視/回復)に接続する 4 行に絞った（dead-item を並べるより循環が回る最小集合を優先）。②キノコ採取の含有率を深度非依存(0.14)にした＝oreAt は深いほど絞るが、キノコは「序盤から通貨を貯めて商人へ行く」体験を優先（深度ゲートを付けると浅層で通貨が貯まらず循環が遅れる）。③消耗品(フルーツ/夢キノコ)の使用導線を商人タブ内「食べる」に置いた＝HUD バーにボタンを足さない C の設計を一貫させるため（緊急回復の即時性はやや落ちるが、回復薬は従来どおり HUD「薬」ボタンで即時使用できるので回復導線は維持）。
+- **本番反映は OWNER 承認待ち（restart 未実施・push なし・commit は orc 側指示で）**: lead(orc) 統制ゲート。本増分は VERSION=v0.8.0、検証は別ポート47864 で実施し本番47825 には非接触（実装+テスト緑化+STATUS 記録まで）。playtester 実機検証と code-reviewer レビューを後段で通してからまとめてコミットする（orc 側が指示）。
+- **次増分候補（plan §2）**: 育成（女の子の情報→`PER_*` レベルアップ、EXP/夢キノコ等の用途を開く）/ 仲間同行 / セーブ永続 / 残りダンジョン / アイテム拡充。本増分で開いたキノコ通貨・夢キノコ・フルーツは育成/アイテム拡充の素地になる。
+
+### v0.9.0（2026-06-22、育成＝救出した女の子の「情報」→ボーナスポイント → `PER_*` レベルアップの第7増分、実装完了・自己動作確認13/13・playtester/code-reviewer/本番反映は後段、未コミット）
+
+OWNER 発注＝育成（`mineroad-remake-plan.md` §2 バックログ **3 番＝育成**、原作 §4「キャラクター育成＝パラメータのレベルアップ制」）。救出のリターンを永続強化に変換する。設計正本は原作が済ませている＝game-designer/critic は外す。**忠実再現・決定論（ランタイム乱数禁止）・本番 restart は OWNER 承認待ちで止める** を厳守。スコープは §2-3 番「育成」に限定（仲間同行/セーブ永続/残りダンジョン/アイテム拡充は対象外＝次以降）。
+
+- **CSV→実装 翻案の各判断（着手前に先記録、v0.4.0〜v0.8.0 の進め方踏襲）**:
+  - **A. 裏庭=BP100% という一次データ制約をどう扱うか（核となる翻案判断）**: `dungeon_info.csv` の PER_* 重み列は裏庭(ID0)＝**BP 列 100・他列すべて空**。忠実に翻案すると裏庭の情報変換は**ボーナスポイント(BP)に 100% 偏る**（HP/ST/DIG/ATK/DEF/SWIM のスキルポイント直接入手は防空壕 ID1 以降で初めて配分が出る）。**採用方針＝BP を「全 PER_* に使える汎用ポイント」とし、情報→BP→各 PER_* レベルアップへ消費する単一通貨路を開く**。原作の「スキルポイント(パラメータ別) または ボーナスポイント+アイテム」のうち、**裏庭で実際に得られるのは BP のみ**なので、本増分は BP 路だけを忠実に実装する（パラメータ別スキルポイントは「裏庭に配分が無い＝この増分では入手経路が開かない」が原作仕様に忠実。残りダンジョン増分で `dungeon_info` の他列配分を入れたとき自然に各 PER のスキルポイント源が増える）。BP は「どの PER にも振れる汎用ポイント」という原作 BP の役割（ボーナスポイント枠）に忠実。
+  - **B. 「情報」資源の入手経路（救出state を消費先へ繋ぐ）**: 原作「救出した女の子の情報を変換して BP/スキルポイントを得る（変換すると情報は消費）」に忠実に、**女の子を地表へ連れ帰って救出が成立した瞬間に情報(`G.info`)を +1** する（`rescueGirl` に 1 行）。救出state(following→rescued)を既存のまま使い、救出のリターンを情報という育成資源へ変換する。情報→BP の変換は Lv.UP 画面で「情報1→BP `INFO_TO_BP`(=3)」のボタンで明示変換（変換で情報を消費＝原作「変換すると情報は消費」に忠実）。**EXP の用途接続**: v0.5.0 で HUD 蓄積のみだった EXP を、BP 変換の**第2の対価**として開く（情報が無くても撃破 EXP を貯めて BP に変えられる＝自機育成側に EXP を使う翻案。仲間同行は対象外なので EXP の行き先は自機育成とする）。「EXP `EXP_TO_BP`(=20)→BP1」。これで EXP HUD の死蔵を解消し、戦闘リターンも永続強化へ繋がる。
+  - **C. PER_* レベルが動かす消費先＝既存育成フックの係数を開く（対症療法2周目回避の核）**: 既存増分が CONST/ヘルパー1点に切り出した育成フックを **PER レベルで動かす有効値ヘルパーへ通す**（新たな分岐を散らさず、既に切り出したフックの「消費先を開く」）。対応＝**PER_HP→HP_MAX**(effHpMax) / **PER_ST→STAMINA_MAX**(effStaminaMax) / **PER_DIG→掘削手数 -1/レベル**(effDigTaps、最低1で頭打ち＝pickPower と並ぶ DIG 強化) / **PER_ATTACK→ATK_BASE**(effAtkBase) / **PER_DEFENCE→DEF_BASE**(effDefBase) / **PER_SWIM→SWIM_MITIGATION**(既存 hazardSpMult/hazardHpChip がレベルで割る)。**PER_ARROW は原作も「矢=遠距離攻撃が本リメイク未実装」のため対象外**（原作 §4 にも未実装機能と注記）。**CAVEIN_MITIGATION は原作 PER に対応列が無い**ため本増分では育てない（PER_* enum 忠実＝原作の 8 種に限定、cavein は崩落物理側の将来フックのまま据え置き）。各レベルアップのコスト＝BP（PER 別に現レベルに応じて逓増、`bpCostFor(per, lvl)`）。**理由**: 既存の `playerAtk`/`playerDef`/`digTaps`/`hazardSpMult`/HP/SP 最大値参照を「PER レベルを掛けた有効値ヘルパー」経由に置換するだけ＝フックを使う設計（新 if/elif や閾値積み増しをしない）。
+  - **D. UI（上部バーにボタンを足さない＝gate G 退行回避の轍を踏まない）**: 原作は BAG「Lv.UP」画面。本実装は v0.8.0 で確立した**工房オーバーレイのタブ同居**に第3タブ「育成」を足す（上部バーのボタン総幅は不変＝既存 2 個のまま、`btn-craft` の x 位置を動かさない＝gate G の地表タップ/カメラ前提を壊さない）。育成タブで ①情報/EXP→BP 変換、②各 PER のレベル/コスト/Lv.UP ボタンを表示。HUD バーに「情報」表示はボタンの後ろの span（pointer 素通し、x 位置不変＝C と同じ茸 span 流儀）。
+  - **E. 育成 state のスコープ（永続は次増分）**: セーブ永続は §2-5 番で別増分。本増分は **PER レベル・BP・情報はランごと（fail/再挑戦/startDive でリセット）** = v0.3.0〜v0.8.0 のスコープ境界踏襲（save モデルは次送り）。これにより既存の「fail で盤面リセット」決定論を壊さない。
+- **非介入の保証（v0.4.0〜v0.8.0 と同じ）**: 育成は tileType/girlPositions/oreAt/monster/hazard/avalanche レイヤーに一切手を入れない state 遷移のみ。determinism snapshot・EXPECTED_GIRLS(`11,6|0,8|4,10|3,12|8,14`)・女の子掘り当て経路・oreAt 鉱石・monster スポーンを保存。**新規アセット無し**＝server allowlist 追記不要・URL 不変。**初期値（PER 全レベル0）では effHpMax=HP_MAX/effStaminaMax=STAMINA_MAX/effDigTaps=素の手数/effAtkBase=ATK_BASE/effDefBase=DEF_BASE/SWIM_MITIGATION=1.0 と既存挙動に完全一致**＝育成前は既存ゲート(A〜Y)が不変。
+- **実装（変更ファイル）**: VERSION=v0.8.0→v0.9.0。`tiles.js`（`PER_DEFS`／`PER_GAIN`／`GROW_RATE`／`bpCostFor` データ + window 公開）/ `app.js`（G state=info/bp/per・startDive 初期化・育成実効値ヘルパー `perLv`/`effHpMax`/`effStaminaMax`/`effAtkBase`/`effDefBase`/`effSwimMitigation`・既存フックを eff 経由へ置換[playerAtk/playerDef/digTaps/hazardSpMult/hazardHpChip/startDive・surfaceReturn・usePotion/useFruit/useDreamMushroom・renderHud 比率・appendEatRow の各 HP/SP cap]・`convertInfoToBp`/`convertExpToBp`/`levelUpPer`・`renderGrow`/`appendGrowRow`・工房第3タブ `setWorkshopTab("grow")`・`rescueGirl` で情報 +1・HUD 情報表示・DOM 参照/イベント配線）/ `index.html`（工房オーバーレイに育成タブ + grow-list・HUD バーに情報 span をボタン後ろへ）/ `style.css`（`.inv-ore.info` 色。craft-tabs は flex:1 1 0 で 3 タブ自動分割=追加 CSS 不要）。
+- **自己動作確認（implementer、別ポート47871 で静的サーバ自前起動、本番47825 非接触）**: `tests/selfcheck-mineroad-grow.mjs` **ALL PASS 13/13**。① VERSION=v0.9.0 ② 初期 PER 全0で素の値（HP30/SP100/掘削 SOIL1）=育成前は既存挙動に完全一致 ③ 情報1→BP3 変換（情報消費）④ EXP20→BP1 変換（EXP 消費=死蔵解消）⑤ PER_HP で HP_MAX 30→35 ⑥ PER_ST で SP_MAX 100→120 ⑦ PER_ATTACK で攻撃+1 ⑧ PER_DEFENCE で防御+1 ⑨ PER_DIG で SOIL 手数 1（最低頭打ち）・HARD 2→1 ⑩ PER_HP/ST レベルアップで現ゲージも実効最大へ底上げ ⑪ PER_SWIM で水中 SP 倍率が軽減（3→2.33）⑫ 育成タブ=変換2行+PER6行=8行・active・クラフトタブへ戻せる（gate Q 互換保持）⑬ pageerror 0。`node --check` app.js/tiles.js 通過。determinism（Math.random/Date.now/performance.now 実呼び 0、コメント言及のみ）維持。playtester による既存 A〜Y ゲート回帰＋viewport 検証は後段（orc 指示で debug-mineroad.mjs を v0.9.0 へ更新して実施）。
+- **設計判断で独断したところ・翻案注記（報告対象）**: ①裏庭=BP100% に忠実に「情報/EXP→BP→各 PER_*」の BP 単一通貨路を実装。パラメータ別スキルポイントの直接入手は防空壕 ID1 以降の `dungeon_info` 配分が出る残りダンジョン増分まで開かない（裏庭に配分が無いのが原作仕様＝この増分で入手経路を作らないのが忠実）。②PER_ARROW（矢＝遠距離未実装）と CAVEIN（原作 PER に対応列なし）は育成対象外＝原作 §4 の PER 8 種のうち本リメイク実装済みフックに対応する 6 種（HP/ST/DIG/ATTACK/DEFENCE/SWIM）に絞った。③EXP の行き先を自機育成にした（仲間同行は対象外スコープのため）。④育成 state はランごと（save 永続は §2-5 番の別増分）。⑤UI は工房第3タブ同居（上部バーのボタンは増やさず gate G 退行を回避＝v0.8.0 で確立した轍回避を踏襲）。**2 周目ルール非該当**＝既存フックの条件分岐/閾値を増やしたのではなく、既に CONST/ヘルパー1点に切り出してあった有効値の「消費先を effXxx 経由で開いた」（新 if/elif/case の積み増しなし、PER_GAIN/GROW_RATE は単一データブロック）。エラー握りつぶし・互換破壊・データモデル変更なし。
+- **本番反映は OWNER 承認待ち（restart 未実施・push なし・commit は orc 側指示で）**: lead(orc) 統制ゲート。検証は別ポート47871 で実施し本番47825 には非接触（実装+自己動作確認+STATUS 記録まで）。playtester 実機検証と code-reviewer レビューを後段で通してからまとめてコミットする（orc 側が指示）。**未コミット**。
+
+### v0.10.0（2026-06-26、仲間同行＝女の子1人を同行→一緒に戦い EXP 蓄積→地上で別れてレベルアップの第8増分、実装完了・自己動作確認 ALL PASS・playtester/code-reviewer/本番反映は後段、未コミット）
+
+OWNER 発注＝仲間同行（`mineroad-remake-plan.md` §2 バックログ **4 番＝仲間**、原作 §5「女の子＝収集 & 仲間システム」行75-78「1人だけ仲間として連れて潜れる／一緒にモンスターと戦う／戦闘で EXP を蓄積→地上で別れると EXP に応じてレベルアップ／別れると再び情報としてストック」）。護衛の難度と育成の二面を成立させる。設計正本は原作が済ませている＝game-designer/critic は外す。**忠実再現・決定論（ランタイム乱数禁止）・本番 restart は OWNER 承認待ちで止める** を厳守。スコープは §2-4 番「仲間同行」に限定（セーブ永続/残りダンジョン/アイテム拡充は対象外＝次以降）。
+
+- **資料→実装 翻案の各判断（着手前に先記録、v0.4.0〜v0.9.0 の進め方踏襲）**:
+  - **A. 同行 state の置き場＝既存 `following` を「同行」と読み替える（核となる翻案判断・非介入の生命線）**: 原作の女の子 state は hidden→following（護衛中）→rescued（地上へ連れ帰り成功）。本リメイクの既存ロジック（`advanceGirl`/`advanceOneGirl`/`bfsStep` 追従、重力、`loseGirl` ロスト→原位置復帰、`rescueGirl` 地表帰還、クリア判定、GIRLATK）は**すべて `following` を「自機の後ろを辿って一緒に進む」前提で既に組まれている**。原作の「仲間として連れて潜る」＝まさにこの「following＝護衛しながら一緒に進む」状態そのもの。よって**新 state（companion）を追加して追従/重力/GIRLATK/ロスト経路を二重化せず**、`following` 中の女の子のうち**1人を「同行指定」`G.companion`（参照、1人だけ＝原作忠実）にマークする**だけにする。同行は既存 following 追従に完全に乗る（advanceGirl/bfsStep/重力/loseGirl/rescueGirl に分岐を一切足さない＝非介入）。`G.companion` は「following 中の誰が EXP を貯め、帰還でレベルアップするか」を指す1ポインタにすぎず、移動・戦闘巻き込まれ・ロストの物理は既存 following レイヤーがそのまま担う。**理由**: 追従/重力/ロストの2周目（条件分岐の積み増し）を避け、責務（同行＝EXP の帰属先指定）と物理（following の追従）を分離する。
+  - **B. 同行中の EXP 蓄積＝既存 `killMonster` の EXP 加算1点で分岐**: 原作「一緒にモンスターと戦う／戦闘で EXP を蓄積」。撃破時の EXP は v0.5.0 で `G.exp`（自機プール）に貯まり、v0.9.0 でそれを BP へ変換し自機育成に使う路を開いた。**v0.9.0 の EXP→BP 路は壊さない**（自機プール `G.exp` はそのまま）。同行中の companion EXP は**別フィールド `companion.cexp`** に、`killMonster` の既存 `G.exp += meta.exp` の直後1行で「companion が居れば companion.cexp にも同額を貯める」。同じ撃破が自機プール（BP 路）と仲間（レベルアップ路）の両方を太らせる＝原作の二面（自機育成 BP × 仲間レベルアップ）を1つの戦闘リターンで両立。**自機プールから差し引かない**＝v0.9.0 ゲート（EXP→BP）を回帰させない。
+  - **C. 護衛の難度と育成の二面＝companion はレベルで自機 ATK を援護**: 原作「護衛中の女の子も敵に狙われる（GIRLATK＝誘導難度）」は v0.5.0 で実装済み（following がそのまま GIRLATK 対象）。同行を指定すると**その女の子のレベルに応じて自機攻撃力に援護ボーナス `effCompanionAtk()`** が乗る（原作「一緒に戦う」＝仲間が戦力になる）。レベル0（初同行）では援護0＝既存挙動に完全一致。守りながら進む緊張（GIRLATK でロストしうる）と、育てた仲間が戦力になる報酬の二面が成立。**翻案注記**: companion 独立の攻撃ターン/AI は作らず（追従物理の二重化回避）、援護を自機 `playerAtk()` に上乗せする最小形（既存 effAtkBase 流儀＝CONST + ヘルパー1点）。
+  - **D. 帰還で別れてレベルアップ＝既存 `rescueGirl` で companion を清算**: 原作「地上で別れると EXP に応じてレベルアップ／別れると再び情報としてストック」。companion が地表帰還（rescueGirl 成立）した瞬間、貯めた `cexp` を `COMPANION_EXP_PER_LV` で割った数だけ `level` を上げ、`cexp` を繰り越し残し、`G.companion` を解除（別れる）。rescueGirl の「情報 +1」（v0.9.0）は不変＝原作「別れると再び情報としてストック」と整合（救出＝情報、同行レベルアップは情報を消費しない別軸）。`level` は girl オブジェクトに残る（startDive でリセット＝ランごとスコープ。save 永続は §2-5 番）。
+  - **E. UI（上部バーにボタンを足さない＝gate G 退行回避の轍を踏まない）**: v0.8.0/v0.9.0 で確立した**工房オーバーレイのタブ同居**に第4タブ「仲間」を足す（上部バーのボタン総幅は不変＝既存 2 個のまま、`btn-craft` の x 位置を動かさない＝gate G の地表タップ/カメラ前提を壊さない）。仲間タブで ①following 中の女の子一覧（レベル・同行中の EXP）と「同行」指定ボタン ②同行中の女の子の状態。
+  - **F. スコープ（永続は次増分）**: companion 指定・cexp・level はランごと（fail/再挑戦/startDive でリセット）＝v0.3.0〜v0.9.0 のスコープ境界踏襲（save モデルは §2-5 番の別増分）。
+- **非介入の保証（v0.4.0〜v0.9.0 と同じ）**: 仲間同行は tileType/girlPositions/oreAt/monster/hazard/avalanche レイヤーに一切手を入れない state 遷移のみ。determinism snapshot・EXPECTED_GIRLS(`11,6|0,8|4,10|3,12|8,14`)・女の子掘り当て経路・oreAt 鉱石・monster スポーンを保存。**新規アセット無し**＝server allowlist 追記不要・URL 不変。**同行 0 人（companion 未指定）では `effCompanionAtk()=0` で playerAtk が素の値・killMonster の cexp 加算は no-op＝既存挙動（A〜Z ゲート）に完全一致**。
+- **実装（変更ファイル）**: VERSION=v0.9.0→v0.10.0。`tiles.js`（`COMPANION_DEFS` 説明データ + `companionLevelGain(cexp)` + window 公開）/ `app.js`（CONST に `COMPANION_EXP_PER_LV`/`COMPANION_ATK_PER_LV`/`COMPANION_LV_MAX`・G state=companion・各 girl に level/cexp 初期化・`effCompanionAtk`・`playerAtk` に援護加算・`killMonster` で companion.cexp 蓄積1点・`rescueGirl` で companion 清算（cexp→level、別れる）・`setCompanion`/`renderCompanion`/`appendCompanionRow`・工房第4タブ `setWorkshopTab("companion")`・startDive で companion/level/cexp 初期化・DOM 参照/イベント配線）/ `index.html`（工房オーバーレイに仲間タブ + companion-list）/ `style.css`（craft-tabs は flex 自動分割＝4 タブでも追加 CSS 不要、`.inv-ore.companion` は使わず HUD バー不変）。
+- **自己動作確認（implementer、別ポート47872 で静的サーバ自前起動、本番47825 非接触）**: `tests/selfcheck-mineroad-companion.mjs` **ALL PASS**。① VERSION=v0.10.0 ② 同行未指定で playerAtk が素の値・killMonster で cexp 加算 no-op＝既存挙動一致 ③ following 中の1人を同行指定→`G.companion` がその girl を指す ④ 同行中の撃破で companion.cexp が EXP 分蓄積・自機プール G.exp も同額蓄積（v0.9.0 BP 路不変＝二面両立）⑤ companion レベルで playerAtk に援護加算（effCompanionAtk）⑥ 地表帰還（rescueGirl）で cexp→level 反映・companion 解除（別れる）・情報 +1 不変 ⑦ 境界＝同行0人で清算 no-op／複数 following でも companion は1人だけ ⑧ 決定論3回連続一致（同一操作列で companion/cexp/level/girlPositions が完全一致）⑨ 非介入＝girlPositions verbatim・oreAt 決定論不変 ⑩ 仲間タブ UI 表示・active・他タブへ戻せる（gate Q 互換保持）⑪ pageerror 0。`node --check` app.js/tiles.js 通過。determinism（Math.random/Date.now/performance.now 実呼び 0）維持。playtester による既存 A〜Z ゲート回帰＋viewport 検証は後段（orc 指示で debug-mineroad.mjs を v0.10.0 へ更新して実施）。
+- **設計判断で独断したところ・翻案注記（報告対象）**: ①同行 state を新設せず既存 `following` を「同行＝護衛しながら一緒に進む」と読み替え `G.companion` 1ポインタで「EXP 帰属先＋帰還清算対象」を指すのみ＝追従/重力/GIRLATK/ロストの物理は既存 following レイヤーを非介入で再利用（追従ロジック2周目を回避し責務＝同行 vs 物理を分離）。②EXP は自機プール `G.exp`（v0.9.0 BP 路）を壊さず別フィールド `companion.cexp` に同額並走＝1撃破で自機育成と仲間レベルアップの二面を両立。③「一緒に戦う」を companion 独立 AI でなく自機 ATK への援護 `effCompanionAtk()`（レベル0で0＝既存一致）で最小実装＝追従物理の二重化を避ける。④帰還清算は既存 `rescueGirl` 1点で cexp→level・companion 解除＝原作「地上で別れてレベルアップ」、情報 +1（救出図鑑）は別軸で不変。⑤level/cexp/companion はランごと（save 永続は §2-5 番）。⑥UI は工房第4タブ同居（上部バーのボタンは増やさず gate G 退行を回避＝v0.8.0/v0.9.0 の轍踏襲）。**2 周目ルール非該当**＝既存フックの条件分岐/閾値を増やしたのではなく、`killMonster` の EXP 加算1点・`rescueGirl` の帰還1点・`playerAtk` の合算1点に「同行の帰属/清算/援護」を足し、係数は COMPANION_* 単一データブロック + `effCompanionAtk`/`companionLevelGain` ヘルパー1点に集約（新 if/elif/case の散らしなし）。エラー握りつぶし・互換破壊・データモデル変更なし。
+- **本番反映は OWNER 承認待ち（restart 未実施・push なし・commit は orc 側指示で）**: lead(orc) 統制ゲート。検証は別ポート47872 で実施し本番47825 には非接触（実装+自己動作確認+STATUS 記録まで）。playtester 実機検証と code-reviewer レビューを後段で通してからまとめてコミットする（orc 側が指示）。実装 commit `adaa969` + docs `9f922d8`。
+- **code-reviewer 修正必須(A) 反映（2026-06-26、未配信のため v0.10.0 内のバグ修正コミット）**: `surfaceReturn` の帰還ループで道が塞がれて girl が地中残留（`row>0` のまま `following` 継続）したとき、`rescueGirl`/`settleCompanion` を通らず **`G.companion` が地中残留 following を指したまま残存**し、全回復→継続で次の潜行に `effCompanionAtk` の援護が乗り `killMonster` で cexp が再加算される「地表で別れる前に援護が乗り続ける」抜け道があった（`loseGirl` 経路は解除済み・この残留経路だけ漏れていた）。修正＝帰還ループ直後に `if (g.state === "following") detachCompanion(g)` を1点足す。**残留時は清算でなく解除のみ（破棄）を採用**＝原作 §5「地上で別れてレベルアップ」の地表帰還条件に忠実（地表に帰れていない＝cexp→level 清算しない、端数 cexp は破棄＝次回持ち越し先が無い。`loseGirl` のロスト解除と同じ「帰れていないので清算しない」セマンティクス）。解除経路が `loseGirl`/`rescueGirl(settle)`/`surfaceReturn残留` の3箇所へ散るため、**清算なし解除を `detachCompanion(g)` ヘルパー1点に集約**（既存慣習＝effXxx/settleXxx の1点集約方式に最も寄る選択。`loseGirl` と新 surfaceReturn 残留の2経路を helper 経由へ、`settleCompanion`=清算ありは別系統で温存、`setCompanion` の UI トグルは showHint/playSfx を伴う別フローなので inline 維持）。軽微提案＝`renderCompanion` 非同行行の `((lvl) * COMPANION_ATK_PER_LV || 0)` の冗長 `|| 0` も同コミットで除去（表示は元から正しい）。**2 周目ルール非該当**＝同一原因への条件分岐の積み増しでなく、漏れていた状態解除経路を1点足し helper に集約した修正。selfcheck に残留→解除＋援護/cexp 再加算なしの新ケースを追加し companion 12/12・grow 13/13 ALL PASS・決定論3回連続一致を維持。
+
+### v0.11.0（2026-06-26、中核の作り直し＝①女の子追従②仲間モデル③崩落ソフトロック修正＋検証の作り直し。実機 FB で中核破綻が判明した中核仕様変更。**着手時 翻案判断 先記録**）
+
+OWNER 発注＝実機 FB で「中核（女の子追従・救出・仲間同行）が破綻」と調査確定したため、設計の引き直しを含む中核作り直し。`mineroad-remake-plan.md` §2-4（仲間）/ §3 横断留意点に紐づく。`/newgame` 不使用の仕様駆動。要望④斜め移動・⑤モンスター画像は今回スコープ外（次増分）。**忠実再現・決定論（ランタイム乱数禁止）・本番 restart は OWNER 承認待ちで止める・本番ポート47825 非接触** を厳守。版は中核仕様変更のため v0.11.0。
+
+- **① 女の子追従の作り直し（既存設計の引き直し、`~/companion/CLAUDE.md`「設計判断・対症療法の上限」適用）— 根本原因と引き直し方針を先記録**:
+  - **根本原因（調査確定、対症では直らない）**: 既存 `advanceOneGirl`（app.js）は `bfsStep`（女の子→自機の最初の1歩、空洞=`isSpace`=`G.dug`−`G.fallen` のみ通行可）+ その後の重力（自機を追う一歩が上向き＝クライムでなければ列底まで落とし戻す）で追従を組んでいた。実機のジグザグ掘削では女の子が自機を追うのに横移動が必要になり、その横一歩が「上向きでない」ため毎手 **重力で縦坑の底へ落とし戻される**＝発見後ずっと底に張り付く。bfsStep が辿れても重力が打ち消す。既存ゲート N/C は「自機を女の子の真上にワープ＋縦坑を先掘りして一直線に登る理想経路」だけを通すため、女の子の全ステップが上向き＝重力が一度も発火せず、この破綻を構造的にすり抜けていた。**重力条件いじり・bfs guard 追加・待機しきい値は同一原因への2周目（条件分岐の積み増し）＝禁止。state を持つ側を引き直す。**
+  - **引き直し方針＝自機の通過セル履歴を per-girl の足跡キュー（breadcrumb trail）にして女の子が1手ずつ消化して追う**: 自機が掘って通った経路は必ず空洞なので、その履歴を辿る追従は常に成立する（経路探索の失敗も、横移動での重力落とし戻しも原理的に発火しない）。`advanceOneGirl` の「bfsStep＋独立重力」を破棄し、「記録済み自機足跡を1手ずつ消化」に置換。女の子は独立に落下しない（足跡が空洞である保証＝重力の責務を足跡記録側へ移す＝state を持つ側で1回確定）。**選択理由（既存コード慣習に最も寄る形）**: bfsStep 探索領域拡張案は重力条件と落下判定を同時に直す必要があり「重力分岐の積み増し」に近い。足跡キュー案は追従の責務（どの空洞を辿るか）を「自機が実際に通った履歴」という single source of truth に集約でき、重力・bfs の二重化を解消する＝既存の「state を持つ側を1回引いて確定」「責務を1点に集約」慣習に最も整合。底張り付き（重力落とし戻し）も同時消滅。**(a) 地中発見した未救出の子を地表へ連れ帰る経路 と (b) 同行者を連れて潜る経路 の両文脈で成立を検証する**（足跡は自機の全移動で伸びるので両方で効く）。
+- **② 仲間モデルの作り直し（救出済みストック→次回同行、ユーザー確定方針）**: 「地中で護衛中(following)の子を同行指定」する v0.10.0 モデルを廃し、**「救出して地表に持ち帰った子(rescued)を仲間ストックに貯め、地表で1人を『同行』に選んで次の潜行に連れていく→一緒に戦い EXP 蓄積→地表帰還で別れてレベルアップ→再びストックへ戻る」**（原作 §5「別れると再び情報としてストック→また連れられる」）。
+  - 仲間タブの候補条件を「`state==="following"` の子」から「**救出済みストックの子（rescued）**」に変更。地表で同行者を1人選択する UI に。同行指定した子は次の潜行（startDive ではなくダイブ継続中の再潜行＝撤退後の全回復継続）に追従する。
+  - v0.10.0 の `G.companion`/`cexp`/`level`/`detachCompanion`/`settleCompanion`/`effCompanionAtk`/`killMonster` cexp 加算は流用・改修（作り直しなので「v0.10.0 非介入」制約は外す）。ただし tileType/girlPositions/oreAt/monster/hazard/avalanche のワールドレイヤーには引き続き非介入。
+  - **ラン跨ぎ永続（セーブ §2-5）は未実装のためラン内ストックでよい**（地表⇔地中の往復で同行者を選び直せれば足りる、永続は次増分）。
+- **③ 崩落のソフトロック修正（詰みの核）**: 崩落で塞がれたマスは `G.fallen` に入り `G.dug` から削除されるが、`tileAt` は `G.fallen` を `G.dug` より先に評価して SOIL を返す。プレイヤーがその塞がれた SOIL を再掘削しても `act` は `G.dug.add` するだけで `G.fallen.delete(key)` をしないため、再掘後も永久に SOIL のまま＝通れず地表に戻れない。**掘り抜き成立時に `G.fallen.delete(key)` を足す**（plan §2「塞がれた SOIL は再掘可・soft-lock しない」の前提を実装で守る）。誤発火の合図強化（▼ポップ/SFX）は任意（対症的に発火条件をいじらず合図＝表面化のみ）。
+- **検証の作り直し（今回の肝）**: 現状 `selfcheck-mineroad-companion.mjs` は `g.state="following"` を直接代入する状態注入で、実プレイ経路を一度も通していない。`debug-mineroad.mjs` の gate C/N は自機を女の子の真上にワープ＋縦坑先掘りで「追従が成立する唯一の理想経路」だけを通すため①をすり抜けた。**状態注入を廃し、実プレイ経路（掘る→discoverGirl→自機がジグザグに掘り進む→女の子が追従して地表まで上がる→救出→ストック→地表で同行選択→潜行→撃破で cexp→帰還で Lv UP→ストックへ）を実際の移動・掘削パターンで通して assert** する。③のソフトロック回帰ケース（崩落で塞がれたマスを再掘→通行可）も追加。決定論3回連続一致維持・Math.random/Date.now/argless new Date() 禁止。
+- **2 周目判定の記録（着手前確定）**: ①は重力/bfs の条件分岐を増やす（＝2周目）のではなく、追従の責務を「自機足跡という state を持つ側」へ引き直して `advanceOneGirl` を置換する設計の引き直し＝**2周目を打たず一段引く**側の選択。②はユーザー確定の中核仕様変更（v0.10.0 の following 同行モデル自体の作り直し）＝対症療法でなく仕様の引き直し。③は同一原因への分岐積み増しでなく、`tileAt` の dug/fallen 優先と再掘の状態解除の不整合を1点（`G.fallen.delete`）で正す修正。
+
+- **実装（完了、変更ファイル）**: VERSION=v0.10.0→v0.11.0。`mineroad/web/app.js`（① 追従作り直し＝`G.playerTrail`[自機足跡履歴]・`recordPlayerStep`[moveTo の重力後に現セルを追記]・`startFollowing`[trailIdx を末尾に合わせて発見/再発見の入口に]・`advanceOneGirl` を「bfsStep+独立重力」から「足跡を 1 手ずつ消化(末尾−1 まで=自機の 1 マス後ろ snake 追従)」へ置換・`surfaceReturn` を bfsStep 帰還ループから足跡ドレインへ一貫化 / ② 仲間モデル作り直し＝`setCompanion` を「救出済みストック(rescued)を地表でのみ deployed=following に編成・自機位置から足跡追従・再選択でストックへ戻す」へ・`rescueGirl` を deployed 帰還(別れて Lv→rescued ストックへ、情報二重計上なし)と初回救出(情報+1)の 2 経路へ分岐・`loseGirl` を deployed ロスト時はストックへ戻す/初回はhidden 原位置の 2 経路へ・`renderCompanion` 候補条件を rescued ストック+deployed へ・各 girl に trailIdx 初期化 / ③ `act` 掘り抜きに `G.fallen.delete(key)` を 1 点追加[崩落で塞がれた SOIL を再掘で空間へ戻す soft-lock 修正]）。`mineroad/web/index.html`（仲間タブのコメントを新モデルへ）。検証＝`tests/selfcheck-mineroad-companion.mjs`[実プレイ経路へ全面作り直し]・`tests/debug-mineroad.mjs`[gate C/N/P/S5b/Z2/Z8 を実プレイ経路へ・gate AA を救出ストック同行モデルへ作り直し・VERSION 期待値を v0.11.0 へ]・`tests/selfcheck-mineroad-grow.mjs`[VERSION 期待値のみ更新]。
+  - **① 追従の作り直し方式と選択理由（報告対象）**: 採用＝**自機足跡履歴(per-girl breadcrumb consume)方式**。理由＝(a) 自機が掘って通った経路は必ず空洞なので足跡を辿る追従は経路探索失敗も横移動での重力落とし戻しも原理的に発火しない＝底張り付きを設計から消せる、(b) bfsStep 探索領域拡張案は重力条件と落下判定を同時に直す必要があり「重力分岐の積み増し」に近いが、足跡方式は追従の責務を「自機が実際に通った履歴」という single source of truth に集約でき重力・bfs の二重化を解消＝既存の「state を持つ側を 1 回引いて確定」「責務を 1 点に集約」慣習に最も整合（既存コード慣習に最も寄る形）。底張り付き（重力落とし戻し）も同時消滅。(a)救出経路・(b)同行経路の両文脈で成立を検証済み（足跡は自機の全移動で伸びるので両方で効く）。
+  - **② 仲間モデルの新フロー（報告対象）**: 救出して地表に持ち帰った子(rescued)が仲間ストックに貯まる→地表(py=0)で仲間タブから 1 人を「同行」に選ぶと deployed=following で自機位置から足跡追従して一緒に潜る→撃破 EXP が companion.cexp に蓄積(自機プール G.exp=v0.9.0 BP 路は不変=二面両立)・companion レベルで effCompanionAtk が自機 ATK を援護→地表帰還で別れて cexp→level 清算しストックへ戻る(情報二重計上なし=初回救出で計上済)→再びストックから連れられる。ラン跨ぎ永続(セーブ §2-5)は未実装のためラン内ストック（地表⇔地中の往復で同行者を選び直せる）。
+  - **③ ソフトロック修正の差分(path:line)**: `mineroad/web/app.js:697-704` の `act` 掘り抜き成立直後（`G.dug.add(key)` の次）に `G.fallen.delete(key)` を 1 行追加。原因＝`tileAt`(app.js:517-518)が `G.fallen` を `G.dug` より先に評価して SOIL を返すため、崩落で塞がれた(`G.fallen` 入り)マスを再掘削しても `act` が `G.dug.add` するだけでは永久に SOIL のまま通れず地表へ戻れなかった（詰みの核）。修正で再掘した跡が空間へ戻る（plan §2「塞がれた SOIL は再掘可・soft-lock しない」の前提を実装で守る）。
+  - **検証を実プレイ経路ベースにどう作り直したか（注入を廃した証跡）**: 旧 `selfcheck` は `g.state="following"` を直接代入する状態注入で実プレイ経路を一度も通さず、旧 gate C/N は自機を女の子の真上にワープ＋縦坑を先掘りして「全ステップ上向き＝重力が一度も発火しない理想経路」だけを通し①をすり抜けた。作り直し後は **`act()` だけで実際にジグザグ掘削し(mrDigTowards=横へ寄せ→下へ掘るを交互)、女の子を掘り当てて discoverGirl→足跡追従→実 climb(act で上/横へ)で地表まで連れ帰る**実プレイ経路を通す。①検証は追従 row 系列が底へ落ち戻らず単調に減って地表へ着くことを実測（selfcheck ① の row 系列 `[6,5,4,3,2,0]`／gate N は最深(8,14)で実トレース）＝底張り付きの否定を実経路で証明。③のソフトロック回帰ケース（崩落で塞がれたマスを再掘→`isSpace`/`tileAt` が空間を返す）を selfcheck ③ に追加。gate C/N/P/S5b/Z2/Z8 の救出を `mrRescueGirlAt`(掘り当て→足跡追従→地表 climb)へ・gate AA を救出ストック同行モデルの画面操作（地表で「同行」ボタン画面座標タップ→deployed→撃破 cexp→帰還で Lv→ストック）へ作り直した。状態注入は GIRLATK 純検証(S5)で「護衛中の在場」を作るための trailIdx 末尾合わせ（追従で動かさない）に限定し、追従そのものは全経路で実挙動。
+- **セルフチェック結果（implementer 自己動作確認、本番47825 非接触＝別ポート 47873[selfcheck]・47860[debug 用テストサーバ、stdlib server を GAMES_PORT で起動]）**: `selfcheck-mineroad-companion.mjs` **ALL PASS 12/12**（VERSION/①実プレイ追従救出/②ストック同行・cexp 並走・援護・帰還 Lv→ストック/②-b 候補=ストックのみ・地中編成不可/③崩落 soft-lock 再掘可/④決定論3回連続一致/⑤非介入/⑥仲間タブ UI/pageerror0）・**3 回連続 ALL PASS**。`debug-mineroad.mjs` **gate A〜AA(27) ALL PASS**・**3 回連続 ALL PASS（決定論安定）**（既存 A〜Z 回帰維持、作り直した C/N/P/S/Z/AA を新仕様で緑化、既存6作 URL 不変、短高 viewport はみ出し0、determinism 静的検査 OK）。`selfcheck-mineroad-grow.mjs` **13/13 ALL PASS**（育成回帰不変、VERSION 期待値のみ更新）。`node --check` app.js/tiles.js/各テスト通過。
+- **設計上迷って決めた判断（報告対象）**: ①追従方式は足跡キュー vs bfs 拡張で迷い、既存慣習(state を持つ側で確定・責務1点集約)に最も寄る足跡キューを採用（上記理由）。②deployed companion の「同行編成は地表でのみ可」を独断追加＝地中で編成すると足跡追従の起点が定まらない（潜行中の自機位置から急に追従させると経路が無い）ため、地表（潜行の起点）で編成して足跡を最初から積ませる設計に。③deployed companion がロストした場合は「初回発見の子=hidden 原位置」とは別に「ストック(rescued)へ戻す」を選択＝既に救出済みの子を世界の hidden 女の子に戻すのは不整合（origRow は別の意味）なため。④情報(育成資源)は初回救出でのみ +1、deployed 帰還では計上しない（原作「救出=情報ストック」は 1 回、同行レベルアップは別軸）。⑤検証の状態注入は GIRLATK 純検証の「在場」作成に限定し追従は全経路実挙動（注入を完全排除すると GIRLATK のロスト判定に到達するまでの実プレイが長大化し決定論が脆くなるため、追従そのものの実証[C/N/P/selfcheck①]と GIRLATK の在場注入を分離）。
+- **本番反映は OWNER 承認待ち（restart 未実施・push なし・commit は orc 指示で）**: lead(orc) 統制ゲート。playtester 実機ヒットテスト・code-reviewer は orc 後段。**2 周目ルール非該当**＝①②は設計/仕様の引き直し（条件分岐の積み増しでない）、③は不整合の 1 点修正。エラー握りつぶし・互換破壊・データモデル変更なし（ラン内 state のみ）。
+- **playtester/code-reviewer 修正必須の反映（2026-06-26、v0.11.0 内・version 据え置き）**:
+  - **(1) ②救出の境界バグ（playtester FAIL・最優先）**: 女の子を地表(py=0)まで足跡追従させても**自機が地表で静止していると女の子が自機の1マス後ろ(row=1)で止まり row=0 に乗れず `rescueGirl` が発火しない**（`advanceOneGirl` の snake 追従が「自機の真後ろまで=末尾-1」で止め、`rescueGirl` が「row=0 到達」依存だった噛み合わせ）。ユーザー実機 FB「救出しても仲間タブに出てこない」をこの経路で再現。**修正**＝救出の発火を「女の子自身が row0 セルに乗る」依存から外し、**自機が地表(py=0)に居て追従中の女の子が足跡を消化しきって追いついた（trailIdx≥末尾-1）なら row0 非依存で地表帰還=救出成立**とする述語 `caughtUpAtSurface(g)` を `advanceOneGirl`(app.js:1361-1383付近) と `surfaceReturn`(app.js 帰還ドレイン直後) の両合流点に集約（条件分岐の散らしでなく「救出トリガ=自機帰宅+追いつき」へ責務を引き直す1点集約）。これで②のフル経路（発見→追従→救出→ストック→地表で同行選択→潜行→帰還Lv→ストック戻し）が地表静止でも完結。
+  - **(2) (A) 足跡キュー playerTrail の無制限肥大（code-reviewer 修正必須）**: `recordPlayerStep`(app.js:1310付近)が連続重複を畳むだけで cap/GC が無く長い潜行で際限なく伸びていた。**修正**＝`gcPlayerTrail()` を追加（recordPlayerStep 末尾で毎手呼ぶ）。全 following 中の女の子の `min(trailIdx)` より前の古い足跡を切り、切った分(cut)だけ playerTrail を前詰めし全 girl の trailIdx を `-cut` 補正（trailIdx の意味＝「その girl が今どこを消化したか」が切り詰め後もずれない）。following が0人なら末尾（現在の自機セル）1点へ畳む。リングバッファ的に常時上限内（実測 max≈2、上限=DEPTH_ROWS+GRID_COLS+8 内）。blocked/lag した girl の未消化セルは min(trailIdx) で保全（実プレイ probe で `cellValid:true`＋救出完遂を確認）。決定論=状態遷移のみ（乱数なし）。code-reviewer の (B) trailIdx の per-girl 保持は確認済み＝**対応不要**。
+  - **(C) cexp 端数繰り越し**: `setCompanion`(deploy 経路, app.js:1997-2009付近)は `g.cexp`/`g.level` を**意図的にリセットしない**（前回の地表帰還清算 `settleCompanion` で cexp→level 繰り上げ後の端数 cexp は girl に残り、再同行で続きから貯まる＝同じ子を育て続けられる）。その旨を1行コメントで明示（繰り越し維持＝原作「レベルアップは積み上がる」）。
+  - **(D) 崩落再掘の同一マス無限ループ非発生**: `act` の `G.fallen.delete` 後、`resolveCaveins` が同マスを再び fallen に積み直して「掘っても掘っても塞がる」無限ループにならない（不安定土が尽きれば落下源が無く塞ぎ直さない）ことを selfcheck ⑨ で assert（再掘で空間化→行動継続6手で reblock 0）。
+  - **検証（実プレイ経路を維持）**: `selfcheck-mineroad-companion.mjs` を 12→**16 件 ALL PASS**（⑦ 自機地表静止で追従しきった子が救出されストック入り＝row0 非依存を実プレイで実証[girlRow=1 でも rescued]、⑦-b ②フル経路通し[救出→ストック→地表同行→潜行cexp→帰還Lv→ストック戻し]、⑧ 長経路で playerTrail が上限内＋GC 補正後も追従して救出、⑨ 崩落再掘ループ非発生）・**3回連続 ALL PASS**。`debug-mineroad.mjs` gate A〜AA(27) **ALL PASS・3回連続**（既存回帰維持）。`selfcheck-mineroad-grow.mjs` 13/13。状態注入/自機ワープに戻さず act() の実掘削+足跡追従+実 climb 維持。ワールドレイヤー非介入・Math.random/Date.now 不使用維持。本番47825 非接触（別ポート 47860/47873）。version は v0.11.0 据え置き（同一増分内の修正必須対応）。
+- **検証完了（2026-06-27、orc 後段消化）**: code-reviewer 再点検 **修正必須なし**（②救出述語 caughtUpAtSurface の off-by-one/誤救出/二重救出なし、gcPlayerTrail の未消化保全・cut 補正の境界正しい、決定論・ワールドレイヤー非介入・v0.9.0 BP 路 退行なし）。playtester 実機再検証 **ALL PASS**（debug gate **N2** 追加＝前回 FAIL「地表静止で救出されない」を実機相当で再現→自機が地表に戻れば静止でも救出成立・ストック表示を確認、commit `d371d95`／②フル経路通し・①底張り付き消滅・③崩落再掘・長経路 GC 下の追従継続・既存6作 URL 不変・短高 viewport はみ出し0・決定論3回一致、本番47825非接触）。
+### v0.13.0（2026-06-29、残り8ダンジョン + 解放連結チェーンの第10増分、selfcheck 33/33・debug 29 ALL PASS・code-reviewer 修正必須1件修正済み・commit 済み）
+
+`mineroad-remake-plan.md` §2 バックログ **6 番＝残りダンジョン**。dungeon_info.csv / dungeon.csv から全9ダンジョン(ID 0〜8)のマスターデータと深度帯データを tiles.js に追加し、blockThresholds / hazardAt / avalancheAt / oreAt / spaceMonsterAt / buryMonsterAt を per-dungeon×per-band で動的化。app.js にダンジョン選択UI(タイトル画面に9個のボタン)・applyDungeonConst(CONST をダンジョンに応じて動的設定)・クリア→次ダンジョン解放連結チェーン・ダンジョンごとセーブ分離(旧キーからの自動マイグレーション付き)を実装。**忠実再現・決定論（ランタイム乱数禁止）・本番ポート47825 非接触** を厳守。
+
+- **実装（VERSION=v0.13.0、commit `d6feb49`）**: tiles.js に `DUNGEON_DATA`(全9ダンジョン、dungeon_info.csv 忠実) / `DUNGEON_BANDS`(深度帯データ、dungeon.csv 忠実) / `getDungeonBand(row)` を追加。各生成関数は `getDungeonBand` 経由で深度帯パラメータ(none/hard/rock/hazardRate/magmaFrac/avalancheRate/oreRate/oreW/monW)を取得し per-dungeon×per-band 動的化。app.js に `applyDungeonConst(id)` / `saveDungeonProgress()` / `loadDungeonProgress()` / ダンジョンごとのセーブキー分離(`mineroad_save_0` 〜 `_8`)。showTitle にダンジョン選択ボタン(解放=「▶」選択可、未解放=「🔒」disabled)。showClear に次ダンジョン解放ロジック(G.cleared/G.unlocked を PROGRESS_KEY に永続化)。showFail に「タイトルへ」ボタン。renderHud にダンジョン名表示。startDive で applyDungeonConst + resize + seed にダンジョンID加算。
+- **code-reviewer（修正必須1件→修正済み、commit `73fb58a`）**: ① `startDive()` で `applyDungeonConst` 後に `resize()` 未呼出し — ダンジョン切替時にタイルサイズ未再計算で描画崩壊 → `resize()` 1行追加で修正。② 死んだ定数(HAZARD_WATER_MIN_ROW 等6個、AVALANCHE_MIN_ROW 等3個)を削除。③ `.dungeon-btn` に `margin-bottom: 0.4rem` 追加。④ 80列ダンジョン(孤独な山)のモバイルタップターゲット問題は設計課題として記録(v0.13.0 スコープ外)。
+- **playtester（debug gate A〜AC(29) ALL PASS）**: AC ゲート追加 = AC1 ダンジョンボタン9個(裏庭のみ解放)、AC2 裏庭ダイブ、AC3 全ダンジョングリッドサイズ切替、AC4 HUDダンジョン名、AC5 力尽き→タイトルへ、AC6 クリア→次ダンジョン解放+progress永続化、AC7 裏庭回帰(掘る・グリッドサイズ=15×15・5人)。既存 A〜AB ゲート全 PASS（回帰なし）。selfcheck 3本 v0.13.0 追従済み(commit `9c7b456`)。determinism 静的検査 PASS。本番47825非接触（別ポート47860）。
+- **配信の実態**: server/app.py は静的ファイルを毎リクエストでディスク直読み＋no-cache のため、コミット時点で本番47825に v0.13.0 が即時反映されている。
+- **設計課題**: ダンジョン6「孤独な山」(cols=80)はモバイル 400px 幅で tile=5px。48px タップターゲット要件を大きく下回る。水平スクロールか viewport clipping が将来必要。BEST_DEPTH_KEY / RESCUE_KEY は書き込みのみ残り読者なし(タイトル画面の表示がダンジョン選択に置き換わった)。
+
+### v0.12.0（2026-06-28、セーブ/永続＝力尽き跨ぎで救出・育成・ツルハシを永続化の第9増分、selfcheck 21/21・debug 28 ALL PASS・code-reviewer 修正必須なし・commit 済み）
+
+OWNER 発注＝セーブ/永続（`mineroad-remake-plan.md` §2 バックログ **5 番＝セーブ/永続**、原作 §2 L23「地上で全回復＋セーブ」/ §10 L153「セーブ: ①地上でのセーブ（地上限定、推奨タイミング）」）。力尽き(fail)を跨いで救出・育成・装備を永続化する。設計正本は原作が済ませている＝game-designer/critic は外す。**忠実再現・決定論（ランタイム乱数禁止）・本番ポート47825 非接触** を厳守。スコープは §2-5 番「セーブ/永続」に限定（中断セーブ/残りダンジョン/アイテム拡充は対象外＝次以降）。
+
+- **設計判断（着手前に記録）**:
+  - **永続化対象**: rescued（救出数）/ per（PER_* 6 種レベル）/ info（情報ストック）/ bp（ボーナスポイント）/ pick（ツルハシ段階）/ girls[].level・cexp（仲間レベル・経験値）。原作「情報を入手」「レベルアップ」「装備」は永続。
+  - **永続化しない**: dug/seen/digProgress（盤面＝再生成相当）/ monsters/spawned/exp/kills/drops / stamina/hp（地上全回復）/ ore/mushrooms/fruits/potions/ladders/antenna（消耗品＝力尽きロスト＝原作の緊張設計）/ companion（同行指定＝ランごと）/ playerTrail / unstableDug/fallen。
+  - **保存タイミング＝地上帰還(surfaceReturn)**: 原作「地上でのセーブ（地上限定、推奨タイミング）」に忠実。地中では保存しない＝力尽きたら前回の地上帰還時点に戻る（チェックポイント方式）。
+  - **ロードタイミング＝startDive() 冒頭**: 全 state リセット完了後に loadPersistent で永続 state のみ上書き復元。effStaminaMax/effHpMax を再計算して育成反映済みの最大値で開始。
+  - **クリアでセーブ消去**: showClear で clearPersistent。ダンジョン制覇＝周回開始（原作 §11）。
+  - **技術方式＝localStorage JSON**: 既存 getInt/setInt と同じ try/catch パターン。キー名 `mineroad_save`、スキーマ版 `{v:1, ...}` で将来の互換切り可。localStorage 不可環境でもゲーム成立（保存のみ諦める）。
+  - **girls の復元**: girlPositions(seed) で位置は再生成（決定論で同一配置）。セーブデータには rescued 済みの子のインデックスと level/cexp を保存。復元時に state="rescued" + level/cexp を上書き。
+- **実装（VERSION=v0.12.0、commit `8f24c88`）**: `savePersistent()`/`loadPersistent()`/`clearPersistent()` の 3 関数を既存 localStorage セクション（app.js:456 付近）に追加。startDive に `loadPersistent()` 1 行、surfaceReturn に `savePersistent()` 1 行、showClear に `clearPersistent()` 1 行。tileType/girlPositions/oreAt/monster/hazard/avalanche のワールドレイヤーに非介入。Math.random/Date.now 不使用（決定論維持）。server/app.py 変更なし（新規 URL なし）。
+- **検証**: selfcheck-mineroad-save.mjs **21/21 ALL PASS**（3 回連続）＝fail→retry 復元/ランごとリセット確認/surfaceReturn 保存/localStorage 永続/クリア消去/決定論3回一致/非介入。debug-mineroad.mjs gate A〜AB(28) **ALL PASS**（gate AB＝セーブ永続基本動作）。selfcheck-companion 16/16・selfcheck-grow 13/13（回帰不変）。本番47825 非接触（47861 で検証）。
+- **code-reviewer**: **修正必須なし**。save/load/clear の配置と順序・永続/非永続の切り分け・JSON.parse の try/catch 安全性・スキーマ版管理・既存慣習整合（決定論・ワールドレイヤー非介入）を確認。軽微提案1点（data.per の個々のキー型チェック＝完全クライアント側・個人利用のため実害なし、将来の堅牢化候補として記録のみ）。
+- **配信の実態**: v0.11.0 で確認済みのとおり、server/app.py は静的ファイルを毎リクエストでディスク直読み＋no-cache のため、mineroad/web/app.js のコミット時点で本番47825に v0.12.0 が即時反映されている。
+
+- **配信の実態（一次確認・要設計判断）**: `server/app.py` の `do_GET` は STATIC dict の URL→相対パスを引き **毎リクエストで `with open(...) as f: f.read()` のディスク直読み＋`Cache-Control: no-cache`**。よって `mineroad/web/` 配下の静的ファイル編集は **restart 不要で本番47825へ即時反映**（restart が要るのは server/app.py 自体＝STATIC dict に新規 URL を足すときのみ）。実測：本番47825 は現在 v0.11.0 を配信中（`curl /mineroad/app.js` に `VERSION = "v0.11.0"` を確認）。**＝v0.5.0〜v0.11.0 の「本番反映 OWNER 承認待ち／restart 未実施」という運用記述は、新規 URL を伴わない既存ファイル編集の増分には実効しておらず、ファイル保存時点で本番に出ていた**。配信ゲートを実効化するなら build/deploy 分離か別ディレクトリ配信が要る（設計判断は OWNER 預かり）。
+  - **2026-07-06 OWNER 裁定 = 現状追認**（AskUserQuestion で確定）: live-from-disk＋no-cache を仕様として受け入れる。ゲートの定義は「playtester + code-reviewer 通過 → commit」までとし、「本番反映は OWNER 承認待ち」という独立ゲートは**廃止**（v0.5.0〜v0.13.x の各エントリの同文言はこの再定義で読み替える。歴史記述は改稿しない）。根拠: 単一ユーザ・mineroad の露出は OWNER 限定（直 URL のみ）・v0.5〜v0.13 の全増分で保存即本番だったが実害ゼロの実績があり、build/deploy 分離の実装・運用コストに見合う保護対象がない。作業中の中間状態が保存時点で本番に出る点は認識のうえ受容（壊れた中間状態を worktree に長時間放置しない運用のみ徹底）。deploy 分離は将来公開範囲が広がる等の前提変化時に再起票。
+
+
+## 第 4 作 方向転換（あかり 出荷済み v1.3.0・感想 7/10、2026-06-03 着手 / `/newgame` 2 度目、Steam 実データ起点）
+
+### 方向転換の根拠（3 周目 step-back の記録）
+
+3 作連続 5→3→3 で「ポエム・低ゲーム性・同系統」。同一課題（読むだけ・低ゲーム性）への **3 周目**＝`~/companion/CLAUDE.md` 2 周目ルール「3 度目を打たず設計を引き直し、判断を台帳に根拠付き記録してから着手」を発動。
+
+- **Steam 実データ分析（AI 確定）**: ①直近 2 週に実際に触れているのは Slay the Spire 2（372分）/ Demons' Timeline（233分）/ Core Keeper（125分）/ Fish to Dish Idle Sushi（60分）＝全部メカニクスの濃い周回/システムゲー。②総プレイ最大クラスタは Slay the Spire **3808分**（断トツ、+StS2）。Stardew 2658・Palworld 2650・In Stars And Time 2250・Gunfire 1569・Outer Wilds 1161・Core Keeper 1100・Subnautica 1011・Inscryption 752・Loop Hero 818…。③ジャンル偏り = ローグライク/ローグライト（周回×意思決定×数字）／システム・採掘サバイバル／推理・パズル。④**みちゆき/ともしび/なごりが属する「詩・静歩きウォーキングシム」クラスタ（GRIS, The First Tree, Florence, TOEM 等）は全部「クリアー済み」＝一度遊んで終わり**（100〜240分）。**繰り返し遊ぶのは詩ではなくメカニクスの濃い周回ゲー**。
+- **構造的真因の確定**: `/newgame` の変更不可大前提「静けさ・スコア無し・失敗無し・詩の断章維持」自体が 3 作を詩に収束させていた。一次資料が願望ポエムメモ固定である限り何度発散しても同系統。
+- **ユーザー判断（AskUserQuestionで方向性のみ 1 点確認、2026-06-03）**: 選択肢 A「実データに全振り（推奨）」を選択。**継承＝視覚演出の美しさのみ**（3 作で唯一一貫して当たり）。**破棄＝スコア無し/失敗無し/読むだけ/静歩き/詩の断章**。核＝短い周回 + 毎回違う選択 + 数字や状態が伸びる手応え（参照: Slay the Spire / Loop Hero / Inscryption）。純静的 PWA・スマホ・個人利用・配信境界は維持。
+- **方向性のみユーザー確認した理由**: スキルの「完全 AI 自決・ユーザーに聞くな」と、変更不可大前提を覆す方向転換は衝突する。シリーズ identity を決める設計方向性級の分岐かつ書面化された大前提の破棄のため、ここ 1 点のみ確認（コンセプト・核メカ・美学・実装は全て AI 自決）。
+
+### 発散レーン分離（同方向収束の構造防止）
+
+なごりの真因「game-designer 4 並列でも全案が同方向へ収束」を防ぐため、**各 designer に別メカニクス・レーンを固定割当**（毛色ではなくゲーム性そのものを変える）。詩・静歩き・読むだけは全レーン禁止。Steam クラスタ対応で 4 レーン: (1) デッキ構築ローグライク (2) ループ/自動進行ローグライク (3) 採掘/精錬システム (4) 演繹/論理パズルローグライク。
+
+### 発散結果と選定（§2〜§3、完全 AI 自決、2026-06-03）
+
+`game-designer` 4 並列（各レーン固定割当、opus）。4 案は明確に割れた（レーン分離が同方向収束を構造的に防いだ）:
+
+- **A「あかり」**（デッキ構築）: 捻り＝**明度がリソース**。攻撃カードは明度を消費し撃つと画面が暗くなる／灯カードは明度を足す。明るいほど攻撃威力↑・暗いほど被ダメ↑。プレイの良し悪しが画面の明暗としてそのまま美しく出る。
+- **B「灯路」**（ループ自動進行・Loop Hero型）: 捻り＝道の上に光と闇のグラデを塗り分け、暗区間＝高リスク高報酬／灯区間＝安全低報酬を自分でデザインする。
+- **C「ふかみ」**（採掘・Dome Keeper型）: 捻り＝**酸素＝光＝視界の三位一体**。酸素が減ると画面が暗くなり鉱石が見えなくなる。1 潜行 2〜4 分で区切る。なごり資産（PALETTE 補間・luminance 視認性）の流用度が最高。
+- **D「ひので」**（論理パズル・Minesweeper/Hexcells型）: 捻り＝塗るのでなく「確定を宣言する」。確定で連鎖。テキスト依存ゼロで可読性最強だが、核＝一意解生成＋CSP ソルバの正しさが生命線でハイリスク。
+
+**選定 = A「あかり」**（1 行理由）: ①実データ最大クラスタが Slay the Spire **3808分**（断トツ）＋ StS2 直近2週 **372分**（今最も触っている）で A に直撃 ②ユーザーが AskUserQuestion preview に明記した参照「Slay the Spire / Loop Hero / Inscryption」の過半数（StS・Inscryption）がデッキ構築 ③捻り「明度＝リソース」が継承資産（色と光）を背景演出でなく**毎手番の意思決定そのもの**に食わせ、B/C/D の「光を演出に使う」より深く一致 ④コア実装が決定論的 intent ＋静的データテーブルで素直（D のソルバ正しさ・一意解生成リスクより御しやすい）。**接ぎ木**: D の「テキストをルール上ほぼ使わない＝可読性最強」を A のカード文言にも適用（アイコン＋数値主体、文言上限）／C の「明度演出の徹底」を闇/灯ゲージ演出に活かす。
+
+不採用理由: B は実装のバランス調整が本体の難しさかつ直近 Loop Hero 非稼働。C は堅実だが実データ最大シグナル（StS）から外れる。D は実装リスク最大（ソルバ破綻＝ゲーム破綻、playtester で「PASS≠正しく解ける」穴が出やすい）。
+
+### 美学確定（§4、lead 単独責任）— 第 4 作「あかり」
+
+- **タイトル**: 「あかり（灯）」（ひらがな 3 音でシリーズに揃える。明度＝リソースの核と二重に効く）。
+- **ジャンル/構造**: 一画面固定・ターン制デッキ構築ローグライク。スマホ縦持ち（412×915）。1 ラン = **直線 6 戦**（分岐マップは v1.1 送り、最終戦＝ボス）。各非ボス戦の勝利後に **3 枚から 1 枚デッキに加える（スキップで HP 小回復）**。HP0 で敗北 → 到達戦数を出して **ワンタップ再挑戦**。1 ラン 5〜8 分。スコア/失敗あり（大前提破棄）。メタ進行は v1.0 では **localStorage の最高到達記録のみ**（アンロックツリーはスコープ膨張回避で v1.1 送り）。
+- **核メカニクス＝明度がリソース（LIGHT 0〜100、初期 50）**: 毎ターン マナ（灯量）3。①**攻カード**＝ダメージが LIGHT に比例（明るいほど強い、`×(0.5+LIGHT/100)`）＋使うと LIGHT 減（撃つと暗くなる）②**灯カード**＝LIGHT を上げる（副次でブロック/ドロー）③**守カード**＝ブロック ④**技カード**＝ドロー/強化。**被ダメは暗いほど増える**（`×(1+(100−LIGHT)/100×0.6)`、ブロックは減算が先・倍率非適用）。さらに**闇スケールの攻カード**を数枚混ぜ（暗いほど強い `×(0.5+(100−LIGHT)/100)`）、「光バースト型 vs 闇型」のビルド分岐を v1.0 から成立させる。毎手番「攻めて暗くするか／灯して蓄えるか」が意思決定。プレイの良し悪しが画面の明暗としてそのまま美しく出る＝継承資産（色と光）をメカニクスに一致。
+- **敵**: 決定論的 intent（行動アイコン＋数値を頭上表示、ループ配列）。5 種 + ボス。動的 AI を作らない（StS と同じく予測可能性が面白さ）。
+- **データ verbatim**（lead 確定、`cards.js` / `enemies.js` 相当に静的データとして入れる＝implementer は数値テーブルを埋めるだけで創作しない。係数は単一 CONSTANTS ブロックに集約し playtester で実測調整可）: 初期デッキ 10 枚（ともし火×3／打つ×4／守る×3）＋報酬プール 約10枚（焔・大焔・影撃ち・残光・集光・灯の盾・灯し守り・燭台 ほか）。詳細は implementer 仕様に転記。
+- **PALETTE**: 戦階層で背景テーマが変わる（地下＝藍黒 → 紫＋琥珀 → 暁の橙 → 頂上の白金）。さらに毎ターンの LIGHT で画面全体の明暗が動く（自キャラ中心の放射光円。明＝暖色光彩、暗＝青黒フェード＋敵シルエットだけ浮く）。みちゆきの色補間技術を階層＋明度の 2 軸で流用。
+- **テキスト可読性（初手から、なごり真因の直接対策）**: カード/HUD は **HTML/CSS DOM**（canvas に文字を焼かない＝折返し事故が起きない）。カード文言は **アイコン＋数値主体、説明 1 行・全角 12 字上限**（語数をデータ側で制約）。数値は白文字＋黒縁。3 領域を CSS Grid 固定（敵＝上 35%／ゲージ＝中／手札＝下 38%、safe-area 考慮）。**全テキスト要素の bounding rect が 412×915 内に収まることを playtester で必須アサート**（D 案の「テキスト最小＝可読性最強」を接ぎ木）。
+- **前景視認性（初手から）**: 自キャラ・敵・数値は背景明度に追従（暗背景＝明色＋光輪／明背景＝暗色＋暗縁）。暗ターンでも「敵がどこにいて何を狙うか」は必ず読める。手札・HUD は canvas の外（DOM 不透明レイヤー）なので背景変化に絶対埋もれない。
+
+### 実装（implementer、Done、2026-06-03）
+
+- [x] ゲーム本体 `akari/web/` 一式（`index.html` / `app.js` / `cards.js` / `enemies.js` / `fragments.js` / `style.css` / `manifest.json` / `icons/icon-192・512.png`、VERSION=v1.0.0、SW なし）。文字・カード・HUD は全て DOM（canvas には背景の光＋敵シルエットのみ）。3 領域 CSS Grid 固定（敵 35%／中 27%／手札 38%）、`overflow:hidden`+safe-area ではみ出し封じ、数値は白文字＋黒縁。バランス係数は `app.js` 冒頭の `CONST` ブロックに集約（playtester で調整可）。明度スケール（`atkLightScale`/`atkDarkScale`/`takenMult`）は仕様 verbatim。カード/敵は `cards.js`/`enemies.js` に静的テーブルとして verbatim。
+- [x] `server/app.py` STATIC dict に `/akari/` prefix 9 エントリ追加。既存 URL（`/`・`/tomoshibi/`・`/nagori/`）不変。
+- [x] 自己動作確認（Chromium ヒットテスト、port 47826）: 起動→title→開始→battle（floor1: HP50/LIGHT50/mana3/手札5/敵1）→勝利→reward（fullDeck+1）→floor2..6 へ各遷移、全 floor で全テキスト/カードが 412×915 内、pageerror 0。clear 経路（ボス撃破→clear・best=6 記録）と defeat 経路（HP0→defeat）を個別に PASS。既存 `/`・`/tomoshibi/`・`/nagori/` も同一サーバで 200（回帰）。
+- [x] playtester 正式実機検証（`tests/debug-akari.mjs`、画面座標ヒットテスト経由）**ALL PASS**: `/akari/` 200・pageerror 0、title→battle（最前面 overlay assert＝飛び越えなし）、**全画面（title/全 floor/reward/defeat/clear）テキスト・カードが 412×915 内に収まりはみ出し 0**（なごり真因の直接対策）、LIGHT→与ダメ追従（light100=9/50=6/10=4）、明暗変化率 100%（th=48 を初回基準に実測確定）、勝利経路（clear・best 記録）と敗北経路（HP0→defeat→再挑戦でデッキ初期化）、対象選択（floor4 二つ火 2 体）。**既存作回帰**（同一サーバ `/`・`/tomoshibi/`・`/nagori/` 200・pageerror 0・コア操作前進）＝既存 URL 不変の証明。
+- [x] **バランス 1 周目調整（出荷確定値）**: 初版は単純戦略 bot で**クリア率 0/20**（18/20 が floor5「篝」の Charge で停止、ボス未到達）＝デススパイラル（攻撃で暗くなる→被ダメ増→灯し直す→火力不足）が薄い HP・戦闘後回復の不在・終盤スパイクで詰む構造欠陥。**構造的に緩和**: `PLAYER_MAX_HP` 50→**52**、**`WIN_HEAL`=2 新設**（非ボス勝利時回復、ローグライク標準の欠落していた戦闘後リカバリ）、`SKIP_HEAL` 8→**14**、`TAKEN_DARK_FACTOR` 0.6→**0.45**、「打つ」LIGHT コスト −8→**−6**、篝 Charge A:18→**14**、ボス HP 75→**68**・A:24→**19**。再計測でクリア率 **30〜55%**（bot ヒューリスティクス差、死因は全て floor5/ボス＝晩成の壁が機能する健全分布）。**しきい値の無限ナッジはせず初回調整 1 回で確定**（2 周目ルール非該当＝playtest アサートとは別件の初回バランス確定。`tests/debug-akari.mjs` の旧値固定アサート hp50/-8 は新値 52/-6 へ機械追随、フル再実行で clean PASS）。
+- [x] code-reviewer 点検＝**全 7 観点 OK・commit 可**（配信境界・既存 URL 不変／純静的 PWA・CSP／状態機械の二重発火・null 参照なし＝`won-pending` 中間状態＋`reapEnemies` ガードで封じ／効果インタプリタ・被ダメ計算・集光1回消費・燭台ターン開始フック仕様どおり／可読性・視認性／VERSION／データ verbatim）。軽微提案 2 件（STATUS の旧数値乖離・CONST コメント要約）は独断適用。
+- [x] commit（games repo `18d1c40` feat / `4085ced` docs）。
+- [x] **配信（本番反映＝ユーザー承認のうえ実施、2026-06-03）**: ① `systemctl --user restart companion-games` で本番 47825 を新 app.py へ差し替え（`/`・`/tomoshibi/`・`/nagori/`・`/akari/`・`/healthz` 全 200、既存 URL 不変を確認）② remote `web/app.js` の `GAMES` に「あかり」1 行追加 + SW cache v9→v10 bump（remote `80b2ba0` feat）③ tailscale serve は `:8444 (tailnet only)` で同一ポートのため unit 変更不要。本番 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/akari/`。
+- [x] **v1.1.0 UX 修正（ユーザー実機プレイで詰まり報告 → 即対応、2026-06-03）**: ユーザーが「防御や攻撃でカードを使い切った後、次の操作が分からず何もできない／最初に説明がほしい」と報告。**真因＝ソフトロックではなく「ターン終了」の導線不明**（マナ枯渇で手札が灰色化するが次に押すべきボタンが伝わらない）。**これも "PASS≠操作できる" の穴**＝playtester がコードで end-turn を押していたため人間の詰まりを検出できなかった（みちゆき=操作できない／ともしび=伝わらない／なごり=読めない、に続く同型の穴が「操作導線が分からない」として再発）。対応: ①title「はじめる」→**初回のみ あそびかた説明 overlay 自動表示**（4 行、`localStorage akari_seen_howto`、title 副ボタン「あそびかた」で再読＝閉じるは「もどる」）②使えるカードが無い時に `#battle-hint`「つかえるカードが無い → ターン終了」表示＋ボタン脈動強調③対象選択中ヒスト＋同カード再タップでキャンセル。バランス・コアロジック・配信境界・CSP・既存 URL 不変。VERSION v1.0.0→**v1.1.0**。playtester で詰まり解消を実機相当で確認（マナ枯渇→ヒント+強調→ターン終了で進行）+ 全画面はみ出し 0 + 既存回帰、正本テストを新フローへ更新し ALL PASS。games `9513494` feat。**akari/web は静的配信ゆえディスク編集＝本番即反映**（server restart 不要、再読込で v1.1.0）。
+- [x] **v1.2.0 敵手番の見える化（ユーザー「ターン終了しても敵が行動してない=バグかも」報告 → 即対応、2026-06-03）**: lead が実機（使い捨て 47830、本番 47825 非接触）で確認＝**バグではない**（end-turn で player HP 52→46・敵 turnIndex 0→1・mana 回復・pageerror 0＝敵は行動している）。真因＝**敵手番が同期一瞬で処理されアニメ・間が無く「敵が動いた」のが見えない**（"PASS≠伝わる" がまた別形＝「演出不在で行動が見えない」で再発）。対応: `enemyTurn` を全敵同期一括→**1 体ずつ約 0.6 秒間隔の非同期シーケンス**化（`ENEMY_STEP_MS=600`、被ダメ計算・intent 内容は不変）。`#battle-hint`「てきのターン」表示・敵を 1 体ずつ前進+光輪で強調・cue 表示（A=赤-N／Dim=あかり-N／Charge=ためる／Guard=ブロックバッジ）。`G.busy` で入力ロック・全終了パスで解除。バランス・配信境界・CSP・既存 URL 不変。VERSION v1.1.0→**v1.2.0**。playtester で見える化（floor4 で acting 同時最大 1・各 cue 発火・HP/light 反映）+ 詰まらなさ+はみ出し 0+既存回帰を確認、正本テストを非同期完了待ち（busy 解除待ち）へ追随し ALL PASS。games `5a046f2` feat。静的配信ゆえ本番即反映（再読込で v1.2.0）。
+- [x] **運用事故と再発防止（2026-06-03）**: v1.1.0 検証時、私が playtester に「本番ポート 47825 で検証」と指示 → playtester が本番プロセスを kill して自前サーバ起動 → 検証後に本番を再起動せず終了し **47825 が空＝tailscale `:8444` が 502**。`systemctl --user start companion-games` で復旧。**教訓: 検証は本番ポート 47825 を踏まず 47826 等で行う**（implementer は 47826 を使い無事だった）。v1.2.0 検証では 47826 厳守で再発なし。→ playtester agent / `/newgame` スキルに「本番ポート非接触」を明記する（面白さチェック役の議論とあわせてワークフロー整備時に反映）。
+- [x] **v1.3.0 実機バグ修正＝ターン終了ボタンが画面外に切れる（ユーザー報告 → 即対応、2026-06-03）**: ユーザー実機（モバイル Chrome）で**「ターン終了」ボタンが Chrome のアドレスバー（ヘッダー）で画面外に切れて押せない**＝詰まる／敵が動いて見えない、と報告（「Chrome のヘッダーを意識してほしい」）。真因＝戦闘 UI が `position:fixed; inset:0; height:100vh` で組まれ、**モバイル Chrome の `100vh`/`inset:0` はアドレスバー裏の大ビューポート基準**のため最下部のボタン・`#battle-hint` が画面外へ押し出される。修正: `.battle`/`.overlay` を **`height:100svh`（可視高＝ツールバー表示時の最小）+ 上基準（`top:0`、bottom アンカー廃止）**、`#scene` を `100dvh`、svh 非対応は vh フォールバック。**前回 412×915（ブラウザ UI 無し）検証では検出不能だった "PASS≠実機" の穴の本体**（headless は実ツールバーが無く svh=vh=innerHeight でズレを再現できない）。対策として正本テストに**短高 viewport（412×680/730）で `#end-turn`/`#battle-hint` が `innerHeight` 内・top 基準・タップ機能、を必須 gate 追加**（修正後の受け入れ条件を担保。元バグの完全再現は実機のユーザー確認に委ねる）。VERSION v1.2.0→**v1.3.0**。games `45e8817` fix。静的配信ゆえ再読込で即反映。※implementer が VERSION bump 直前に異常終了（壊れた出力）したため CSS は入っていたが VERSION 未更新→lead が補完し検証へ回した。
+- [ ] **既知の軽微バグ（gate 外、別件・未修正）**: 敵手番中、最上段で動く敵（`.enemy.acting` の前進 `translateY(-8px)`）の intent バッジが画面上端を **約 3px はみ出してクリップ**（`top:-3.2px`、**viewport 高に依存しない**＝v1.3.0 ツールバー修正とは無関係の既存クリップ）。実害小（"攻 8" の数値は読めるがバッジ上辺が約 3px 欠ける）。修正案＝`enemy-area` の上端余白確保 or acting の lift 量調整。次の小修正でまとめて対応候補。
+- [x] **ユーザー実機プレイ（v1.3.0）= 暫定好感触（2026-06-03）**: ボタンが見えて操作でき、**ボスまで撃破・「おもしろかった」**と報告（方向転換シリーズ初の当たり手応え。詩 3 作 5/3/3 からの転換が機能した暫定証左）。正式な点数つき感想は後日 vault `notes/<date>-akari-review.md` で受領予定 → 受領後に §9 へ継承資産/課題を記録。
+- [x] 正式感想受領 = **7/10**（2026-06-03、vault `notes/2026-06-03_akari-review.md`）→ §9 記録（下記）。
+
+### あかり ユーザー感想 受領 = 7/10（§9、2026-06-03）
+
+**シリーズ初の当たり**（みちゆき5→ともしび3→なごり3→**あかり7**）。Steam 実データへの方向転換が正解だったと実証。
+
+**良かった点（＝継承資産、ver2 以降も残す）**:
+- **Steam ライブラリから Slay the Spire を読み取り、うまく落とし込んでいる**と感じた＝方向転換（行動データ主・詩破棄）の判断が当たり。
+- **「気を抜くとすぐ負ける難易度」が良い**＝1 周目バランス調整（HP52/WIN_HEAL/TAKEN0.45/スパイク軽減、勝率帯 30〜55%）が当たり。"初回1周で確定・無限ナッジしない" 方針が機能。
+- **「灯（LIGHT）」という独自システムに戦略性があって良い**＝核メカ（明度＝リソース、攻めると暗くなる/灯して蓄える）が当たり。継承資産は「視覚の美しさ」に加え **この明度メカ自体**も。
+
+**課題（＝ver2 の教訓）**:
+1. **初接触の UX 往復**（ターン終了ボタンが見えていないと分かるまで往復があった）＝ v1.1.0/v1.3.0 で修正済みだが**第一印象を損ねた**。→ 今回 `/newgame` に足した playtester 強化（実機リアリズム＝ツールバー込み短高でボタン可視・初見の操作導線）と game-critic の妥当性を実証。ver2 は**初回から実機・初見検証を通す**。
+2. **敵が 1 パターンしかなく何度も遊べない**＝**ver2 最優先＝リプレイ性**。ローグライクなら最低数回遊べるべき。※ユーザー留保「ver2 を見据えた最小構成なら問題なし」＝v1.0 は最小構成として許容された（このスコープ判断は正しかった）。
+3. **効果が分かりにくいカードがいくつかあった**＝カード文言/アイコンの明確化（12 字上限で削った副作用の可能性。ver2 で見直し）。
+
+## あかり ver2 設計起点メモ（次回以降の資料、2026-06-03）
+
+> ユーザーが「今後 ver2 を作るかもしれない」と明言。次セッションが迷わず着手できるよう資料を集約。**ver2 は新規 `/newgame` ランではなく、あかりの改修・拡張**（核メカは当たりなので捨てない）。
+
+**残す（当たり、変えない）**: ①核メカ「灯（LIGHT）＝リソース」（明攻×明るさ・闇攻×暗さ・被ダメ×暗さ・撃つと暗くなる）②"気を抜くと負ける" 難易度感（現バランス係数を基準点に）③視覚の美しさ（階層×明度の 2 軸 PALETTE）④全 DOM 化の可読性・実機 svh 対応。
+
+**ver2 の主目標（優先順）**:
+1. **リプレイ性（最優先）**: 敵の intent パターンを増やす／敵種を増やす／ラン毎の変化（敵編成・順序・報酬のランダム性強化、エリート/分岐マップ＝v1.1 送りにしていた分岐マップの実装、レリック/メタ進行アンロックの導入）。「最低数回は新鮮に遊べる」を満たす。
+2. **カードの分かりやすさ**: 効果が不明瞭なカードの文言/アイコン見直し（12 字制約と可読性の両立。必要なら軽いツールチップ/詳細表示。ただし canvas に焼かず DOM・はみ出し厳禁の原則は維持）。
+3. **初回 UX を最初から堅牢に**: あそびかた説明（v1.1）・ターン終了導線（v1.1）・敵手番の見える化（v1.2）・svh 対応（v1.3）は実装済みなので踏襲。ver2 でも playtester の実機リアリズム gate（短高 viewport・初見導線・フィードバック可視）を初回から通す。
+
+**既存資産の所在（ver2 が引くもの）**:
+- データ verbatim: `akari/web/cards.js`（初期 10＋報酬プール 10）/ `akari/web/enemies.js`（6 戦・intent ループ。**ここを増やすのがリプレイ性の主戦場**）/ `akari/web/fragments.js`（PALETTE・UI 文言・あそびかた）。
+- バランス係数: `akari/web/app.js` 冒頭 `CONST`（PLAYER_MAX_HP52 等、単一ブロック）。明度スケール3関数もその直下。
+- 美学・核メカの設計正本: STATUS 本 section 上部「美学確定（§4）— 第 4 作あかり」＋「バランス 1 周目調整」。
+- 既知の軽微バグ（ver2 で一緒に直す候補）: 敵手番中、最上段の acting 敵の intent バッジが画面上端を約3pxクリップ（`.enemy.acting` translateY と enemy-area 上端余白。viewport 非依存）。
+- 検証: `tests/debug-akari.mjs`（実機相当・短高 viewport gate・bot 勝率レポート入り。ver2 は敵追加に合わせて intent/勝率の gate を更新）。VERSION は現 v1.3.0（ver2 着手で bump）。
+- 一次資料（再分析用）: `docs/steam-library-2026-06-02.json`（スレスパ 3808分＝デッキ構築の本命裏付け。Inscryption752・Loop Hero818・Dungeon Clawler292 等もデッキ/ローグライク隣接でカード/敵設計の参考）。
+- [x] **面白さチェッカー追加（ユーザー提起 → 議論 → 実装、2026-06-03）**: 現行 `/newgame` には「面白いか」を客観チェックする専任が企画・製造後どちらにもいなかった（designer=推進側・lead=決定者・playtester=動作/難度・reviewer=コード品質。面白さの判定は出荷後のユーザー感想のみ＝3 作凡庸着地と今回の UX 詰まりの構造的真因）。**結論（lead 推奨→ユーザー承認）= 非対称**: ①**企画は devil を常時化（足す）**＝着手前に潰せる罠が最大の手戻り源。②**製造は専任 fun-critic を新設せず playtester を実機・人間寄りに強化**＝今回の製造後すり抜け（ターン終了が見つからない／敵が見えない／ボタンが切れる）は "微妙に面白くない" ではなく "操作できない/壊れて見える"＝実機リアリズムの穴であり、抽象 fun 判定役より既存検証の穴埋めが効く（machinery を増やさない＝対症療法上限とも整合）。**実装**（workspace `9b60c86`）: 新規 `game-critic` agent（read-only devil、§2.5 で全案を反証＝飽き/詰まり/単調/支配戦略/前作の轍/スマホ片手）／playtester に 本番ポート47825非接触・実機リアリズム（ツールバー再現の短高 viewport でボタン可視・初見の操作導線・行動のフィードバック可視）・テキスト可読性・面白さ代理レポート（勝率帯/支配戦略/到達分布）を必須化／SKILL.md の大前提から美学固定を破棄し一次資料を Steam 主に組み替え・§2 をレーン分離に強化。**限界**: エージェントは面白さそのものは感じられず相関する構造の点検に留まる（最終判定は遊ぶユーザー。狙いは無駄な制作サイクルを減らすこと）。
+
+### あかり ver2 設計確定（チケット #48、2026-07-08。設計のみ・コード未変更・実装 GO はオーナーレビュー待ち）
+
+**正本 = `docs/akari-ver2-design.md`（全面改稿）**。2026-06-10 の AI 叩き台を、チケット #48 の発注どおり game-designer/game-critic を回して確定版に置き換えた。工程 = game-designer 3 並列（レーン固定: 敵・遭遇／ラン構造／ビルド深化。ユーザー追加要望「敵の増加以外にも面白く」を受け叩き台の敵単独レーンから拡張）→ game-critic が 3 案を横断反証（コード引用・Steam 数値の裏取り込み、捏造なし）→ lead 統合。
+
+- **増分 3 段への分割が結論**: **ver2.0 = 敵多様化一式（ティア抽選 weak/mid/strong + 新 primitive は Drain 1 個 + 新敵 4 体 [灯喰い/埋み火/常闇/灯呑み] + seed 基盤 + 既存 6 体無変更）+ カード可読性根治（文言改定・実効値ライブ表示・報酬 2 タップ確定 = 感想課題「効果が分かりにくい」の犯人 = 集光のターン内リセット乖離 app.js:240 等を名指し修正）+ 音（Kenney CC0、あかりは現状完全無音。SFX+ジングル、BGM は実機試聴で判断）+ 3px クリップ修正**。ver2.1 = 新カード 6 + 遺灯 6 + 除去 + 写し火/群れ（敵抽選の bot 実測後に 1 変数ずつ）。ver2.2+ = ラン構造（二叉分岐 + エリート別 id verbatim + イベント + 残照は要練り直し）+ ボス 2 体目 + 深灯モード。
+- **critic 反証で落としたもの（要点、詳細は設計書 §6）**: 3 案全部載せ（新概念 10 個超 = 初接触 UX の自傷再発）／残照の生値定義（勝ち確ターンに灯を切る「無料の儀式」化 + 闇型ビルドが構造的に罰される捻れ）／月影の欠片（核メカの代償を遺灯 1 個で消す = 当たりの無効化を報酬にする）／火打石の battleStart 案（自案が名指しした app.js:240 リセットと競合）／エリート ×1.3 ランタイムスケール（verbatim・決定論テストと矛盾 → 別 id 記述に倒す）。横断原則に昇格: 回復ノブは増分ごと高々 1・ランダム性追加は 1 増分 1 系統・overlay 連鎖最大 2・イベント断章 1 行上限（詩回帰の監視）。
+- **アセット調査（ユーザー依頼）**: ダウンロード済み Kenney zip を実物確認。**画像は不使用と確定**（Game Icons 790 個は UI 系のみ・Generic Items は現代日用品・Roguelike 16px ピクセルは「闇のシルエット+光輪」の抽象美学と衝突 = 当たり資産を守る）。**音は採用**（RPG sounds/Jingle/Music loops、ライセンス判定と playSfx cloneNode パターンは mineroad で確立済み。server/app.py STATIC allowlist への純追加が必要）。
+- 検証ゲート素案は設計書 §3.9（bot 勝率帯 30〜55% 維持・敵別死因分布・Drain スパイラル・埋み火膠着・seed 決定論・?force= 実プレイ経路 gate・初見 gate）。実装は orc 系統（designer/critic 再起用不要）、VERSION v1.3.0→v2.0.0、**実装検証は本番ディレクトリ非接触**（akari/web は静的配信 = ディスク編集で本番即反映のため別ポートコピーで検証）。
+
+## 第 3 作「なごり」（出荷済み・感想 3/10、2026-06-02 着手 / `/newgame` 初の実戦投入）
+
+「読むだけ」2 連続（みちゆき 5/10 → ともしび 3/10）を構造から脱するため、**操作の手触りを前作と完全に変え、相互作用を主役に、断章を読むことから降ろす**第 3 作。`/newgame` スキルを初めて正規工程で回した（みちゆき・ともしびは orc 流用の変則だった）。
+
+### 発散と選定（§2〜§3、完全 AI 自決）
+
+- **発散 = `game-designer` subagent 4 並列**（mesh team へは昇格せず）。4 案: (A) 砂に溝を彫り潮を導いて窪地を潤す「なぎさ」 / (B) 指でなぞって**消えない**道を描き霧の淀みを全部つなぐ「痕跡蓄積」 / (C) 水面を掃って沈んだ町を露わにし深層＝過去へ降りる「みなも」 / (D) 俯瞰の盆地を自由になぞって潤す「自由探索」。
+- **mesh 非昇格の判断**: 4 案中 3 案が「なぞる×水」に寄ったが、これは一次資料（ないものに触れる／喪失／ただ歩く）の自然な引力で、各案の核（潮で導く／不可逆に刻む／水位を下げ降下／自由に潤す）は十分に割れており行き詰まりも無い。team はトークン桁違いで個人ゲーム制作に過剰（skill §2 デフォルト＝subagent 並列）。lead が center of truth として選定・美学確定し他案の強みを接ぎ木。
+- **選定理由（1 行）**: 3 作目に最も欠けていた「達成・手応え」を満たすのが案 B のみ（①操作が前作と完全別＝なぞって描く・消えない ②相互作用が一対一で即時＝伝わらないリスクが構造的に低い ③淀みを全部繋ぐ→自分の一筆が俯瞰される明確な達成 ④「引いた線は戻らない／余白は可能性のまま」が嗜好メモ「終わりが惜しい・読んでない本は可能性のまま」の最深の翻訳）。D は自由すぎて「手応えが薄い」を再発、C は pinch ＋水戻りが静けさと緊張、A は水流シミュの実装リスクと「潮待ち＝受動回帰」で見送り。
+
+### 美学確定（§4、lead 単独責任）
+
+- **タイトル**: 「なごり」（名残＝喪失と余韻。引いた線が消えず残る不可逆性と二重に効く。ひらがな 3 音でシリーズに揃える）。
+- **核メカニクス**: 横スクロール一本道を捨て、**一画面固定の俯瞰**（広さは霧と終盤の俯瞰で出す）。最初ほぼ乳白の霧。①**なぞる＝道を描く**（ドラッグ軌跡が消えない光る線として固定、線上の帯だけ霧が晴れ地形が即立つ＝同フレーム一対一フィードバック）②**不可逆の蓄積**（引いた線は消去・上書き不可。線は何本でも足せる＝詰みなし）③**淀み 7 個**（決定論配置、暗い染みとして初期から視認可。線が淀み中心から閾値内を通ると晴れて断章が一瞬浮かぶ）④**達成＝縫い終える**（全 7 淀みに線が触れると視点がズームアウトして全軌跡が一筋の道として俯瞰され、ending 断章で静かに終端）。progress = cleared 淀み数 / 7。失敗なし・スコアなし・時間制限なし。
+- **断章 verbatim**（lead が全文書き切り。`fragments.js` にそのまま入る＝implementer は創作・改変しない）: opening 1 + 淀み 7 + ending 1。文体は雰囲気・喪失・懐かしさ（にょりさんの郷愁）を継承し、プレイヤーの描く行為そのものに語りかける。
+- **PALETTE**: progress（晴れた淀み割合）に沿った 6 キーフレーム。乳白の霧（無彩・明背景）→ 薄青・苔緑・砂が差す → 夕の琥珀 → 藍の夕映えで引いた全線が金の筋として浮く（みちゆきの時間軸を達成軸に置換）。
+- **前景視認性（初手から）**: 前景＝引いた線・指カーソル・淀み・断章。線は背景 luminance を毎フレーム読んで明度反転気味＋縁取り（明背景＝濃橙＋暗縁／暗背景＝明金＋光彩）。指先に常時光カーソル。淀みは霧より一段暗く初期から視認。断章浮上時は背後に暗幕を敷き地形色と混ざらないコントラストを確保（みちゆきの同化事故を文字側でも構造防止）。
+
+### Done / TODO（このセッション）
+
+- [x] implementer 実装（`nagori/web/` 一式 + `server/app.py` STATIC 拡張 + icons、VERSION=v1.0.0）。
+- [x] playtester 実機検証 PASS（`tests/debug-nagori.mjs`、画面座標ヒットテスト経由）: `/nagori/` 200・pageerror 0、opening タップで dismiss→scene、1 本ドラッグで画面変化率 10.81%（採用 th=48＝明背景の崖を実測で確定。みちゆき th=24・ともしび th=8 は流用せず）・strokes=1/cleared=1/progress 0→0.143、全 7 淀みなぞりで cleared=7/7・progress=1.0 →ズームアウト俯瞰→ending（dismiss せず終端）。**同一起動サーバでみちゆき `/`・ともしび `/tomoshibi/` の回帰も PASS**（200・pageerror 0・progress 前進）＝既存 URL 不変の証明。初回実行で app.js の null 参照例外（`beginEnding` が `curStroke` を無効化した後の `pressMove` 末尾 push）を 1 件検出し、状態無効化地点の正規ガード `if (!drawing || !curStroke) return;` で解消（対症療法 2 周目には非該当）。
+- [x] code-reviewer 点検＝**修正必須なし**（配信境界・既存 URL 不変／純静的 PWA・CSP／overlay 罠対策／前景視認性／正しさ／VERSION／断章 verbatim の 7 観点 OK、playtester ガードも妥当判定）。軽微提案 2 件は独断適用（テスト BASE デフォルトを既存テストと同じ 47825 に統一／`beginEnding` の死にコード 2 行削除）。
+- [x] games repo に commit（`feat(games):`）。
+- [x] **配信（本番反映＝ユーザー承認のうえ実施）**: ① `systemctl --user restart companion-games` で本番 47825 を新 app.py へ差し替え（`/`・`/tomoshibi/`・`/nagori/` すべて 200・`/healthz` 200 を確認、既存 URL 不変）② remote `web/app.js` の `GAMES` に「なごり」1 行追加＋SW cache v8→v9 bump（remote `0d760d7` feat / `3985116` docs）③ tailscale serve は 8444→47825 で同一ポートのため変更不要。本番 URL = `https://miho-inspiron-3521.tail5e989b.ts.net:8444/nagori/`。
+- [x] ユーザー実機プレイ → 感想受領 = **3/10**（下記）→ §9 記録。
+
+### ユーザー感想 受領 = 3/10（2026-06-02、vault `notes/2026-06-02_nagori-review.md`）
+
+3 作連続で 5/10 → 3/10 → 3/10。良かったのは「幻想的な画面で不思議な感じ」の 1 点のみ（**視覚演出は 3 作とも一貫して当たり**＝美しい景色 / 明かり / 幻想。継承資産として確定）。よくなかった点：
+
+1. **文字がはみ出していて読めない** ＝ 実装バグ。412×915 実機で断章テキストが画面外/canvas 外にはみ出した。playtester は pageerror 0・画面変化率は取ったが**テキストのレイアウト（はみ出し・可読性）を検証していない**。「PASS ≠ 伝わる」の穴（ともしびで指摘済み）が**今度は「PASS ≠ 読める」として再発**。ヒットテストは可読性を見ていない。
+2. **ちょっとなぞってすぐ終わる** ＝ 淀み 7 個・cleared 閾値が緩く、少しなぞると全部繋がってボリューム/手応え不足。
+3. **3 作連続でポエムかつ低いゲーム性** / **同じ系統ばかりやらされている感覚** ＝ 根本批判。
+
+#### 構造的真因と方針転換（重要、AI 確定）
+
+- **真因**: `/newgame` スキルが一次資料に「2026-04-11 の願望ポエムメモ（Journey/SotC・広大な世界をただ歩く・ないものに触れる・静かで終わりが惜しい）」を**必須読込として固定**しているため、game-designer を 4 並列で発散させても全案が「静かに歩く/なぞるポエム」へ収束する。一次資料が偏っている限り何度回しても同系統を生む構造。これは「読むだけ/低ゲーム性」という**同一課題への 3 周目**＝ CLAUDE.md「2 度目で一段引く」を超過。個別作品の磨き込みではなくワークフロー（一次資料の構成）を引き直す局面。
+- **ユーザーの指摘**: 「嗜好メモを参考にするのをやめてと言っても AI はやめない」＝ 上記設計の固さを突いている。
+- **方針転換（ユーザー主導）**: ユーザーが **Steam の情報（実際にプレイ/欲しいゲーム）を取得して渡す**。それを新しい一次資料に据えて次作の方向を仕切り直す。**次作着手はユーザーからの Steam 情報連絡まで保留**（今は AI 側から発散・着手しない）。
+- **`/newgame` 側の見直し候補（Steam 情報受領後に判断）**: ①一次資料を「願望ポエムメモ固定」から「Steam 実プレイ嗜好＋過去 review」へ組み替える（願望メモは従でよい）。②発散の収束を防ぐため game-designer の「毛色を変える」を「**ジャンル/ゲーム性そのものを変える**（ポエム・静歩き禁止の案を最低 1 つ混ぜる）」へ強化。③playtester の検証に**テキスト可読性（画面内に収まるか・はみ出さないか）**のヒットテストを追加（今回の真因の直接対策）。
+- **文字はみ出しバグ**: なごり単体の欠陥だが、系統転換が本質のため微修正より Steam 仕切り直しを優先。ユーザー希望があれば修正する。
+
+## ゲーム制作ワークフローの専用化（着手・実装完了、2026-06-02 / user 依頼）
+
+> user 所感「いまの構成（workspace + orc）がゲーム制作に向いていない。ゲーム用のスキルを作り、AI のみで作るゲーム制作に最適な構成を別にするか検討」を受け、(a)〜(d) をユーザー確認のうえ実装完了。
+
+### 決定（ユーザー確認済み、2026-06-02）
+
+- **(a) コンセプト発散 = subagent 並列**。複数 game-designer を並列起動し毛色の違う案 → lead 選定。「案が似通う / 行き詰まる / 振れ幅不足と lead 判断」で agent team(mesh) へ昇格する条件をスキルに明文化。
+- **(b) 完全 AI 自決**。一次資料（vault 嗜好メモ + 各作 review）だけを入力にコンセプト〜美学を AI が全確定。ユーザー確認窓は工程に置かない。選定理由は STATUS に 1 行残す。
+- **(c) スキル + games/CLAUDE.md + 専用 agent（game-designer / playtester）** の 3 点を作成。
+- **(d) 配置**: スキルと専用 agent は `workspace/.claude/`（ユーザーは workspace から起動＝discoverable）。games 固有暗黙知は `games/CLAUDE.md`（CWD=games の auto-discovery 用）。
+
+### 成果物（新設 4 ファイル、workspace `c43ac27` / games `1d0913a`）
+
+- `workspace/.claude/skills/newgame/SKILL.md` — 固定工程（一次資料読込 → 発散 → AI 自決選定 → 美学確定 → 実装 → playtester 実機検証 → 配信導線 → review+commit → 感想記録）。
+- `workspace/.claude/agents/game-designer.md`（read-only, color green）— 一次資料から既存作と毛色の違うコンセプト案を 1 つ提案。並列起動前提。
+- `workspace/.claude/agents/playtester.md`（color magenta）— Playwright+Chromium で画面座標ヒットテスト経由の実機検証 + 既存作回帰。
+- `games/CLAUDE.md` — 配信境界 / 純静的 PWA / verbatim 断章 / Playwright 必須 / 前景視認性 / 配信導線 3 点 / SW・VERSION 運用の暗黙知を明文化。共通項・対症療法 2 周目ルールは上位 `~/companion/CLAUDE.md` 参照。
+
+### 旧・検討時の分岐メモ（決定済み、参考）
+
+- (a) 暫定推奨「subagent 並列、複雑化したら team」→ 採用（昇格条件を明文化）。
+- (b) 「完全 AI 自決 か 提出窓を残すか」→ 完全 AI 自決を採用。
+- (c) 暫定推奨「スキル + games/CLAUDE.md」→ さらに専用 agent まで含めて採用。
+- (d) 「workspace 共有 か games 専用か」→ skill/agent は workspace、CLAUDE.md は games のハイブリッド。
+
+### 現状構成の問題（なぜ向かないか）
+
+- `orc` スキルは「意図が**固まった改修**タスク」用（implementer で実装 → code-reviewer → commit）。ゲーム制作は「AI が要望を聞かず**勝手に新規制作**する」クリエイティブ作業で、軸が違う。
+- ゲーム制作に固有の工程が orc に無い: ①一次資料（嗜好・過去作感想）の読み込み ②コンセプトの**発散と比較** ③核メカニクス／断章 verbatim ／配色／視認性の**美学判断** ④Playwright 実機検証必須 ⑤配信導線（3 点）⑥感想受領 → 次作の方向づけ。
+- 実際 第 1・2 作は orc を流用し「lead が設計を全確定 → implementer」という**変則**で回した。毎回、配信境界・Playwright 必須・一次資料パス・配信導線 3 点を STATUS から思い出している（暗黙知が台帳に散在）。
+
+### 推奨案（2 点セット）
+
+1. **ゲーム制作専用スキル**（仮 `/newgame`）。固定工程:
+   一次資料読込（vault `aidiary/2026-04-11_games-i-want-to-try.md` + 各作の review ノート＝**必須**） → コンセプト発散（複数案） → **AI 自決でコンセプト選定**（「要望を聞かない」趣旨を担保） → 核／verbatim 断章／PALETTE／視認性を lead 確定 → implementer 実装 → **Playwright 実機検証 PASS**（`feedback_game_debugger_before_report`） → **配信導線チェックリスト**（server STATIC に prefix 追加 / remote `GAMES` に 1 行 + **SW cache bump** / tailscale serve / VERSION bump） → code-reviewer + commit → 感想受領 → 次作方向づけを STATUS 記録。
+2. **games 固有 `games/CLAUDE.md` 新設**（CWD=games の auto-discovery で読まれる）。明文化する暗黙知:
+   配信境界（127.0.0.1 bind + tailscale serve のみ）/ 純静的 PWA・ランタイムで claude/外部 API 不可 / 断章は verbatim 静的データ（実装で創作しない）/ Playwright 実機検証必須 / 一次資料パス / 配信導線 3 点 / SW 運用（開発中は無効、cache bump 規律）/ VERSION 運用。
+
+### ユーザー判断が要る分岐（次セッション冒頭で確認）
+
+- (a) コンセプト発散を **agent team(mesh)** でやるか **subagent 並列**で十分か。team はトークン桁違い（CLAUDE.md は「発散探索は team」だが個人ゲーム制作には過剰の可能性）。**暫定推奨: まず subagent 並列、複雑化したら team**。
+- (b)「要望を聞かない」担保の度合い: 完全 AI 自決 か、今回運用（「提出してほしいデータがあれば言う」窓は残す）か。
+- (c) 構成分離の深さ: スキルのみ / **スキル + `games/CLAUDE.md`（推奨）** / さらに専用 agent（game-designer・playtester）まで。
+- (d) スキル配置: `workspace/.claude/skills/` 共有 か games 専用か。
+
+### 次アクション
+
+上記 (a)〜(d) をユーザー確認 → スキル + `games/CLAUDE.md` を実装。本セッションは提案のみで畳む。
+
+---
+
+## 第 2 作「ともしび」（In progress → Done、2026-06-02）
+
+闇〜薄明の広い野を歩きながら **呼びかけると世界が応える** ゲーム。Journey の「歌で呼応」を参照点に、v1 みちゆきの「読むだけ」を超えて「歩く + 世界が応える」を核に据える。ユーザー嗜好一次資料の「ないものに触れる」を直接の手触りに = 呼ぶまで見えない灯が、呼び声に応えた瞬間だけ姿を見せる。コンセプト・核相互作用・断章テキストは発注時に verbatim 確定（実装側で創作・改変しない）。
+
+### Done（2026-06-02）
+
+- [x] ゲーム本体 `tomoshibi/web/`（純静的 PWA、SW なし、VERSION=v1.0.0）。
+- [x] **歩く（長押し）**: みちゆき準拠の 3 層パララックス + progress 0→1、`FULL_WALK_SECONDS`=150、歩行者 `WALKER_X_RATIO`=0.32。
+- [x] **呼ぶ（短タップ）**: pointerdown 時刻と移動量で判別（`CALL_MAX_MS`=220ms / `CALL_MAX_MOVE`=16px 未満で離せば呼び声）。押した瞬間は歩行扱いで前進開始（短タップでも半歩進む＝立ち止まってひと声）。離した時に短タップ判定で歩行者中心の波紋（光の輪）を `ripples` 配列に発火。
+- [x] **種火（眠っている灯）**: 決定論的配置（sin/定数ベース、乱数禁止、`SEEDS` 90 個）。progress に応じ右→左へ流れる。通常ほぼ不可視。波紋の現在半径が種火の画面位置に届いた瞬間（縁 ±28px）に点灯し、暖色の放射グラデがふっと灯ってゆっくり減衰しやがて消える＝「世界が応える」核。点灯は `litCount` で数えるが UI に数値は出さない。
+- [x] **物語の出方**: 本線断章（opening/waypoint×5/ending、progress 閾値）は呼ばない人も読める（みちゆきの showFragment/dismissFragment 流用、ending は dismiss せず静かに終端）。灯のささやき（`WHISPERS`、ささやく灯＝`SEEDS` の約 1/6 を決定論選択）は点灯時にその灯の近くへ淡くフェードイン→数秒で消す in-canvas テキスト。本線断章中は出さない。
+- [x] **歩行者の視認性（v1 の教訓を初手から）**: 背景（land）の明度を `luminance` で見て歩行者の塗りを反転気味に追従（暗背景=明るめ / 明背景=暗め）+ ごく細い 1px 縁。強い縁取りで目立たせず「言われれば気づく」程度を常に確保。
+- [x] **overlay の罠回避（v1 真因）**: `.overlay[hidden]{display:none !important}` / `.overlay:not(.visible){pointer-events:none}` / canvas `touch-action:none` をみちゆき同様に投入。
+- [x] **配信**: 同一サーバ・同一ポートで `/tomoshibi/` prefix 配信（下記「複数ゲーム配信の設計判断」）。CSP はみちゆき同方針。icons は PIL 生成（闇に暖色の放射）。
+- [x] **実機相当検証（Playwright + Chromium, `tests/debug-tomoshibi.mjs`）PASS**: 画面座標ヒットテスト経由で pageerror 0 / opening タップで scene に / 長押し 3s で progressΔ=0.0204・画面変化率 39.79% / 短タップ 4 回で波紋 4 本立つ / 灯 1 点灯。**同一起動サーバでみちゆき回帰（`/` 200・pageerror 0・長押しで progress 前進）も PASS**＝みちゆき URL を壊していない証明。
+
+### 複数ゲーム配信の設計判断（2026-06-02、server を触る判断＝台帳に記録）
+
+`server/app.py` を最小拡張し **同一サーバ・同一ポートで prefix 分け**する方式を採用した。
+
+- みちゆきは `/`, `/app.js` 等の **URL を完全に不変**に保つ（ユーザーがホーム追加した本番 `:8444/` 互換を壊さない）。みちゆきの web ファイルも一切編集していない。
+- ともしびは `/tomoshibi/` 配下に **最初から絶対パス**で配る（HTML の `<link>`/`<script>`、manifest の start_url/scope すべて `/tomoshibi/`）。
+- 実装は `WEB_DIR` を games リポジトリ直下へ引き上げ、`STATIC` dict の rel をゲーム名込み（`michiyuki/web/...` / `tomoshibi/web/...`）に拡張しただけ。allowlist 方式・FS への URL 連結禁止・リスティング無し・Content-Type 明示・generic エラー・no-store・/healthz 無認証・127.0.0.1 bind・`GAMES_PORT` env は全部維持。
+- `/` をゲーム選択ギャラリーにする案は **YAGNI で見送り**（2 作なら直リンクで足りる。TODO に残置）。
+- systemd unit は同一サーバ・同一ポートのため **追加・変更不要**。
+
+### テスト計測しきい値の判断（PALETTE が暗背景ゆえの調整、対症療法 2 周目には非該当）
+
+`debug-tomoshibi.mjs` の画面ピクセル差分しきい値はみちゆきの `th=24`（明背景向け）では暗背景のともしびで成立しない。実測（3s 歩行）で `th=8`→約40% / `th=10`→0.7% と急峻な崖があり、暗背景の自然な可動域は `th=8` 付近。景色は確かに流れている（progress 前進 + 多数ピクセルが小さく変化）ため、**アプリ挙動は変えず計測側を `th=8` に合わせた**。これは「新規ゲームの計測基準を初めて定める」調整であり、同一バグへの 2 周目（しきい値の場当たりいじり）ではない。合格条件 `ratio>2%` は維持（`th=8` で 40% 出るためマージン十分）。
+
+### ユーザー感想 受領 = 3/10（2026-06-02、vault `notes/2026-06-02_tomoshibi-review.md`）
+
+第 1 作みちゆき（5/10）より評価が下がった。良かったのは「タップで明かりがつく演出が綺麗」の 1 点のみ。よくなかった点：**「前回とほぼ同じゲームだった」「前回『読むだけのやつが続くとつらい』と書いたのにまったく反映されていない」「また読むだけですぐ終わり、ゲーム性が皆無」**。
+
+設計上は「歩く + 呼ぶ → 種火が灯る」で相互作用を入れたつもりで playtester も「波紋 4 本・灯 1 点灯」で PASS していたが、**体感は「読むだけ」のままだった**。真因の仮説：①「歩く=長押し」をみちゆきから流用したので操作の手触りが前作と同一 →「ほぼ同じ」。②「呼ぶ→灯る」が控えめすぎ（種火は通常ほぼ不可視・視認性は言われれば気づく程度・数も出さない）→ 相互作用があること自体が伝わらない。③目標/達成/手応えの設計が無く「読むだけ」に戻る。**「相互作用が技術的に発火する（playtester PASS）」と「プレイヤーにゲームとして伝わる」は別物**で、現行ヒットテストは前者しか見ていない。読むだけ 2 連続＝CLAUDE.md「2 度目で一段引く」に該当。
+
+**判断（ユーザー確認済み、2026-06-02）**：
+- 第 3 作の方向性も AI 側＝`/newgame` スキルが一次資料から自決する。方向性をユーザーに聞くのはコンセプト違反（今回 lead が選択肢で聞いて「これもスキルが決める」と返された）。
+- ワークフロー（newgame/playtester）の検証の穴を**今は机上でいじらず保留**。理由：newgame スキルはまだ一度も実戦投入していない（みちゆき・ともしびは orc 流用の変則）。実際に 1 作 `/newgame` で走らせた「できたもの」を見てから検証基準を考える。
+- 次に着手するときは orc ではなく `/newgame` を回す。みちゆき・ともしび両 review が一次資料（vault notes）として既に効く位置にある。
+
+## セッション引き継ぎ（2026-06-02、次セッションは別セッション想定）
+
+- **現状**: みちゆき v1 は実機(Pixel-6 Chrome/Edge)で opening → 長押し歩行 → 景色遷移 → ending「着いた」まで踏破確認済み。歩けない真因(overlay)・視認性(静止に見えた)・キャッシュ事故(SW)を解決済み。git クリーン、`companion-games.service` active+enabled。
+- **ユーザー感想 受領済み**(vault `notes/2026-06-02_michiyuki-review.md`)。下記「v1 ユーザー感想と次への反映」に内容と教訓を記録。次セッションは (a) v1 微調整(歩行者の視認性をわずかに上げる / 歩行速度・断章タイミング・景色の流れ・フォントのバランス) と (b) 第 2 作の方向づけ(「読むだけ」を超える関与の設計) に入る。
+- **配信 URL(現状 3 本とも生きている、tailscale serve --bg で永続)**:
+  - `https://miho-inspiron-3521.tail5e989b.ts.net:8444/` … 本番(クリーン origin、ユーザーが踏破したのはここ)
+  - `:8445/?debug=1` … HUD 付きデバッグ
+  - `:8443/` … 最初の origin(旧 SW キャッシュが端末に残りうる。killer SW で自浄)
+- **片付け候補(本番 URL 確定後に実施)**:
+  - tailscale serve を本番 1 本(推奨 8444)へ整理し、`tailscale serve --https=8443 off` / `--https=8445 off` で 8443・8445 を落とす。ユーザーがどの URL をホーム追加したか確認してから。
+  - `?debug` HUD(app.js 末尾)の除去 or 恒久デバッグ資産として明示保持の判断。
+  - オフライン再プレイ(Service Worker)の再導入可否(現在は killer で無効化中)。
+
+## v1 ユーザー感想と次への反映（2026-06-02）
+
+一次資料: vault `notes/2026-06-02_michiyuki-review.md`（ユーザー手書き、fleeting）。本プロジェクトは「要望を聞かず AI が判断して作る」趣旨のため、感想の解釈と次手の判断は AI 側で確定する（ユーザーに確認したところ「あなたが全部管理するので判断して」と委任を再確認）。
+
+### ユーザーが良かったと挙げた点（= 第 2 作以降も継承する資産）
+
+- **CSS/canvas のみで移りゆく景色が美しい**。色彩の時間変化（夜明け→夜の 6 キーフレーム補間）はこのシリーズの核として刺さっている。→ 「色と光の時間変化で世界を語る」は継続の柱。
+- **テキストが雰囲気に合っている**。断章の文体は当たり。verbatim 静的データ方針（実装側で創作しない）も含めて継続。
+- **「昔」のパートに“にょりさん”の雰囲気があって良い**。過去・郷愁の手触りが効いている。→ 第 2 作でも「時間の層／喪失と懐かしさ」のモチーフは強み。
+
+### ユーザーが課題と挙げた点（= 次への教訓）
+
+1. **「読むだけ」ではゲームとして厳しい**。「私を楽しませる」コンセプトは伝わったが、読み物（長押しで進むだけ）は“たまに”なら良くても“ずっとこれ”だと持たない、との評。
+   - **教訓（第 2 作の方向づけ）**: 静けさ・スコア無し・失敗無しの美学は維持しつつ、**プレイヤーの選択や操作が世界に作用する余地**を一段入れる。例: 分岐する道／触れると反応する地形・光／拾う・残す等の小さな相互作用／探索で景色が変わる。Journey の「歩く以上の関わり（飛ぶ・呼応・他者）」が参照点。みちゆきは「一本道を読む」一極だったのを、次は「歩く + 世界が応える」へ。
+   - v1 自体は“静かな読み物”として完成形でよい（ジャンルとして成立）。第 2 作で振れ幅を変える、という棲み分け。
+
+2. **背景と歩行者の色が同化してほとんど見えなかった**（「意図したものなら OK」と留保付き）。
+   - **判断（AI 確定）**: v1 で歩行者の視認性を**わずかに上げる**。理由 — 歩行者はプレイヤー唯一の分身で自己投影の対象。静かな体験でも「自分がそこにいる」感覚は要る（Journey の赤い衣が常時視認できるのと同じ役割）。ただし「景色が主役・人は気配」の方針は保持し、**強い縁取りではなく明度差／薄い縁取りを少し付ける程度**に留める。「ほとんど見えない」→「言われれば気づく」を目標。完全に目立たせない。
+   - 実装メモ: `app.js` の歩行者シルエット描画は背景色に対して固定的に暗い塗り。progress に沿って空・地面色が大きく動く（特に夜帯）ため、背景明度に応じて歩行者の明度を相対的にずらす（暗背景では少し明るく、明背景では少し暗く）か、ごく細い半透明の縁を 1px 入れると同化を避けられる。コントラスト比は WCAG までは要らない、視線で追える最低限。
+
+### 第 2 作（次弾）の設計起点メモ
+
+- 継承: 色と光の時間変化 / 雰囲気重視の断章文体 / 静けさ・スコア無し・失敗無し / 純静的 PWA（ランタイムで claude 呼ばない budget-guard 回避）/ 127.0.0.1 bind + tailscale serve 境界。
+- 変える: 「読むだけ」→「歩く + 世界が応える」。小さな相互作用を一つ核に据える。
+- 視認性の原則を最初から: 前景（プレイヤー／触れる対象）は背景の明度変化に追従して常にコントラストを確保する設計を初手から入れる（v1 では後から気づいた）。
+
+## 概要
+
+「スマホで遊べるゲームを全部 AI で作る」umbrella プロジェクト。ユーザー(SE, 完全個人利用)が「自分にいっさい要望を聞かず、自分が楽しめるゲームを AI が勝手に作る」という趣旨で発注。嗜好の一次資料は vault `aidiary/2026-04-11_games-i-want-to-try.md`(広大な世界をただ歩く / 地形だけで語る / Journey・Shadow of the Colossus のような静かで「終わりが惜しい」体験 / 「ないものに触れる」)。
+
+第 1 作 **みちゆき** はこれに寄せた静かな横歩きゲーム。スコア無し・失敗無し、長押しで歩き、progress 0→1 の道中で空と地面の色が夜明け→夜へ移ろい、断章(石碑)を読みながら終端へ向かう。
+
+- 対象ユーザ: miho 個人のみ(完全個人利用、外部公開なし)
+- 配信形態: スマホ(Tailnet 同居)から開く静的 PWA
+- 不要なもの: スコア / マルチプレイ / 課金 / 音(v1 は無音)
+
+## 位置付け
+
+`workspace/PROJECT.md` の Phase 1〜4 ロードマップとは独立した **フェーズ外の独立プロジェクト**(remote / dashboard と同じ扱い)。umbrella「全部 AI で作るゲーム」の第 1 作。
+
+## ネットワーク境界
+
+companion-remote の流儀を踏襲。
+
+- サーバ(`server/app.py`)は **127.0.0.1 のみに bind**(0.0.0.0 / tailnet IP 厳禁)。
+- 外向きは **`tailscale serve`(HTTPS 前段リバースプロキシ)経由のみ**。Tailnet 内からしか到達しない。
+- 認証は tailscale 境界に委ねる(単一ユーザー、API 無し)。`/healthz` のみ無認証の生存確認。
+- ポートは env `GAMES_PORT`(デフォルト 47825、remote の 47824 と衝突しない別番号)。
+
+## 設計判断: ランタイムで claude を呼ばない（budget-guard 境界回避）
+
+ゲームはランタイムで claude / 外部 API を**一切呼ばない純静的 PWA**。断章テキストは**ビルド時に AI 生成した静的データ**(`michiyuki/web/fragments.js`)で、配信時は素朴なファイルサーブに徹する。これにより budget-guard 境界に踏み込まない。唯一の外部依存は和文フォントの Google Fonts CDN(`<link>`)で、取得失敗時は CSS の serif フォールバックで成立する(CSP で `fonts.googleapis.com` / `fonts.gstatic.com` のみ許可)。
+
+## 設計判断: 開発フェーズは Service Worker を使わない（2 周目回避）
+
+v1 初版で shell precache の cache-first SW(`michiyuki-v1`)を入れたが、実機(Pixel-6 Chrome)で「タップ・長押ししても画面が変わらない」事象。Chromium(Playwright)で配信中の現コードを SW 抜きで検証すると **PASS**(opening 表示 → タップ dismiss → 長押しで progress 前進、実行時エラー 0)。∴ コードは正常で、原因は **SW が壊れた中間状態の古い shell を cache-first で返し続けていた**こと。
+
+対処として CACHE 名 bump(`v1`→`v2`)を一度打ったが、これは「同じ境界(SW キャッシュ整合)への 2 周目の条件いじり」(`~/companion/CLAUDE.md` 2 周目ルール)。3 度目を打たず一段引いて設計を見直し、**複雑性の源である SW 自体を開発フェーズから外す**判断に切り替えた:
+
+- `sw.js` を **killer SW** に置換: 全キャッシュ削除 → 自身を `unregister` → 制御中ページを reload。fetch ハンドラを置かず、ブラウザ既定のネット直取得に戻す。ブラウザは navigation 時に byte 差分でこの新 sw.js を取得し旧 SW を置換するため、ユーザー端末は再アクセスで自動的に SW 無し状態へ収束する。
+- `app.js` の SW 登録を廃止し、既存登録・キャッシュの掃除コードに置換。
+- オフライン再プレイ(SW の本来目的)は tailscale 接続前提の本作では今は不要な装飾。**v1 のプレイ感が固まってから再導入**(下記 TODO)。
+
+## 実機で歩けなかった真因(overlay)と視認性 — 2026-06-02
+
+実機(Pixel-6 Chrome/Edge)で「タイトルはタップで消えるが、その後押しても歩かない」。HUD(`?debug`)で実機の生イベントを観測し確定:
+
+- **真因**: opening を閉じる際 `overlay.hidden = true` にしていたが、UA の `[hidden]{display:none}` は詳細度が低く、`.overlay{display:flex}`(クラス指定)に負けて**消えていなかった**。透明な overlay が `inset:0` で画面全体を覆ったまま `pointer-events` を受け、canvas へ pointerdown が届かず `walking` が立たなかった(HUD で pointerdown は window capture では増えるが walking=false のまま、を実観測)。`.overlay[hidden]{display:none !important}` で打ち消し + フェードアウト中(`.overlay:not(.visible)`)は `pointer-events:none` で canvas へ透過。
+- **検証ミスの教訓**: 初版 Playwright は長押しを **canvas へ直接 dispatch** していたため overlay を飛び越え PASS していた。座標へのヒットテスト(`page.mouse` を画面座標へ)に直し、最前面要素判定を実機同様に通すよう修正。`elementFromPoint` が `scene` を返すことも assert。
+- **視認性**: 歩いても景色がほぼ流れず静止に見えた(3 秒で画面変化 0.66%)。scrollSpeed を約 5 倍(遠 700/中 1800/近 4500)、`FULL_WALK_SECONDS` 210→150、歩行者 bob 増。→ 3 秒で **15%** 変化、最初の文章まで約 15 秒。Playwright スクショを目視確認。
+- **canvas に `touch-action:none`** も明示(body だけでなく canvas 自身に必要。長押しがジェスチャに消費されるのを防ぐ保険)。
+
+## 実機検証基盤（Playwright + Chromium）
+
+「実機相当のデバッガを通してから報告する」運用要求に対応。`tests/debug-michiyuki.mjs` が Chromium(headless)で配信中の本体を開き、**画面座標へのヒットテスト経由で**(canvas へ直接 dispatch しない)実行時エラー / opening dismiss / 長押し前進 / 画面ピクセル変化率を実観測して PASS/FAIL を返す。`devDependencies` に `playwright`、ブラウザ本体は `~/.cache/ms-playwright`(git 外)。実行: `node tests/debug-michiyuki.mjs`(サーバを 47825 で起動した状態で)。
+
+`?debug` 付き URL で起動すると画面左上に HUD(pointerdown/touchstart/click 数 + walking/paused/progress)を表示し、実機の生入力を直接読める(本番=クエリ無しでは一切動かない)。実機で挙動が分かれたときの一次情報取得に使う。
+
+## ディレクトリ構成
+
+```
+games/
+├── docs/STATUS.md
+├── michiyuki/web/        # 第 1 作。`/` 直下で配信(URL 不変)
+│   ├── index.html       # canvas + 断章オーバーレイ + CSP + フォント link
+│   ├── app.js           # ゲーム本体(歩行 / パララックス / 色補間 / 断章 / 入力)
+│   ├── fragments.js     # 断章テキスト(verbatim, AI 生成静的データ) + 色キーフレーム
+│   ├── style.css        # 静けさ最優先のタイポグラフィ / オーバーレイ
+│   ├── manifest.json    # PWA(name みちゆき / standalone / 夜明け色基調)
+│   ├── sw.js            # shell precache の service worker(オフライン再プレイ)
+│   └── icons/           # icon-192.png / icon-512.png(夜明け色グラデ, PIL 生成)
+├── tomoshibi/web/        # 第 2 作。`/tomoshibi/` prefix で配信
+│   ├── index.html       # canvas + 断章オーバーレイ + CSP(/tomoshibi/ 絶対パス)
+│   ├── app.js           # 歩行 + 呼び声(短タップ)→波紋→種火点灯 + ささやき + 歩行者の背景追従コントラスト
+│   ├── fragments.js     # 断章 + WHISPERS(灯のささやき) + HINTS + PALETTE(闇基調)
+│   ├── style.css        # みちゆき踏襲(overlay 罠対策含む)、テーマ色を闇基調に
+│   ├── manifest.json    # PWA(name ともしび / start_url=scope=/tomoshibi/)
+│   └── icons/           # icon-192.png / icon-512.png(闇に灯る暖色放射, PIL 生成)
+├── server/app.py        # stdlib http.server, 127.0.0.1 bind, 固定 allowlist 配信(2 作 prefix 分け)
+├── tests/
+│   ├── debug-michiyuki.mjs   # みちゆき実機相当(Playwright+Chromium)
+│   └── debug-tomoshibi.mjs   # ともしび実機相当 + みちゆき回帰(URL 不変の証明)
+└── systemd/companion-games.service
+```
+
+git: **(C) ローカル git のみ(remote なし、rollback 専用)**。GitHub remote は意図的に付けない(マシン外バックアップ不要)。gitleaks pre-commit hook 導入済み。
+
+## 起動手順（SETUP）
+
+```sh
+# 1. user service として登録
+ln -sf ~/companion/games/systemd/companion-games.service ~/.config/systemd/user/companion-games.service
+systemctl --user daemon-reload
+systemctl --user enable --now companion-games.service
+systemctl --user status companion-games.service   # active 確認
+
+# 2. tailscale serve で HTTPS 前段を張る(Tailnet 内のみ到達)
+#    127.0.0.1:47825 を tailnet の HTTPS にぶら下げる。
+sudo tailscale serve --bg --https=443 127.0.0.1:47825
+tailscale serve status                              # 公開状態確認
+# → スマホの Tailnet から https://<machine>.<tailnet>.ts.net/ で「みちゆき」が開く
+
+# ポート変更する場合は ~/companion/games/.env に GAMES_PORT=xxxxx を置く(EnvironmentFile=-)。
+```
+
+> gitleaks pre-commit hook は `.git/hooks/` 配下(git 管理外)。この repo を別環境へ clone / 再 init した場合は消えるので、`~/companion/workspace/.githooks-template` か remote/ の hook を再配置すること(remote / web と同じ既知事項)。
+
+## v1 で実装した範囲
+
+### Done
+- [x] 配信サーバ(`server/app.py`): 127.0.0.1 bind / 固定 allowlist dict 配信 / ディレクトリリスティング無し / Content-Type 明示 / generic エラー / `/healthz` 無認証生存確認 / `GAMES_PORT` env(default 47825)。
+- [x] systemd user unit(`systemd/companion-games.service`): WorkingDirectory=%h/companion/games / Restart=on-failure / WantedBy=default.target。
+- [x] ゲーム本体(`michiyuki/web`): canvas 全画面横歩き / 長押し(pointer)前進・→/Space でも前進 / フル踏破 約 3.5 分 / パララックス 3 層(決定論的 sin 和ノイズ) / 歩行者シルエット(bob) / progress に沿った空・地面色の線形補間(6 キーフレーム) / 夜の星 / 断章 8 本(opening + waypoint 6 + ending)を閾値到達でフェードイン・タップ dismiss / ending 後の静かな終端。
+- [x] 断章テキストは仕様の verbatim を `fragments.js` に構造化(progress 閾値 + text、ending は改行保持)。実装側で改変・創作しない。
+- [x] PWA: manifest.json(みちゆき / standalone / 夜明け色基調) / sw.js(shell precache, オフライン再プレイ) / icons 192・512(PIL で夜明け色グラデ生成)。
+- [x] 動作確認: `node --check` で構文 OK、manifest.json JSON 妥当、テストポートで配信(全 allowlist 200 + 正 Content-Type / allowlist 外 404 / リスティング無効 / 127.0.0.1 bind)を確認。
+- [x] **実機相当検証(Playwright + Chromium)**: opening 表示 → タップ dismiss → 「押しているあいだ、歩く」表示 → 長押しで progress 前進 → 離して停止、実行時エラー 0 を PASS 確認(`tests/debug-michiyuki.mjs`)。
+- [x] 操作導線: 止まっている間「押しているあいだ、歩く」を画面下に表示(初版は操作不明だった)。
+- [x] SW 無効化(killer SW + 登録廃止)。上記「設計判断」section 参照。
+- [x] **トップ(opening)画面に版番号表示(2026-06-02, user 要望)**: `app.js` の `const VERSION`(現 `v1.0.0`)を単一真実源に、opening の断章カード内へ小さく薄く表示(`showFragment` で `fragVersionEl.hidden = f.kind !== "opening"`、歩行中/waypoint/ending は非表示)。目的=実機で見える番号とこちらが出した番号がズレれば「端末キャッシュに旧版残存」、一致すれば「こちらの認識・検証不足」と切り分ける。VERSION は app.js 内定数なので表示番号と app.js の鮮度が常に一致。Chromium 検証 PASS(opening で可視 / dismiss 後・歩行中は非可視 / pageerror 0)。**運用ルール: ゲーム本体(`michiyuki/web/*`)に手を入れるたびに必ず VERSION を上げる**(上げ忘れると切り分けが効かない。人手依存の残存リスク)。
+- [x] **リモコン(companion-remote)からゲームへの導線(2026-06-02, user 要望)**: remote 側で対応済。リモコン `#app` 最下部の折りたたみ「ゲーム」カードからアドレスのコピペ無しで開ける。リンク先は本番 `:8444/`。詳細は `~/companion/remote/docs/STATUS.md` Done(2026-06-02)。**games 本番ポートを変えたら remote 側 `web/app.js` の `GAMES` を直す**(現状 8444 を指す)。
+
+### TODO（今後の候補）
+- [ ] 音: ambient soundscape の追加(v1 は無音。風 / 足音 / 環境音を progress に連動)。**外部から音源を取得する形にする場合は index.html の CSP 更新が必須**(`connect-src` / `media-src` の追加。現状は Google Fonts 2 ドメイン以外の外向きを塞いでいる)。同一オリジン配置(web 配下に同梱)なら CSP 変更不要。
+- [ ] 複数ゲーム gallery 化: 第 2 作「ともしび」は `/tomoshibi/` prefix 直リンクで配信し、`/` をギャラリーにする案は YAGNI で見送り済み（上記「複数ゲーム配信の設計判断」2026-06-02）。3 作目以降で直リンク運用が辛くなったら `/` をゲーム選択にし STATIC を分割する。
+- [ ] 断章の増補: 道中の waypoint を増やす / 季節・天候バリエーション。
+- [ ] 実機目視プレイでのバランス調整(歩行速度 / 断章の出現タイミング / フォント表示)。Playwright で機能は検証済みだが、歩き心地・可読性は人の目で。
+- [ ] オフライン再プレイ(Service Worker)の再導入: v1 のプレイ感が固まってから。開発中は上記のとおり無効化している。

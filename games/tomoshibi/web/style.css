@@ -1,0 +1,154 @@
+/* ともしび — 静けさ最優先。派手なエフェクト / emoji は使わない。みちゆき踏襲。 */
+:root {
+  --ink: #f3ecdc;
+  /* 和文 mincho。CDN 失敗時は serif にフォールバック。 */
+  --mincho: "Zen Old Mincho", "Shippori Mincho", "Hiragino Mincho ProN",
+    "Yu Mincho", "Noto Serif JP", serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #070612;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#scene {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  inset: 0;
+  /* 画面を覆う canvas 自身に touch-action: none を付けないと、Android では
+     長押し/短タップがスクロール・選択ジェスチャに消費され pointerdown が届かない
+     (body の touch-action は body 上のタッチにしか効かない)。みちゆきの真因対策。 */
+  touch-action: none;
+}
+
+/* 断章オーバーレイ。暗幕 + 中央寄せ、ゆっくりフェードイン。 */
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.4rem 1.8rem calc(2.4rem + env(safe-area-inset-bottom));
+  background: rgba(6, 5, 16, 0);
+  opacity: 0;
+  transition: opacity 1.6s ease, background-color 1.6s ease;
+  z-index: 10;
+}
+.overlay.visible {
+  opacity: 1;
+  background: rgba(6, 5, 16, 0.6);
+}
+/* hidden 属性を確実に効かせる。UA の [hidden]{display:none} は詳細度が低く
+   .overlay{display:flex} に負けるため、透明な overlay が画面を覆ったまま残り
+   タッチを全部横取りする(みちゆきで実機で歩けなかった真因)。明示して打ち消す。 */
+.overlay[hidden] {
+  display: none !important;
+}
+/* フェードアウト中(visible 解除〜hidden=true まで)もタッチを下の canvas に通す。 */
+.overlay:not(.visible) {
+  pointer-events: none;
+}
+
+.frag {
+  max-width: 32rem;
+  color: var(--ink);
+  text-align: center;
+  font-family: var(--mincho);
+  line-height: 2.05;
+  letter-spacing: 0.06em;
+}
+
+.frag-title {
+  font-weight: 500;
+  font-size: 1.5rem;
+  margin-bottom: 1.6rem;
+  letter-spacing: 0.18em;
+}
+/* opening のタイトル「ともしび」だけ大きく。 */
+.frag-title.big-title {
+  font-size: clamp(2.6rem, 12vw, 4.2rem);
+  letter-spacing: 0.3em;
+  margin-bottom: 2.2rem;
+}
+
+.frag-text {
+  font-size: clamp(1rem, 4.4vw, 1.18rem);
+  font-weight: 400;
+}
+.frag-text p {
+  margin: 0 0 0.7em;
+  /* 余白を多めに、静かに読ませる。 */
+  text-align: justify;
+  text-justify: inter-character;
+}
+.frag-text p:last-child {
+  margin-bottom: 0;
+}
+
+/* 版番号: トップ(opening)画面にだけ、ごく小さく薄く。静けさを乱さない。 */
+.frag-version {
+  margin-top: 1.4rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  opacity: 0.35;
+  font-family: var(--mincho);
+}
+
+.hint {
+  margin-top: 2.4rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.24em;
+  opacity: 0.55;
+  font-family: var(--mincho);
+  animation: breathe 3.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* 操作ヒント。画面下部に薄く。タップは下の canvas に通す。 */
+.walkhint {
+  position: fixed;
+  left: 50%;
+  bottom: calc(2.4rem + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  color: var(--ink);
+  font-family: var(--mincho);
+  font-size: 0.95rem;
+  letter-spacing: 0.24em;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
+  animation: breathe 3.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hint,
+  .walkhint {
+    animation: none;
+    opacity: 0.55;
+  }
+}
