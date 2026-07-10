@@ -102,15 +102,23 @@ def _entry_has_manual_ja(entry):
     return isinstance(subs, dict) and "ja" in subs
 
 
-def _entry_sort_key(entry):
-    """話数順キー。プレイリスト index を 4 桁 0 埋め (10 話超での字句ソート崩れ対策)。"""
+def _entry_sort_key(entry, source_order=0):
+    """話数順キー。プレイリスト index を 4 桁 0 埋め (10 話超での字句ソート崩れ対策)。
+
+    単一動画 URL は playlist_index が無く upload_date フォールバックに落ちるが、同日公開
+    (実測: Bee and PuppyCat Ep1/Ep2 = 20141107) で同値タイになり一覧の表示順が不定になる。
+    sources.json のエントリ順 (source_order、= 話数順に列挙する運用) を 0 埋めサフィックスで
+    安定タイブレークとして焼き込む (video_id 辞書順のような偶然依存キーは使わない)。
+    sort_key は INSERT 時 1 回確定で既存行は再計算しない — サフィックスなしの既存行
+    ("20231013") は同一 prefix の新形式 ("20231013-0005") より字句順で先に並び互換。
+    upload_date も無い場合は "~" prefix (全英数字より後) + エントリ順で末尾に確定させる。"""
     idx = entry.get("playlist_index")
     if isinstance(idx, int) and not isinstance(idx, bool):
         return "%04d" % idx
     upload_date = entry.get("upload_date")
     if isinstance(upload_date, str) and upload_date:
-        return upload_date
-    return str(entry.get("id"))
+        return "%s-%04d" % (upload_date, source_order)
+    return "~%04d" % source_order
 
 
 def _ffprobe_duration_s(path, env):
@@ -219,7 +227,7 @@ def _existing_episode_ids(conn):
     return {row["id"] for row in conn.execute("SELECT id FROM episodes")}
 
 
-def _ingest_one_entry(conn, entry, series_id, source_url, env):
+def _ingest_one_entry(conn, entry, series_id, source_url, env, source_order=0):
     vid = entry["id"]
     sub_kind = _entry_sub_kind(entry)
     common.log("downloading %s: %s" % (vid, entry.get("title")))
@@ -242,7 +250,8 @@ def _ingest_one_entry(conn, entry, series_id, source_url, env):
     # ここでは NULL のまま登録する。生字幕は media/subs/raw/<id>.en.vtt に固定命名で置かれ、
     # subs.py がその命名規則から見つけてクリーニング後に sub_path を確定させる。
     _insert_episode_row(conn, vid, series_id, entry.get("title") or vid, source_url,
-                         duration_s, video_path, None, sub_kind, _entry_sort_key(entry))
+                         duration_s, video_path, None, sub_kind,
+                         _entry_sort_key(entry, source_order))
     return True, None
 
 
@@ -273,7 +282,7 @@ def ingest_from_sources(sources_path=None, db_path=None):
             vid = entry.get("id")
             if not vid or vid in existing:
                 continue
-            ok, err = _ingest_one_entry(conn, entry, series_id, source_url, env)
+            ok, err = _ingest_one_entry(conn, entry, series_id, source_url, env, source_order=i)
             if ok:
                 added += 1
             else:
