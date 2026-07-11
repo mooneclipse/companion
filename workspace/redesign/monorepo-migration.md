@@ -175,9 +175,9 @@ gh repo archive mooneclipse/companion-voice -y
 
 ## 8. Phase 5 — 移行後検証 (翌日以降)
 
-- [ ] 翌朝 05:00 の ytcheck 自動 commit がモノレポに正しく載る: `git -C ~/companion log --oneline -3 -- ytcheck/`
-- [ ] vault auto-sync / bot `/vault_push` が従来どおり動く (vault は独立 repo のまま、無影響のはず)
-- [ ] 手元セッションの Task Workflow (レビュー → パス明示 commit) が新 push 行で回る
+- [x] 翌朝 05:00 の ytcheck run とモノレポの共存 (2026-07-11 実測): 05:03〜05:19 正常完了 (推薦 11 件)、モノレポは run 後も clean = 巻き込みなし。**commit ゼロが正常** — `_git_commit` はチャンネル追加/更新 (`add_channel`/`update_channel`) 時のみ呼ばれ、日次巡回は vault (境界外) と gitignore 済み cache しか書かない。§3-1 の「05:00 回避」と本チェック項目は「日次で自動 commit が載る」前提だったが実装はそうではなかった (害なし)。自動 commit の実弾は次にチャンネル追加/更新が起きた際に `git log -- ytcheck/tasks/` で確認
+- [ ] vault auto-sync / bot `/vault_push` が従来どおり動く (vault は独立 repo のまま、無影響のはず) — 次回 bot 書き込み時に観察
+- [x] 手元セッションの Task Workflow が新 push 行で回る (2026-07-11 実測): 本移行セッションでパス明示 commit 8 本 → push 行表示 → OWNER push 成功 (main = origin/main 一致確認済み)
 - [ ] 2〜4 週問題なければ `~/companion/.archive/split-era-git/` を削除 (それまで完全 rollback 可能)。削除は OWNER 承認後
 
 ## 9. Rollback 手順 (Phase 5 完了まで有効)
