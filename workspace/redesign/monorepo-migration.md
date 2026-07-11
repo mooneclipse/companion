@@ -1,6 +1,6 @@
 # companion モノレポ移行手順書
 
-**status**: Phase 0〜4 実行済み (2026-07-11 深夜、チケット #82) — 残り = OWNER 3 コマンド (初回 push / 旧 4 repo アーカイブ / .migration 削除) + Phase 5 翌日以降検証
+**status**: Phase 0〜4 + OWNER 3 コマンド完了 (2026-07-11、チケット #82 done) — 初回 push 済み (main = origin/main = f3b883a 実測)、旧 4 repo isArchived=true ×4 実測、.migration 削除済み。残り = Phase 5 翌日以降検証 (§8、申し送りチケットあり) と 2〜4 週後の .archive/split-era-git 削除 (OWNER 承認後)
 **決定記録**: 2026-07-10 OWNER 承認 — ① モノレポ化 GO、② bot-workspace / ytcheck を含める (運用後に問題が出たら OWNER に「外す相談」をする約束)、③ 分割時代の履歴を取り込む
 **実行単位**: Phase 0〜3 は 1 セッションで通す (切替を中途で止めない)。Phase 4 は同日中、Phase 5 は翌日以降
 
