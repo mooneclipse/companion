@@ -11,6 +11,7 @@
 - Phase 3: remote add 済み (`git@github.com:mooneclipse/companion.git`、空 repo への SSH 到達確認済み)。**初回 push と旧 4 repo アーカイブは OWNER 未実施**
 - Phase 4: 共通 CLAUDE.md (b1bbb63) / workspace CLAUDE.md (fdb7739) / PROJECT.md (5a234c2) / closing SKILL.md (2424739) / 取りこぼし 6 箇所 (501ec11) + memory 5 ファイル同期済み。photos 側は独立 repo に別 commit (07e507b)
 - 初回 push 前の証跡: code-reviewer が全履歴 gitleaks スキャン (573 commits / 7.14MB) を実行、検出 2 件はいずれも `web/lib/p5.min.js` の関数名への generic-api-key 誤検知で実 secret なし (screensaver は分割時代 hook 未設置だったため、この全履歴スキャンで初めて全域カバー)
+- 事後トラブル 1 件 (2026-07-11 朝、解決済み): 旧 4 repo アーカイブの際に `mooneclipse/companion` 本体も誤って archive され、以後の push が read-only で reject。`gh repo unarchive mooneclipse/companion --yes` で解除し再 push で同期 (旧 4 repo の isArchived=true は維持を確認)。GitHub 側に archive→unarchive のイベントが残るのは正常
 
 ---
 
