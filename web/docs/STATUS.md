@@ -1,6 +1,6 @@
 # companion-web 開発台帳（Phase 3-1: Web 検索 → md 蓄積 + Obsidian vault 同期）
 
-最終更新: 2026-05-20 (web/ をローカル git のみ (rollback 専用) で git 化)
+最終更新: 2026-07-11 (vault push 自動化 — vault-sync-from-transcript.sh に commit 後 push を追加、チケット #83)
 
 ## 設計メモ
 
@@ -74,7 +74,7 @@
 - `~/companion/vault/notes/` … 機械書き込み許可エリア
 - `~/companion/vault/CLAUDE.md` / `templates/note.md` … 書き込み規約の正
 - `~/companion/web/scripts/` … スクリプト配置先（bot Phase 2.5 T-C で切り出し、未 git 化）
-  - `vault-sync-from-transcript.sh` … Discord bot 経由 claude セッション (bot-workspace CWD) の Stop フックから呼ばれ、claude が `~/companion/vault/notes/` に書いた未 commit 変更を `git add -- notes/` + `git commit` で回収する最終同期処理。push は `permissions.ask` の人手承認に任せる。詳細は `bot/docs/STATUS.md` の T-C エントリ
+  - `vault-sync-from-transcript.sh` … Discord bot 経由 claude セッション (bot-workspace CWD) の Stop フックから呼ばれ、claude が `~/companion/vault/notes/` に書いた未 commit 変更を `git add -- notes/` + `git commit` で回収する最終同期処理。commit 成功後は `git push origin develop` まで自動実行 (2026-07-11 チケット #83、BatchMode=yes + timeout 60s、失敗時はログのみで自動回復なし → 回復は `/vault_push`)。詳細は `bot/docs/STATUS.md` の T-C エントリ + 本台帳 2026-07-11 エントリ
   - web/ 配下の git 化は次にスクリプトを 1 本以上追加するタイミングで判断（vault-sync 単体では web/ 内に履歴を持つメリットが薄い、bot 側 STATUS.md と vault 側 commit 履歴で追跡可能）
 
 ### 失敗リカバリ手順
@@ -130,6 +130,15 @@ C. **push 済み**: 修正 commit を新規に作って push（force push は使
 （なし）
 
 ## Done
+
+- 2026-07-11 vault push 自動化 — `vault-sync-from-transcript.sh` の commit 成功後に push を追加 (チケット #83)
+  - **背景**: 2026-07-10 OWNER 合意 (`workspace/redesign/monorepo-migration.md` §11)。従来 push は `/vault_push` (Telegram 人手承認) に委ねていたが、notes/ auto-sync 分は commit 直後の自動 push に切替
+  - **実装**: commit 成功後に `git push origin develop` を実行。push 機構は bot.py `cmd_vault_push` の実証済み構成を踏襲 — `GIT_SSH_COMMAND="ssh -o BatchMode=yes"` (keyring ロック時は対話待ちせず即 fail) + `GIT_TERMINAL_PROMPT=0` + `timeout 50`。timeout を 50s にしたのは code-reviewer 指摘の反映 (Stop hook 自体が claude code デフォルト 60s で kill されるため、それより先に自前の error ログパスを通す)。失敗時はログ記録 + exit 1 のみで、リトライ・stderr 分類・自動回復は追加しない (スクリプトヘッダの rc != 0 禁止事項を維持)。回復経路は `/vault_push`
+  - **レビュー見送り 2 件 (code-reviewer 軽微提案)**: (1) flock (fd 9) を push 前に解放する案 — push stall 時に `/tweet` の 15s ブロッキング lock 取得と競合する窓はあるが、通常 push は数秒で発生確率が低く追加しない。頻発したら再検討。(2) ヘッダ既存文言「rc != 0 時は Discord 通知 + notify socket」と実体 (ログのみ) の乖離 — 既存 drift のため本タスクでは触らず、次回整理候補
+  - **branch は develop**: チケット文言は `git push origin main` だったが vault repo に main は存在せず (`git branch -vv` で確認)、実証済み経路 (bot.py `VAULT_BRANCH = "develop"`) に合わせて develop とした
+  - **restart 不要の確認** (§11 の実装時確認事項): 呼び出し元は `bot-workspace/.claude/settings.json` の Stop hook で、スクリプトは claude セッション終了ごとに新規実行される。remote server は経路に関与しない
+  - **検証**: `bash -n` 構文 OK + `git push --dry-run origin develop` (BatchMode=yes 付き) で SSH 認証・疎通確認済み。実弾は次回 bot セッションの notes/ 書き込みで観察 (チケット #85 ① の vault auto-sync 観察と同じタイミング)
+  - **連動更新**: bot.py の `/vault_push` 設計境界コメント (「Stop hook は commit までで止まる設計」→ 手動回復 + clips/ 同期用に役割変更、コメントのみで動作変更なし・restart 不要)、本台帳「主要パス」の該当行
 
 - 2026-05-20 `web/` をローカル git のみ (remote なし、rollback 専用) で git 化
   - **背景**: companion 配下 git 化を 3 階層に整理 (`~/companion/CLAUDE.md` git 運用方針 / `workspace/PROJECT.md`「git 化の 3 階層」)。`web/` は実体あるサブプロジェクトだが、マシン外バックアップ不要・rollback が効けば十分のため (C) ローカルのみを採用

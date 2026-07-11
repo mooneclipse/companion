@@ -2,7 +2,12 @@
 # Discord bot 経由 claude セッション (bot-workspace CWD) の Stop フック。
 # claude が ~/companion/vault/notes/ に書いた未 commit 変更を回収して commit する。
 # stdin の JSON (transcript_path 等) は現状参照しない (将来必要になれば追加)。
-# push は permissions.ask の人手承認フローに任せる (design.md §5.2)。
+# commit 成功後は push まで自動実行する (2026-07-10 OWNER 合意、チケット #83、
+# monorepo-migration.md §11。design.md §5.2 の人手承認フローを置き換え)。
+# push 機構は bot.py cmd_vault_push で実証済みの構成を踏襲:
+# BatchMode=yes + GIT_TERMINAL_PROMPT=0 で対話 hang を即 fail、timeout 併設。
+# timeout は 50s (60s ではない): Stop hook 自体が claude code デフォルト 60s で
+# kill されるため、それより先に自前の error ログパスを必ず通す。
 #
 # rc != 0 後処理の禁止事項 (2026-05-20 軸 5 集約 M-12、devil M-6 採用、CLAUDE.md §10.2 + design.md §1.4 と整合):
 #   - rc != 0 時のリトライ・auto reset・pull --rebase --autostash 等の自動回復追加禁止
@@ -58,5 +63,17 @@ if git commit -m "$msg" >>"$LOG_FILE" 2>&1; then
     log "ok: committed $count file(s) under notes/"
 else
     log "error: git commit failed"
+    exit 1
+fi
+
+# push (チケット #83)。branch は /vault_push (bot.py VAULT_BRANCH) と同じ develop 固定。
+# 失敗しても commit はローカルに残り、回復は /vault_push (人手) に委ねる
+# (ヘッダの rc != 0 禁止事項どおり、リトライ・分類・自動回復は追加しない)。
+export GIT_SSH_COMMAND="ssh -o BatchMode=yes"
+export GIT_TERMINAL_PROMPT=0
+if timeout 50 git push origin develop >>"$LOG_FILE" 2>&1; then
+    log "ok: pushed to origin/develop"
+else
+    log "error: git push failed (commit remains local; recover via /vault_push)"
     exit 1
 fi

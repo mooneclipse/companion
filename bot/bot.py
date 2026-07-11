@@ -194,9 +194,10 @@ def _load_remote_video():
 remote_video = _load_remote_video()
 
 # `/vault-push`: vault (`~/companion/vault`, branch develop) の commit 済変更を
-# GitHub に push する。コマンド送信そのものが push の人手承認の置き換え
-# (vault-sync-from-transcript.sh = Stop hook は commit までで止まる設計)。
-# bot 自律 push ではなく安全ゲートは保持する。
+# GitHub に push する。2026-07-10 以降 (チケット #83) は Stop hook
+# (vault-sync-from-transcript.sh) が notes/ の commit 成功後に自動 push するため、
+# 本コマンドの役割は「自動 push 失敗時の手動回復」と「Stop hook を通らない
+# commit (/tweet の clips/ 等) の同期」に変わった。
 VAULT_DIR = Path.home() / "companion" / "vault"
 VAULT_BRANCH = "develop"
 VAULT_REMOTE = "origin"
