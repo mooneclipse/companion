@@ -164,3 +164,20 @@ def record_usage(meta: SessionMeta) -> None:
     meta.last_prompt_at = now
     meta.prompt_count += 1
     save(meta)
+
+
+def record_usage_if_exists(chat_id: int, thread_id: int | None) -> bool:
+    """State があるときだけ record_usage する (無ければ何もせず False)。
+
+    ephemeral session で送る proactive 経路 (investigate / ticket / remind) が
+    沈黙ゲートの last_prompt_at を進める専用。ここで start_or_resume を使うと、
+    claude に一度も --session-id で渡していない uuid が state に保存され、次の
+    ユーザー発話の --resume が "No conversation found" で必ず落ちる
+    (2026-07-13 実障害: /reset 直後に proactive が先行したケース)。発番は
+    実際に claude を起動する経路 (bot.py の run_claude 呼び出し側) だけが行う。
+    """
+    meta = load(chat_id, thread_id)
+    if meta is None:
+        return False
+    record_usage(meta)
+    return True

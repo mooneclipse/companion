@@ -132,5 +132,23 @@ class RecordUsageTest(SessionsCase):
         self.assertIsNotNone(loaded.last_prompt_at)
 
 
+class RecordUsageIfExistsTest(SessionsCase):
+
+    def test_absent_state_returns_false_and_creates_nothing(self) -> None:
+        # 幻 session 防止の本体: state が無いとき発番・保存を一切しない
+        # (2026-07-13 実障害: proactive が /reset 後に幻 uuid を保存し、次の
+        # ユーザー発話の --resume が no_prior_session で落ちた)
+        self.assertFalse(sessions.record_usage_if_exists(-1001234567890, 2))
+        self.assertIsNone(sessions.load(-1001234567890, 2))
+
+    def test_existing_state_updates_and_returns_true(self) -> None:
+        meta, _ = sessions.start_or_resume(-1001234567890, 2)
+        self.assertTrue(sessions.record_usage_if_exists(-1001234567890, 2))
+        loaded = sessions.load(-1001234567890, 2)
+        self.assertEqual(loaded.prompt_count, 1)
+        self.assertIsNotNone(loaded.last_prompt_at)
+        self.assertEqual(loaded.session_id, meta.session_id)
+
+
 if __name__ == "__main__":
     unittest.main()

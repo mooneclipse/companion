@@ -2915,8 +2915,10 @@ async def _run_proactive_investigate(
     await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
     # investigate は ephemeral session で #chat session を更新しないため、ここで
     # 明示的に #chat の last_prompt_at を進める (沈黙ゲート 4h の最低間隔を保全)。
-    meta, _ = sessions.start_or_resume(chat_id, thread_id)
-    sessions.record_usage(meta)
+    # state が無ければ発番せず skip (幻 session 防止、record_usage_if_exists docstring
+    # 参照。暴走防止は record_investigate の interval 消費が下支え)。
+    if not sessions.record_usage_if_exists(chat_id, thread_id):
+        logger.info("investigate touch skip: no #chat session state")
     voice_state = _dispatch_proactive_voice(app, output)
     logger.info(
         "investigate sent len=%d topic=%s voice=%s", len(output), topic, voice_state
@@ -2967,8 +2969,10 @@ async def _run_proactive_ticket(
     await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
     # ticket は ephemeral session で #chat session を更新しないため、ここで明示的に
     # #chat の last_prompt_at を進める (沈黙ゲート 4h の最低間隔を保全)。
-    meta, _ = sessions.start_or_resume(chat_id, thread_id)
-    sessions.record_usage(meta)
+    # state が無ければ発番せず skip (幻 session 防止、record_usage_if_exists docstring
+    # 参照。暴走防止は record_ticket の interval 消費が下支え)。
+    if not sessions.record_usage_if_exists(chat_id, thread_id):
+        logger.info("ticket touch skip: no #chat session state")
     voice_state = _dispatch_proactive_voice(app, output)
     logger.info(
         "ticket sent len=%d signal=%s voice=%s", len(output), signal, voice_state
@@ -3021,8 +3025,10 @@ async def _run_proactive_remind(
     await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
     # reminder は ephemeral session で #chat session を更新しないため、ここで明示的に
     # #chat の last_prompt_at を進める (沈黙ゲート 4h の最低間隔を保全)。
-    meta, _ = sessions.start_or_resume(chat_id, thread_id)
-    sessions.record_usage(meta)
+    # state が無ければ発番せず skip (幻 session 防止、record_usage_if_exists docstring
+    # 参照。暴走防止は record_remind の interval 消費が下支え)。
+    if not sessions.record_usage_if_exists(chat_id, thread_id):
+        logger.info("remind touch skip: no #chat session state")
     voice_state = _dispatch_proactive_voice(app, output)
     logger.info(
         "remind sent len=%d signal=%s voice=%s", len(output), signal, voice_state

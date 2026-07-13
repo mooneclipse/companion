@@ -966,10 +966,11 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(rec["sent"])
         # 軸 4 拡張 (6): 前景降格 marker が investigate 経路の ledger に乗る。
         self.assertTrue(rec["foreground_proposal"])
-        # #chat session の last_prompt_at が更新された (4h 最低間隔保全)。
+        # #chat session state が無いときは幻 session を発番しない (2026-07-13 障害の
+        # 回帰ガード: 幻 uuid を保存すると次のユーザー発話の --resume が必ず落ちる)。
+        # state があるときの touch は test_sessions.py RecordUsageIfExistsTest で担保。
         meta = self.bot.sessions.load(self.bot.NOTIFY_CHAT_ID, self.bot.BOT_THREAD_ID_CHAT)
-        self.assertIsNotNone(meta)
-        self.assertIsNotNone(meta.last_prompt_at)
+        self.assertIsNone(meta)
 
     async def test_disabled_falls_through_to_talk(self) -> None:
         from unittest import mock
@@ -1257,10 +1258,11 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(rec["sent"])
         # 軸 4 拡張 (6): 前景降格 marker が ticket 経路の ledger に乗る。
         self.assertTrue(rec["foreground_proposal"])
-        # #chat session の last_prompt_at が更新された (4h 最低間隔保全)。
+        # #chat session state が無いときは幻 session を発番しない (2026-07-13 障害の
+        # 回帰ガード: 幻 uuid を保存すると次のユーザー発話の --resume が必ず落ちる)。
+        # state があるときの touch は test_sessions.py RecordUsageIfExistsTest で担保。
         meta = self.bot.sessions.load(self.bot.NOTIFY_CHAT_ID, self.bot.BOT_THREAD_ID_CHAT)
-        self.assertIsNotNone(meta)
-        self.assertIsNotNone(meta.last_prompt_at)
+        self.assertIsNone(meta)
 
     async def test_researched_thread_still_signals_ticket(self) -> None:
         # investigate 済み (researched) thread でも ticket signal にはなる (起票は調査でない)。
@@ -1653,10 +1655,11 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rec["remind_signal"], "ディスク管理")
         self.assertTrue(rec["sent"])
         self.assertTrue(rec["foreground_proposal"])
-        # #chat session の last_prompt_at が更新された (4h 最低間隔保全)。
+        # #chat session state が無いときは幻 session を発番しない (2026-07-13 障害の
+        # 回帰ガード: 幻 uuid を保存すると次のユーザー発話の --resume が必ず落ちる)。
+        # state があるときの touch は test_sessions.py RecordUsageIfExistsTest で担保。
         meta = self.bot.sessions.load(self.bot.NOTIFY_CHAT_ID, self.bot.BOT_THREAD_ID_CHAT)
-        self.assertIsNotNone(meta)
-        self.assertIsNotNone(meta.last_prompt_at)
+        self.assertIsNone(meta)
 
     async def test_researched_thread_still_signals_remind(self) -> None:
         # 調べたきり放置 (researched) thread こそ「あれどうなった?」の振り返り対象。
