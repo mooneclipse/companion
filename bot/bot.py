@@ -64,6 +64,11 @@ from claude_runner import ClaudeOptions, ClaudeRunner, ErrorKind
 
 load_dotenv()
 
+
+def _bool_env(name: str, default: str = "1") -> bool:
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip()
 NOTIFY_CHAT_ID_RAW = os.environ.get("NOTIFY_CHAT_ID", "").strip()
@@ -74,15 +79,13 @@ CLAUDE_TIMEOUT = float(os.environ.get("CLAUDE_TIMEOUT", "300"))
 # 自発発話 (proactive companion messaging) のグローバル on/off。off にすると
 # bot 側でも依頼を無視する (script 側ガードと二重防御、env で全停止可能)。
 # 出典: ~/companion/vault/notes/2026-05-30_proactive-companion-messaging-design.md
-PROACTIVE_ENABLED_RAW = os.environ.get("PROACTIVE_ENABLED", "1").strip().lower()
-PROACTIVE_ENABLED = PROACTIVE_ENABLED_RAW in ("1", "true", "yes", "on")
+PROACTIVE_ENABLED = _bool_env("PROACTIVE_ENABLED")
 
 # 自発発話を TV からの声でも流すか (todo#22)。proactive が #chat に送る一言を
 # voice_command.cmd_say で「生成と再生の分離」(同期待ちしない呼び出し) で再生する。
 # 在宅検知は持たず、proactive と同じ発火窓 9-22 JST を在宅前提の代用とする。
 # 出典: voice/docs/STATUS.md 2026-06-12 entry + persona 軸 4。
-PROACTIVE_VOICE_ENABLED_RAW = os.environ.get("PROACTIVE_VOICE_ENABLED", "1").strip().lower()
-PROACTIVE_VOICE_ENABLED = PROACTIVE_VOICE_ENABLED_RAW in ("1", "true", "yes", "on")
+PROACTIVE_VOICE_ENABLED = _bool_env("PROACTIVE_VOICE_ENABLED")
 
 # 関心 state (persona 軸 4 拡張 機構 1、TODO (1))。触らないスレッドが消えるまでの
 # 日数。env override 可 (PROACTIVE_* env の慣習に倣う)。妥当な既定 = 14 日
@@ -98,8 +101,7 @@ PROACTIVE_INTEREST_PROMPT_LIMIT = 3
 # 自発発話の発火回のうち条件成立時に、関心スレッドを 1 本選んで Web 調査 → vault
 # notes/ に調査ノート新規作成 → #chat に一言報告する。off にすると従来の「喋る」
 # パスのみ (二度調査回避や interval は index の last_investigate state で確定)。
-PROACTIVE_INVESTIGATE_ENABLED_RAW = os.environ.get("PROACTIVE_INVESTIGATE_ENABLED", "1").strip().lower()
-PROACTIVE_INVESTIGATE_ENABLED = PROACTIVE_INVESTIGATE_ENABLED_RAW in ("1", "true", "yes", "on")
+PROACTIVE_INVESTIGATE_ENABLED = _bool_env("PROACTIVE_INVESTIGATE_ENABLED")
 # 前回 investigate からこの日数以上空いた発火回でのみ「動く」(未設定 = 一度も調査
 # していない = due)。index トップレベル last_investigate (ISO) を state として引く。
 try:
@@ -111,8 +113,7 @@ except ValueError:
 # 自発発話の発火回のうち、investigate が出なかった回で条件成立時に、関心 signal を元に
 # 共用 TODO に 1 件だけ起票 (tickets.py add --by ai) → #chat に一言報告する。off にすると
 # ticket 分岐を通らない (起票可否や interval は index の last_ticket state で確定)。
-PROACTIVE_TICKET_ENABLED_RAW = os.environ.get("PROACTIVE_TICKET_ENABLED", "1").strip().lower()
-PROACTIVE_TICKET_ENABLED = PROACTIVE_TICKET_ENABLED_RAW in ("1", "true", "yes", "on")
+PROACTIVE_TICKET_ENABLED = _bool_env("PROACTIVE_TICKET_ENABLED")
 # 前回起票からこの日数以上空いた発火回でのみ「起票する」(未設定 = 一度も起票して
 # いない = due)。index トップレベル last_ticket (ISO) を state として引く。
 try:
@@ -126,8 +127,7 @@ except ValueError:
 # #chat に「そういえば先週の○○どうなった?」式の一言を投げる。investigate / ticket と違い
 # 外向き/不可逆操作はゼロ (tickets.py は list/show 読み取りのみ、起票・編集はしない)。off に
 # すると reminder 分岐を通らない (振り返り可否や interval は index の last_remind state で確定)。
-PROACTIVE_REMIND_ENABLED_RAW = os.environ.get("PROACTIVE_REMIND_ENABLED", "1").strip().lower()
-PROACTIVE_REMIND_ENABLED = PROACTIVE_REMIND_ENABLED_RAW in ("1", "true", "yes", "on")
+PROACTIVE_REMIND_ENABLED = _bool_env("PROACTIVE_REMIND_ENABLED")
 # 前回 reminder からこの日数以上空いた発火回でのみ「振り返る」(未設定 = 一度も振り返って
 # いない = due)。index トップレベル last_remind (ISO) を state として引く (investigate=7 /
 # ticket=7 に揃える)。
@@ -143,9 +143,7 @@ except ValueError:
 # このキーを 1 回引き、あれば確率ロールを置換する (未来なら skip / 期限到来なら
 # roll なしで発火、handoff 成功時に消費)。off にすると prompt の申告指示と state
 # 書き込みを止める (出力からの marker 剥がしは残す = Telegram に生 marker を流さない)。
-PROACTIVE_SELF_SCHEDULE_ENABLED_RAW = os.environ.get(
-    "PROACTIVE_SELF_SCHEDULE_ENABLED", "1").strip().lower()
-PROACTIVE_SELF_SCHEDULE_ENABLED = PROACTIVE_SELF_SCHEDULE_ENABLED_RAW in ("1", "true", "yes", "on")
+PROACTIVE_SELF_SCHEDULE_ENABLED = _bool_env("PROACTIVE_SELF_SCHEDULE_ENABLED")
 # 申告のクランプ幅 (時間)。下限は沈黙ゲート 4h より短くても害がない安全弁、上限は
 # 「相方が 3 日を超えて自主的に消える」を許さない天井 (それ以上の静けさは /snooze の領分)。
 PROACTIVE_SELF_SCHEDULE_MIN_HOURS = 1.0
