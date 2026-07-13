@@ -189,6 +189,15 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 
 ## Done
 
+### proactive 幻セッション発番の根絶 + モノレポ root trust 設定 (2026-07-13、障害対応)
+
+- **障害**: 7/13 09:21・09:22、#chat (thread 3) への発話に `[claude error: no_prior_session rc=1]` + 生 stderr 626 字がそのまま返る (bot.py:630 の仕様どおりの表面化)。機序: 7/12 10:00 の `/reset` で topic state が消えた後、7/13 09:17 の proactive ticket が送信後の沈黙ゲート touch (`start_or_resume` + `record_usage`) で **claude に一度も渡していない uuid (`6a01ff52`) を state に保存** (幻セッション) → 次のユーザー発話の `--resume` が "No conversation found" で必落。/reset 常用 + proactive がユーザー発話より先に来る、の稀な交差で初発症 (no_prior_session はログ全期間で初出)
+- **切り分け**: claude CLI 2.1.149→2.1.207 up (7/13 09:14、無記録 auto-update) は 7 分差の同時刻だが**無関係**と実測で確定 (`--session-id` 尊重 / `--resume` / persist / JSON 出力すべて正常)
+- **修正**: `sessions.record_usage_if_exists(chat_id, thread_id)` 新設 (state が無ければ発番せず False)。investigate / ticket / remind の 3 箇所を差し替え、uuid 発番は実際に claude を起動する run_claude 経路 (bot.py:599) のみに一本化。テスト: 旧仕様 (proactive が state 新規作成) を検証していた test_bot.py の 3 assert を新仕様の回帰ガードに更新、test_sessions.py に `RecordUsageIfExistsTest` 2 件追加。`venv/bin/python -m unittest discover -s tests` 313 件全 PASS
+- **許容した残余 (対症療法ルールの合理化記録)**: /reset 直後 + 他 topic の last_prompt_at が 4h 超過去 + 複数 mode 同時 due の敵対条件では、touch skip 中に**異 mode が timer 2h 間隔で最大 3 連発**し得る (4h ゲートが進まないため。同一 mode は interval 7 日消費で連発不可)。4 発目の talk が run_claude 経由で正規 state を作り自己回復、週 8 上限 + 確率ロールもあり実害小と判断して許容 (code-reviewer 指摘、修正必須なし)。将来この 3 連発が実観測されたら、ゲートを proactive_ledger.jsonl の送信時刻併用に引き直す (touch 自体を廃せる設計代替として記録)
+- **trust 設定 (併発問題)**: CLI 2.1.207 は workspace trust を**モノレポ root (`~/companion`) で判定**し、未 trust のため bot セッションの permissions.allow 35 件 + additionalDirectories (vault) が無視されていた (stderr の "Ignoring N permissions.allow entries" 警告を実測)。`~/.claude.json` の `projects["/home/miho/companion"].hasTrustDialogAccepted` を true に変更 (バックアップ `~/.claude.json.bak-20260713-trust`)、設定後の同条件実行で警告消滅を確認。クローズ済 #40 (WebSearch/vault Read が承認待ちのまま通らない) の真因もこれだった可能性が高い
+- **起票**: #86 (CLI 2.1.207 再検証の残り: S1-S5 フル + `/usage` headless + 存在しない uuid 文言 + encoded-cwd)、#87 (JSON 返却 session_id と要求 uuid の照合 warning = 本 STATUS L938 Watch 項目の実装。今回の障害はこの検知網があれば一発特定だった)
+
 ### 個人メモ捕獲 topic 新設 (2026-07-11、ticket #84)
 
 **目的**: Telegram supergroup に個人メモ専用 topic を新設し、鍵垢ツイートのような個人情報込みメモを投げて保存する。生テキスト投稿を claude セッション無し (コスト 0) で bot.py が直接 `vault/notes/` に日付ファイル保存し、見返しはメイン機 Obsidian 側。topic には直近 48h 分だけ残す (2026-07-11 チケット設計改訂: 即時削除でなく Telegram のユーザー編集ウィンドウ 48h を丸ごと活かす)。
