@@ -658,6 +658,90 @@ class SplitNextSelfHoursTest(unittest.TestCase):
             )
 
 
+class SplitThoughtTest(unittest.TestCase):
+    """思考自由記述 marker 行の分離 (チケット #93)。最終非空行のみ・1 回で確定 (#92 対称)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_marker_on_last_line_is_split(self) -> None:
+        body, thought = self.bot.split_thought(
+            "ディスクのこと調べといた。\n[[thought: 圧縮の仕組みが面白かった]]"
+        )
+        self.assertEqual(body, "ディスクのこと調べといた。")
+        self.assertEqual(thought, "圧縮の仕組みが面白かった")
+
+    def test_marker_with_trailing_blank_lines(self) -> None:
+        body, thought = self.bot.split_thought("一言。\n[[thought: ふむ]]\n\n")
+        self.assertEqual(body, "一言。")
+        self.assertEqual(thought, "ふむ")
+
+    def test_marker_only_output_means_silent_with_thought(self) -> None:
+        # 本文なし + thought のみ = 沈黙回。本文は空になり _run_proactive_* の既存
+        # empty_or_denied skip に落ちるが、thought は record 経由で思考ログに残る。
+        body, thought = self.bot.split_thought("[[thought: 材料が薄かった]]")
+        self.assertEqual(body, "")
+        self.assertEqual(thought, "材料が薄かった")
+
+    def test_no_marker_returns_output_unchanged(self) -> None:
+        body, thought = self.bot.split_thought("ただの報告。")
+        self.assertEqual(body, "ただの報告。")
+        self.assertIsNone(thought)
+
+    def test_marker_not_on_last_line_is_ignored(self) -> None:
+        # 最終非空行以外の marker は拾わない (全文走査しない = 決定的)。
+        text = "[[thought: 途中に紛れた]]\n本文が後に続く。"
+        body, thought = self.bot.split_thought(text)
+        self.assertEqual(body, text)
+        self.assertIsNone(thought)
+
+    def test_case_insensitive_marker(self) -> None:
+        # LLM の大文字揺れ ([[Thought: ...]]) も本文に漏らさず拾う (#92 と同理由)。
+        body, thought = self.bot.split_thought("一言。\n[[Thought: なるほど]]")
+        self.assertEqual(body, "一言。")
+        self.assertEqual(thought, "なるほど")
+
+    def test_malformed_or_empty_marker_is_ignored(self) -> None:
+        for bad in ("[[thought:]]", "[[thought: ]]", "[[thought なるほど]]"):
+            body, thought = self.bot.split_thought(f"一言。\n{bad}")
+            self.assertEqual(body, f"一言。\n{bad}", msg=f"bad={bad!r}")
+            self.assertIsNone(thought, msg=f"bad={bad!r}")
+
+    def test_empty_output(self) -> None:
+        body, thought = self.bot.split_thought("")
+        self.assertEqual(body, "")
+        self.assertIsNone(thought)
+
+
+class ProactiveThoughtPromptTest(unittest.TestCase):
+    """thought 指示文言 (チケット #93) が ephemeral 3 分岐の prompt に乗ること。
+
+    talk (build_proactive_prompt) は対象外 ([[next]] marker と競合させない)。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_instruction_present_in_all_ephemeral_prompts(self) -> None:
+        for name, prompt in (
+            ("investigate", self.bot.build_investigate_prompt("topic")),
+            ("ticket", self.bot.build_ticket_prompt("topic")),
+            ("remind", self.bot.build_remind_prompt("topic")),
+        ):
+            self.assertIn("[[thought:", prompt, msg=name)
+            # 出どころ限定 (§F 両立) と内部連絡である旨が乗ること。
+            self.assertIn("今回実際にやったこと", prompt, msg=name)
+            self.assertIn("この行は内部連絡でユーザーには届かない", prompt, msg=name)
+            # 沈黙回でも thought 行だけは返せる旨が乗ること。
+            self.assertIn("黙って終える回も、この 1 行だけは添えてよい", prompt, msg=name)
+
+    def test_talk_prompt_has_no_thought_instruction(self) -> None:
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("[[thought:", prompt)
+
+
 class SnoozeTest(unittest.TestCase):
     """/snooze の日数→snooze_until 計算と state 読み書き、snooze 中判定。"""
 
@@ -1352,6 +1436,70 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(idx["last_remind"], "2026-06-02T00:00:00+09:00")
         self.assertEqual(idx["last_investigate"], now.isoformat())
 
+    def test_record_investigate_thought_concatenated(self) -> None:
+        # thought (ephemeral claude の自由記述、チケット #93) は機械観察行に「。」で
+        # 連結される (事実 anchor が行内に残る = §F 両立)。
+        import json as _json
+        now = self._seed_active("ディスク管理")
+        self.bot.record_investigate("ディスク管理", now, thought="圧縮の仕組みが面白かった")
+        line = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()[-1]
+        entry = _json.loads(line)
+        self.assertEqual(
+            entry["observation"],
+            "ディスク管理 について調べて notes に書いた。圧縮の仕組みが面白かった",
+        )
+        # 構造化スキーマ (timestamp + observation) は不変。
+        self.assertEqual(set(entry), {"timestamp", "observation"})
+
+    def test_record_investigate_without_thought_keeps_fixed_text(self) -> None:
+        # thought=None (既定) は従来の固定文言のまま (#93 前の挙動を維持)。
+        import json as _json
+        now = self._seed_active("ディスク管理")
+        self.bot.record_investigate("ディスク管理", now)
+        line = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()[-1]
+        self.assertEqual(
+            _json.loads(line)["observation"], "ディスク管理 について調べて notes に書いた"
+        )
+
+    async def test_thought_marker_stripped_from_send_and_logged(self) -> None:
+        # 配線 (チケット #93): thought 付き出力 → Telegram 送信本文から marker が剥がれ、
+        # 思考ログの観察行に claude の自由記述が連結される。output_len も分離後の本文長。
+        from unittest import mock
+
+        now = self._seed_active("ディスク管理")
+        sent = mock.AsyncMock()
+
+        async def _fake_run_discord(prompt, options):
+            return _ok_result(
+                "ディスク管理のこと調べといた。\n[[thought: 圧縮の仕組みが面白かった]]"
+            )
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "record"), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot, "send_text", new=sent), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+
+        # 送信本文に marker が残らない (内部連絡でユーザーに届かない)。
+        self.assertEqual(sent.await_args.args[3], "ディスク管理のこと調べといた。")
+        rec = self._ledger()[-1]
+        self.assertTrue(rec["sent"])
+        self.assertEqual(rec["output_len"], len("ディスク管理のこと調べといた。"))
+        thoughts = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            "ディスク管理 について調べて notes に書いた。圧縮の仕組みが面白かった",
+            thoughts,
+        )
+
 
 class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
     """自律ループ「起票する」分岐 (persona 軸 4 拡張 (4) = 共用チケット自発起票) の配線。
@@ -1707,6 +1855,65 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(idx["last_investigate"], "2026-06-01T00:00:00+09:00")
         self.assertEqual(idx["last_remind"], "2026-06-02T00:00:00+09:00")
         self.assertEqual(idx["last_ticket"], now.isoformat())
+
+    def test_record_ticket_thought_concatenated(self) -> None:
+        # thought (チケット #93) は機械観察行に「。」で連結される (investigate と対称)。
+        import json as _json
+        now = self._seed_active("ディスク管理")
+        self.bot.record_ticket(now, thought="TODO が溜まってきてる気がする")
+        line = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()[-1]
+        entry = _json.loads(line)
+        self.assertEqual(
+            entry["observation"],
+            "共用 TODO にチケットを起票するか検討した。TODO が溜まってきてる気がする",
+        )
+        self.assertEqual(set(entry), {"timestamp", "observation"})
+
+    def test_record_ticket_without_thought_keeps_fixed_text(self) -> None:
+        import json as _json
+        now = self._seed_active("ディスク管理")
+        self.bot.record_ticket(now)
+        line = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()[-1]
+        self.assertEqual(
+            _json.loads(line)["observation"], "共用 TODO にチケットを起票するか検討した"
+        )
+
+    async def test_thought_only_silent_round_logs_thought(self) -> None:
+        # 配線 (チケット #93): marker のみの沈黙回 → 送信 skip (empty_or_denied ledger)
+        # だが thought は思考ログに残る (skip return より先に record を呼ぶ設計)。
+        from unittest import mock
+
+        now = self._seed_active("ディスク管理")
+        sent = mock.AsyncMock()
+
+        async def _fake_run_discord(prompt, options):
+            return _ok_result("[[thought: 起票するほどの実体は無かった]]")
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "record"), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot, "send_text", new=sent), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+
+        sent.assert_not_awaited()
+        rec = self._ledger()[-1]
+        self.assertEqual(rec["mode"], "ticket")
+        self.assertFalse(rec["sent"])
+        self.assertEqual(rec["reason"], "empty_or_denied")
+        thoughts = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            "共用 TODO にチケットを起票するか検討した。起票するほどの実体は無かった",
+            thoughts,
+        )
 
 
 class BuildTicketPromptTest(unittest.TestCase):
@@ -2099,6 +2306,30 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(idx["last_investigate"], "2026-06-01T00:00:00+09:00")
         self.assertEqual(idx["last_ticket"], "2026-06-02T00:00:00+09:00")
         self.assertEqual(idx["last_remind"], now.isoformat())
+
+    def test_record_remind_thought_concatenated(self) -> None:
+        # thought (チケット #93) は機械観察行に「。」で連結される (3 mode 対称)。
+        import json as _json
+        now = self._seed_active("ディスク管理")
+        self.bot.record_remind(now, thought="前のチケットが進んでて安心した")
+        line = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()[-1]
+        entry = _json.loads(line)
+        self.assertEqual(
+            entry["observation"],
+            "前に気になっていたこと / 自分のチケットを振り返るか検討した。"
+            "前のチケットが進んでて安心した",
+        )
+        self.assertEqual(set(entry), {"timestamp", "observation"})
+
+    def test_record_remind_without_thought_keeps_fixed_text(self) -> None:
+        import json as _json
+        now = self._seed_active("ディスク管理")
+        self.bot.record_remind(now)
+        line = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()[-1]
+        self.assertEqual(
+            _json.loads(line)["observation"],
+            "前に気になっていたこと / 自分のチケットを振り返るか検討した",
+        )
 
 
 class BuildRemindPromptTest(unittest.TestCase):

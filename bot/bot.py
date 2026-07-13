@@ -360,6 +360,20 @@ PROACTIVE_SCENE_PROMPT = (
     "前置きや自己説明はせず、本文だけを返す。"
 )
 
+# ephemeral 分岐 (investigate / ticket / remind) 共通の思考自由記述指示 (チケット #93)。
+# marker は bot 側で剥がして companion_thoughts.jsonl に残すので、ユーザーには届かない
+# 内部連絡 (#92 の [[next]] marker と対称)。出どころを「今回実際にやったこと」に限定して
+# §F (でっち上げ禁止) と両立させる。空報告で黙って終える回も thought 行だけは返せる
+# (受け皿: 配線側は record を skip return より先に呼ぶ)。talk モードは対象外
+# ([[next]] marker と競合させない)。
+PROACTIVE_THOUGHT_INSTRUCTION = (
+    "最後に、今回実際にやったこと・見たことから思ったことがあれば、"
+    "本文とは別の最終行に [[thought: ...]] の形式で 1 行だけ添える"
+    " (1〜2 文。感情の演技や、今回やったことと無関係な話題は書かない)。"
+    "この行は内部連絡でユーザーには届かない。"
+    "本文を出さず黙って終える回も、この 1 行だけは添えてよい。"
+)
+
 # 自律ループ「動く」分岐の調査指示 (persona 軸 4 拡張 (3))。口調・性格は
 # PERSONA_SYSTEM_PROMPT が system prompt 側に常駐するため、ここでは作業手順のみ。
 # {{TOPIC}} には関心 index から選んだ実トピック (実活動由来の topic) を埋める
@@ -383,7 +397,8 @@ PROACTIVE_INVESTIGATE_PROMPT = (
     "(3) 最後に、調べてノートに残したことを #chat 用に 1〜3 行で報告する。\n"
     "    「○○調べといた」式のさらっとした事後報告にする。前置き・自己説明・"
     "ノート全文の貼り付けはしない。報告本文だけを返す (ノートに何を書いたかの"
-    "演技や『メモにこう書いた』式の語りもしない)。"
+    "演技や『メモにこう書いた』式の語りもしない)。\n"
+    + PROACTIVE_THOUGHT_INSTRUCTION
 )
 
 # 自律ループ「起票する」分岐の指示 (persona 軸 4 拡張 (4) 勝手な実行 B)。口調・性格は
@@ -417,7 +432,8 @@ PROACTIVE_TICKET_PROMPT = (
     "(3) 起票したら、出力の `#番号` を読んで #chat 用に 1〜3 行で報告する。\n"
     "    「○○やっといたらと思って #番号 起票しといた」式のさらっとした事後報告にする。\n"
     "    actionable なタスクが無く起票しなかった場合は、何も報告せず空のまま終える"
-    " (無理に話題を作らない)。前置き・自己説明・チケット一覧の貼り付けはしない。"
+    " (無理に話題を作らない)。前置き・自己説明・チケット一覧の貼り付けはしない。\n"
+    + PROACTIVE_THOUGHT_INSTRUCTION
 )
 
 # 自律ループ「振り返る」分岐の指示 (persona 軸 4 拡張 (5) 勝手な実行 C = リマインド)。口調・
@@ -447,7 +463,8 @@ PROACTIVE_REMIND_PROMPT = (
     "    「そういえば先週の○○どうなった?」式のさらっとした一言にする。\n"
     "    - 返事を催促したり「ねえ」と引き止めたりしない (相手の手が空いてなければ流せる軽さ)。\n"
     "    - 振り返る実体が無ければ、何も報告せず空のまま終える (無理に話題を作らない)。\n"
-    "    前置き・自己説明・チケット一覧やノート全文の貼り付けはしない。報告本文だけを返す。"
+    "    前置き・自己説明・チケット一覧やノート全文の貼り付けはしない。報告本文だけを返す。\n"
+    + PROACTIVE_THOUGHT_INSTRUCTION
 )
 
 _runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
@@ -841,6 +858,35 @@ def split_next_self_hours(output: str) -> tuple[str, float | None]:
     return output, None
 
 
+# ephemeral 分岐の思考自由記述 marker (チケット #93)。#92 の [[next]] と対称に、出力の
+# 最終非空行のみを見る (全文走査しない = どこかに紛れた偶然の一致を拾わない、判定は
+# 1 回で確定)。IGNORECASE は LLM の大文字揺れ ([[Thought: ...]] 等) が本文として
+# Telegram に漏れるのを防ぐ (「内部連絡でユーザーに届かない」の破れ道を塞ぐ、#92 と同理由)。
+# capture は先頭非空白必須 (\S.*?) = 空白のみの [[thought: ]] を thought=" " と誤認しない
+# (形式不一致は #92 の malformed marker と同じく「そのまま残す」に倒す)。
+_THOUGHT_RE = re.compile(r"^\[\[thought:\s*(\S.*?)\s*\]\]$", re.IGNORECASE)
+
+
+def split_thought(output: str) -> tuple[str, str | None]:
+    """claude 出力から思考自由記述 marker 行を分離する。Pure function → unit-testable。
+
+    最終非空行が ``[[thought: <text>]]`` 形式ならその行を取り除いた本文と thought
+    文字列を返す。marker が無い / 最終非空行以外にある / 形式不一致なら
+    (出力そのまま, None)。思考ログへの追記は呼び出し側 (record_* 経由) の責務
+    (ここは分離のみ)。
+    """
+    lines = output.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i].strip()
+        if not line:
+            continue
+        m = _THOUGHT_RE.match(line)
+        if not m:
+            return output, None
+        return "\n".join(lines[:i]).rstrip(), m.group(1)
+    return output, None
+
+
 def is_snoozed(now_epoch: float | None = None) -> bool:
     """Return True if proactive messaging is currently snoozed.
 
@@ -1193,12 +1239,16 @@ async def run_investigate(topic: str, now: datetime) -> str:
     return body or ""
 
 
-def record_investigate(topic: str, now: datetime) -> None:
+def record_investigate(topic: str, now: datetime, thought: str | None = None) -> None:
     """investigate 回の関心 index と思考ログを更新する (load → decay → touch → save)。
 
     対象スレッドを state="researched" で touch (last_touched 更新 + 二度調査回避) し、
     index トップレベル last_investigate を now の ISO で更新して save。思考ログに実活動
     の機械観察を 1 行残す (感情・趣味は書かない)。state を持つ側を 1 回引いて確定する。
+
+    thought は ephemeral claude の自由記述 (チケット #93)。truthy なら機械観察 (実活動の
+    事実 anchor) に「。」で連結する = 出どころが行内に残り §F と両立。構造化スキーマ
+    (timestamp + observation) は不変。
 
     last_investigate の更新は claude 起動を決めた時点で確定する設計 (interval を
     成否に関わらず消費 = 場当たりリトライを作らない、dormant の handoff 消費と同思想)。
@@ -1211,11 +1261,10 @@ def record_investigate(topic: str, now: datetime) -> None:
     data = interests.touch_thread(data, topic, source="investigation", now=now, state="researched")
     data = {**data, "last_investigate": now.isoformat()}
     interests.save_interests(INTERESTS_INDEX_PATH, data)
-    interests.append_thought(
-        THOUGHTS_LOG_PATH,
-        f"{topic} について調べて notes に書いた",
-        now,
-    )
+    observation = f"{topic} について調べて notes に書いた"
+    if thought:
+        observation += f"。{thought}"
+    interests.append_thought(THOUGHTS_LOG_PATH, observation, now)
 
 
 # ---------------------------------------------------------------------------
@@ -1294,11 +1343,15 @@ async def run_ticket(signal: str, now: datetime) -> str:
     return body or ""
 
 
-def record_ticket(now: datetime) -> None:
+def record_ticket(now: datetime, thought: str | None = None) -> None:
     """ticket 回の関心 index と思考ログを更新する (load → decay → save)。
 
     index トップレベル last_ticket を now の ISO で更新して save。思考ログに実活動の
     機械観察を 1 行残す。state を持つ側を 1 回引いて確定する。
+
+    thought は ephemeral claude の自由記述 (チケット #93)。truthy なら機械観察 (実活動の
+    事実 anchor) に「。」で連結する = 出どころが行内に残り §F と両立。構造化スキーマ
+    (timestamp + observation) は不変。
 
     investigate と違い thread の state は "researched" にしない (起票は調査でなく、
     同じ thread から将来別 ticket が出る余地を残す。重複は list での内容チェックで抑える)。
@@ -1309,11 +1362,10 @@ def record_ticket(now: datetime) -> None:
     data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
     data = {**data, "last_ticket": now.isoformat()}
     interests.save_interests(INTERESTS_INDEX_PATH, data)
-    interests.append_thought(
-        THOUGHTS_LOG_PATH,
-        "共用 TODO にチケットを起票するか検討した",
-        now,
-    )
+    observation = "共用 TODO にチケットを起票するか検討した"
+    if thought:
+        observation += f"。{thought}"
+    interests.append_thought(THOUGHTS_LOG_PATH, observation, now)
 
 
 # ---------------------------------------------------------------------------
@@ -1397,11 +1449,15 @@ async def run_remind(signal: str, now: datetime) -> str:
     return body or ""
 
 
-def record_remind(now: datetime) -> None:
+def record_remind(now: datetime, thought: str | None = None) -> None:
     """reminder 回の関心 index と思考ログを更新する (load → decay → save)。
 
     index トップレベル last_remind を now の ISO で更新して save。思考ログに実活動の
     機械観察を 1 行残す。state を持つ側を 1 回引いて確定する。
+
+    thought は ephemeral claude の自由記述 (チケット #93)。truthy なら機械観察 (実活動の
+    事実 anchor) に「。」で連結する = 出どころが行内に残り §F と両立。構造化スキーマ
+    (timestamp + observation) は不変。
 
     record_ticket と同じく thread の state は触らない (reminder は調査でも起票でもなく、
     振り返ったスレッドを将来また振り返る余地を残す)。last_remind の更新は claude 起動を
@@ -1412,11 +1468,10 @@ def record_remind(now: datetime) -> None:
     data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
     data = {**data, "last_remind": now.isoformat()}
     interests.save_interests(INTERESTS_INDEX_PATH, data)
-    interests.append_thought(
-        THOUGHTS_LOG_PATH,
-        "前に気になっていたこと / 自分のチケットを振り返るか検討した",
-        now,
-    )
+    observation = "前に気になっていたこと / 自分のチケットを振り返るか検討した"
+    if thought:
+        observation += f"。{thought}"
+    interests.append_thought(THOUGHTS_LOG_PATH, observation, now)
 
 
 # ---------------------------------------------------------------------------
@@ -3007,11 +3062,15 @@ async def _run_proactive_investigate(
     ibase = {**base, "mode": "investigate", "investigate_topic": topic}
 
     output = await run_investigate(topic, now)
+    # 思考自由記述 marker を本文から分離する (チケット #93)。以降の empty 判定・送信・
+    # output_len は分離後の本文で行う (marker 行は Telegram に流さない)。skip return より
+    # 先に record を呼ぶので、本文空 + thought のみの沈黙回でも thought は思考ログに残る。
+    output, thought = split_thought(output)
 
     # interval / 二度調査回避の state を消費する (claude を起動した時点で確定)。
     # 記録失敗は本体を道連れにしない (index は次回 due として再挑戦になるだけ)。
     try:
-        record_investigate(topic, now)
+        record_investigate(topic, now, thought=thought)
     except OSError as e:
         logger.warning("investigate interest record failed: %s", e)
 
@@ -3063,11 +3122,15 @@ async def _run_proactive_ticket(
     tbase = {**base, "mode": "ticket", "ticket_signal": signal}
 
     output = await run_ticket(signal, now)
+    # 思考自由記述 marker を本文から分離する (チケット #93)。以降の empty 判定・送信・
+    # output_len は分離後の本文で行う (marker 行は Telegram に流さない)。skip return より
+    # 先に record を呼ぶので、本文空 + thought のみの沈黙回でも thought は思考ログに残る。
+    output, thought = split_thought(output)
 
     # interval state を消費する (claude を起動した時点で確定)。記録失敗は本体を道連れに
     # しない (index は次回 due として再挑戦になるだけ)。
     try:
-        record_ticket(now)
+        record_ticket(now, thought=thought)
     except OSError as e:
         logger.warning("ticket interest record failed: %s", e)
 
@@ -3119,11 +3182,15 @@ async def _run_proactive_remind(
     rbase = {**base, "mode": "remind", "remind_signal": signal}
 
     output = await run_remind(signal, now)
+    # 思考自由記述 marker を本文から分離する (チケット #93)。以降の empty 判定・送信・
+    # output_len は分離後の本文で行う (marker 行は Telegram に流さない)。skip return より
+    # 先に record を呼ぶので、本文空 + thought のみの沈黙回でも thought は思考ログに残る。
+    output, thought = split_thought(output)
 
     # interval state を消費する (claude を起動した時点で確定)。記録失敗は本体を道連れに
     # しない (index は次回 due として再挑戦になるだけ)。
     try:
-        record_remind(now)
+        record_remind(now, thought=thought)
     except OSError as e:
         logger.warning("remind interest record failed: %s", e)
 

@@ -322,7 +322,10 @@ def activity_score(data: dict, now: datetime, freshness_days: float) -> float:
 def append_thought(path: Path, observation: str, now: datetime) -> None:
     """私的思考ログに 1 行追記する (proactive_ledger と同じ append-only jsonl)。
 
-    実活動の機械的な観察のみ (感情・趣味は書かない)。読まれない前提の素メモ。
+    実活動の観察が基本 (機械観察の事実 anchor)。チケット #93 以降、ephemeral 分岐の
+    観察行には claude の自由記述 (今回やったことから思ったこと) が連結され得るが、
+    出どころは実活動限定 (§F 両立)。読まれない前提の素メモ。スキーマは
+    timestamp + observation の 2 キーで不変。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = {"timestamp": now.isoformat(), "observation": observation}
