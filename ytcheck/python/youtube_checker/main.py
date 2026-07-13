@@ -533,21 +533,6 @@ async def process_single_channel(
     }
 
 
-def _resolve_pending_dir() -> Path:
-    """
-    pending_evaluations ディレクトリの絶対パスを解決する
-
-    settings.PENDING_EVALUATION_DIR は相対パス（CWD 依存）で保存側
-    （ai_evaluator.save_pending_evaluation）が使っているが、
-    リトライ側は CWD に依存しないようモジュール位置でアンカーする。
-    ytcheck.bat はプロジェクトディレクトリへ cd してから実行するため両者は一致する。
-    """
-    p = Path(settings.PENDING_EVALUATION_DIR)
-    if p.is_absolute():
-        return p
-    return Path(__file__).resolve().parent / p
-
-
 async def _retry_pending_evaluations(
     channels: list[dict[str, Any]],
     cache: EvaluationCache | None = None,
@@ -571,7 +556,7 @@ async def _retry_pending_evaluations(
     Returns:
         list[dict[str, Any]]: チャンネル単位の再評価結果リスト（成功分のみ）
     """
-    pending_dir = _resolve_pending_dir()
+    pending_dir = ai_evaluator.resolve_pending_dir()
     files = sorted(pending_dir.glob("pending_*.json")) if pending_dir.exists() else []
     if not files:
         return []

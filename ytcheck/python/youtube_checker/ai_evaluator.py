@@ -20,6 +20,25 @@ from subtitle_fetcher import analyze_excitement_signals
 
 logger = logging.getLogger(__name__)
 
+# channel_store.py / main.py と同じ導出（プロジェクトルート = ~/companion/ytcheck）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def resolve_pending_dir() -> Path:
+    """
+    pending_evaluations ディレクトリの絶対パスを解決する
+
+    settings.PENDING_EVALUATION_DIR が相対パスのときはプロジェクトルートに
+    アンカーする。保存側（save_pending_evaluation）とリトライ側
+    （main._retry_pending_evaluations）が CWD に依存せず同じ場所を指すよう、
+    解決をこの 1 関数に寄せる（#100: 保存 = CWD 相対 / リトライ =
+    モジュール位置アンカーの不一致で pending が永遠に回収されなかった）。
+    """
+    p = Path(settings.PENDING_EVALUATION_DIR)
+    if p.is_absolute():
+        return p
+    return _PROJECT_ROOT / p
+
 
 def truncate_text(text: str, max_tokens: int) -> str:
     """
@@ -230,7 +249,7 @@ def save_pending_evaluation(
     Returns:
         Path: 保存したファイルのパス
     """
-    output_dir = Path(settings.PENDING_EVALUATION_DIR)
+    output_dir = resolve_pending_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
