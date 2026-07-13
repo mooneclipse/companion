@@ -659,7 +659,7 @@ async def run_claude(prompt: str, chat_id: int, thread_id: int | None) -> str:
     else:
         options.resume_session = meta.session_id
 
-    result = await runner.run_discord(prompt, options)
+    result = await runner.run_session_prompt(prompt, options)
 
     if result.error_kind == ErrorKind.OK:
         sessions.record_usage(meta)
@@ -1288,7 +1288,7 @@ async def run_investigate(topic: str, now: datetime) -> str:
         timeout_s=CLAUDE_TIMEOUT,
         append_system_prompt=PERSONA_SYSTEM_PROMPT,
     )
-    result = await runner.run_discord(build_investigate_prompt(topic), options)
+    result = await runner.run_session_prompt(build_investigate_prompt(topic), options)
     budget_guard.record(
         datetime.now(quota.JST),
         result,
@@ -1409,7 +1409,7 @@ async def run_ticket(signal: str, now: datetime) -> str:
         timeout_s=CLAUDE_TIMEOUT,
         append_system_prompt=PERSONA_SYSTEM_PROMPT,
     )
-    result = await runner.run_discord(build_ticket_prompt(signal), options)
+    result = await runner.run_session_prompt(build_ticket_prompt(signal), options)
     budget_guard.record(
         datetime.now(quota.JST),
         result,
@@ -1515,7 +1515,7 @@ async def run_remind(signal: str, now: datetime) -> str:
         timeout_s=CLAUDE_TIMEOUT,
         append_system_prompt=PERSONA_SYSTEM_PROMPT,
     )
-    result = await runner.run_discord(build_remind_prompt(signal), options)
+    result = await runner.run_session_prompt(build_remind_prompt(signal), options)
     budget_guard.record(
         datetime.now(quota.JST),
         result,

@@ -1,7 +1,7 @@
-"""Subprocess runner for ``claude -p`` invocations from the Discord bot.
+"""Subprocess runner for ``claude -p`` invocations from the Telegram bot.
 
 The bot's call site stays free of CLI strings: ``bot.py`` builds a
-:class:`ClaudeOptions`, awaits :meth:`ClaudeRunner.run_discord`, and inspects a
+:class:`ClaudeOptions`, awaits :meth:`ClaudeRunner.run_session_prompt`, and inspects a
 :class:`ClaudeResult`. A future migration to the Anthropic Agent SDK can
 replace the subprocess body without touching the call site.
 """
@@ -159,7 +159,7 @@ class ClaudeRunner:
         self.cwd = str(cwd)
         self.claude_lock = asyncio.Lock()
 
-    async def run_discord(self, prompt: str, options: ClaudeOptions) -> ClaudeResult:
+    async def run_session_prompt(self, prompt: str, options: ClaudeOptions) -> ClaudeResult:
         args = options.to_cli_args()
         async with self.claude_lock:
             try:

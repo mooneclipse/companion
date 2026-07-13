@@ -54,7 +54,7 @@ def _import_bot_with_stub_env():
 
 
 def _ok_result(text: str):
-    """投資調査テスト用の OK な ClaudeResult を組む (run_discord の戻り値モック)。"""
+    """投資調査テスト用の OK な ClaudeResult を組む (run_session_prompt の戻り値モック)。"""
     from claude_runner import ClaudeResult, ErrorKind
     return ClaudeResult(
         rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
@@ -965,19 +965,19 @@ class ProactiveGuardNotBypassedTest(unittest.IsolatedAsyncioTestCase):
         import json as _json
         from unittest import mock
 
-        called = {"run_discord": 0}
+        called = {"run_session_prompt": 0}
 
-        async def _fake_run_discord(*a, **kw):
-            called["run_discord"] += 1
+        async def _fake_run_session_prompt(*a, **kw):
+            called["run_session_prompt"] += 1
             raise AssertionError("claude_runner must not be invoked when guard denies")
 
-        # guard.allow を False に固定、runner.run_discord を監視 spy に差し替え。
+        # guard.allow を False に固定、runner.run_session_prompt を監視 spy に差し替え。
         with mock.patch.object(self.bot.budget_guard, "allow", return_value=False), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord):
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt):
             app = mock.MagicMock()
             await self.bot._run_proactive(app, {"kind": "proactive", "seed_kind": "recent_conversation"})
 
-        self.assertEqual(called["run_discord"], 0)
+        self.assertEqual(called["run_session_prompt"], 0)
         # ledger に budget_guard で skip した記録が残ること
         lines = [l for l in self._ledger.read_text(encoding="utf-8").splitlines() if l.strip()]
         self.assertEqual(len(lines), 1)
@@ -992,10 +992,10 @@ class ProactiveGuardNotBypassedTest(unittest.IsolatedAsyncioTestCase):
         # snooze 中は guard を引くまでもなく skip。
         self.bot.write_snooze_until(int(__import__("time").time()) + 86400)
 
-        async def _fake_run_discord(*a, **kw):
+        async def _fake_run_session_prompt(*a, **kw):
             raise AssertionError("claude_runner must not be invoked when snoozed")
 
-        with mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord):
+        with mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt):
             app = mock.MagicMock()
             await self.bot._run_proactive(app, {"kind": "proactive", "seed_kind": "recent_conversation"})
 
@@ -1349,10 +1349,10 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
 
         now = self._seed_active("ディスク管理")
-        ran = {"discord": 0}
+        ran = {"runs": 0}
 
-        async def _fake_run_discord(prompt, options):
-            ran["discord"] += 1
+        async def _fake_run_session_prompt(prompt, options):
+            ran["runs"] += 1
             ran["prompt"] = prompt
             ran["session_id"] = options.session_id
             ran["resume"] = options.resume_session
@@ -1369,7 +1369,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "run_claude", side_effect=_fail_run_claude), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
@@ -1379,7 +1379,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
             )
 
         # ephemeral session で起動 (resume しない、新規 session_id)。
-        self.assertEqual(ran["discord"], 1)
+        self.assertEqual(ran["runs"], 1)
         self.assertIsNotNone(ran["session_id"])
         self.assertIsNone(ran["resume"])
         self.assertIn("ディスク管理", ran["prompt"])
@@ -1430,7 +1430,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_investigate), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_no_investigate), \
              mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
@@ -1481,7 +1481,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result("   ")  # 空白のみ = 空報告
 
         app = mock.MagicMock()
@@ -1491,7 +1491,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -1516,7 +1516,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _no_discord(prompt, options):
+        async def _no_claude(prompt, options):
             raise AssertionError("budget 拒否時に claude を起動してはいけない")
 
         # _run_proactive 入口の guard は通すが、run_investigate 内の allow を False に。
@@ -1533,7 +1533,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "allow", side_effect=_allow), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="requests_count")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_no_claude), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -1640,7 +1640,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result(
                 "ディスク管理のこと調べといた。\n"
                 "[[interest: zstd の辞書学習 | notes/2026-07-13_ren-research-disk.md]]\n"
@@ -1654,7 +1654,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -1681,7 +1681,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result(
                 "ディスク管理のこと調べといた。\n[[thought: 圧縮の仕組みが面白かった]]"
             )
@@ -1693,7 +1693,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -1788,10 +1788,10 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
 
         now = self._seed_active("ディスク管理")
-        ran = {"discord": 0}
+        ran = {"runs": 0}
 
-        async def _fake_run_discord(prompt, options):
-            ran["discord"] += 1
+        async def _fake_run_session_prompt(prompt, options):
+            ran["runs"] += 1
             ran["prompt"] = prompt
             ran["session_id"] = options.session_id
             ran["resume"] = options.resume_session
@@ -1808,7 +1808,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "run_claude", side_effect=_fail_run_claude), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
@@ -1818,7 +1818,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
             )
 
         # ephemeral session で起動 (resume しない、新規 session_id)。
-        self.assertEqual(ran["discord"], 1)
+        self.assertEqual(ran["runs"], 1)
         self.assertIsNotNone(ran["session_id"])
         self.assertIsNone(ran["resume"])
         self.assertIn("ディスク管理", ran["prompt"])
@@ -1854,7 +1854,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
 
         now = self._seed_active("ディスク管理", state="researched")
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result("掃除タスク #7 起票した")
 
         app = mock.MagicMock()
@@ -1864,7 +1864,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -1884,7 +1884,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_INVESTIGATE_ENABLED = True
         seen = {"prompts": []}
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             seen["prompts"].append(prompt)
             return _ok_result("調べといた")
 
@@ -1895,7 +1895,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -1923,7 +1923,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
             talk["called"] += 1
             return "やあ"
 
-        async def _no_discord(prompt, options):
+        async def _no_claude(prompt, options):
             raise AssertionError("signal 無しで起票 claude を呼んではいけない")
 
         app = mock.MagicMock()
@@ -1932,7 +1932,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_no_claude), \
              mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
@@ -1956,7 +1956,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
             talk["called"] += 1
             return "やあ"
 
-        async def _no_discord(prompt, options):
+        async def _no_claude(prompt, options):
             raise AssertionError("disabled 時に起票 claude を呼んではいけない")
 
         app = mock.MagicMock()
@@ -1965,7 +1965,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_no_claude), \
              mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
@@ -1984,7 +1984,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result("   ")  # 空白のみ = 起票せず空報告
 
         app = mock.MagicMock()
@@ -1994,7 +1994,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -2019,7 +2019,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _no_discord(prompt, options):
+        async def _no_claude(prompt, options):
             raise AssertionError("budget 拒否時に claude を起動してはいけない")
 
         allow_calls = {"n": 0}
@@ -2035,7 +2035,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "allow", side_effect=_allow), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="requests_count")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_no_claude), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -2098,7 +2098,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result("[[thought: 起票するほどの実体は無かった]]")
 
         app = mock.MagicMock()
@@ -2108,7 +2108,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -2250,10 +2250,10 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
 
         now = self._seed_active("ディスク管理")
-        ran = {"discord": 0}
+        ran = {"runs": 0}
 
-        async def _fake_run_discord(prompt, options):
-            ran["discord"] += 1
+        async def _fake_run_session_prompt(prompt, options):
+            ran["runs"] += 1
             ran["prompt"] = prompt
             ran["session_id"] = options.session_id
             ran["resume"] = options.resume_session
@@ -2270,7 +2270,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "run_claude", side_effect=_fail_run_claude), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
@@ -2280,7 +2280,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
             )
 
         # ephemeral session で起動 (resume しない、新規 session_id)。
-        self.assertEqual(ran["discord"], 1)
+        self.assertEqual(ran["runs"], 1)
         self.assertIsNotNone(ran["session_id"])
         self.assertIsNone(ran["resume"])
         self.assertIn("ディスク管理", ran["prompt"])
@@ -2310,7 +2310,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
 
         now = self._seed_active("ディスク管理", state="researched")
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result("ディスク管理の件、その後どう?")
 
         app = mock.MagicMock()
@@ -2320,7 +2320,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -2339,7 +2339,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         self.bot.PROACTIVE_TICKET_ENABLED = True
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result("#42 起票しといた")
 
         app = mock.MagicMock()
@@ -2349,7 +2349,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -2375,7 +2375,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
             talk["called"] += 1
             return "やあ"
 
-        async def _no_discord(prompt, options):
+        async def _no_claude(prompt, options):
             raise AssertionError("signal 無しで振り返り claude を呼んではいけない")
 
         app = mock.MagicMock()
@@ -2384,7 +2384,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_no_claude), \
              mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
@@ -2408,7 +2408,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
             talk["called"] += 1
             return "やあ"
 
-        async def _no_discord(prompt, options):
+        async def _no_claude(prompt, options):
             raise AssertionError("disabled 時に振り返り claude を呼んではいけない")
 
         app = mock.MagicMock()
@@ -2417,7 +2417,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_no_claude), \
              mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
              mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
@@ -2436,7 +2436,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             return _ok_result("   ")  # 空白のみ = 振り返る実体なく空報告
 
         app = mock.MagicMock()
@@ -2446,7 +2446,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "record"), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="none")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -2470,7 +2470,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         now = self._seed_active("ディスク管理")
         sent = mock.AsyncMock()
 
-        async def _no_discord(prompt, options):
+        async def _no_claude(prompt, options):
             raise AssertionError("budget 拒否時に claude を起動してはいけない")
 
         allow_calls = {"n": 0}
@@ -2486,7 +2486,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.budget_guard, "allow", side_effect=_allow), \
              mock.patch.object(self.bot.budget_guard, "summary",
                                return_value=mock.MagicMock(guard_kind="requests_count")), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_no_discord), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_no_claude), \
              mock.patch.object(self.bot, "send_text", new=sent), \
              mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
             dt.now.return_value = now
@@ -2646,7 +2646,7 @@ class DispatchProactiveVoiceTest(unittest.IsolatedAsyncioTestCase):
 class RunClaudePersonaWiringTest(unittest.IsolatedAsyncioTestCase):
     """run_claude が組む ClaudeOptions に persona system prompt が常に乗ること。
 
-    口調 (軸 1「対等な相方」) は全 claude 呼び出し共通の配線。runner.run_discord を
+    口調 (軸 1「対等な相方」) は全 claude 呼び出し共通の配線。runner.run_session_prompt を
     spy に差し替えて options.append_system_prompt を捕捉する。
     """
 
@@ -2661,7 +2661,7 @@ class RunClaudePersonaWiringTest(unittest.IsolatedAsyncioTestCase):
 
         captured = {}
 
-        async def _fake_run_discord(prompt, options):
+        async def _fake_run_session_prompt(prompt, options):
             captured["options"] = options
             return ClaudeResult(
                 rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
@@ -2672,7 +2672,7 @@ class RunClaudePersonaWiringTest(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(self.bot.sessions, "_SESSIONS_DIR", Path(tmp) / "topics"), \
              mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
              mock.patch.object(self.bot.budget_guard, "record"), \
-             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord):
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt):
             out = await self.bot.run_claude("hi", -1001234567890, 5)
 
         self.assertEqual(out, "ok")
