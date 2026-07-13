@@ -115,6 +115,23 @@ def _parse_json_stdout(stdout: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _warn_if_session_id_mismatch(options: ClaudeOptions, result: ClaudeResult) -> None:
+    """Surface (log only) a divergence between the requested uuid and the JSON-returned one.
+
+    STATUS.md Watch 項目の実装 (ticket #87)。将来の CLI 仕様変更で
+    `--session-id` / `--resume` に渡した uuid と JSON の session_id が乖離した
+    場合の検知網。warning 止まりで state 補正・リトライはしない — 回復は
+    sessions JSON を持つ側の責務 (design.md §3.2、ErrorKind docstring と同根)。
+    """
+    requested = options.session_id or options.resume_session
+    if requested and result.session_id and result.session_id != requested:
+        logger.warning(
+            "claude session_id mismatch: requested=%s returned=%s (sessions JSON は requested のまま)",
+            requested,
+            result.session_id,
+        )
+
+
 def _claude_env() -> dict[str, str]:
     """Strip host auth and nested-claude markers (design.md §1.6)."""
     env = os.environ.copy()
@@ -201,6 +218,7 @@ class ClaudeRunner:
             result.permission_denials = parsed.get("permission_denials") or []
             result.terminal_reason = parsed.get("terminal_reason")
             result.duration_ms = parsed.get("duration_ms")
+        _warn_if_session_id_mismatch(options, result)
         return result
 
     async def run_oneshot(self, prompt: str, options: ClaudeOptions) -> ClaudeResult:

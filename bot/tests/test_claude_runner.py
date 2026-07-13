@@ -12,7 +12,51 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from claude_runner import ClaudeOptions
+from claude_runner import (
+    ClaudeOptions,
+    ClaudeResult,
+    ErrorKind,
+    _warn_if_session_id_mismatch,
+)
+
+
+def _ok_result(session_id: str | None) -> ClaudeResult:
+    return ClaudeResult(
+        rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
+        session_id=session_id,
+    )
+
+
+class WarnIfSessionIdMismatchTest(unittest.TestCase):
+    """ticket #87: 要求 uuid と JSON 返却 session_id の照合 warning (表面化専用)。"""
+
+    def test_session_id_match_is_silent(self) -> None:
+        opts = ClaudeOptions(session_id="uuid-a")
+        with self.assertNoLogs("companion-bot", level="WARNING"):
+            _warn_if_session_id_mismatch(opts, _ok_result("uuid-a"))
+
+    def test_resume_session_match_is_silent(self) -> None:
+        opts = ClaudeOptions(resume_session="uuid-a")
+        with self.assertNoLogs("companion-bot", level="WARNING"):
+            _warn_if_session_id_mismatch(opts, _ok_result("uuid-a"))
+
+    def test_mismatch_warns_with_both_uuids(self) -> None:
+        opts = ClaudeOptions(resume_session="uuid-a")
+        with self.assertLogs("companion-bot", level="WARNING") as cm:
+            _warn_if_session_id_mismatch(opts, _ok_result("uuid-b"))
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("uuid-a", cm.output[0])
+        self.assertIn("uuid-b", cm.output[0])
+
+    def test_no_returned_session_id_is_silent(self) -> None:
+        # JSON parse 失敗 / text 出力時は result.session_id が None のまま。
+        opts = ClaudeOptions(session_id="uuid-a")
+        with self.assertNoLogs("companion-bot", level="WARNING"):
+            _warn_if_session_id_mismatch(opts, _ok_result(None))
+
+    def test_no_requested_uuid_is_silent(self) -> None:
+        with self.assertNoLogs("companion-bot", level="WARNING"):
+            _warn_if_session_id_mismatch(ClaudeOptions(), _ok_result("uuid-b"))
 
 
 class ToCliArgsTest(unittest.TestCase):
