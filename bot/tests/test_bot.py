@@ -469,6 +469,76 @@ class BuildProactivePromptTest(unittest.TestCase):
         prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
         self.assertNotIn("タメ口", prompt)
 
+    def test_self_schedule_instruction_toggle(self) -> None:
+        # 自己申告指示 (チケット #92) は self_schedule=True で結びに乗り、False で消える。
+        # 既定 (None) は module 定数 PROACTIVE_SELF_SCHEDULE_ENABLED (env 既定 1) に従う。
+        payload = {"seed_kind": "recent_conversation"}
+        on = self.bot.build_proactive_prompt(payload, self_schedule=True)
+        self.assertIn("[[next: 12h]]", on)
+        off = self.bot.build_proactive_prompt(payload, self_schedule=False)
+        self.assertNotIn("[[next:", off)
+        default = self.bot.build_proactive_prompt(payload)
+        self.assertEqual("[[next: 12h]]" in default, self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED)
+
+
+class SplitNextSelfHoursTest(unittest.TestCase):
+    """自己申告 marker 行の分離 (チケット #92)。最終非空行のみ・1 回で確定。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_marker_on_last_line_is_split(self) -> None:
+        body, hours = self.bot.split_next_self_hours("今日は涼しいね。\n[[next: 8h]]")
+        self.assertEqual(body, "今日は涼しいね。")
+        self.assertEqual(hours, 8.0)
+
+    def test_marker_with_trailing_blank_lines(self) -> None:
+        body, hours = self.bot.split_next_self_hours("一言。\n[[next: 24h]]\n\n")
+        self.assertEqual(body, "一言。")
+        self.assertEqual(hours, 24.0)
+
+    def test_marker_only_output_means_silent_with_schedule(self) -> None:
+        # 本文なし + 申告のみ = 「今は黙るが次はこの頃」。本文は空になり
+        # _run_proactive の既存 empty_output skip に落ちる。
+        body, hours = self.bot.split_next_self_hours("[[next: 20h]]")
+        self.assertEqual(body, "")
+        self.assertEqual(hours, 20.0)
+
+    def test_no_marker_returns_output_unchanged(self) -> None:
+        body, hours = self.bot.split_next_self_hours("ただの一言。")
+        self.assertEqual(body, "ただの一言。")
+        self.assertIsNone(hours)
+
+    def test_marker_not_on_last_line_is_ignored(self) -> None:
+        # 最終非空行以外の marker は拾わない (全文走査しない = 決定的)。
+        text = "[[next: 8h]]\n本文が後に続く。"
+        body, hours = self.bot.split_next_self_hours(text)
+        self.assertEqual(body, text)
+        self.assertIsNone(hours)
+
+    def test_malformed_marker_is_ignored(self) -> None:
+        for bad in ("[[next: h]]", "[[next: 8]]", "[[next: abch]]", "[[next 8h]]"):
+            body, hours = self.bot.split_next_self_hours(f"一言。\n{bad}")
+            self.assertEqual(body, f"一言。\n{bad}")
+            self.assertIsNone(hours)
+
+    def test_decimal_hours_accepted(self) -> None:
+        body, hours = self.bot.split_next_self_hours("一言。\n[[next: 1.5h]]")
+        self.assertEqual(body, "一言。")
+        self.assertEqual(hours, 1.5)
+
+    def test_case_insensitive_marker(self) -> None:
+        # LLM の大文字揺れ ([[Next: ...]]) も本文に漏らさず拾う (code-reviewer 指摘)。
+        body, hours = self.bot.split_next_self_hours("一言。\n[[Next: 6H]]")
+        self.assertEqual(body, "一言。")
+        self.assertEqual(hours, 6.0)
+
+    def test_empty_output(self) -> None:
+        body, hours = self.bot.split_next_self_hours("")
+        self.assertEqual(body, "")
+        self.assertIsNone(hours)
+
     def test_vault_hint_included_when_present(self) -> None:
         prompt = self.bot.build_proactive_prompt(
             {"seed_kind": "recent_conversation+vault", "vault_hint": "2026-06-01_topic"}
@@ -639,6 +709,18 @@ class SnoozeTest(unittest.TestCase):
         content = self._state.read_text(encoding="utf-8")
         self.assertIn("last_proactive_date=2026-06-01", content)
         self.assertIn("snooze_until=2000000", content)
+
+    def test_write_next_self_at_preserves_other_keys(self) -> None:
+        # 自己申告 next_self_at (チケット #92) の書き込みも総なめ保持
+        # (snooze_until / script が書く発火履歴を潰さない)。
+        self._state.write_text(
+            "snooze_until=1500000\nproactive_fire_epochs=1000,2000\n", encoding="utf-8"
+        )
+        self.bot.write_next_self_at(1_234_567)
+        content = self._state.read_text(encoding="utf-8")
+        self.assertIn("snooze_until=1500000", content)
+        self.assertIn("proactive_fire_epochs=1000,2000", content)
+        self.assertIn("next_self_at=1234567", content)
 
 
 class ProactiveGuardNotBypassedTest(unittest.IsolatedAsyncioTestCase):
@@ -846,6 +928,130 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
         topics = {t["topic"] for t in index["threads"]}
         self.assertIn("2026-06-10_prior", topics)
         self.assertIn("2026-06-19_today", topics)
+
+
+class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
+    """次回発話タイミングの自己申告 (チケット #92) の talk 経路配線。
+
+    - marker が送信本文から剥がれ、state に next_self_at (epoch) が書かれること。
+    - 本文なし + 申告のみの回は empty_output skip に落ちつつ申告は保存されること。
+    - クランプ (1〜72h) と toggle off (state 非書き込み、剥がしは維持) の境界。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self._orig = (
+            self.bot.PROACTIVE_LEDGER_PATH,
+            self.bot.PROACTIVE_STATE_FILE,
+            self.bot.INTERESTS_INDEX_PATH,
+            self.bot.THOUGHTS_LOG_PATH,
+            self.bot.PROACTIVE_INVESTIGATE_ENABLED,
+            self.bot.PROACTIVE_TICKET_ENABLED,
+            self.bot.PROACTIVE_REMIND_ENABLED,
+            self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED,
+        )
+        self.bot.PROACTIVE_LEDGER_PATH = d / "proactive_ledger.jsonl"
+        self.bot.PROACTIVE_STATE_FILE = d / "proactive"
+        self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
+        self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+        self.bot.PROACTIVE_INVESTIGATE_ENABLED = False
+        self.bot.PROACTIVE_TICKET_ENABLED = False
+        self.bot.PROACTIVE_REMIND_ENABLED = False
+        self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED = True
+
+    def tearDown(self) -> None:
+        (
+            self.bot.PROACTIVE_LEDGER_PATH,
+            self.bot.PROACTIVE_STATE_FILE,
+            self.bot.INTERESTS_INDEX_PATH,
+            self.bot.THOUGHTS_LOG_PATH,
+            self.bot.PROACTIVE_INVESTIGATE_ENABLED,
+            self.bot.PROACTIVE_TICKET_ENABLED,
+            self.bot.PROACTIVE_REMIND_ENABLED,
+            self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED,
+        ) = self._orig
+        self._tmp.cleanup()
+
+    async def _run_talk(self, claude_output: str):
+        """talk 経路を 1 回回し、(send_text mock, ledger 最終行, now) を返す。"""
+        import json as _json
+        from datetime import datetime
+        from unittest import mock
+
+        now = datetime(2026, 7, 13, 12, 0, 0, tzinfo=self.bot.quota.JST)
+
+        async def _fake_run_claude(prompt, chat_id, thread_id):
+            return claude_output
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        send = mock.AsyncMock()
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new=send), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+        lines = [
+            l for l in self.bot.PROACTIVE_LEDGER_PATH.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        return send, _json.loads(lines[-1]), now
+
+    def _state_next_self_at(self) -> str | None:
+        return self.bot._read_state_value(self.bot.PROACTIVE_STATE_FILE, "next_self_at")
+
+    async def test_marker_stripped_and_state_written(self) -> None:
+        send, rec, now = await self._run_talk("今日は涼しいね。\n[[next: 8h]]")
+        # 送信本文に marker が残らない
+        self.assertEqual(send.await_args.args[3], "今日は涼しいね。")
+        # state に now + 8h の epoch が書かれる
+        self.assertEqual(
+            self._state_next_self_at(), str(int(now.timestamp() + 8 * 3600))
+        )
+        self.assertTrue(rec["sent"])
+        self.assertEqual(rec["next_self_hours"], 8.0)
+
+    async def test_marker_only_output_saves_schedule_and_skips_send(self) -> None:
+        # 「今は黙るが次はこの頃」: 本文なしでも申告は保存され、送信はしない。
+        send, rec, now = await self._run_talk("[[next: 20h]]")
+        send.assert_not_awaited()
+        self.assertFalse(rec["sent"])
+        self.assertEqual(rec["reason"], "empty_output")
+        self.assertEqual(rec["next_self_hours"], 20.0)
+        self.assertEqual(
+            self._state_next_self_at(), str(int(now.timestamp() + 20 * 3600))
+        )
+
+    async def test_hours_clamped_to_max(self) -> None:
+        send, rec, now = await self._run_talk("一言。\n[[next: 500h]]")
+        self.assertEqual(rec["next_self_hours"], 72.0)
+        self.assertEqual(
+            self._state_next_self_at(), str(int(now.timestamp() + 72 * 3600))
+        )
+
+    async def test_no_marker_leaves_state_untouched(self) -> None:
+        send, rec, now = await self._run_talk("marker なしの一言。")
+        self.assertEqual(send.await_args.args[3], "marker なしの一言。")
+        self.assertIsNone(rec["next_self_hours"])
+        self.assertIsNone(self._state_next_self_at())
+
+    async def test_toggle_off_strips_marker_but_skips_state(self) -> None:
+        # off でも生 marker を Telegram に流さない (剥がしは維持)、state は書かない。
+        self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED = False
+        send, rec, now = await self._run_talk("一言。\n[[next: 8h]]")
+        self.assertEqual(send.await_args.args[3], "一言。")
+        self.assertIsNone(self._state_next_self_at())
 
 
 class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):

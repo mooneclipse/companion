@@ -136,6 +136,21 @@ try:
 except ValueError:
     PROACTIVE_REMIND_INTERVAL_DAYS = 7.0
 
+# 自発発話 self-schedule = 次回発話タイミングの自己申告 (persona 軸 4 拡張、チケット #92)。
+# talk モードの発話回の最後に「次に自分から話したくなるのは何時間後か」を最終行
+# `[[next: 12h]]` 形式で claude に申告させ、state (maintenance/.state/proactive の
+# next_self_at=<epoch>) に保存する。script (proactive-companion.sh) 側は step7 で
+# このキーを 1 回引き、あれば確率ロールを置換する (未来なら skip / 期限到来なら
+# roll なしで発火、handoff 成功時に消費)。off にすると prompt の申告指示と state
+# 書き込みを止める (出力からの marker 剥がしは残す = Telegram に生 marker を流さない)。
+PROACTIVE_SELF_SCHEDULE_ENABLED_RAW = os.environ.get(
+    "PROACTIVE_SELF_SCHEDULE_ENABLED", "1").strip().lower()
+PROACTIVE_SELF_SCHEDULE_ENABLED = PROACTIVE_SELF_SCHEDULE_ENABLED_RAW in ("1", "true", "yes", "on")
+# 申告のクランプ幅 (時間)。下限は沈黙ゲート 4h より短くても害がない安全弁、上限は
+# 「相方が 3 日を超えて自主的に消える」を許さない天井 (それ以上の静けさは /snooze の領分)。
+PROACTIVE_SELF_SCHEDULE_MIN_HOURS = 1.0
+PROACTIVE_SELF_SCHEDULE_MAX_HOURS = 72.0
+
 LOG_DIR = Path.home() / "companion" / "logs"
 LOG_FILE = LOG_DIR / "bot.log"
 
@@ -685,6 +700,7 @@ def build_proactive_prompt(
     payload: dict,
     interest_topics: list[str] | None = None,
     now: datetime | None = None,
+    self_schedule: bool | None = None,
 ) -> str:
     """Compose the claude prompt for a proactive utterance from persona + seed.
 
@@ -696,6 +712,8 @@ def build_proactive_prompt(
     「今が何時か」を prompt に明示注入し、LLM が時間帯を推測 (= 夜固定の例文に
     引っ張られる) のを根から断つ。now を渡さない呼び出し (一部 unit-test) では
     時刻文を省くだけで、フォールバック分岐や file IO は作らない (純関数性を維持)。
+    self_schedule は次回発話タイミングの自己申告指示 (チケット #92) を結びに足すか。
+    None なら module 定数 PROACTIVE_SELF_SCHEDULE_ENABLED に従う (テストでは明示可)。
 
     注入防止: prompt に展開してよいのは bounded/サニタイズ済みフィールドのみ
     (現状 vault_hint / dormant_hint = script 側で basename 化したノート名、
@@ -780,7 +798,47 @@ def build_proactive_prompt(
         "では、相方として軽く一言、話しかけて"
         " (話す材料が薄ければ、何も返さず黙って終えていい)。"
     )
+    # 次回発話タイミングの自己申告 (チケット #92)。marker は bot 側で剥がして state に
+    # 保存するので、ユーザーには届かない内部連絡。沈黙回でも申告だけは返せる
+    # (「今は黙るが次はこの頃話したい」が成立する)。
+    if self_schedule is None:
+        self_schedule = PROACTIVE_SELF_SCHEDULE_ENABLED
+    if self_schedule:
+        parts.append(
+            "最後に、次に自分から話したくなるのは何時間後くらいかを、"
+            "本文とは別の最終行に [[next: 12h]] の形式で 1 行だけ添える"
+            " (数字は 1〜72 時間。数時間後にまた話したければ小さく、"
+            "しばらく黙っていたければ大きく、自分の気分で決めていい)。"
+            "この行は内部連絡でユーザーには届かない。"
+            "本文を出さず黙って終える回も、この 1 行だけは添えてよい。"
+        )
     return "\n".join(parts)
+
+
+# 次回発話タイミング自己申告の marker (チケット #92)。出力の最終非空行のみを見る
+# (全文走査しない = どこかに紛れた偶然の一致を拾わない、判定は 1 回で確定)。
+# IGNORECASE は LLM の大文字揺れ ([[Next: 12h]] 等) が本文として Telegram に漏れる
+# のを防ぐ (「内部連絡でユーザーに届かない」の破れ道を塞ぐ、code-reviewer 指摘)。
+_NEXT_SELF_RE = re.compile(r"^\[\[next:\s*([0-9]+(?:\.[0-9]+)?)\s*h\]\]$", re.IGNORECASE)
+
+
+def split_next_self_hours(output: str) -> tuple[str, float | None]:
+    """claude 出力から自己申告 marker 行を分離する。Pure function → unit-testable。
+
+    最終非空行が ``[[next: <N>h]]`` 形式ならその行を取り除いた本文と時間数を返す。
+    marker が無い / 最終非空行以外にある / 形式不一致なら (出力そのまま, None)。
+    クランプや state 書き込みは呼び出し側 (_run_proactive) の責務 (ここは分離のみ)。
+    """
+    lines = output.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i].strip()
+        if not line:
+            continue
+        m = _NEXT_SELF_RE.match(line)
+        if not m:
+            return output, None
+        return "\n".join(lines[:i]).rstrip(), float(m.group(1))
+    return output, None
 
 
 def is_snoozed(now_epoch: float | None = None) -> bool:
@@ -815,10 +873,10 @@ def _read_state_value(path: Path, key: str) -> str | None:
     return None
 
 
-def write_snooze_until(until_epoch: int, path: Path | None = None) -> None:
-    """Persist ``snooze_until`` while preserving the other state lines.
+def _write_state_values(updates: dict[str, str], path: Path | None = None) -> None:
+    """Persist key=value updates while preserving the other state lines.
 
-    state file は key=value 行形式 (script と共有)。snooze_until 以外の既存行
+    state file は key=value 行形式 (script と共有)。updates 以外の既存行
     (proactive_fire_epochs / last_dormant_date 等) は残す (総なめ保持)。path
     未指定時は呼び出し時点の PROACTIVE_STATE_FILE を解決する (テストでの差し替えを
     効かせるため)。
@@ -837,12 +895,26 @@ def write_snooze_until(until_epoch: int, path: Path | None = None) -> None:
                 existing[k] = v
     except FileNotFoundError:
         pass
-    existing["snooze_until"] = str(until_epoch)
+    existing.update(updates)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as f:
         for k, v in existing.items():
             f.write(f"{k}={v}\n")
     os.replace(tmp, path)
+
+
+def write_snooze_until(until_epoch: int, path: Path | None = None) -> None:
+    """/snooze の snooze_until を書く (他キー総なめ保持、_write_state_values 委譲)。"""
+    _write_state_values({"snooze_until": str(until_epoch)}, path)
+
+
+def write_next_self_at(epoch: int, path: Path | None = None) -> None:
+    """自己申告の next_self_at を書く (チケット #92、他キー総なめ保持)。
+
+    script (proactive-companion.sh) 側が step7 でこのキーを 1 回引いて確率ロールを
+    置換し、handoff 成功時の書き戻しで消費する (bot 側は書くだけ、消さない)。
+    """
+    _write_state_values({"next_self_at": str(int(epoch))}, path)
 
 
 def cmd_snooze(args: list[str], now_epoch: float | None = None) -> str:
@@ -2856,6 +2928,24 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     prompt = build_proactive_prompt(payload, interest_topics=interest_topics, now=now)
     # run_claude は guard を通り、#chat の session を resume して claude を起動する。
     output = await run_claude(prompt, chat_id, thread_id)
+    # 次回発話タイミングの自己申告 (チケット #92)。marker 剥がしは toggle 非依存で
+    # 常に行う (--resume 履歴の自己強化で off 後も marker が出る回に生 marker を
+    # Telegram へ流さない)。state 書き込みだけを toggle で止める。申告は本文より
+    # 先に分離する = 本文なし + 申告のみの回 (「今は黙るが次はこの頃」) も成立し、
+    # そのまま既存 empty_output skip に落ちる。書き込み失敗は本体を道連れにしない
+    # (次回は script 側が従来の確率パスへ倒れるだけ = 安全側)。
+    next_self_hours = None
+    if output:
+        output, next_self_hours = split_next_self_hours(output)
+    if PROACTIVE_SELF_SCHEDULE_ENABLED and next_self_hours is not None:
+        next_self_hours = min(
+            max(next_self_hours, PROACTIVE_SELF_SCHEDULE_MIN_HOURS),
+            PROACTIVE_SELF_SCHEDULE_MAX_HOURS,
+        )
+        try:
+            write_next_self_at(int(now.timestamp() + next_self_hours * 3600))
+        except OSError as e:
+            logger.warning("proactive next_self_at write failed: %s", e)
     if not output or not output.strip():
         # 空出力 = claude の沈黙権行使 (チケット #91、prompt で許可済み) または
         # エラー時の空文字。どちらも「送らない」の 1 状態に倒す (切り分けは bot.log の
@@ -2865,7 +2955,10 @@ async def _run_proactive(app: Application, payload: dict) -> None:
         # (週カウントは送信数上限でなく発火試行の総量管理。沈黙分だけ発話が減る方向 =
         # 安全側。bot→script の払い戻し書き込みは state 競合と連続発火 race を生むので作らない)。
         logger.info("proactive skip: empty claude output")
-        _append_proactive_ledger({**base, "sent": False, "reason": "empty_output"})
+        _append_proactive_ledger({
+            **base, "sent": False, "reason": "empty_output",
+            "next_self_hours": next_self_hours,
+        })
         return
 
     await send_text(app.bot, chat_id, thread_id, output, disable_notification=True)
@@ -2884,6 +2977,7 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     )
     _append_proactive_ledger({
         **base, "sent": True, "reason": "ok", "output_len": len(output),
+        "next_self_hours": next_self_hours,
         "voice": voice_state,
         "guard_kind": budget_guard.summary(datetime.now(quota.JST)).guard_kind,
     })
