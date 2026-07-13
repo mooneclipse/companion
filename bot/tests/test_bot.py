@@ -1021,6 +1021,9 @@ class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(rec["sent"])
         self.assertEqual(rec["next_self_hours"], 8.0)
+        # 申告の判断が思考ログの観察行にも残る (内省の写し、正は ledger)
+        thoughts = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8")
+        self.assertIn("約 8 時間後と申告した", thoughts)
 
     async def test_marker_only_output_saves_schedule_and_skips_send(self) -> None:
         # 「今は黙るが次はこの頃」: 本文なしでも申告は保存され、送信はしない。
@@ -1045,6 +1048,10 @@ class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(send.await_args.args[3], "marker なしの一言。")
         self.assertIsNone(rec["next_self_hours"])
         self.assertIsNone(self._state_next_self_at())
+        # 申告なしの回は思考ログの観察行にも申告文言を足さない
+        thoughts = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8")
+        self.assertIn("自発発話を一言かけた", thoughts)
+        self.assertNotIn("申告した", thoughts)
 
     async def test_toggle_off_strips_marker_but_skips_state(self) -> None:
         # off でも生 marker を Telegram に流さない (剥がしは維持)、state は書かない。
@@ -1052,6 +1059,9 @@ class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
         send, rec, now = await self._run_talk("一言。\n[[next: 8h]]")
         self.assertEqual(send.await_args.args[3], "一言。")
         self.assertIsNone(self._state_next_self_at())
+        # off でも申告事実は ledger 同様に思考ログへ残る (写し原則、clamp なし生値)
+        thoughts = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8")
+        self.assertIn("申告した", thoughts)
 
 
 class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):

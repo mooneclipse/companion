@@ -199,6 +199,7 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 - **script のテスト容易性**: パス定数 7 個 (STATE_FILE / LOG / SOCK / SESSIONS_DIR / VAULT_NOTES_DIR / MORNING_REPORT / INTERESTS_INDEX / BOT_DIR) を env override 可に (本番は未設定 = 既定パス不変)。sandbox ドライラン 6 ケース (future skip / due roll なし発火 / キー無し確率パス / P=0 確率 skip / 実 Unix socket handoff で消費 + 他キー保持 + payload 到達 / ゴミ値 fallback) 全 PASS
 - **検証**: `SplitNextSelfHoursTest` 9 件 / `ProactiveSelfScheduleTest` 5 件 (marker 剥がし送信・沈黙+申告・クランプ・off 境界) / prompt toggle 1 件 / `write_next_self_at` 総なめ保持 1 件を追加、`venv/bin/python -m unittest discover -s tests` 319→335 件全 PASS。code-reviewer 修正必須なし (軽微 2 件 = IGNORECASE + ledger 注記、本エントリまでに反映済み)
 - **反映**: service restart 実施済み (2026-07-13 12:32:26、ActiveState=active・新 MainPID 406757・journal クリーン) = 本番投入済み。script 側は timer 発火ごとに新版を読むため restart 不要。以後の観察点: proactive_ledger の `next_self_hours` 出現率 (申告の定着度) と proactive-companion.log の `self-schedule not due` / `eff_p=self-schedule` 行
+- **フォローアップ (同日、OWNER 依頼)**: 申告の判断を思考ログ (companion_thoughts.jsonl) の観察行にも残す — `record_proactive_interest` に `next_self_hours` を渡し「次に話したくなるのは約 N 時間後と申告した」を既存の観察 1 行に連結 (resume 時に自分のリズムを読み返せる材料。構造化データの正は ledger、思考ログは内省の写し)。沈黙回 (empty_output) は record 非到達 = 従来どおり index/思考ログとも非記録 (申告は ledger と state にのみ残る)。toggle off 時は clamp なし生値が写る非対称は ledger と同挙動で許容 (テストで固定、code-reviewer 軽微指摘)。335 tests pass、restart 済み
 
 ### proactive talk モードに沈黙権 (2026-07-13、ticket #91)
 

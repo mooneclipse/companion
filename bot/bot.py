@@ -1094,12 +1094,17 @@ def build_interest_context(now: datetime) -> list[str]:
     return [t.get("topic") for t in threads if isinstance(t.get("topic"), str)]
 
 
-def record_proactive_interest(payload: dict, now: datetime) -> None:
+def record_proactive_interest(
+    payload: dict, now: datetime, next_self_hours: float | None = None,
+) -> None:
     """送信確定後に関心 index と思考ログを更新する (実活動起点の seeding)。
 
     load → decay → touch_thread → save を 1 回で確定する (state を持つ側を 1 回
     引いて決める設計、条件分岐の積み増しをしない)。あわせて思考ログに実活動の
     機械的な観察を 1 行残す (感情・趣味は書かない)。
+    next_self_hours は次回発話タイミングの自己申告 (チケット #92)。申告した回は
+    その判断も観察として同じ 1 行に残す (resume 時に自分のリズムを読み返せる材料。
+    構造化データの正は proactive_ledger の next_self_hours、ここは内省の写しのみ)。
     """
     topic = _proactive_topic_from_payload(payload)
     seed_kind = payload.get("seed_kind", "unknown")
@@ -1107,11 +1112,10 @@ def record_proactive_interest(payload: dict, now: datetime) -> None:
     data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
     data = interests.touch_thread(data, topic, source=str(seed_kind), now=now)
     interests.save_interests(INTERESTS_INDEX_PATH, data)
-    interests.append_thought(
-        THOUGHTS_LOG_PATH,
-        f"{seed_kind} の種で自発発話を一言かけた (topic={topic})",
-        now,
-    )
+    observation = f"{seed_kind} の種で自発発話を一言かけた (topic={topic})"
+    if next_self_hours is not None:
+        observation += f"。次に話したくなるのは約 {next_self_hours:g} 時間後と申告した"
+    interests.append_thought(THOUGHTS_LOG_PATH, observation, now)
 
 
 # ---------------------------------------------------------------------------
@@ -2969,7 +2973,7 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     # 送信が確定した実活動なので、その種から関心 index を更新し思考ログに観察を残す
     # (機構 1 の seeding、実活動起点のみ)。記録失敗は proactive 本体を道連れにしない。
     try:
-        record_proactive_interest(payload, now)
+        record_proactive_interest(payload, now, next_self_hours=next_self_hours)
     except OSError as e:
         logger.warning("proactive interest record failed: %s", e)
     logger.info(
