@@ -20,6 +20,7 @@ CLI(claude セッション用):
   python3 tickets.py edit <id> <text>             # テキスト更新
   python3 tickets.py start <id>                   # 着手中(doing)に
   python3 tickets.py done <id>                    # 完了(done、一覧から外れる)
+  python3 tickets.py --help                       # この usage (どの位置の -h/--help でも起票しない)
 """
 import contextlib
 import fcntl
@@ -186,6 +187,11 @@ _BY_MARK = {"user": "🙋", "ai": "🤖"}
 _ST_MARK = {"todo": "未着手", "doing": "着手中", "done": "完了"}
 
 
+def _usage():
+    # docstring 1 行目の「+ CLI。」でなく "CLI(claude セッション用):" 以降を抜く。
+    return "CLI(" + __doc__.split("CLI(", 1)[-1]
+
+
 def _fmt(t):
     return "#%d [%s] %s %s" % (
         t.get("id", 0), _ST_MARK.get(t.get("status"), "?"),
@@ -193,14 +199,23 @@ def _fmt(t):
 
 
 def _parse_add(rest):
-    """add の引数を (text, by) に。--by <val> を抜き、残りを text に連結。"""
+    """add の引数を (text, by) に。--by <val> を抜き、残りを text に連結。
+
+    --by 以外の -- 始まりトークンは本文に混ぜず reject する (`add --help` が
+    本文「--help」で誤起票される事故の再発防止)。本文の途中に -- 始まりの語を
+    書くのは可 (トークン先頭のみ判定)。
+    """
     by = "user"
     words = []
     i = 0
     while i < len(rest):
-        if rest[i] == "--by" and i + 1 < len(rest):
+        if rest[i] == "--by":
+            if i + 1 >= len(rest):
+                raise TicketError("--by requires a value (user|ai)")
             by = rest[i + 1]
             i += 2
+        elif rest[i].startswith("--"):
+            raise TicketError("unknown option: %s" % rest[i])
         else:
             words.append(rest[i])
             i += 1
@@ -210,6 +225,11 @@ def _parse_add(rest):
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
     rest = argv[2:]
+    # help はどの位置でも usage 表示のみ (subcommand の引数に流さない)。
+    # add --help が本文「--help」で誤起票された実害の再発防止。
+    if cmd in ("help", "-h", "--help") or "-h" in rest or "--help" in rest:
+        print(_usage(), end="")
+        return 0
     try:
         if cmd == "add":
             text, by = _parse_add(rest)
@@ -239,7 +259,7 @@ def main(argv):
         elif cmd == "done":
             print(_fmt(set_status(int(rest[0]), "done")))
         else:
-            sys.stderr.write(__doc__.split("CLI", 1)[-1])
+            sys.stderr.write(_usage())
             return 2
     except (TicketError, ValueError, IndexError) as e:
         sys.stderr.write("error: %s\n" % e)

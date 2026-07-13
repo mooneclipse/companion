@@ -5,6 +5,8 @@
 flock 下の並行 add 衝突なし を検証する。tmpdir に tickets の path 定数を
 差し替えて隔離する。実行: cd remote && python3 -m unittest discover -s tests
 """
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -177,6 +179,60 @@ class TestQueries(TicketsTestBase):
         tickets.add("a")
         tickets.set_status(1, "doing")
         self.assertEqual(tickets.history(), {"tickets": []})
+
+
+class TestParseAdd(unittest.TestCase):
+    # CLI 引数パース (純関数)。--help 誤起票の再発防止ガードを含む。
+    def test_by_extracted(self):
+        self.assertEqual(tickets._parse_add(["x", "--by", "ai"]), ("x", "ai"))
+
+    def test_plain_text_joined(self):
+        self.assertEqual(tickets._parse_add(["a", "b"]), ("a b", "user"))
+
+    def test_reject_unknown_option(self):
+        with self.assertRaises(tickets.TicketError):
+            tickets._parse_add(["--help"])
+
+    def test_reject_unknown_option_after_text(self):
+        with self.assertRaises(tickets.TicketError):
+            tickets._parse_add(["text", "--all"])
+
+    def test_reject_by_without_value(self):
+        with self.assertRaises(tickets.TicketError):
+            tickets._parse_add(["text", "--by"])
+
+    def test_dashes_inside_token_allowed(self):
+        # トークン先頭のみ判定。本文中の -- は quoted 1 引数なら通る。
+        self.assertEqual(tickets._parse_add(["claude の --bare を検証"]),
+                         ("claude の --bare を検証", "user"))
+
+
+class TestMainHelp(TicketsTestBase):
+    # -h/--help はどの位置でも usage 表示のみで state に触らない。
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = tickets.main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_add_help_files_nothing(self):
+        rc, out, _ = self._run(["tickets.py", "add", "--help"])
+        self.assertEqual(rc, 0)
+        self.assertIn("tickets.py add", out)
+        self.assertEqual(tickets.all_tickets(), [])
+
+    def test_top_level_help(self):
+        for argv in (["tickets.py", "--help"], ["tickets.py", "-h"], ["tickets.py", "help"]):
+            with self.subTest(argv=argv):
+                rc, out, _ = self._run(argv)
+                self.assertEqual(rc, 0)
+                self.assertIn("tickets.py add", out)
+
+    def test_add_unknown_option_files_nothing(self):
+        rc, _, err = self._run(["tickets.py", "add", "text", "--nope"])
+        self.assertEqual(rc, 2)
+        self.assertIn("unknown option", err)
+        self.assertEqual(tickets.all_tickets(), [])
 
 
 class TestConcurrency(TicketsTestBase):
