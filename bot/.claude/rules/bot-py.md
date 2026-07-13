@@ -34,6 +34,11 @@ paths:
 - state は `sessions/memo_state.json`（message_id→ファイル対応、bot が保存したメッセージのみ削除・同期対象）。cleanup の書き戻しは**再ロードして処理済み key のみ pop**（job は並行タスク、丸ごと save は lost-update）。
 - cleanup は突合型: 48h 超で `delete_message`、失敗は次周期再試行、7 日超は purge 打ち切り（saved_at だけで確定、失敗文言マッチ分岐を作らない）。edited_message を受けるのは `on_memo_edited` のみ（他 topic の編集は従来どおり無視、§4.5 の例外はこの 1 点に限る）。
 
+## `/remind`（単発タイマー）
+- claude 非経由の bot 内完結タイマー。`30m` / `1h30m` 等（d/h/m/s、上限 `MAX_REMIND_SECONDS`=7 日）、`list` / `cancel <番号>` サブコマンドあり。
+- state は `sessions/reminders.json`（tmp 書き → `os.replace` の atomic 保存）。発火は `job_queue.run_once`、再起動時は起動処理で未発火分を再スケジュール（期限切れは掃除）。
+- proactive の remind 分岐（週次振り返り、claude 経由）とは別物。混同しない。
+
 ## proactive 3 分岐（investigate / ticket / remind）
 - 各 env スイッチ `PROACTIVE_*_ENABLED`（既定 1）+ `PROACTIVE_*_INTERVAL_DAYS`（既定 7）。毎回新規 ephemeral session（resume なし）で `#chat` セッションを汚さない。budget gate 必須。
 - **境界はプロンプトで強制**（bot-workspace settings は変えない）: investigate は vault `notes/` 新規生成のみ（既存/手書きノート上書き禁止）。ticket は `tickets.py add --by ai` 1 件のみ（OWNER 分は不可触、list/show は読み取り）。remind は read-only（tickets list/show のみ、起票・編集なし）。
