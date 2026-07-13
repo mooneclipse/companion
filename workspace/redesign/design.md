@@ -132,6 +132,7 @@ S1〜S5 全シナリオ実機検証済:
 
 - 2026-05-14 T-0 (CLI 2.1.141): S1-S5 全シナリオ pass、design.md 表 (2.1.138) と完全一致、`--bare` オプトインのまま (bot/docs/STATUS.md 2026-05-14 T-0 entry 参照)
 - 2026-05-20 軸 5 M-7 (CLI 2.1.145): S1-S5 全シナリオ pass、design.md 表 + 5/14 T-0 と完全一致、`--bare` オプトインのまま継続。S5 stdout に `ttft_ms` (time to first token) 新規追加観察、ClaudeResult dataclass (§3.1 既存 7 項目) は十分 (bot/docs/STATUS.md 2026-05-20 軸 5 entry 参照)
+- 2026-07-13 ticket #86 (CLI 2.1.207): S1-S5 全シナリオ pass、過去 3 版と完全一致、`--bare` オプトインのまま継続。S5 stdout に `time_to_request_ms` / `ttft_stream_ms` 新規追加観察、encoded-cwd 不変 + projects/<encoded-cwd>/ に `memory/` サブディレクトリ新規作成を観察 (jsonl 非干渉)。`/usage` headless は $0 / num_turns 0 維持だがコールド 1 発目 15s timeout あり (bot/docs/STATUS.md 2026-07-13 #86 entry 参照)
 - 次回 CLI up 検出時は同様に S1-S5 再走 + STATUS.md 追記、design.md §1.5 タイトル「(claude 2.1.138)」の version pin は表本体の確定値、追加版での pass 結果は本 sub-section に追記する形で管理
 
 ### 1.6 環境変数強制 (researcher P3 + devil W6 採用)
