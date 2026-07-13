@@ -330,6 +330,9 @@ PERSONA_SYSTEM_PROMPT = (
 # prompt 側に常駐するため、ここでは重複定義しない (矛盾する二重定義を残さない)。
 # 自発発話は沈黙 6h+ で発火する設計なので、直近の会話は既に完結したものとして
 # 扱わせる (「流れにつながる一言を」と指示すると終わった会話を蒸し返す)。
+# 沈黙権 (チケット #91): ticket/remind の「実体が無ければ何も返さない」と対称に、
+# talk も話す材料が薄ければ空を返して黙ってよい (§F でっち上げ禁止の延長)。
+# 空出力は _run_proactive の既存 empty_output skip 経路が受ける (新分岐なし)。
 PROACTIVE_SCENE_PROMPT = (
     "今はユーザーから話しかけられたのではなく、しばらく会話が途切れていたので"
     "あなたの方からふらっと一言声をかける場面。"
@@ -337,6 +340,8 @@ PROACTIVE_SCENE_PROMPT = (
     "「元気?」「何してる?」のような中身のない問いかけや、"
     "「寂しい」「行かないで」のような情緒で引き止める言い回しは絶対に使わない。"
     "時間帯や今日の話題ヒントに合う、新しい角度の軽い一言を 1〜2 文の短さで送る。"
+    "ただし、ヒントを見ても話す材料が薄い・新しい角度が出ないと感じたら、"
+    "無理に話題をでっち上げず、何も出力せず空のまま終えてよい (黙るのも相方の選択肢)。"
     "前置きや自己説明はせず、本文だけを返す。"
 )
 
@@ -771,7 +776,10 @@ def build_proactive_prompt(
             f" (ノート名): {dormant_hint}。"
             "「昔これ気にしてたね」くらいの軽い再会のさせ方で一言。無理に深掘りしない。"
         )
-    parts.append("では、相方として軽く一言、話しかけて。")
+    parts.append(
+        "では、相方として軽く一言、話しかけて"
+        " (話す材料が薄ければ、何も返さず黙って終えていい)。"
+    )
     return "\n".join(parts)
 
 
@@ -2849,6 +2857,13 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     # run_claude は guard を通り、#chat の session を resume して claude を起動する。
     output = await run_claude(prompt, chat_id, thread_id)
     if not output or not output.strip():
+        # 空出力 = claude の沈黙権行使 (チケット #91、prompt で許可済み) または
+        # エラー時の空文字。どちらも「送らない」の 1 状態に倒す (切り分けは bot.log の
+        # run_claude 側ログで可能、ledger に分類 enum を増やさない)。script 側週カウント
+        # (proactive_fire_epochs) は socket handoff 時に消費済みで戻さない — investigate/
+        # ticket/remind の「claude 起動を決めた時点で interval 消費、成否問わず」と同思想
+        # (週カウントは送信数上限でなく発火試行の総量管理。沈黙分だけ発話が減る方向 =
+        # 安全側。bot→script の払い戻し書き込みは state 競合と連続発火 race を生むので作らない)。
         logger.info("proactive skip: empty claude output")
         _append_proactive_ledger({**base, "sent": False, "reason": "empty_output"})
         return

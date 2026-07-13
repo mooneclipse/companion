@@ -455,6 +455,14 @@ class BuildProactivePromptTest(unittest.TestCase):
         # 中身のない問いかけ / 引き止めを禁じる指示が prompt に乗ること
         self.assertIn("情緒で引き止める", prompt)
 
+    def test_silence_option_always_present(self) -> None:
+        # 沈黙権 (チケット #91): 話す材料が薄ければ空を返して黙ってよい指示が
+        # 場面指示と結び行の両方に乗ること (ticket/remind の「実体が無ければ
+        # 何も返さない」と対称。空出力は _run_proactive の empty_output skip が受ける)。
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertIn("何も出力せず空のまま終えてよい", prompt)
+        self.assertIn("何も返さず黙って終えていい", prompt)
+
     def test_tone_definition_not_duplicated(self) -> None:
         # 口調定義は PERSONA_SYSTEM_PROMPT (system prompt 側) に常駐するため、
         # proactive prompt 側に二重定義を残さない
