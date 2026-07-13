@@ -374,6 +374,20 @@ PROACTIVE_THOUGHT_INSTRUCTION = (
     "本文を出さず黙って終える回も、この 1 行だけは添えてよい。"
 )
 
+# investigate 分岐専用の派生関心自己登録指示 (チケット #96)。§F (でっち上げ禁止) の
+# 1 例外 = 「実際にやった調査の中で派生した関心」だけは実活動由来と見なして index への
+# 登録を認める (OWNER 2026-07-13 線引き承認)。出どころ (調べたノート名/URL) を marker 内
+# フィールドで必須にし、欠けた marker は bot 側で非マッチ = 登録しない (捏造との区別を
+# 形式で強制)。ticket/remind は調査をしないので対象外 (例外を 1 分岐に閉じる)。
+PROACTIVE_DERIVED_INTEREST_INSTRUCTION = (
+    "また、今回の調査の中で派生して気になった別の話題 (調べていて実際に引っかかったもの)"
+    " が 1 つだけあれば、本文とは別の行 ([[thought: ...]] の行より前) に"
+    " [[interest: 話題 | 出どころ]] の形式で 1 行だけ添えてよい"
+    " (出どころ = その話題が引っかかった実際のノート名か URL。"
+    "調査で実際に出てこなかった話題をでっち上げて書かない。無ければこの行は書かない)。"
+    "この行も内部連絡でユーザーには届かない。\n"
+)
+
 # 自律ループ「動く」分岐の調査指示 (persona 軸 4 拡張 (3))。口調・性格は
 # PERSONA_SYSTEM_PROMPT が system prompt 側に常駐するため、ここでは作業手順のみ。
 # {{TOPIC}} には関心 index から選んだ実トピック (実活動由来の topic) を埋める
@@ -398,6 +412,7 @@ PROACTIVE_INVESTIGATE_PROMPT = (
     "    「○○調べといた」式のさらっとした事後報告にする。前置き・自己説明・"
     "ノート全文の貼り付けはしない。報告本文だけを返す (ノートに何を書いたかの"
     "演技や『メモにこう書いた』式の語りもしない)。\n"
+    + PROACTIVE_DERIVED_INTEREST_INSTRUCTION
     + PROACTIVE_THOUGHT_INSTRUCTION
 )
 
@@ -887,6 +902,55 @@ def split_thought(output: str) -> tuple[str, str | None]:
     return output, None
 
 
+# investigate 分岐の派生関心 marker (チケット #96)。topic と出どころ (ノート名/URL) の
+# 2 フィールドを `|` 区切りで必須にする — 出どころ欠落 ([[interest: foo]]) は非マッチ =
+# 登録しない (§F 側に倒す fail-closed。#92/#93 の malformed marker と同じく「そのまま
+# 残す」挙動)。IGNORECASE は #92/#93 と同理由 (大文字揺れの本文漏れ防止)。各 capture は
+# 先頭も非空白かつ区切り文字 (topic: `|`/`]`、origin: `]`) を除外 = 空白のみのフィールドを
+# 誤認せず、先頭 1 文字だけ区切り制約を抜ける穴も塞ぐ (code-reviewer 指摘)。
+_INTEREST_RE = re.compile(
+    r"^\[\[interest:\s*([^|\]\s][^|\]]*?)\s*\|\s*([^\]\s][^\]]*?)\s*\]\]$", re.IGNORECASE
+)
+
+
+def split_investigate_markers(
+    output: str,
+) -> tuple[str, str | None, tuple[str, str] | None]:
+    """investigate 出力から末尾の marker 行群を分離する。Pure function → unit-testable。
+
+    末尾の非空行から順に [[thought: ...]] / [[interest: 話題 | 出どころ]] のいずれかに
+    一致する行を剥がしていき、一致しない行に当たった時点で止める (本文中に紛れた偶然の
+    一致は拾わない = #92/#93 の「最終非空行のみ」の 2 marker 一般化)。順不同を許すのは
+    LLM が指示した並び ([[interest]] が先) を守らなくても marker 行を Telegram 本文に
+    漏らさないため。同種 marker が複数あれば末尾に近いものを採用 (残りは剥がすだけ)。
+    戻り値は (本文, thought, (派生topic, 出どころ) | None)。index への登録は呼び出し側
+    (record_investigate 経由) の責務 (ここは分離のみ)。
+    """
+    lines = output.splitlines()
+    thought: str | None = None
+    interest: tuple[str, str] | None = None
+    i = len(lines) - 1
+    while i >= 0:
+        line = lines[i].strip()
+        if not line:
+            i -= 1
+            continue
+        m = _THOUGHT_RE.match(line)
+        if m:
+            if thought is None:
+                thought = m.group(1)
+            i -= 1
+            continue
+        m = _INTEREST_RE.match(line)
+        if m:
+            if interest is None:
+                interest = (m.group(1), m.group(2))
+            i -= 1
+            continue
+        break
+    return "\n".join(lines[: i + 1]).rstrip(), thought, interest
+
+
 def is_snoozed(now_epoch: float | None = None) -> bool:
     """Return True if proactive messaging is currently snoozed.
 
@@ -1192,9 +1256,11 @@ def decide_investigate(now: datetime) -> str | None:
 def build_investigate_prompt(topic: str) -> str:
     """調査 claude に渡す prompt を組む (純関数)。topic は関心 index の実トピック。
 
-    topic は index 由来 = 種 (vault_hint/dormant_hint basename or 過去の実活動)
-    のみが入る bounded な文字列。捏造トピックは入らない (should_investigate が
-    recent_conversation を弾く)。多段ツール使用 + notes 新規作成 + 1〜3 行報告を指示。
+    topic は index 由来 = 種 (vault_hint/dormant_hint basename or 過去の実活動) か
+    調査中に派生した関心 (チケット #96、claude 産だが出どころ必須の実調査由来) のみが
+    入る bounded な文字列。実体のない捏造トピックは入らない (should_investigate が
+    recent_conversation を弾き、派生関心は出どころ必須で登録済みのもののみ)。
+    多段ツール使用 + notes 新規作成 + 1〜3 行報告を指示。
     """
     return PROACTIVE_INVESTIGATE_PROMPT.replace("{{TOPIC}}", topic)
 
@@ -1239,7 +1305,10 @@ async def run_investigate(topic: str, now: datetime) -> str:
     return body or ""
 
 
-def record_investigate(topic: str, now: datetime, thought: str | None = None) -> None:
+def record_investigate(
+    topic: str, now: datetime, thought: str | None = None,
+    derived: tuple[str, str] | None = None,
+) -> None:
     """investigate 回の関心 index と思考ログを更新する (load → decay → touch → save)。
 
     対象スレッドを state="researched" で touch (last_touched 更新 + 二度調査回避) し、
@@ -1250,18 +1319,32 @@ def record_investigate(topic: str, now: datetime, thought: str | None = None) ->
     事実 anchor) に「。」で連結する = 出どころが行内に残り §F と両立。構造化スキーマ
     (timestamp + observation) は不変。
 
+    derived は調査中に派生した関心 (チケット #96、(topic, 出どころ) の 2 要素)。§F の
+    1 例外として index に source="derived" + origin=出どころ で登録する (出どころ必須は
+    marker 形式で強制済み)。derived touch を researched touch より**先**に適用する =
+    派生 topic が調査対象と同一でも最終 state は researched が勝ち、同一 topic を
+    調べ続ける再活性化ループを条件分岐なしで構造的に防ぐ。増殖抑制は 1 発火 1 件 +
+    既存 MAX_THREADS 押し出し + 既存 decay のみ (新しい上限機構は足さない)。
+
     last_investigate の更新は claude 起動を決めた時点で確定する設計 (interval を
     成否に関わらず消費 = 場当たりリトライを作らない、dormant の handoff 消費と同思想)。
     呼び出し側が claude 起動後に必ず 1 回呼ぶ。
     """
     data = interests.load_interests(INTERESTS_INDEX_PATH)
     data = interests.decay(data, now, PROACTIVE_INTEREST_TTL_DAYS)
+    if derived is not None:
+        derived_topic, derived_origin = derived
+        data = interests.touch_thread(
+            data, derived_topic, source="derived", now=now, origin=derived_origin
+        )
     # source は元スレッドの値を保てないが touch は topic 一致で last_touched/state を
     # 更新するだけ (source は引数必須なので "investigation" を入れる = 実活動の出どころ)。
     data = interests.touch_thread(data, topic, source="investigation", now=now, state="researched")
     data = {**data, "last_investigate": now.isoformat()}
     interests.save_interests(INTERESTS_INDEX_PATH, data)
     observation = f"{topic} について調べて notes に書いた"
+    if derived is not None:
+        observation += f"。調べる中で {derived[0]} が引っかかった (出どころ: {derived[1]})"
     if thought:
         observation += f"。{thought}"
     interests.append_thought(THOUGHTS_LOG_PATH, observation, now)
@@ -3062,15 +3145,16 @@ async def _run_proactive_investigate(
     ibase = {**base, "mode": "investigate", "investigate_topic": topic}
 
     output = await run_investigate(topic, now)
-    # 思考自由記述 marker を本文から分離する (チケット #93)。以降の empty 判定・送信・
-    # output_len は分離後の本文で行う (marker 行は Telegram に流さない)。skip return より
-    # 先に record を呼ぶので、本文空 + thought のみの沈黙回でも thought は思考ログに残る。
-    output, thought = split_thought(output)
+    # 思考自由記述 (#93) + 派生関心 (#96) の marker を本文から分離する。以降の empty
+    # 判定・送信・output_len は分離後の本文で行う (marker 行は Telegram に流さない)。
+    # skip return より先に record を呼ぶので、本文空 + marker のみの沈黙回でも
+    # thought / 派生関心は記録される。
+    output, thought, derived = split_investigate_markers(output)
 
     # interval / 二度調査回避の state を消費する (claude を起動した時点で確定)。
     # 記録失敗は本体を道連れにしない (index は次回 due として再挑戦になるだけ)。
     try:
-        record_investigate(topic, now, thought=thought)
+        record_investigate(topic, now, thought=thought, derived=derived)
     except OSError as e:
         logger.warning("investigate interest record failed: %s", e)
 

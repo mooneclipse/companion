@@ -95,6 +95,29 @@ class TouchThreadTest(unittest.TestCase):
         self.assertEqual(t["state"], "warm")
         self.assertEqual(t["last_touched"], _now().isoformat())
 
+    def test_origin_set_on_new_thread(self) -> None:
+        # チケット #96: origin (派生関心の出どころ) は非 None のときだけキーを立てる。
+        out = interests.touch_thread(
+            {"threads": []}, "topicA", "derived", _now(), origin="notes/2026-07-13_x.md"
+        )
+        self.assertEqual(out["threads"][0]["origin"], "notes/2026-07-13_x.md")
+
+    def test_origin_absent_by_default(self) -> None:
+        out = interests.touch_thread({"threads": []}, "topicA", "vault", _now())
+        self.assertNotIn("origin", out["threads"][0])
+
+    def test_origin_none_preserves_existing_origin(self) -> None:
+        # origin=None (既定) の後続 touch は既存 origin を保持する (来歴を消さない)。
+        data = interests.touch_thread(
+            {"threads": []}, "topicA", "derived", _now(), origin="notes/x.md"
+        )
+        out = interests.touch_thread(
+            data, "topicA", "investigation", _now(), state="researched"
+        )
+        t = out["threads"][0]
+        self.assertEqual(t["origin"], "notes/x.md")
+        self.assertEqual(t["state"], "researched")
+
     def test_caps_at_max_threads_drops_oldest(self) -> None:
         base = _now() - timedelta(days=10)
         threads = []

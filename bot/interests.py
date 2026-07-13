@@ -8,15 +8,21 @@ proactive_ledger.jsonl と同居) に 2 層で持つ:
 - 構造化 index (companion_interests.json): いま気になってる 3〜5 本のスレッド。
   各 = {topic, source, last_touched, state}。触らないと decay で消える
   (「自分の時間が流れてる」手触り)。
-- 私的思考ログ (companion_thoughts.jsonl): 実活動の機械的な観察を 1 行追記。
+- 私的思考ログ (companion_thoughts.jsonl): 実活動の機械観察 (事実 anchor) に
+  claude の自由記述 (今回やったことから思ったこと、チケット #93) を連結した 1 行を追記。
   感情日記にしない (でっち上げの内面を持たせない)。読まれない前提で書き、
   自発発話では一言だけ滲ませるだけ (全文ダンプ・演技なし = §F dark pattern 回避)。
 
 設計境界 (~/companion/CLAUDE.md 設計判断・対症療法の上限):
 - 判定は load した data 1 つに decay → touch を純関数適用 → save 1 回で確定する。
   条件分岐・リトライの積み増し (対症療法 2 周目) を作らない。
-- topic/source の出どころは実活動由来のみ。claude に新しい関心・感情・趣味を
-  捏造させない (このモジュールは記録専用、生成判断は持たない)。
+- topic/source の出どころは実活動由来が原則。claude に新しい関心・感情・趣味を
+  捏造させない (このモジュールは記録専用、生成判断は持たない)。例外は 1 つだけ
+  (チケット #96、OWNER 2026-07-13 線引き承認): 実際にやった調査の中で派生した
+  関心 (「○○を調べてたら△△が引っかかった」) は実活動由来と見なし、investigate
+  分岐からの登録を認める。その場合も出どころ (調べたノート名/URL) を origin
+  フィールドで必須記録して実体のない捏造と区別する。増殖は 1 発火 1 件 +
+  MAX_THREADS + 既存 decay で抑制 (新しい上限機構は足さない)。
 
 純関数 (load/touch_thread/decay/active_threads) は unit-test 対象。
 副作用は save_interests / append_thought の atomic / append のみ。
@@ -62,12 +68,18 @@ def save_interests(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def touch_thread(data: dict, topic: str, source: str, now: datetime, state: str = "active") -> dict:
+def touch_thread(
+    data: dict, topic: str, source: str, now: datetime, state: str = "active",
+    origin: str | None = None,
+) -> dict:
     """topic 一致スレッドを最新接触に更新、無ければ追加して返す (純関数、新 dict)。
 
     - topic が既存に一致 → last_touched=now、source/state を更新。
     - 無ければ追加。MAX_THREADS 超過時は last_touched が最古のものを落とす
       (「触らないと押し出される」= decay と同じ「自分の時間が流れる」手触り)。
+    origin は claude 産派生関心 (チケット #96) の出どころ (調べたノート名/URL)。
+    非 None のときだけ thread に origin キーを立てる/更新する (None は既存 origin を
+    保持 = 後続の seed touch が来歴を消さない)。
     入力 data は破壊しない (新しい dict を返す)。判定は呼び出し側で decay → touch
     の順に 1 回適用して save する前提。
     """
@@ -78,14 +90,19 @@ def touch_thread(data: dict, topic: str, source: str, now: datetime, state: str 
             t["source"] = source
             t["last_touched"] = now_iso
             t["state"] = state
+            if origin is not None:
+                t["origin"] = origin
             break
     else:
-        threads.append({
+        new_thread = {
             "topic": topic,
             "source": source,
             "last_touched": now_iso,
             "state": state,
-        })
+        }
+        if origin is not None:
+            new_thread["origin"] = origin
+        threads.append(new_thread)
     if len(threads) > MAX_THREADS:
         # 最古 (last_touched 昇順) を落とす。値欠落は最古扱い (空文字は ISO より小さい)。
         threads.sort(key=lambda t: t.get("last_touched") or "")

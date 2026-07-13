@@ -714,6 +714,136 @@ class SplitThoughtTest(unittest.TestCase):
         self.assertIsNone(thought)
 
 
+class SplitInvestigateMarkersTest(unittest.TestCase):
+    """investigate 出力末尾の marker 群の分離 (チケット #96、[[thought]] #93 との 2 marker 一般化)。
+
+    末尾の非空行から一致行を剥がし、非一致行で止める。順不同でも marker 行を
+    Telegram 本文に漏らさない。出どころ欠落の [[interest]] は非マッチ = 登録しない
+    (§F fail-closed、#92/#93 の malformed marker と同じ「そのまま残す」挙動)。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_thought_only_behaves_like_split_thought(self) -> None:
+        body, thought, interest = self.bot.split_investigate_markers(
+            "ディスクのこと調べといた。\n[[thought: 圧縮の仕組みが面白かった]]"
+        )
+        self.assertEqual(body, "ディスクのこと調べといた。")
+        self.assertEqual(thought, "圧縮の仕組みが面白かった")
+        self.assertIsNone(interest)
+
+    def test_interest_and_thought_in_instructed_order(self) -> None:
+        body, thought, interest = self.bot.split_investigate_markers(
+            "調べといた。\n"
+            "[[interest: zstd の辞書学習 | notes/2026-07-13_ren-research-disk.md]]\n"
+            "[[thought: 圧縮って奥が深い]]"
+        )
+        self.assertEqual(body, "調べといた。")
+        self.assertEqual(thought, "圧縮って奥が深い")
+        self.assertEqual(
+            interest, ("zstd の辞書学習", "notes/2026-07-13_ren-research-disk.md")
+        )
+
+    def test_swapped_marker_order_still_stripped(self) -> None:
+        # LLM が指示した並び ([[interest]] が先) を守らなくても本文に漏らさない。
+        body, thought, interest = self.bot.split_investigate_markers(
+            "調べといた。\n[[thought: ふむ]]\n[[interest: zstd | https://example.com/z]]"
+        )
+        self.assertEqual(body, "調べといた。")
+        self.assertEqual(thought, "ふむ")
+        self.assertEqual(interest, ("zstd", "https://example.com/z"))
+
+    def test_interest_without_origin_is_rejected(self) -> None:
+        # 出どころ欠落 = 非マッチ → 登録しない (捏造との区別を形式で強制)。
+        text = "調べといた。\n[[interest: zstd]]"
+        body, thought, interest = self.bot.split_investigate_markers(text)
+        self.assertEqual(body, text)
+        self.assertIsNone(interest)
+        self.assertIsNone(thought)
+
+    def test_whitespace_only_fields_rejected(self) -> None:
+        for bad in ("[[interest: | notes/x.md]]", "[[interest: zstd | ]]", "[[interest: | ]]"):
+            body, thought, interest = self.bot.split_investigate_markers(f"一言。\n{bad}")
+            self.assertEqual(body, f"一言。\n{bad}", msg=f"bad={bad!r}")
+            self.assertIsNone(interest, msg=f"bad={bad!r}")
+
+    def test_delimiter_at_field_head_rejected(self) -> None:
+        # 先頭 1 文字も区切り文字制約を受ける (topic 先頭 `|`、origin 先頭 `]` は
+        # 非マッチ = fail-closed、code-reviewer 指摘の穴埋め)。
+        for bad in ("[[interest: |a | notes/x.md]]", "[[interest: a | ]x]]"):
+            body, thought, interest = self.bot.split_investigate_markers(f"一言。\n{bad}")
+            self.assertEqual(body, f"一言。\n{bad}", msg=f"bad={bad!r}")
+            self.assertIsNone(interest, msg=f"bad={bad!r}")
+
+    def test_marker_only_silent_round(self) -> None:
+        # 本文なし + marker のみ = 沈黙回。本文は空で既存 empty skip に落ちるが、
+        # thought / 派生関心は record 経由で記録される (#93 と同じ受け皿)。
+        body, thought, interest = self.bot.split_investigate_markers(
+            "[[interest: zstd | notes/x.md]]\n[[thought: 静かな回]]"
+        )
+        self.assertEqual(body, "")
+        self.assertEqual(thought, "静かな回")
+        self.assertEqual(interest, ("zstd", "notes/x.md"))
+
+    def test_case_insensitive_marker(self) -> None:
+        body, _, interest = self.bot.split_investigate_markers(
+            "一言。\n[[Interest: zstd | notes/x.md]]"
+        )
+        self.assertEqual(body, "一言。")
+        self.assertEqual(interest, ("zstd", "notes/x.md"))
+
+    def test_duplicate_interest_markers_keep_nearest_to_end(self) -> None:
+        # 同種 marker 複数は末尾に近いものを採用、残りは剥がすだけ (本文に漏らさない)。
+        body, _, interest = self.bot.split_investigate_markers(
+            "一言。\n[[interest: 先 | notes/a.md]]\n[[interest: 後 | notes/b.md]]"
+        )
+        self.assertEqual(body, "一言。")
+        self.assertEqual(interest, ("後", "notes/b.md"))
+
+    def test_marker_mid_text_not_picked(self) -> None:
+        # 末尾に連なっていない marker は拾わない (全文走査しない = 決定的)。
+        text = "[[interest: 途中 | notes/x.md]]\n本文が後に続く。"
+        body, thought, interest = self.bot.split_investigate_markers(text)
+        self.assertEqual(body, text)
+        self.assertIsNone(interest)
+
+    def test_no_marker_and_empty_output(self) -> None:
+        self.assertEqual(
+            self.bot.split_investigate_markers("ただの報告。"), ("ただの報告。", None, None)
+        )
+        self.assertEqual(self.bot.split_investigate_markers(""), ("", None, None))
+
+
+class DerivedInterestPromptTest(unittest.TestCase):
+    """派生関心の自己登録指示 (チケット #96) は investigate prompt だけに乗る。
+
+    §F の例外は「実際にやった調査の中で派生した関心」1 つだけ = 調査をしない
+    ticket / remind / talk には指示を出さない (例外を 1 分岐に閉じる)。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_instruction_present_in_investigate_prompt(self) -> None:
+        prompt = self.bot.build_investigate_prompt("topic")
+        self.assertIn("[[interest:", prompt)
+        # 出どころ必須 + でっち上げ禁止 + 内部連絡である旨が乗ること。
+        self.assertIn("出どころ", prompt)
+        self.assertIn("でっち上げて書かない", prompt)
+        self.assertIn("この行も内部連絡でユーザーには届かない", prompt)
+
+    def test_other_prompts_have_no_interest_instruction(self) -> None:
+        for name, prompt in (
+            ("ticket", self.bot.build_ticket_prompt("topic")),
+            ("remind", self.bot.build_remind_prompt("topic")),
+            ("talk", self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})),
+        ):
+            self.assertNotIn("[[interest:", prompt, msg=name)
+
+
 class ProactiveThoughtPromptTest(unittest.TestCase):
     """thought 指示文言 (チケット #93) が ephemeral 3 分岐の prompt に乗ること。
 
@@ -1460,6 +1590,88 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             _json.loads(line)["observation"], "ディスク管理 について調べて notes に書いた"
         )
+
+    def test_record_investigate_registers_derived_interest(self) -> None:
+        # チケット #96: 派生関心は source="derived" + origin (出どころ必須) で index に
+        # 登録され、観察行にも出どころ付きの機械観察として残る (§F 両立)。
+        import json as _json
+        now = self._seed_active("ディスク管理")
+        self.bot.record_investigate(
+            "ディスク管理", now, thought="圧縮って奥が深い",
+            derived=("zstd の辞書学習", "notes/2026-07-13_ren-research-disk.md"),
+        )
+        idx = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        by_topic = {t["topic"]: t for t in idx["threads"]}
+        d = by_topic["zstd の辞書学習"]
+        self.assertEqual(d["source"], "derived")
+        self.assertEqual(d["origin"], "notes/2026-07-13_ren-research-disk.md")
+        self.assertEqual(d["state"], "active")
+        # 調査対象スレッドは従来どおり researched。
+        self.assertEqual(by_topic["ディスク管理"]["state"], "researched")
+        line = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()[-1]
+        entry = _json.loads(line)
+        self.assertEqual(
+            entry["observation"],
+            "ディスク管理 について調べて notes に書いた。"
+            "調べる中で zstd の辞書学習 が引っかかった"
+            " (出どころ: notes/2026-07-13_ren-research-disk.md)。圧縮って奥が深い",
+        )
+        self.assertEqual(set(entry), {"timestamp", "observation"})
+
+    def test_record_investigate_derived_same_topic_stays_researched(self) -> None:
+        # 派生 topic が調査対象と同一なら researched が勝つ (derived touch を先に適用 =
+        # 同一 topic を調べ続ける再活性化ループを条件分岐なしで防ぐ)。
+        now = self._seed_active("ディスク管理")
+        self.bot.record_investigate(
+            "ディスク管理", now, derived=("ディスク管理", "notes/x.md")
+        )
+        idx = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        self.assertEqual(len(idx["threads"]), 1)
+        t = idx["threads"][0]
+        self.assertEqual(t["state"], "researched")
+        # 来歴 (origin) は残る (後続 touch の origin=None が既存 origin を消さない)。
+        self.assertEqual(t["origin"], "notes/x.md")
+
+    async def test_interest_marker_registers_derived_thread(self) -> None:
+        # 配線 (チケット #96): [[interest]] 付き出力 → Telegram 送信本文から marker が
+        # 剥がれ、派生関心が index に登録される (調査→派生関心→次の調査の自己ループ入口)。
+        from unittest import mock
+
+        now = self._seed_active("ディスク管理")
+        sent = mock.AsyncMock()
+
+        async def _fake_run_discord(prompt, options):
+            return _ok_result(
+                "ディスク管理のこと調べといた。\n"
+                "[[interest: zstd の辞書学習 | notes/2026-07-13_ren-research-disk.md]]\n"
+                "[[thought: 圧縮って奥が深い]]"
+            )
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "record"), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot.runner, "run_discord", side_effect=_fake_run_discord), \
+             mock.patch.object(self.bot, "send_text", new=sent), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"}
+            )
+
+        # 送信本文に marker が残らない (内部連絡でユーザーに届かない)。
+        self.assertEqual(sent.await_args.args[3], "ディスク管理のこと調べといた。")
+        idx = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        by_topic = {t["topic"]: t for t in idx["threads"]}
+        d = by_topic["zstd の辞書学習"]
+        self.assertEqual(d["source"], "derived")
+        self.assertEqual(d["origin"], "notes/2026-07-13_ren-research-disk.md")
+        self.assertEqual(d["state"], "active")
+        thoughts = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8")
+        self.assertIn("調べる中で zstd の辞書学習 が引っかかった", thoughts)
 
     async def test_thought_marker_stripped_from_send_and_logged(self) -> None:
         # 配線 (チケット #93): thought 付き出力 → Telegram 送信本文から marker が剥がれ、
