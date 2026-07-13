@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-07-10 (NTP 時刻同期を導入 — マシンの時計 2 分遅れ解消、チケット #79。詳細は Done 先頭 entry)
+最終更新: 2026-07-13 (usb-backup の BACKUP_PATHS に漏れ 7 パスを追加 — 鍵類・mineroad-analysis ほか、次回手動実行から反映。詳細は Done 先頭 entry)
 
 ## 設計メモ
 
@@ -73,6 +73,13 @@ machine-audit PLAN.md S6-6 の 7 作業項目。計測→powertop 適用→DPMS 
 （なし）
 
 ## Done
+
+- 2026-07-13 usb-backup: 対象の過不足チェックで発覚した漏れ 7 パスを BACKUP_PATHS に追加 (OWNER 依頼)
+  - **経緯**: 実行前の対象過不足チェック (ホーム直下全エントリと実物照合) で、GitHub にもどこにもコピーがない漏れを検出。追加 7 点 = `~/mineroad-analysis` (132M、git repo ですらない) / `~/.claude.json` (claude CLI 本体設定、`.claude/` ディレクトリでは拾えない別ファイル) / `~/.mozc` (IME ユーザー辞書) / `~/.ssh` / `~/.gnupg` / `~/.local/share/keyrings` (GNOME キーリング) / `~/ドキュメント`。計約 133M
+  - **セキュリティ判断**: 鍵類 (.ssh/.gnupg/keyrings) の追加は restic repo の暗号化 (AES-256 + scrypt) 前提で妥当 (code-reviewer 確認済み)。ただし **USB 紛失時の砦が restic パスワード 1 本に格上げ**されたため、パスワード強度がこの前提に見合うかは OWNER 確認事項
+  - **保留 (OWNER 判断待ち)**: photos 除外の根拠「Takeout 原本 zip が別在」の実物は同一ディスクの `~/ダウンロード/takeout-*.zip` (34G) で、ディスク全損時は復元不能。Google フォト クラウド側に原本が残る運用なら現状可。任意候補として提示済みの `~/.mozilla` (254M、Firefox Sync なら不要) / `~/.tmux.conf` は今回見送り
+  - **コメント同期**: companion 行の「(C) ローカル git のみ」記述をモノレポ化 (2026-07-11) 後の実態 (gitignore された english/media・repo なし logs・.env 系の唯一のオフディスクコピー) に更新、ヘッダの対象例示に鍵類を追記 (code-reviewer 軽微反映)
+  - **注意**: 次回の手動 USB バックアップから反映。前回実行は 2026-06-12 で companion 追加 (7/7) 後も未実行 = 次回が新設定初回。実効サイズ見積 ~2.9G / USB 64GB で容量問題なし。code-reviewer 修正必須なし
 
 - 2026-07-10 NTP 時刻同期の導入 (チケット #79「ダッシュボードの時計が2分遅い」)
   - **原因**: マシンに時刻同期が丸ごと不在だった (systemd-timesyncd 未インストール、ntp.service は masked、`timedatectl` = synchronized: no / NTP service: n/a)。RTC ドリフトが蓄積し、HTTP Date ヘッダ比較で実測 2 分 1 秒の遅れ。dashboard 側は `new Date()` のシステム時刻直読みでコードに問題なし

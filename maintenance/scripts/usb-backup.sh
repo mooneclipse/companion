@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # オフディスクバックアップ (machine-audit S6-2)。
 # KIOXIA USB (FAT32) 上の restic リポジトリへ、GitHub バックアップのない
-# ローカルデータ (音楽 / dotfiles / ~/.claude / /etc) をスナップショット保存する。
+# ローカルデータ (音楽 / dotfiles / 鍵類 .ssh・.gnupg・keyrings / /etc) をスナップショット保存する。
 # 運用: USB を挿してから `sudo ~/companion/maintenance/scripts/usb-backup.sh` を手動 1 発。
 # /etc を全量読むため root 必須。初回実行時はリポジトリを自動 init する。
 # パスワードは PASSWORD_FILE (マシン内) + オフマシン控えの 2 箇所保持が前提
@@ -28,9 +28,18 @@ BACKUP_PATHS=(
     "${OWNER_HOME}/.bashrc"
     "${OWNER_HOME}/.profile"
     "${OWNER_HOME}/.claude"
-    # (C) ローカル git のみの repo 群 (workspace/ytcheck 等) のマシン外コピー確保
-    # (2026-07-07 追加。ytcheck の Windows 原本削除の前提。除外は下の EXCLUDES 参照)
+    # companion モノレポは GitHub push 対象だが、gitignore された english/media・
+    # repo なしの logs/・.env 系 secret の唯一のオフディスクコピーとして丸ごと含める
+    # (2026-07-07 追加、当時の (C) 区分は 2026-07-11 モノレポ化で廃止。除外は下の EXCLUDES 参照)
     "${OWNER_HOME}/companion"
+    # 2026-07-13 追加: GitHub にもどこにもコピーがない漏れ分
+    "${OWNER_HOME}/mineroad-analysis"
+    "${OWNER_HOME}/.claude.json"
+    "${OWNER_HOME}/.mozc"
+    "${OWNER_HOME}/.ssh"
+    "${OWNER_HOME}/.gnupg"
+    "${OWNER_HOME}/.local/share/keyrings"
+    "${OWNER_HOME}/ドキュメント"
     /etc
 )
 
