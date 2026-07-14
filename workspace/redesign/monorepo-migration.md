@@ -1,6 +1,6 @@
 # companion モノレポ移行手順書
 
-**status**: Phase 0〜4 + OWNER 3 コマンド完了 (2026-07-11、チケット #82 done) — 初回 push 済み (main = origin/main = f3b883a 実測)、旧 4 repo isArchived=true ×4 実測、.migration 削除済み。残り = Phase 5 翌日以降検証 (§8、申し送りチケットあり) と 2〜4 週後の .archive/split-era-git 削除 (OWNER 承認後)
+**status**: Phase 0〜4 + OWNER 3 コマンド完了 (2026-07-11、チケット #82 done) — 初回 push 済み (main = origin/main = f3b883a 実測)、旧 4 repo isArchived=true ×4 実測、.migration 削除済み。Phase 5 検証 (§8) は vault auto-sync / Task Workflow / ytcheck 共存まで確認済み (2026-07-14、チケット #85)。残り = ytcheck 自動 commit の実弾 (チャンネル追加/更新イベント待ち) と 2〜4 週後の .archive/split-era-git 削除 (OWNER 承認後、7 月末目安)
 **決定記録**: 2026-07-10 OWNER 承認 — ① モノレポ化 GO、② bot-workspace / ytcheck を含める (運用後に問題が出たら OWNER に「外す相談」をする約束)、③ 分割時代の履歴を取り込む
 **実行単位**: Phase 0〜3 は 1 セッションで通す (切替を中途で止めない)。Phase 4 は同日中、Phase 5 は翌日以降
 
@@ -177,7 +177,7 @@ gh repo archive mooneclipse/companion-voice -y
 ## 8. Phase 5 — 移行後検証 (翌日以降)
 
 - [x] 翌朝 05:00 の ytcheck run とモノレポの共存 (2026-07-11 実測): 05:03〜05:19 正常完了 (推薦 11 件)、モノレポは run 後も clean = 巻き込みなし。**commit ゼロが正常** — `_git_commit` はチャンネル追加/更新 (`add_channel`/`update_channel`) 時のみ呼ばれ、日次巡回は vault (境界外) と gitignore 済み cache しか書かない。§3-1 の「05:00 回避」と本チェック項目は「日次で自動 commit が載る」前提だったが実装はそうではなかった (害なし)。自動 commit の実弾は次にチャンネル追加/更新が起きた際に `git log -- ytcheck/tasks/` で確認
-- [ ] vault auto-sync / bot `/vault_push` が従来どおり動く (vault は独立 repo のまま、無影響のはず) — 次回 bot 書き込み時に観察
+- [x] vault auto-sync / bot `/vault_push` が従来どおり動く (2026-07-14 実測、チケット #85): 切替後の vault repo に bot session auto-sync commit が 7/12〜7/14 毎日着地 (08e4199 / 7ee612e / ea376d8 / 6425028、他 7/11 tweet clips af817ed)、かつ HEAD = origin/develop (ahead/behind 0/0) で push も貫通 (push 実体は Stop hook 自動 push = web/scripts/vault-sync-from-transcript.sh、/vault_push コマンド自体は切替後未起動だが同一構成 git push origin develop のため同等とみなす)。vault 独立 repo 運用はモノレポ切替の影響なし
 - [x] 手元セッションの Task Workflow が新 push 行で回る (2026-07-11 実測): 本移行セッションでパス明示 commit 8 本 → push 行表示 → OWNER push 成功 (main = origin/main 一致確認済み)
 - [ ] 2〜4 週問題なければ `~/companion/.archive/split-era-git/` を削除 (それまで完全 rollback 可能)。削除は OWNER 承認後
 
@@ -208,4 +208,4 @@ done
 
 ---
 
-**最終更新**: 2026-07-10 (初版 + code-reviewer 指摘反映: §4 spot check を第 2 親経由に修正・`git log -- <dir>` 誤認防止注記、§5 突合を pre/post diff に機械化、§9 rollback を mv 退避に変更、§7 grep の vault/logs 除外、Phase 2 の bot 停止注記。レビューは git 2.34.1 実機 + テスト repo で Phase 1 レシピ再現実行済み)
+**最終更新**: 2026-07-14 (チケット #85: §8 vault auto-sync 検証 OK を反映 — auto-sync commit 7/12〜7/14 毎日着地 + HEAD = origin/develop で push 貫通。残りは ytcheck 自動 commit のイベント待ちと .archive 削除承認のみ。前回 2026-07-10: 初版 + code-reviewer 指摘反映: §4 spot check を第 2 親経由に修正・`git log -- <dir>` 誤認防止注記、§5 突合を pre/post diff に機械化、§9 rollback を mv 退避に変更、§7 grep の vault/logs 除外、Phase 2 の bot 停止注記。レビューは git 2.34.1 実機 + テスト repo で Phase 1 レシピ再現実行済み)
