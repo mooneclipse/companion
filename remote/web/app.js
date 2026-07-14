@@ -879,6 +879,9 @@ function initGames() {
 // user(この PWA) と AI(claude セッション) 共用の inbox。実体は server の
 // .state/tickets.json(flock 排他)。各チケットは番号(#N)付きで、user は「#N やって」と
 // 番号で AI に渡せる。バッジ = 未対応(todo+doing)件数。ホームのやることタイルに表示。
+// 完了操作はこの UI に置かない (#105): 完了だけ非可逆なのに編集と隣接し誤タップが
+// 実際に起きたため、AI 側 (tickets.py done — 手元/Telegram どちらの claude セッション
+// でも可) に一本化。UI は起票・編集・コピーのみ。
 const TODO_BY_MARK = { user: "🙋", ai: "🤖" };
 
 // 未対応件数バッジ。ホームのタイル(#tile-todo-badge)に表示し、sub に件数文言。
@@ -944,15 +947,8 @@ function renderTodo(tickets) {
     edit.textContent = "編集";
     edit.addEventListener("click", () => startEditTodo(li, t));
 
-    const done = document.createElement("button");
-    done.className = "todo-done";
-    done.type = "button";
-    done.textContent = "完了";
-    done.addEventListener("click", () => doneTodo(t.id));
-
     actions.appendChild(copy);
     actions.appendChild(edit);
-    actions.appendChild(done);
 
     li.appendChild(id);
     li.appendChild(by);
@@ -1073,21 +1069,6 @@ async function addTodo() {
   } finally {
     btn.disabled = false;
   }
-}
-
-async function doneTodo(id) {
-  try {
-    const r = await api("/api/todo/status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status: "done" }),
-    });
-    if (r.ok || r.status === 404) {
-      await refreshTodo();        // 404=既に消えている→再取得で整合
-      // 完了したものは履歴に回るので、開いていれば履歴も更新(取りこぼし防止)。
-      if (!$("todo-history-list").hidden) refreshHistory();
-    }
-  } catch (e) { /* unauthorized は api() が処理 */ }
 }
 
 // epoch 秒 → ローカル "YYYY-MM-DD HH:MM"(完了日時表示用)。0/未定義は空文字。

@@ -177,8 +177,9 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--acc)
 .todo-edit-input{flex:1;font-family:inherit;font-size:14px;color:var(--ink);
   background:var(--paper);border:none;border-bottom:2px solid var(--acc);padding:6px 2px;letter-spacing:.005em;}
 .todo-edit-input:focus{outline:none;}
-/* コピー/編集/完了 の 3 ボタンは本文と同行だと 412px 幅で本文を圧迫するため、
-   常に 2 行目へ落として右寄せ (本文が 1 行目の全幅を使える)。dl-item はボタン直付けで対象外。 */
+/* コピー/編集 の 2 ボタンは本文と同行だと 412px 幅で本文を圧迫するため、
+   常に 2 行目へ落として右寄せ (本文が 1 行目の全幅を使える)。dl-item はボタン直付けで対象外。
+   完了ボタンは #105 で撤去 (AI 側 tickets.py done に一本化)。.todo-done はボタン共通クラスとして残置。 */
 .todo-actions{display:flex;gap:6px;flex:0 0 100%;justify-content:flex-end;}
 /* 完了履歴(折りたたみ、閲覧専用)。done は active と区別するため grey 系でトーンダウン。 */
 .todo-history-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;

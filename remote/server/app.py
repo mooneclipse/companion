@@ -347,26 +347,6 @@ def api_todo_edit(handler):
         return 404, {"error": "no such ticket"}
 
 
-def api_todo_status(handler):
-    """POST /api/todo/status {id, status} — 状態変更(done で一覧から外れる)。Bearer 必須。
-
-    分岐は state を引く前に確定: id/status を先に検証して 400、その後の
-    TicketError は「該当 id なし」=404 と一意に決まる(文言マッチで分岐しない)。
-    """
-    data, err = _read_json(handler)
-    if err:
-        return err
-    tid = data.get("id")
-    if isinstance(tid, bool) or not isinstance(tid, int):
-        return 400, {"error": "id must be an integer"}
-    if data.get("status") not in tickets.STATUSES:
-        return 400, {"error": "invalid status"}
-    try:
-        return 200, tickets.set_status(tid, data["status"])
-    except tickets.TicketError:
-        return 404, {"error": "no such ticket"}
-
-
 class _Binary:
     """ハンドラがバイナリ(画像)を返すときのラッパ。_dispatch がこの型を見て
     JSON でなく生バイトを送る(1回の型判定で送出経路を決める。条件分岐を積まない)。
@@ -641,11 +621,12 @@ ROUTES = {
     ("GET", "/api/dl"): (api_dl_list, True),
     ("POST", "/api/dl/delete"): (api_dl_delete, True),
     # 共用 TODO/inbox(F-todo、v1-α 系列 = bot.py 非依存)。全て Bearer 必須。
+    # 状態変更(/api/todo/status)は #105 で撤去 — 完了は AI 側 tickets.py done に一本化
+    # (UI の完了ボタンが編集と隣接して誤タップ、done は UI から復活手段がないため)。
     ("GET", "/api/todo"): (api_todo_list, True),
     ("GET", "/api/todo/history"): (api_todo_history, True),
     ("POST", "/api/todo"): (api_todo_add, True),
     ("POST", "/api/todo/edit"): (api_todo_edit, True),
-    ("POST", "/api/todo/status"): (api_todo_status, True),
     # F-vault(出先からの read-only ノート閲覧)。全て GET / Bearer 必須。書き込み endpoint なし。
     ("GET", "/api/vault/list"): (api_vault_list, True),
     ("GET", "/api/vault/get"): (api_vault_get, True),
