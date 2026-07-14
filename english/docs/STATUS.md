@@ -17,13 +17,14 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 - `server/` — ThreadingHTTPServer (静的 + JSON API + /media Range)。テスト: `python3 server/tests/test_api.py` (88 チェック)
 - `web/` — vanilla SPA (D 案)。SW なし (photos と同じ、キャッシュ版すれ違い回避)
 - `data/english.db` — SQLite (WAL)。`media/` `inbox/` とも .gitignore
-- pipeline テスト: `python3 -m unittest discover -s pipeline/tests -p "test_*.py"` (42 本)
+- pipeline テスト: `python3 -m unittest discover -s pipeline/tests -p "test_*.py"` (60 本)
 
 ## 運用メモ・設計判断の記録
 
 - yt-dlp は `~/bin/yt-dlp` (dlqueue と同一実体・同一 720p フォーマット)。破損対応は dlqueue の churn 台帳に相乗り
 - **`clips.py --rebuild` は attempts を意図的に残す** (2026-07-02 レビュー裁定): attempts は streak/正答率履歴の源泉のため削除しない。rebuild 時のみ FK を明示 OFF して clips 行を削除 → commit 後に mp4 を unlink。clip id は決定的 (`<episode_id>-<start_ms>`) なので、開始時刻が変わらないクリップの attempts は再生成後に自然と有効参照に戻る
 - clip id が end を含まないため、清掃規則変更後の rebuild で「同 id・別内容」の mp4 があり得る (Cache 7 日、rebuild は稀なので許容 — レビュー記録)
+- **誤答肢は confusion group → 同文法カテゴリ → 全プールランダムの 3 段フォールバック** (2026-07-14 #80、カテゴリ未所属の content word は従来どおりランダム)。カテゴリ定義は `pipeline/wordlists/categories.json`、weak_forms 全語カバーは回帰テストで担保
 - 対症療法 2 周目ルールは上位 `~/companion/CLAUDE.md` を参照
 
 ## TODO
@@ -34,6 +35,7 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 
 ## Done
 
+- 2026-07-14: **誤答肢の品質改善 — 文法カテゴリ第 2 フォールバック導入 + 全クリップ backfill** (#80「もっと学習によさそうな出題に」)。従来は confusion group 非所属の空欄 (弱形機能語が大半) の誤答肢が weak_forms+common2000 全プールランダムで、「聞き取らなくても文法だけで解ける」問題が大半だった (実測例: answer='an' に choices=['references','an','appear','secretary'])。`pipeline/wordlists/categories.json` 新設 (16 カテゴリ、weak_forms 全 58 語カバー + common2000 の頻出機能語、1 語複数所属可で候補は合併) し、`_build_choices` を confusion group → 同カテゴリ (クリップ単位決定的 rng、sort→shuffle) → 全プールランダムの 3 段に変更。`--refresh-blanks <EPISODE_ID|all>` 新設 (fill_translations と同じ UPDATE のみバックフィル、mp4/attempts 無変更、tokens 不一致・None は skip してログ) で全 15 話 377 クリップを埋め直し。検証: pipeline テスト 60 本 (9 本追加: カテゴリカバー回帰ガード/3 段フォールバック/決定性/refresh 不変性) + test_api 全 PASS、backup DB との全行比較で tokens/空欄 idx/answer/feature_tags の不変性違反ゼロ・662 空欄中 640 で choices 改善 (残 22 は confusion group で 3 語揃済み)、after 実例: 'an'→['another','this','every','an']、'but'→['if','unless','or','but']、'you'→['it','we','she','you']。server はキャッシュなし (リクエスト毎 DB 読み) のため restart 不要、loopback /api/home 200 確認
 - 2026-07-10: **weights レンジクランプ** (v1 レビュー軽微指摘の反映、user 承認)。validate_output で 0.5〜3.0 を強制 (範囲逸脱は NG でなくクランプ、極端値 1 つで analysis 全体を fallback に落とさない) + ペアキーの空白 strip 正規化。pipeline テスト 51 本 (2 本追加) 全 PASS
 - 2026-07-10: **教材一括追加 — TADC Ep2-9 + Bee and PuppyCat Ep1-10 (18 本) を sources.json に追記して ingest** (TODO「TADC 残り 8 話 + Bee and PuppyCat」消化、設計 v0.11)。結果: added=17 / failed=1 (TADC Ep4 Q9KWcWKo2T8 が HTTP 403、1 回確定でログのみ・リトライなし)、subs cleaned=17/17、clips made=337 (総計 377 本)。既存 TADC Ep1 は冪等 skip を実測確認。BPC は Ep5/6/8/9/10 が auto 字幕 (設計どおり sub_kind=auto)。**auto 字幕 3 話 (BPC Ep5/6/9) はクリップ 0 本** — 2018 再アップの自動字幕に句読点がなく文分割が 4〜12 秒 / 5〜25 語基準を全て外れるため (視聴専用ではなく sub_kind=auto のままライブラリ視聴可、クリップ選定基準による自然な結果として許容)。media 総量 1.4GB (+1.3GB)。あわせて**表示順タイブレーク修正**: 単一動画 URL は playlist_index がなく upload_date フォールバックが BPC Ep1/Ep2 (同日 20141107 公開) で同値タイ → sources.json のエントリ順を 0 埋めサフィックスで sort_key に焼き込み (state 側 1 回確定、server 無変更・video_id 辞書順は不採用)。検証: pipeline 49 本 (sort_key 7 本追加)・test_api 全 PASS、/api/library 実レスポンスで BPC Ep1→Ep2 正順、クリップ 3 本 ffprobe 健全 (h264+aac)
 

@@ -1,0 +1,21 @@
+{
+  "_comment": "文法カテゴリ定義 (チケット #80)。形式: categories は『カテゴリ名 → 同じ文法スロットに入り得る語のリスト』(小文字・大小無視でマッチ)。ある空欄の答えがカテゴリに属する場合、所属する全カテゴリの合併 (自分自身を除く) を誤答肢の第 2 候補にする (第 1 候補は confusions.json の音韻混同グループ、最後の保険は weak_forms+common2000 全プールランダム — clips.py _build_choices 参照)。1 語が複数カテゴリに属してよい。weak_forms.txt の全語をいずれかのカテゴリでカバーすること (回帰テスト test_pipeline.py で担保)。",
+  "categories": {
+    "articles_determiners": ["a", "an", "the", "some", "any", "no", "every", "each", "another", "this", "that", "these", "those"],
+    "subject_pronouns": ["i", "you", "he", "she", "it", "we", "they"],
+    "object_pronouns": ["me", "you", "him", "her", "it", "us", "them"],
+    "possessive_determiners": ["my", "your", "his", "her", "its", "our", "their"],
+    "prepositions": ["at", "in", "on", "to", "for", "of", "with", "from", "by", "about", "into", "over", "under", "after", "before", "between", "through", "around", "near", "off", "up", "down", "out", "as"],
+    "conjunctions": ["and", "but", "or", "so", "because", "if", "that", "than", "when", "while", "though", "since", "as", "unless", "until"],
+    "modals": ["can", "could", "will", "would", "shall", "should", "may", "might", "must"],
+    "be_forms": ["be", "am", "is", "are", "was", "were", "been", "being"],
+    "have_forms": ["have", "has", "had", "having"],
+    "do_forms": ["do", "does", "did", "done", "doing"],
+    "negative_contractions": ["don't", "doesn't", "didn't", "can't", "won't", "wouldn't", "couldn't", "shouldn't", "isn't", "aren't", "wasn't", "weren't", "haven't", "hasn't", "hadn't", "ain't"],
+    "positive_contractions": ["it's", "that's", "there's", "he's", "she's", "what's", "let's", "i'm", "i'll", "i've", "i'd", "you're", "you'll", "you've", "we're", "we'll", "we've", "they're", "they'll", "they've"],
+    "wh_words": ["what", "who", "when", "where", "why", "how", "which", "whose"],
+    "quantifiers_degree": ["some", "any", "many", "much", "more", "most", "few", "little", "all", "both", "enough", "quite", "very", "really", "pretty", "too", "so"],
+    "casual_reductions": ["gonna", "wanna", "gotta", "kinda", "sorta", "gimme", "lemme", "dunno", "outta", "lotta"],
+    "place_adverbs": ["here", "there", "everywhere", "anywhere", "somewhere", "nowhere"]
+  }
+}

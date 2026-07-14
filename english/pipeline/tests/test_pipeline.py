@@ -10,6 +10,7 @@ media/ を汚さない (WORDLISTS_DIR は実ファイルのまま、実運用の
 """
 import json
 import pathlib
+import random
 import shutil
 import subprocess
 import sys
@@ -351,9 +352,143 @@ class PipelineSyntheticTest(unittest.TestCase):
         filled, skipped = clips.fill_translations("ep2", db_path=str(self.db_path))
         self.assertEqual((filled, skipped), (0, 0))
 
+    def test_07_refresh_blanks_updates_choices_without_touching_mp4(self):
+        # choices を意図的に壊してから --refresh-blanks 経路で埋め直し、
+        # tokens/空欄 idx/answer は不変・choices だけ作り直し・mp4 無変更を確認する (#80)。
+        conn = common.open_db(str(self.db_path))
+        rows_before = {r["id"]: dict(r) for r in
+                        conn.execute("SELECT * FROM clips WHERE episode_id='ep1'")}
+        for clip_id, row in rows_before.items():
+            blanks = json.loads(row["blanks"])
+            for b in blanks:
+                b["choices"] = [b["answer"], "xxx1", "xxx2", "xxx3"]
+            conn.execute("UPDATE clips SET blanks=? WHERE id=?",
+                          (json.dumps(blanks, ensure_ascii=False), clip_id))
+        conn.commit()
+        conn.close()
+
+        mp4_path = common.CLIPS_DIR / "ep1-0.mp4"
+        before_mtime = mp4_path.stat().st_mtime_ns
+
+        updated, skipped = clips.refresh_blanks("ep1", db_path=str(self.db_path))
+        self.assertEqual((updated, skipped), (2, 0))
+
+        category_map = clips._load_categories(common.WORDLISTS_DIR / "categories.json")
+        conn = common.open_db(str(self.db_path))
+        rows_after = {r["id"]: dict(r) for r in
+                       conn.execute("SELECT * FROM clips WHERE episode_id='ep1'")}
+        conn.close()
+        for clip_id, row in rows_after.items():
+            with self.subTest(clip_id=clip_id):
+                self.assertEqual(row["tokens"], rows_before[clip_id]["tokens"])  # tokens 不変
+                blanks_before = json.loads(rows_before[clip_id]["blanks"])
+                blanks_after = json.loads(row["blanks"])
+                self.assertEqual([b["idx"] for b in blanks_after],
+                                  [b["idx"] for b in blanks_before])     # 空欄位置 不変
+                self.assertEqual([b["answer"] for b in blanks_after],
+                                  [b["answer"] for b in blanks_before])  # answer 不変
+                for b in blanks_after:
+                    self.assertEqual(len(set(b["choices"])), 4)
+                    self.assertIn(b["answer"], b["choices"])
+                    self.assertNotIn("xxx1", b["choices"])  # 壊した choices は作り直される
+
+        # ep1-0 の answer "a" は confusion group 非所属 → 誤答肢は同カテゴリ (冠詞・限定詞)
+        blank_a = json.loads(rows_after["ep1-0"]["blanks"])[0]
+        self.assertEqual(blank_a["answer"], "a")
+        for c in blank_a["choices"]:
+            if c != "a":
+                self.assertIn(c, category_map["a"])
+
+        self.assertEqual(mp4_path.stat().st_mtime_ns, before_mtime)  # mp4 は触らない
+
+        with self.assertRaises(ValueError):
+            clips.refresh_blanks("no-such-episode", db_path=str(self.db_path))
+
+    def test_08_refresh_blanks_all_covers_episodes_with_clips(self):
+        # ep1 (クリップ 2 本) のみ対象になる (ep2 はクリップ 0 本なので回らない)
+        updated, skipped = clips.refresh_blanks_all(db_path=str(self.db_path))
+        self.assertEqual((updated, skipped), (2, 0))
+
 
 class ClipsUnitTest(unittest.TestCase):
     """ffmpeg/DB を使わない純粋ロジックの単体テスト。"""
+
+    @classmethod
+    def setUpClass(cls):
+        # 実運用の wordlists (categories.json 含む) を検証対象にする (#80)
+        cls.weak_forms = clips._load_wordlist(clips.common.WORDLISTS_DIR / "weak_forms.txt")
+        cls.common2000 = clips._load_wordlist(clips.common.WORDLISTS_DIR / "common2000.txt")
+        cls.confusion_groups = clips._load_confusion_groups(
+            clips.common.WORDLISTS_DIR / "confusions.json")
+        cls.category_map = clips._load_categories(clips.common.WORDLISTS_DIR / "categories.json")
+        cls.fallback_pool = sorted(cls.weak_forms | cls.common2000)
+
+    def test_categories_cover_all_weak_forms(self):
+        # 回帰ガード: weak_forms.txt の全語がいずれかのカテゴリに属する
+        # (弱形が空欄の大半を占めるため、カバー漏れ = ランダム誤答肢への逆戻り)
+        missing = sorted(w for w in self.weak_forms if w not in self.category_map)
+        self.assertEqual(missing, [])
+
+    def test_categories_have_at_least_4_words(self):
+        # 各カテゴリは正解 1 + 誤答 3 が同カテゴリで揃う規模 (4 語以上)
+        with open(clips.common.WORDLISTS_DIR / "categories.json", encoding="utf-8") as f:
+            categories = json.load(f)["categories"]
+        for name, words in categories.items():
+            with self.subTest(category=name):
+                self.assertGreaterEqual(len(set(words)), 4)
+
+    def test_build_choices_category_fallback_for_non_confusion_word(self):
+        # "an" は confusions.json のどのグループにも属さない → 誤答肢 3 語すべて
+        # 同カテゴリ (冠詞・限定詞) から選ばれる
+        self.assertFalse(any("an" in g for g in self.confusion_groups))
+        choices = clips._build_choices("an", [], self.confusion_groups, self.category_map,
+                                        self.fallback_pool, random.Random("clip-x"))
+        self.assertEqual(len(set(choices)), 4)
+        self.assertIn("an", choices)
+        for c in choices:
+            if c != "an":
+                self.assertIn(c, self.category_map["an"])
+
+    def test_build_choices_confusion_group_takes_priority_over_category(self):
+        # "to" は too/two の混同グループ持ち → まず group の 2 語、不足 1 語は同カテゴリから
+        choices = clips._build_choices("to", [], self.confusion_groups, self.category_map,
+                                        self.fallback_pool, random.Random("clip-y"))
+        self.assertEqual(len(set(choices)), 4)
+        self.assertIn("to", choices)
+        self.assertIn("too", choices)
+        self.assertIn("two", choices)
+        rest = [c for c in choices if c not in ("to", "too", "two")]
+        self.assertEqual(len(rest), 1)
+        self.assertIn(rest[0], self.category_map["to"])
+
+    def test_build_choices_deterministic_for_same_seed(self):
+        # クリップ単位 rng (random.Random(clip_id)) で決定的 — 同じ seed なら同じ choices
+        for answer in ("an", "to", "you", "elephant"):  # elephant はカテゴリ未所属 → 全プール
+            with self.subTest(answer=answer):
+                c1 = clips._build_choices(answer, [], self.confusion_groups, self.category_map,
+                                           self.fallback_pool, random.Random("ep1-1234"))
+                c2 = clips._build_choices(answer, [], self.confusion_groups, self.category_map,
+                                           self.fallback_pool, random.Random("ep1-1234"))
+                self.assertEqual(c1, c2)
+
+    def test_build_choices_uncategorized_word_falls_back_to_pool(self):
+        # カテゴリ未所属の語 (content word) は従来どおり全プールランダムに落ちる
+        self.assertNotIn("elephant", self.category_map)
+        choices = clips._build_choices("elephant", [], self.confusion_groups, self.category_map,
+                                        self.fallback_pool, random.Random("clip-z"))
+        self.assertEqual(len(set(choices)), 4)
+        self.assertIn("elephant", choices)
+        for c in choices:
+            if c != "elephant":
+                self.assertIn(c, self.fallback_pool)
+
+    def test_build_choices_excludes_other_blank_answers(self):
+        # 同一クリップ内の他の空欄の answer は誤答肢に混ざらない (既存 exclude の維持)
+        choices = clips._build_choices("an", ["the", "some"], self.confusion_groups,
+                                        self.category_map, self.fallback_pool,
+                                        random.Random("clip-w"))
+        self.assertNotIn("the", choices)
+        self.assertNotIn("some", choices)
 
     def test_eligible_indices_exclusion_rules(self):
         weak_forms = {"gonna", "kinda"}
