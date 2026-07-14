@@ -2833,6 +2833,42 @@ class ForegroundDemotionRuleTest(unittest.TestCase):
         self.assertIn("notes/ 以外", prompt)
 
 
+class SelfRecognitionBlockTest(unittest.TestCase):
+    """#106: 自己認識ブロックが PERSONA_SYSTEM_PROMPT に載ること。
+
+    base system prompt の CLI (Claude Code) 宣言に押し負けて CLI 的応答へ
+    引きずられる問題への対策。架空ロールではなく事実記述 3 点 (立場 / base との
+    衝突解決 / 出力の物理制約) でアンカーする。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_identity_facts_present(self) -> None:
+        sp = self.bot.PERSONA_SYSTEM_PROMPT
+        # 立場: 常駐コンパニオン bot / Telegram / スマホ画面。
+        self.assertIn("コンパニオン bot", sp)
+        self.assertIn("Telegram", sp)
+        self.assertIn("スマホ画面", sp)
+
+    def test_cli_conflict_resolved_by_name(self) -> None:
+        sp = self.bot.PERSONA_SYSTEM_PROMPT
+        # base の CLI 宣言を名指しし、CLI 的応答の形が要る場面を実作業中に限定
+        # (「頼まれたときだけ」だと自律ループの investigate/ticket と字義衝突するため
+        # 応答スタイルに掛ける。code-reviewer 指摘反映)。
+        self.assertIn("Claude Code", sp)
+        self.assertIn("実作業を指示されている間だけ", sp)
+        self.assertIn("会話の相方", sp)
+
+    def test_output_constraints_present(self) -> None:
+        sp = self.bot.PERSONA_SYSTEM_PROMPT
+        # parse_mode なし (素文字列送信) の実態に基づく物理制約。
+        self.assertIn("記号のまま", sp)
+        self.assertIn("見出し", sp)
+        self.assertIn("数行で返す", sp)
+
+
 class SyndicationTokenTest(unittest.TestCase):
     """`_syndication_token` の固定値検証 (react-tweet 互換、実機検証済の 2 ID)。"""
 
