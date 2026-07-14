@@ -150,6 +150,13 @@ def active_threads(data: dict, now: datetime, limit: int) -> list:
 _INVESTIGATE_SKIP_TOPIC = "recent_conversation"
 _INVESTIGATE_DONE_STATE = "researched"
 
+# 機械出力カテゴリの固定ラベル (チケット #94)。maintenance/lib/activity_hints.py の
+# SOURCES で定義される activity_type と同期して維持する (ラベルの変更・追加時は両方)。
+# カテゴリ名の Web 調査 (investigate) / 起票 (ticket) は具体性を欠くため対象から
+# 除外する。remind (言及して振り返るだけ、外向き操作ゼロ) は「そういえば最近の
+# おすすめ見た?」として自然なので除外しない。
+_CATEGORY_LABEL_TOPICS = frozenset({"ytcheck 巡回のおすすめ", "英語ディクテーション"})
+
 
 def should_investigate(
     data: dict, now: datetime, interval_days: float, last_investigate: str | None,
@@ -163,7 +170,8 @@ def should_investigate(
       1. interval 経過: ``last_investigate`` (ISO) から ``interval_days`` 日以上
          経過。``last_investigate`` が None / パース不能 = 一度も調査していない =
          due (「state を引けない」を due の 1 状態へ正規化、回復分岐は作らない)。
-      2. 対象スレッドが 1 本以上: topic が ``recent_conversation`` でなく state が
+      2. 対象スレッドが 1 本以上: topic が ``recent_conversation`` でも機械出力
+         カテゴリラベル (``_CATEGORY_LABEL_TOPICS``、#94) でもなく、state が
          ``researched`` でない active thread。freshest (last_touched 降順の先頭)
          を選ぶ。
 
@@ -180,6 +188,7 @@ def should_investigate(
         and isinstance(t.get("topic"), str)
         and t.get("topic")
         and t.get("topic") != _INVESTIGATE_SKIP_TOPIC
+        and t.get("topic") not in _CATEGORY_LABEL_TOPICS
         and t.get("state") != _INVESTIGATE_DONE_STATE
     ]
     if not candidates:
@@ -200,9 +209,10 @@ def should_ticket(
       1. interval 経過: ``last_ticket`` (ISO) から ``interval_days`` 日以上経過。
          None / パース不能 = 一度も起票していない = due (``_interval_elapsed`` 共用)。
       2. 実 signal が 1 本以上: actionable な active thread (topic が
-         ``recent_conversation`` でない = 実トピック) が存在する。これが §F の核 =
-         **でっち上げたタスクを起票しない**。index が空 / recent_conversation だけ
-         なら signal なし → ``(False, None)`` (index が空の現状では絶対に発火しない)。
+         ``recent_conversation`` でも機械出力カテゴリラベル (#94) でもない =
+         実トピック) が存在する。これが §F の核 = **でっち上げたタスクを起票
+         しない**。index が空 / recent_conversation だけなら signal なし →
+         ``(False, None)`` (index が空の現状では絶対に発火しない)。
 
     signal 部分は build_ticket_prompt に渡す材料。freshest な actionable thread の
     topic を代表として返す (investigate が topic を返すのと対称)。``researched`` 除外は
@@ -222,6 +232,7 @@ def should_ticket(
         and isinstance(t.get("topic"), str)
         and t.get("topic")
         and t.get("topic") != _INVESTIGATE_SKIP_TOPIC
+        and t.get("topic") not in _CATEGORY_LABEL_TOPICS
     ]
     if not candidates:
         return (False, None)

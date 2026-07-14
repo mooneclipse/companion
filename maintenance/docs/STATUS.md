@@ -1,6 +1,6 @@
 # companion-maintenance 開発台帳
 
-最終更新: 2026-07-13 (usb-backup の BACKUP_PATHS に漏れ 7 パスを追加し新設定で実行成功 — snapshot `06fa1bed`、restore→diff 検証済み、photos 懸念は USB 上の展開済みコピー確認で解消。詳細は Done 先頭 entry)
+最終更新: 2026-07-14 (proactive 種の多様化 = チケット #94。`lib/activity_hints.py` 新設で ytcheck 当日推薦 + english 当日学習を payload の activity_hint/activity_type として bot に渡す。詳細は Done 先頭 entry)
 
 ## 設計メモ
 
@@ -74,6 +74,12 @@ machine-audit PLAN.md S6-6 の 7 作業項目。計測→powertop 適用→DPMS 
 
 ## Done
 
+- 2026-07-14 proactive: 種の多様化 = 「相手の一日」実活動ヒントを payload に追加 (チケット #94)
+  - **本体**: `lib/activity_hints.py` 新設 (stdlib のみ)。当日 (JST) の既存機械出力から短いヒントを集めて JSON 1 行を stdout に出す。供給源 = (a) ytcheck 当日レポート (`vault/notes/ytcheck/ytcheck-YYYYMMDD-N.md` の N 数値最大 = 最新) から推薦動画タイトル抽出 (bold entry 行の正規表現 = 推薦系 4 セクションのみにマッチ、タイトル 60 字切り、先頭 2 件 + 総数)、(b) `english/data/english.db` (WAL) の read-only URI 接続で当日 attempts 件数。供給源ごとに独立 fail-safe (読めない/当日分なし/parse 不能はその行を落とすだけ)、全滅は `{}` で rc 0 = 「ヒントなし」の 1 状態。`proactive-companion.sh` は発火確定後に helper を 1 回呼び (`|| activity_json=""` で errexit 貫通防止)、payload に `activity_hint` (prompt 展開用) / `activity_type` (関心 index topic 用の SOURCES 固定ラベル) を足す。bot 側 (bot/bot.py) は activity_hint を「今日のあなたの身の回りで起きたこと」として展開 (1 つだけ軽く・報告口調禁止の抑制付き)、topic 導出は dormant > vault > activity_type > recent_conversation の具体性順、ledger に activity_type 記録。供給源の追加は helper の SOURCES + collect 関数のみ (sh/bot 配線は無改変)
+  - **注入境界 (出自メモ、2026-06-24 契約に従う出自確認)**: `activity_hint` に入る **YouTube 動画タイトルは第三者 (投稿者) 制御の外部文字列のパススルー** だが、ytcheck が既に claude 評価 prompt に流している機械出力レポート由来で、morning_hint の NHK RSS 見出しと同じ「外部機械テキスト」区分 (ユーザー由来の自由文ではない、サイズも 2 件 × 60 字で bounded)。english は COUNT 数値 + 固定文言の自己生成。`activity_type` は SOURCES で定義した固定ラベルのみで prompt には流さない (topic/ledger 専用)。今後も hint に別ソースを足す際は出自を必ず確認する
+  - **見送った供給源**: maintenance システムイベント (notify-system-report.log 等) は「notified for <date>」の結果行しか残らず種の材料にならないため今回見送り (供給源リストに後から足せる構造で受ける)
+  - **investigate/ticket との整合 (code-reviewer 軽微 1 の反映)**: activity_type の固定ラベルが index に thread として入ると investigate (カテゴリ名の Web 調査 = 具体性欠く) / ticket (actionable でない) の候補になってしまうため、`bot/interests.py` に `_CATEGORY_LABEL_TOPICS` (SOURCES と同期維持、相互参照コメント) を新設し両判定から除外。remind (言及のみ・外向き操作ゼロ) は「そういえば最近のおすすめ見た?」が自然なので許容
+  - **検証**: bot 372→381 tests pass (prompt 展開 3 + topic 導出 2 + wiring 1 + interests 除外 3)。helper 単体 = fixture ドライラン 3 ケース (当日あり/なし/パス不在)。sh 統合 = bash -n + mock socket エンドツーエンド 3 ケース (activity 載る / 当日なしはフィールドなし / helper 不在でも従来 payload で送信成功)。code-reviewer 修正必須なし (軽微 2 = カテゴリラベルの investigate 対象化 → 上記反映 / 同日レポート辞書順 sort の N≥10 取り違え → 数値 key 化で反映)
 - 2026-07-13 usb-backup: 対象の過不足チェックで発覚した漏れ 7 パスを BACKUP_PATHS に追加 (OWNER 依頼)
   - **経緯**: 実行前の対象過不足チェック (ホーム直下全エントリと実物照合) で、GitHub にもどこにもコピーがない漏れを検出。追加 7 点 = `~/mineroad-analysis` (132M、git repo ですらない) / `~/.claude.json` (claude CLI 本体設定、`.claude/` ディレクトリでは拾えない別ファイル) / `~/.mozc` (IME ユーザー辞書) / `~/.ssh` / `~/.gnupg` / `~/.local/share/keyrings` (GNOME キーリング) / `~/ドキュメント`。計約 133M
   - **セキュリティ判断**: 鍵類 (.ssh/.gnupg/keyrings) の追加は restic repo の暗号化 (AES-256 + scrypt) 前提で妥当 (code-reviewer 確認済み)。ただし **USB 紛失時の砦が restic パスワード 1 本に格上げ**されたため、パスワード強度がこの前提に見合うかは OWNER 確認事項

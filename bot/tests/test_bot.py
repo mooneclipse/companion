@@ -588,6 +588,37 @@ class SplitNextSelfHoursTest(unittest.TestCase):
             )
             self.assertNotIn("昔これ気にしてたね", prompt, msg=f"dormant_hint={bad!r}")
 
+    def test_activity_hint_included_when_present(self) -> None:
+        # 「相手の一日」実活動ヒント (チケット #94): 機械出力由来の行が展開され、
+        # 「1 つだけ軽く」の抑制と報告口調の禁止が乗ること。
+        prompt = self.bot.build_proactive_prompt(
+            {
+                "seed_kind": "recent_conversation",
+                "activity_hint": "今日の YouTube 巡回レポートにおすすめ動画が 3 本",
+                "activity_type": "ytcheck 巡回のおすすめ",
+            }
+        )
+        self.assertIn("今日のあなたの身の回りで起きたこと", prompt)
+        self.assertIn("おすすめ動画が 3 本", prompt)
+        self.assertIn("触れたければ 1 つだけ軽く", prompt)
+        self.assertIn("報告口調にはしない", prompt)
+        # activity_type は topic 導出/ledger 専用で prompt には流さない
+        self.assertNotIn("ytcheck 巡回のおすすめ", prompt)
+
+    def test_no_activity_hint_when_absent(self) -> None:
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("身の回りで起きたこと", prompt)
+
+    def test_activity_hint_omitted_when_not_string(self) -> None:
+        # 注入防止境界: str のみ展開する (非文字列は展開しないだけ)
+        for bad in (123, True, 6.5, ["x"], {"a": 1}):
+            prompt = self.bot.build_proactive_prompt(
+                {"seed_kind": "recent_conversation", "activity_hint": bad}
+            )
+            self.assertNotIn(
+                "身の回りで起きたこと", prompt, msg=f"activity_hint={bad!r}"
+            )
+
     def test_dormant_and_vault_hint_both_expanded(self) -> None:
         # script 側は同時に出さない設計だが、両方来ても分岐で握りつぶさず両方展開する
         prompt = self.bot.build_proactive_prompt(
@@ -655,6 +686,38 @@ class SplitNextSelfHoursTest(unittest.TestCase):
         for hour, band in cases.items():
             self.assertEqual(
                 self.bot._jst_time_band(hour), band, msg=f"hour={hour}"
+            )
+
+
+class ProactiveTopicFromPayloadTest(unittest.TestCase):
+    """関心スレッド topic の導出優先順 (純関数)。
+
+    dormant_hint > vault_hint > activity_type (#94) > recent_conversation。
+    捏造しない = payload に実在する実活動由来フィールドだけから決める。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_priority_order(self) -> None:
+        f = self.bot._proactive_topic_from_payload
+        full = {
+            "dormant_hint": "old-note",
+            "vault_hint": "today-note",
+            "activity_type": "ytcheck 巡回のおすすめ",
+        }
+        self.assertEqual(f(full), "old-note")
+        self.assertEqual(f({k: full[k] for k in ("vault_hint", "activity_type")}), "today-note")
+        self.assertEqual(f({"activity_type": full["activity_type"]}), "ytcheck 巡回のおすすめ")
+        self.assertEqual(f({}), "recent_conversation")
+
+    def test_non_string_activity_type_falls_through(self) -> None:
+        for bad in (123, True, ["x"], {"a": 1}, ""):
+            self.assertEqual(
+                self.bot._proactive_topic_from_payload({"activity_type": bad}),
+                "recent_conversation",
+                msg=f"activity_type={bad!r}",
             )
 
 
@@ -1100,6 +1163,46 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertTrue(ledger[-1]["sent"])
         self.assertTrue(ledger[-1]["foreground_proposal"])
+
+    async def test_activity_type_seeds_index(self) -> None:
+        # チケット #94: dormant/vault が無い回は activity_type (機械出力由来の
+        # 固定ラベル) が関心 index の topic として seeding される。
+        import json as _json
+        from datetime import datetime
+        from unittest import mock
+
+        now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=self.bot.quota.JST)
+
+        async def _fake_run_claude(prompt, chat_id, thread_id):
+            return "今日のおすすめ、ちょっと良さそうだったよ"
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app,
+                {"kind": "proactive", "seed_kind": "recent_conversation",
+                 "activity_hint": "今日の YouTube 巡回レポートにおすすめ動画が 3 本",
+                 "activity_type": "ytcheck 巡回のおすすめ"},
+            )
+
+        index = self.bot.interests.load_interests(self.bot.INTERESTS_INDEX_PATH)
+        topics = [t["topic"] for t in index["threads"]]
+        self.assertIn("ytcheck 巡回のおすすめ", topics)
+        # ledger にも activity_type が記録される (base 継承)。
+        ledger = [
+            _json.loads(l)
+            for l in self.bot.PROACTIVE_LEDGER_PATH.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        self.assertEqual(ledger[-1]["activity_type"], "ytcheck 巡回のおすすめ")
 
     async def test_prompt_reads_prior_index_then_records_new(self) -> None:
         from datetime import datetime, timedelta

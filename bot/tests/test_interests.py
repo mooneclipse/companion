@@ -333,6 +333,22 @@ class ShouldInvestigateTest(unittest.TestCase):
         self.assertFalse(should)
         self.assertIsNone(topic)
 
+    def test_category_label_topic_excluded(self) -> None:
+        # 機械出力カテゴリの固定ラベル (#94) は Web 調査の具体性を欠くため除外。
+        # 具体トピックが並んでいればそちらが選ばれる。
+        for label in ("ytcheck 巡回のおすすめ", "英語ディクテーション"):
+            data = {"threads": [self._thread(label, 1)]}
+            should, topic = interests.should_investigate(data, _now(), 7, None)
+            self.assertFalse(should, msg=f"label={label}")
+            self.assertIsNone(topic)
+        data = {"threads": [
+            self._thread("ytcheck 巡回のおすすめ", 1),
+            self._thread("real-topic", 2),
+        ]}
+        should, topic = interests.should_investigate(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(topic, "real-topic")
+
     def test_freshest_skips_researched_picks_next(self) -> None:
         data = {"threads": [
             self._thread("done", 1, state="researched"),
@@ -410,6 +426,13 @@ class ShouldTicketTest(unittest.TestCase):
         self.assertTrue(should)
         self.assertEqual(signal, "done-topic")
 
+    def test_category_label_topic_excluded(self) -> None:
+        # 機械出力カテゴリの固定ラベル (#94) は actionable な signal ではない。
+        data = {"threads": [self._thread("ytcheck 巡回のおすすめ", 1)]}
+        should, signal = interests.should_ticket(data, _now(), 7, None)
+        self.assertFalse(should)
+        self.assertIsNone(signal)
+
     def test_empty_index_skips(self) -> None:
         # §F の核: 実 signal が無ければ絶対に発火しない (でっち上げ起票をしない)。
         should, signal = interests.should_ticket({"threads": []}, _now(), 7, None)
@@ -481,6 +504,14 @@ class ShouldRemindTest(unittest.TestCase):
         should, signal = interests.should_remind(data, _now(), 7, None)
         self.assertTrue(should)
         self.assertEqual(signal, "done-topic")
+
+    def test_category_label_topic_NOT_excluded(self) -> None:
+        # 機械出力カテゴリの固定ラベル (#94) は investigate/ticket からは除外だが、
+        # remind の「そういえば最近のおすすめ見た?」式の言及は自然なので許容する。
+        data = {"threads": [self._thread("ytcheck 巡回のおすすめ", 4)]}
+        should, signal = interests.should_remind(data, _now(), 7, None)
+        self.assertTrue(should)
+        self.assertEqual(signal, "ytcheck 巡回のおすすめ")
 
     def test_empty_index_skips(self) -> None:
         # §F の核: 実 signal が無ければ絶対に発火しない (でっち上げた過去を振り返らない)。

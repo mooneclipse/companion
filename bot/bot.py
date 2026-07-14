@@ -808,6 +808,20 @@ def build_proactive_prompt(
                 + morning_hint
             )
         parts.append(msg)
+    # 「相手の一日」実活動ヒント (チケット #94)。script 側 helper
+    # (maintenance/lib/activity_hints.py) が当日 (JST) の既存機械出力 (ytcheck 推薦
+    # レポート / english 学習 DB) から集めた短い行。中身に YouTube タイトル等の
+    # 外部由来文字列を含むが、出どころは ytcheck が既に claude 評価 prompt に
+    # 流している機械出力レポート = morning_hint の NHK RSS 見出しと同じ
+    # 「外部機械テキスト」区分として展開する (ユーザー由来の自由文ではない)。
+    activity_hint = payload.get("activity_hint")
+    if isinstance(activity_hint, str) and activity_hint:
+        parts.append(
+            "今日のあなたの身の回りで起きたこと (機械的な記録から):\n"
+            + activity_hint + "\n"
+            "触れたければ 1 つだけ軽く。リストの読み上げや報告口調にはしない"
+            " (自分が今日見聞きしたことを思い出して話す感じ)。無理に出さない。"
+        )
     vault_hint = payload.get("vault_hint")
     if isinstance(vault_hint, str) and vault_hint:
         parts.append(
@@ -1176,8 +1190,11 @@ def _proactive_topic_from_payload(payload: dict) -> str:
     """この回の種から関心スレッドの topic を導出する (実活動起点のみ)。
 
     dormant_hint / vault_hint = script 側で basename 化済みのノート名を優先し、
-    どちらも無ければ "recent_conversation" (直近会話起点)。捏造はしない =
-    payload に既にある実活動由来フィールドだけから決める。
+    次に activity_type (チケット #94 = 当日の機械出力由来の固定ラベル、helper の
+    SOURCES で定義した bounded な文字列のみ)、どれも無ければ
+    "recent_conversation" (直近会話起点)。捏造はしない = payload に既にある
+    実活動由来フィールドだけから決める。activity_type を vault_hint より後に
+    置くのは、OWNER が今日触れた話題 > 周辺の機械出力、の具体性順。
     """
     dormant = payload.get("dormant_hint")
     if isinstance(dormant, str) and dormant:
@@ -1185,6 +1202,9 @@ def _proactive_topic_from_payload(payload: dict) -> str:
     vault = payload.get("vault_hint")
     if isinstance(vault, str) and vault:
         return vault
+    activity = payload.get("activity_type")
+    if isinstance(activity, str) and activity:
+        return activity
     return "recent_conversation"
 
 
@@ -3009,6 +3029,7 @@ async def _run_proactive(app: Application, payload: dict) -> None:
         "seed_kind": seed_kind,
         "vault_hint": payload.get("vault_hint"),
         "dormant_hint": payload.get("dormant_hint"),
+        "activity_type": payload.get("activity_type"),
         # 軸 4 拡張 (6) 前景降格ガードの静的 marker。降格ルールが PERSONA_SYSTEM_PROMPT
         # に載った状態で起動した回 = 外向き衝動が前景提案に降格される対象だった回、を
         # 記録するだけ。提案テキストの有無は機械検知しない (文言マッチ・操作分類分岐を

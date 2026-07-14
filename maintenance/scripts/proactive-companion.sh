@@ -51,6 +51,11 @@ SOCK="${PROACTIVE_SOCK:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/companion-bot.soc
 SESSIONS_DIR="${PROACTIVE_SESSIONS_DIR:-${HOME}/companion/bot/sessions/topics}"
 VAULT_NOTES_DIR="${PROACTIVE_VAULT_NOTES_DIR:-${HOME}/companion/vault/notes}"
 
+# 「相手の一日」実活動ヒントの収集 helper (チケット #94)。当日 (JST) の既存
+# 機械出力 (ytcheck 推薦レポート / english 学習 DB) から短いヒントを集めて
+# JSON 1 行を返す。供給源の追加は helper 側 SOURCES のみ (sh/bot は無改変)。
+ACTIVITY_HELPER="${PROACTIVE_ACTIVITY_HELPER:-${HOME}/companion/maintenance/lib/activity_hints.py}"
+
 # --- 調整可能パラメータ (env override 可、未設定時は確定済デフォルト) -------------
 PROACTIVE_ENABLED="${PROACTIVE_ENABLED:-1}"
 PROACTIVE_HOUR_START="${PROACTIVE_HOUR_START:-9}"     # JST、この時刻以上で発火可
@@ -401,16 +406,37 @@ fi
 # 結合を維持)。python3 で JSON を読むのはこのスクリプトの既存慣習 (session JSON 読みも
 # すべて python3)。多行値をシェル変数経由で渡すと改行と衝突するため、朝報の読み取りは
 # この payload 構築 python3 に MORNING_REPORT_FILE と today_jst を渡して内部で完結させる。
+
+# 「相手の一日」実活動ヒント (チケット #94)。発火確定後に helper を 1 回だけ呼び、
+# JSON 1 行 (改行なし) をシェル変数で受けて payload 構築 python3 に渡す。helper 不在 /
+# 異常終了 / 出力空はすべて "{}" (ヒントなし) の 1 状態に倒す (fail-safe、errexit 下
+# でも貫通させない。ヒントなしは正常 = フィールドを付けないだけ)。
+activity_json=$(python3 "$ACTIVITY_HELPER" 2>/dev/null) || activity_json=""
+[[ -z "$activity_json" ]] && activity_json="{}"
+
 payload=$(python3 -c '
 import json, sys
 (seed_kind, vault_hint, dormant_hint, silence_hours,
- morning_report_file, today) = sys.argv[1:7]
+ morning_report_file, today, activity_json) = sys.argv[1:8]
 obj = {"kind": "proactive", "version": 1, "seed_kind": seed_kind,
        "silence_hours": int(silence_hours)}
 if vault_hint:
     obj["vault_hint"] = vault_hint
 if dormant_hint:
     obj["dormant_hint"] = dormant_hint
+# 実活動ヒント (チケット #94): helper 出力の activity_hint / activity_type を
+# そのまま足す。parse 不能 / 非 dict / キー欠落は「ヒントなし」に倒して付けない。
+try:
+    activity = json.loads(activity_json)
+except Exception:
+    activity = None
+if isinstance(activity, dict):
+    hint = activity.get("activity_hint")
+    a_type = activity.get("activity_type")
+    if isinstance(hint, str) and hint:
+        obj["activity_hint"] = hint
+        if isinstance(a_type, str) and a_type:
+            obj["activity_type"] = a_type
 # 朝報 JSON を 1 回だけ open し、当日 (JST) かつ天気ありのときだけ
 # morning_weather / morning_hint を足す。読めない / 古い / 天気空はすべて
 # 「朝報なし」の 1 状態に倒し、フィールドを付けない (古い天気を渡さない)。
@@ -433,7 +459,7 @@ if isinstance(report, dict) and report.get("date") == today:
         if hint_parts:
             obj["morning_hint"] = "\n".join(hint_parts)
 print(json.dumps(obj, ensure_ascii=False))
-' "$seed_kind" "$vault_hint" "$dormant_hint" "$silence_hours" "$MORNING_REPORT_FILE" "$today_jst")
+' "$seed_kind" "$vault_hint" "$dormant_hint" "$silence_hours" "$MORNING_REPORT_FILE" "$today_jst" "$activity_json")
 
 message=$(printf '[[proactive-v1]]\n%s' "$payload")
 
@@ -491,7 +517,7 @@ print(",".join(str(e) for e in sorted(kept)))
         [[ -n "$dormant_last" ]] && printf 'dormant_last=%s\n' "$dormant_last" >> "$tmp"
     fi
     mv "$tmp" "$STATE_FILE"
-    log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', dormant_hint='${dormant_hint}', silence_hours=$silence_hours, roll=$roll, eff_p=$eff_probability, weekly_count=$(( recent_fire_count + 1 ))/$PROACTIVE_WEEKLY_MAX)"
+    log "proactive request sent (seed_kind=$seed_kind, vault_hint='${vault_hint}', dormant_hint='${dormant_hint}', activity=$([[ "$activity_json" == "{}" ]] && echo no || echo yes), silence_hours=$silence_hours, roll=$roll, eff_p=$eff_probability, weekly_count=$(( recent_fire_count + 1 ))/$PROACTIVE_WEEKLY_MAX)"
 else
     log "send failed"
     exit 1
