@@ -14,7 +14,8 @@
 | Tailscale 接続 | ✅ 本機 100.123.48.81。**m-gamepc (Windows) = active/direct 接続中**、**pixel-6 (Android) = 登録済み (確認時 offline、last seen 5h — スマホの通常挙動)** |
 | Telegram bot | ✅ companion-bot active (NRestarts=0)、`bot/.env` 存在 (600、token/chat_id は git 外) |
 | ytcheck 稼働 | ✅ `companion-ytcheck.timer` 毎日 05:03 JST 発火中 |
-| `/want`・`/retro` | ❌ **この機体に非存在** (bot コマンド 9 個に含まれず、非 vault 領域 grep 0 件)。Windows 機側スキルか記憶違い。→ 要件 §2/§3-3 の流用前提は成立しない、意図管理は独自ストア新設 (D-5) |
+
+要件 §2/§3-3 の既存スキル (`/want`・`/retro`) 流用検討は **OWNER 指示 (2026-07-15) により対象外** — 意図管理は最初から独自ストアで設計する (D-5)。
 
 **要件書への訂正 1 件**: §6/§9「ytcheck = Telegram/Tailscale 送信の同型先行例」はコード事実と不一致。ytcheck は「timer + 収集 + claude -p + vault ファイル書き込み」までで **Telegram/Tailscale 送信コードは存在しない**。F5 の流用元は companion-bot (こちらに完備)。ytcheck から流用するのは claude -p 骨格・timer 設定・pending リトライ・flock+atomic write の各パターン。
 
@@ -43,7 +44,7 @@
 - **D-2 トリガーは外部 systemd timer + 判定スクリプト → socket envelope**。proactive-companion.sh と同型。既存 proactive の時間窓 (`PROACTIVE_HOUR_END=22`、23:30 は窓外) や `snooze_until` (ペルソナ全体のグローバルフラグ) とは**独立のゲート**を持つ — 転用すると意味が混線するため。envelope は**新マーカーを増やさず既存 `[[proactive-v1]]` の kind フィールド追加**で判別する (socket 受信段階の判別は JSON envelope 1 回、という bot 既存設計の維持。マーカー 2 種目は 2 周目議論を誘発するため不採用)。
 - **D-3 Windows 収集は ActivityWatch REST pull**。`aw-server.toml` の `[server] address` 変更で LAN 待受は公式手順 (remote-server.rst)。取得は query API (AFK 補正済み canonical events) を第一候補、粒度は exe 名 + ウィンドウタイトル全文。**安定版 (v0.13.2) に API 認証は無い** → Tailscale 内限定 + Windows Firewall で Tailscale インターフェースに限定して受容 (Bearer 認証は 2026-04 に master へ入ったが未リリース、リリース後に追随)。
 - **D-4 蓄積は Linux 側 SQLite** (`osekkai/data/activity.db`)。pull は常時ポーリングせず**生成タイミング (号令/振り返り) の直前に on-demand** で 19:00〜現在 の範囲を取得して蓄積。PC オフライン時は「取れた分で動く」 (N3) — 活動データゼロでも号令は出せる、振り返りは「今夜はデータなし」と言うだけ。ytcheck の pending リトライパターンは失敗時の再取得に流用。
-- **D-5 意図管理は独自 JSON ストア新設** (`backlog.json` = 週次バックログ + 締切アイテム、`tonight.json` = 今夜の意図・休むフラグ・送信済みマーク)。`/want` は非存在のため流用しない。Google Calendar 連携は Phase 3 以降のオプション。書き込みは ytcheck `channel_store.py` の flock + atomic write の型を流用 (timer と bot の複数書き手)。
+- **D-5 意図管理は独自 JSON ストア新設** (`backlog.json` = 週次バックログ + 締切アイテム、`tonight.json` = 今夜の意図・休むフラグ・送信済みマーク)。Google Calendar 連携は Phase 3 以降のオプション。書き込みは ytcheck `channel_store.py` の flock + atomic write の型を流用 (timer と bot の複数書き手)。
 - **D-6 プライバシーは Phase 1 から安全側デフォルト**: claude -p に渡すのは**アプリ/exe 名 + 集計時間 + AFK 状態のみ、ウィンドウタイトル全文は渡さない** (N1)。タイトル活用 (何の創作か等の解像度向上) は Phase 3 のマスクフィルタ設計とセットで解禁。SQLite への蓄積 (ローカル) はタイトル込みで保持してよい — クラウドに出る境界は生成プロンプトのみ。
 - **D-7 トーンは osekkai 専用 system prompt**。§3-4 (提案形・指摘 1 つ・1〜2 文・トリガーなければ沈黙) を明文化し、ytcheck `config.py` の「禁止表現列挙 + 書き換え方針」パターンで埋め込む。口調ベースは Phase 4 確定済みの「対等な相方」に揃える。
 - **D-8 頻度制御は tonight.json の送信済みフラグ** (号令 1/日、中間 1/日 = Phase 3、「今日は休む」フラグで当日の以降トリガーを全て沈黙)。判定は state 1 read で決定的に (CLAUDE.md 派生原則)。
@@ -85,7 +86,6 @@
 ## 6. OWNER への確認事項 (承認ゲート)
 
 1. **計画全体の承認** (§8 step 3。承認後に実装チケットを切って着手)
-2. `/want`・`/retro` はこの機体に無かった — Windows 機側のスキル? **流用せず独自ストアで進めてよいか** (スキル定義を移植したい場合は Windows 側から受領が必要)
-3. Windows への ActivityWatch 導入・設定変更は **OWNER 作業** になる (手順書は用意する)
-4. **無認証 aw-server を Tailscale 内で公開する妥協** (上記リスク) の受容可否
-5. Telegram に **osekkai 専用 topic を新設** する運用でよいか (#chat 相乗りはペルソナ雑談との混線と引き換えに topic 追加不要 — 推奨は専用 topic)
+2. Windows への ActivityWatch 導入・設定変更は **OWNER 作業** になる (手順書は用意する)
+3. **無認証 aw-server を Tailscale 内で公開する妥協** (上記リスク) の受容可否
+4. Telegram に **osekkai 専用 topic を新設** する運用でよいか (#chat 相乗りはペルソナ雑談との混線と引き換えに topic 追加不要 — 推奨は専用 topic)
