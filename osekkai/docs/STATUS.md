@@ -4,7 +4,7 @@
 
 - **要件正本**: `~/companion/workspace/redesign/osekkai-requirements.md` (§3 は変更不可の合意事項)
 - **実装計画正本**: `~/companion/workspace/redesign/osekkai-plan.md` v0.2 (2026-07-15 OWNER 承認済、設計判断 D-1〜D-9)
-- **チケット**: #110 (Phase 1 実装)。#108 (要件受領〜計画承認) は 2026-07-15 完了
+- **チケット**: #110 (Phase 1 実装) / #111 (OWNER 作業 = AW 導入 + topic 新設、#110 のブロッカー) / #112 (Phase 2 Android) / #113 (Phase 3 中間チェック・締切・フィルタ) / #114 (aw-server Bearer 認証リリース追随 watch)。#108 (要件受領〜計画承認) は 2026-07-15 完了
 
 ## 構成 (Phase 1 予定)
 
