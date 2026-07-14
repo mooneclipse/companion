@@ -12,7 +12,8 @@
   まとめて JSON で返す。JST 当日の日付を key に同日 1 回だけ build → cache。同じ JSON
   を 1 日中返すので、bot 通知 (notify script) と dashboard ブラウザ (web/app.js) で
   完全一致が保証される（占い random seed / 天気 fetch 時点 / news fetch 時点のズレを
-  helper 側で吸収）。
+  helper 側で吸収）。例外は weather 取得失敗の朝: cache 未確定のまま再 build するため、
+  bot 通知が告知行・後続のブラウザ表示が実天気、と食い違い得る（#104 の意図した劣化）。
 
 設計（~/companion/CLAUDE.md 準拠）:
 - mpv 不在 / socket 無し / 接続拒否 / タイムアウト ＝「再生していない」正常状態 → {"playing": false} を 200 で返す。
