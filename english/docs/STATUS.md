@@ -32,6 +32,7 @@ UI 確定案: **D 融合 (A 字幕の骨格 + ドリルのみ C の可読性)** 
 - [ ] TADC Ep 4 (Q9KWcWKo2T8) の再取込 — 2026-07-10 の一括 ingest で唯一 DL 失敗 (HTTP 403 Forbidden、yt-dlp impersonation 案内。設計契約どおり 1 回確定・リトライせず)。yt-dlp 更新 or impersonation 依存導入後に run_all.sh 再走で冪等に拾える
   (注: sources.json は**追記のみ**。既存エントリの前に行を挿入すると未取込分の source_order がずれ、同日公開の既存行と sort_key 衝突 (順序不定) の余地がある — 2026-07-10 レビュー指摘)
 - [ ] v1 残り: 新エピソード自動巡回の夜間バッチ化 / 入力式解答 / 弱点タグ統計画面 / english.db の USB バックアップ追加
+- [ ] #80 レビュー軽微 3 件 (2026-07-14 code-reviewer、対応任意・OWNER 判断待ち): ① `refresh_blanks` に空欄 idx/answer 不一致の skip guard 追加 (現状は tokens 一致のみコード強制。wordlists 編集後に叩くと idx/answer が黙って変わり得る) ② categories.json の 2 カテゴリに文法スロット混載 (quantifiers_degree に限定詞系と程度副詞、casual_reductions に動詞句と数量 — 'some' の誤答肢に 'very' が出る余地) ③ `_load_categories` にアポストロフィ正規化なし (現ファイルは ASCII で実害ゼロ、カーリー付き追記時に無音不一致)
 
 ## Done
 
