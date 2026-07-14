@@ -22,8 +22,9 @@
 - /news レスポンスは helper メモリ内で TTL=30 分キャッシュ（NHK RSS への過剰アクセス回避、
   client が多重に叩いても外部 fetch は最大 30 分に 1 回）。
 - /quotes は JST 当日の日付を key にした in-memory cache。同日内は同じ JSON を返す。
-  日付ロールオーバーで cache を破棄して次の呼び出しで再 build。failure は静かに空配列で
-  返す（retry なし、既存 /np / /news と同方針）。
+  日付ロールオーバーで cache を破棄して次の呼び出しで再 build。failure は空配列で返す
+  （retry なし、既存 /np / /news と同方針）。例外は weather: 取得失敗時は告知行 1 本を
+  入れて返しつつ cache に確定しない = 次の /quotes で再 build（2026-07-14、#104）。
 - 1 クライアント・低頻度ポーリング（~2.5s）前提。リクエスト毎に接続して即閉じる。
 """
 import datetime
@@ -327,7 +328,9 @@ def _anthropic_new_titles(today_ymd):
 #   anthropic: anthropic.com/news の Product カテゴリ新着タイトル（_anthropic_new_titles）。
 #              通常 0 件、新モデル/製品発表があった朝だけ 1〜数件。
 #
-# 失敗時は該当配列を空で返す（retry なし、既存 /np / /news と同方針）。
+# 失敗時は該当配列を空で返す（retry なし、既存 /np / /news と同方針）。weather のみ
+# 例外: 取得失敗時は WEATHER_UNAVAILABLE_LINE を 1 本入れて返し、cache に確定しない
+# （次の /quotes で再 build。詳細は _quotes_cache のコメント参照、#104）。
 
 WEATHER_TIMEOUT = 4.0
 USER_AGENT = "companion-dashboard/1.0 (+local kiosk)"
@@ -349,7 +352,16 @@ FORTUNE_TIP = [
 ]
 
 # 当日 cache。{"date": "YYYY-MM-DD", "payload": {...}} を保持。
+# 天気取得失敗時 (weather 空) は cache に確定しない = 次の /quotes で再 build
+# (2026-07-14 朝、5:30 の初回 build で Open-Meteo fetch が一過性失敗 → 天気空の
+# payload が当日 key で確定し、同日中 Telegram 朝報 / TV セリフ枠の両方から天気が
+# 消えた。回復は次リクエストの再 build に委ね、client retry は導入しない)。
 _quotes_cache = {"date": None, "payload": None}
+
+# 天気取得失敗時にセリフ枠 / 朝報へ流す告知行 (cache 判定は「weather 空か」で
+# 行うため、この行を入れて non-empty になっても cache しない)。TV の天気パネルは
+# app.js が Open-Meteo を直 fetch する別系統 (last-good 保持) なので参照先として正しい。
+WEATHER_UNAVAILABLE_LINE = "きょうの天気：取得できなかった…TV の天気パネルの方を見てみて"
 
 
 def _read_weather_config():
@@ -391,7 +403,11 @@ def _fetch_weather():
         with urllib.request.urlopen(req, timeout=WEATHER_TIMEOUT) as resp:
             raw = resp.read(1024 * 1024)
         return json.loads(raw.decode("utf-8", "replace"))
-    except (OSError, ValueError):
+    except (OSError, ValueError) as e:
+        # 表面化のみ (挙動分岐・retry はしない)。2026-07-14 朝に無言失敗で当日 cache に
+        # weather:[] が確定し朝報から天気が消えた。失敗種別 (timeout / DNS / HTTP) を
+        # journald で確定できるよう記録する (anthropic-news の既存ログと同形式)。
+        print(f"weather: fetch failed: {e!r}", file=sys.stderr, flush=True)
         return None
 
 
@@ -573,15 +589,25 @@ def quotes_payload():
     # build 用には JST の naive datetime を渡したい（weekday / month / day を JST で判定）
     jst = datetime.timezone(datetime.timedelta(hours=9))
     now_jst = datetime.datetime.now(jst).replace(tzinfo=None)
+    weather_lines = _build_weather_lines(now_jst)
+    # 土日も最低 1 行出る設計なので「空 = 取得失敗」で確定できる (config 欠落も
+    # 失敗側に倒れるが、静的 config なので実用上起きない)。
+    weather_ok = bool(weather_lines)
+    if not weather_ok:
+        weather_lines = [WEATHER_UNAVAILABLE_LINE]
     payload = {
         "date": today_ymd,
-        "weather": _build_weather_lines(now_jst),
+        "weather": weather_lines,
         "fortune": _build_fortune_line(now_jst),
         "news": _build_news_lines(),
         "anthropic": _build_anthropic_lines(today_ymd),
     }
-    _quotes_cache["date"] = today_ymd
-    _quotes_cache["payload"] = payload
+    # 天気取得失敗時は cache に確定しない = 次の /quotes 呼び出しで再 build。
+    # 再 build の安全性: fortune は日付 seed の deterministic、news は TTL cache、
+    # anthropic は state.date == 今日なら shown を返す idempotent 設計で本文はブレない。
+    if weather_ok:
+        _quotes_cache["date"] = today_ymd
+        _quotes_cache["payload"] = payload
     return payload
 
 
