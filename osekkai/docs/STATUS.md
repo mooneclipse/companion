@@ -32,7 +32,7 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 ## TODO (Phase 1、計画 §4 の番号)
 
 - [x] 1. **[OWNER 作業]** Windows (m-gamepc) に ActivityWatch 導入 — 手順書 `docs/SETUP-windows-aw.md` に従う (インストール / address 変更 / Firewall / タスクスケジューラ窓稼働) ✅ 2026-07-15 導入完了 + Linux 側から到達確認 OK (下記 Done 参照)
-- [ ] 2. **[OWNER 作業]** Telegram supergroup に osekkai 用 topic 新設 → thread_id を `bot/.env` の `BOT_THREAD_ID_OSEKKAI` に追加
+- [x] 2. **[OWNER 作業]** Telegram supergroup に osekkai 用 topic 新設 → thread_id を `bot/.env` の `BOT_THREAD_ID_OSEKKAI` に追加 ✅ 2026-07-15 OWNER が topic 新設、thread_id=1115 を .env に追記済 (claude 実施)
 - [ ] 4. collector: REST pull (query API、前回 pull 済み以降〜現在) + SQLite 蓄積 (蓄積前にタイトル破棄、exe 名+時間+AFK のみ、保持 90 日) + F3 要約器 — 着手条件 (TODO 1) は 2026-07-15 充足、**着手可**
 - [ ] 5. 意図ストア: backlog.json / tonight.json + flock+atomic write (ytcheck channel_store の型)
 - [ ] 6. trigger: 平日 19 時台 (RandomizedDelay) + 23:30 の systemd timer 2 本 + 判定スクリプト (休むフラグ / 号令済み / 平日判定は state 1 read)
@@ -43,10 +43,11 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 ## In progress
 
-- (なし — TODO 1・2 の OWNER 作業待ち。4 以降は 1 完了後に着手)
+- (なし — OWNER 作業 2 件完了、次セッションで TODO 4 collector から着手)
 
 ## Done
 
+- **2026-07-15 21:57**: TODO 2 完了 — OWNER が osekkai topic 新設 (テスト投稿リンク `t.me/c/3851931893/1115/1116` → thread_id=1115)、`bot/.env` に `BOT_THREAD_ID_OSEKKAI=1115` を追記 (.env 中身は読まずキー件数のみで重複なし確認)。bot.py はまだこの変数を参照しないため bot 再起動は不要、TODO 7 の bot 分岐実装時に読み込む。thread_id の実効性 (その topic へ送れるか) の裏取りも TODO 7 で実施。OWNER 作業 2 件が出揃いチケット #111 完了
 - **2026-07-15 21:50**: TODO 1 完了 — OWNER が m-gamepc に AW v0.13.2 導入、Linux 側から Tailscale 越しに到達確認 OK (窓内 21:50 実施)。`/api/0/info` 応答 (hostname=m-gamepc, testing=false)、buckets に `aw-watcher-window_m-gamepc` / `aw-watcher-afk_m-gamepc` の両方が存在、window イベントも実データ流入中 (app/title 取得確認)。設定は Python 版 `aw-server.toml` の `host = "0.0.0.0"` で有効だった。残る OWNER 作業は TODO 2 (osekkai topic + thread_id) のみ、claude 側は TODO 4 (collector) から着手可
 - **2026-07-15**: Phase 1 着手 (チケット #110)。計画 v0.2 OWNER 承認 → `osekkai/` 台帳新設 + Windows AW 導入手順書 `docs/SETUP-windows-aw.md` 作成。設計判断 2 件 (proactive 非相乗り = #97 非該当、AW 窓稼働はスタック全体) を上記に記録
 - **2026-07-14〜15** (チケット #108): 要件受領 (`osekkai-requirements.md`) → §6 前提確認 → §7 調査 (bot 配管 / ytcheck 部品 / ActivityWatch Web 一次情報) → 実装計画 v0.1〜v0.2 → OWNER 承認。経緯は計画正本の改版履歴参照
@@ -57,4 +58,4 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 ---
 
-**最終更新**: 2026-07-15 21:50 (TODO 1 = AW 導入・到達確認 完了)
+**最終更新**: 2026-07-15 21:57 (TODO 1・2 完了 = OWNER 作業出揃い、#111 クローズ。次は TODO 4 collector)
