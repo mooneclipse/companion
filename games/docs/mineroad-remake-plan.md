@@ -42,7 +42,9 @@
 5. **セーブ/永続**（力尽き跨ぎで救出済み女の子・育成を永続化 = save モデル）= v0.3.0 でスコープ境界として次送りした宿題（STATUS 行78）。
    - **【v0.12.0 で実装（2026-06-28）】**: localStorage JSON 方式（既存 getInt/setInt と同じ try/catch パターン）。永続対象: rescued/per/bp/info/pick/girls level・cexp。保存＝地上帰還(surfaceReturn)成功時、ロード＝startDive 冒頭、クリアで消去。ランごとリセット state（dug/seen/monsters/ore/mushrooms/potions/ladders/antenna/exp/kills/companion 等）は永続しない。selfcheck-save 21/21 ALL PASS（3回連続）・debug gate A〜AB(28) ALL PASS・selfcheck-grow 13/13・selfcheck-companion 16/16 ALL PASS。本番反映は OWNER 承認待ち。詳細は STATUS「v0.12.0」エントリ。
 6. **残りダンジョン**（防空壕〜モンスターの巣窟の8つ、`dungeon.csv` の深度難度カーブ §6）+ **クリア条件→次ダンジョン解放の連結**（§7/§11）。
+   - **【v0.13.0 で実装済み（2026-06-29）】**: 全9ダンジョンのマスターデータ + 深度帯 per-dungeon×per-band 動的化 + 選択UI + 解放連結チェーン + ダンジョンごとセーブ分離。詳細は STATUS「v0.13.0」エントリ。
 7. **アイテム拡充**（原作45種への拡張、§8）+ **アンテナ保険**（電波範囲内は力尽きてもアイテムをロストしない §8）。
+   - **【v0.14.0 で実装済み（2026-07-15、チケット #56）＝バックログ 7 番まで全消化】**: 鉱石を原作実名6種へ名寄せ（v0.4.0 独自4種体系の解消、oreW 全70帯 dungeon.csv 機械抽出、craft/shop 実レシピ化）+ ITEM_DATA 45種カタログ（取得経路を開く20種／dead-item 25種は非陳列）+ 回復薬廃止→原作飲食へ置換 + アンテナ設置型（上限20）+ 深度比例電波網 + 力尽き保険（圏内なら携行品持ち越し）。詳細は STATUS「v0.14.0」エントリ。**§2 バックログはこれで全消化** — 次期候補（dead-item 25種の新規メカ／ボスモンスター＝龍のウロコ経路開通／電波網テスト補強）は OWNER 発注待ち。
 
 > 各項目は着手時に STATUS へ「CSV→実装の翻案判断」を記録してから実装する（v0.3.0/v0.4.0 の進め方を踏襲）。順序・粒度は OWNER 発注で前後しうる。
 
