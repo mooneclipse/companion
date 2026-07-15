@@ -61,96 +61,96 @@ const DUNGEON_DATA = [
 // 各帯: floorTo(この行まで適用), none/hard/rock(ブロック比率 0..1, 累積前),
 //   hazardRate(空間に占める水/マグマの割合), magmaFrac(ハザード中のマグマ割合),
 //   avalancheRate(SOIL 中の不安定土割合), oreRate(鉱石含有率 /1000),
-//   oreW[copper,iron,gold,diamond](鉱石種の重み),
+//   oreW[石炭,鉄鉱石,化石,鋼,ルビー,ダイヤ](鉱石種の重み。dungeon.csv 列21-26 忠実、v0.14.0 名寄せ),
 //   monW[BAT,SLIME,SLIME_HALF,SNAKE,WORM,SPIDER](実装済みモンスターの重み)。
 const DUNGEON_BANDS = {
   0: [
-    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [64,30,5,0],  monW: [80,0,0,0,10,10] },
-    { floorTo: 10, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:  30, oreW: [64,30,5,0],  monW: [64,5,0,0,10,20] },
-    { floorTo: 15, none: 0.07, hard: 0.10, rock: 0.02, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0,      oreRate:  50, oreW: [58,30,10,0], monW: [56,10,0,3,10,20] },
+    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [59,30,5,0,0,0],  monW: [80,0,0,0,10,10] },
+    { floorTo: 10, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:  30, oreW: [59,30,5,0,0,0],  monW: [64,5,0,0,10,20] },
+    { floorTo: 15, none: 0.07, hard: 0.10, rock: 0.02, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0,      oreRate:  50, oreW: [48,30,10,0,0,0], monW: [56,10,0,3,10,20] },
   ],
   1: [
-    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [64,30,5,0],  monW: [49,10,0,10,10,20] },
-    { floorTo: 10, none: 0.06, hard: 0.12, rock: 0.05, hazardRate: 0.17, magmaFrac: 0,    avalancheRate: 0.013,  oreRate:  40, oreW: [64,30,5,0],  monW: [29,10,0,20,10,30] },
-    { floorTo: 15, none: 0.07, hard: 0.14, rock: 0.05, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0.0135, oreRate:  80, oreW: [52,30,15,1], monW: [13,20,0,20,10,30] },
-    { floorTo: 20, none: 0.07, hard: 0.16, rock: 0.05, hazardRate: 0.29, magmaFrac: 0.50, avalancheRate: 0.0278, oreRate: 120, oreW: [51,30,15,1], monW: [13,20,0,20,10,30] },
-    { floorTo: 25, none: 0.08, hard: 0.18, rock: 0.05, hazardRate: 0.38, magmaFrac: 0.33, avalancheRate: 0.029,  oreRate: 160, oreW: [35,35,25,1], monW: [6,10,0,20,10,30] },
-    { floorTo: 30, none: 0.10, hard: 0.20, rock: 0.05, hazardRate: 0.50, magmaFrac: 0.40, avalancheRate: 0.0308, oreRate: 200, oreW: [34,35,25,1], monW: [9,10,0,20,10,20] },
+    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.02, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [34,30,5,0,0,0],  monW: [49,10,0,10,10,20] },
+    { floorTo: 10, none: 0.06, hard: 0.12, rock: 0.05, hazardRate: 0.17, magmaFrac: 0,    avalancheRate: 0.013,  oreRate:  40, oreW: [34,30,5,0,0,0],  monW: [29,10,0,20,10,30] },
+    { floorTo: 15, none: 0.07, hard: 0.14, rock: 0.05, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0.0135, oreRate:  80, oreW: [22,30,10,5,1,0], monW: [13,20,0,20,10,30] },
+    { floorTo: 20, none: 0.07, hard: 0.16, rock: 0.05, hazardRate: 0.29, magmaFrac: 0.50, avalancheRate: 0.0278, oreRate: 120, oreW: [21,30,10,5,1,0], monW: [13,20,0,20,10,30] },
+    { floorTo: 25, none: 0.08, hard: 0.18, rock: 0.05, hazardRate: 0.38, magmaFrac: 0.33, avalancheRate: 0.029,  oreRate: 160, oreW: [5,35,15,10,1,0], monW: [6,10,0,20,10,30] },
+    { floorTo: 30, none: 0.10, hard: 0.20, rock: 0.05, hazardRate: 0.50, magmaFrac: 0.40, avalancheRate: 0.0308, oreRate: 200, oreW: [4,35,15,10,1,0], monW: [9,10,0,20,10,20] },
   ],
   2: [
-    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.0125, oreRate:   0, oreW: [64,30,5,0],  monW: [39,10,0,30,10,10] },
-    { floorTo: 10, none: 0.06, hard: 0.12, rock: 0.05, hazardRate: 0.17, magmaFrac: 0,    avalancheRate: 0.013,  oreRate:  40, oreW: [63,30,5,0],  monW: [39,10,0,30,10,10] },
-    { floorTo: 15, none: 0.07, hard: 0.14, rock: 0.05, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0.027,  oreRate:  80, oreW: [44,30,20,3], monW: [16,20,0,30,10,15] },
-    { floorTo: 20, none: 0.07, hard: 0.16, rock: 0.05, hazardRate: 0.29, magmaFrac: 0.50, avalancheRate: 0.0278, oreRate: 120, oreW: [44,30,20,3], monW: [16,20,0,30,10,15] },
-    { floorTo: 25, none: 0.10, hard: 0.18, rock: 0.08, hazardRate: 0.50, magmaFrac: 0.40, avalancheRate: 0.0625, oreRate: 160, oreW: [27,35,30,5], monW: [1,20,0,20,10,10] },
-    { floorTo: 30, none: 0.13, hard: 0.20, rock: 0.08, hazardRate: 0.62, magmaFrac: 0.38, avalancheRate: 0.0678, oreRate: 200, oreW: [27,35,30,5], monW: [4,20,0,20,10,10] },
-    { floorTo: 35, none: 0.13, hard: 0.26, rock: 0.08, hazardRate: 0.62, magmaFrac: 0.62, avalancheRate: 0.0755, oreRate: 240, oreW: [13,35,40,8], monW: [5,15,0,20,0,5] },
-    { floorTo: 40, none: 0.14, hard: 0.28, rock: 0.10, hazardRate: 0.64, magmaFrac: 0.89, avalancheRate: 0.125,  oreRate: 280, oreW: [7,35,45,9],  monW: [7,9,0,15,0,0] },
+    { floorTo:  5, none: 0.05, hard: 0.10, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.0125, oreRate:   0, oreW: [59,30,5,0,0,0],  monW: [39,10,0,30,10,10] },
+    { floorTo: 10, none: 0.06, hard: 0.12, rock: 0.05, hazardRate: 0.17, magmaFrac: 0,    avalancheRate: 0.013,  oreRate:  40, oreW: [55,30,5,0,0,0],  monW: [39,10,0,30,10,10] },
+    { floorTo: 15, none: 0.07, hard: 0.14, rock: 0.05, hazardRate: 0.29, magmaFrac: 0,    avalancheRate: 0.027,  oreRate:  80, oreW: [36,30,10,10,3,0], monW: [16,20,0,30,10,15] },
+    { floorTo: 20, none: 0.07, hard: 0.16, rock: 0.05, hazardRate: 0.29, magmaFrac: 0.50, avalancheRate: 0.0278, oreRate: 120, oreW: [36,30,10,10,3,0], monW: [16,20,0,30,10,15] },
+    { floorTo: 25, none: 0.10, hard: 0.18, rock: 0.08, hazardRate: 0.50, magmaFrac: 0.40, avalancheRate: 0.0625, oreRate: 160, oreW: [17,35,10,20,5,0], monW: [1,20,0,20,10,10] },
+    { floorTo: 30, none: 0.13, hard: 0.20, rock: 0.08, hazardRate: 0.62, magmaFrac: 0.38, avalancheRate: 0.0678, oreRate: 200, oreW: [17,35,10,20,5,0], monW: [4,20,0,20,10,10] },
+    { floorTo: 35, none: 0.13, hard: 0.26, rock: 0.08, hazardRate: 0.62, magmaFrac: 0.62, avalancheRate: 0.0755, oreRate: 240, oreW: [8,35,10,30,7,1], monW: [5,15,0,20,0,5] },
+    { floorTo: 40, none: 0.14, hard: 0.28, rock: 0.10, hazardRate: 0.64, magmaFrac: 0.89, avalancheRate: 0.125,  oreRate: 280, oreW: [2,35,15,30,7,2],  monW: [7,9,0,15,0,0] },
   ],
   3: [
-    { floorTo:  4, none: 0.25, hard: 0.30, rock: 0.02, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0,      oreRate:   0, oreW: [60,30,10,0],  monW: [5,0,0,0,0,0] },
-    { floorTo:  8, none: 0.25, hard: 0.30, rock: 0.02, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0,      oreRate:  20, oreW: [58,30,10,0],  monW: [9,20,0,10,5,10] },
-    { floorTo: 14, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  40, oreW: [40,30,25,3],  monW: [4,20,0,10,5,10] },
-    { floorTo: 19, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  60, oreW: [40,30,25,3],  monW: [8,20,0,10,5,10] },
-    { floorTo: 25, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  80, oreW: [33,30,30,5],  monW: [1,20,0,10,5,10] },
-    { floorTo: 30, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate: 100, oreW: [25,30,35,8],  monW: [5,10,0,10,5,10] },
-    { floorTo: 35, none: 0.30, hard: 0.30, rock: 0.04, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.1111, oreRate: 120, oreW: [19,30,35,14], monW: [4,10,0,10,5,10] },
-    { floorTo: 40, none: 0.30, hard: 0.30, rock: 0.04, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.1111, oreRate: 140, oreW: [21,30,30,17], monW: [2,10,0,10,5,5] },
+    { floorTo:  4, none: 0.25, hard: 0.30, rock: 0.02, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0,      oreRate:   0, oreW: [55,30,10,0,0,0],  monW: [5,0,0,0,0,0] },
+    { floorTo:  8, none: 0.25, hard: 0.30, rock: 0.02, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0,      oreRate:  20, oreW: [48,30,10,0,0,0],  monW: [9,20,0,10,5,10] },
+    { floorTo: 14, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  40, oreW: [30,30,15,10,3,0],  monW: [4,20,0,10,5,10] },
+    { floorTo: 19, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  60, oreW: [30,30,15,10,3,0],  monW: [8,20,0,10,5,10] },
+    { floorTo: 25, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate:  80, oreW: [23,30,20,10,5,0],  monW: [1,20,0,10,5,10] },
+    { floorTo: 30, none: 0.28, hard: 0.30, rock: 0.04, hazardRate: 0.71, magmaFrac: 0.50, avalancheRate: 0.0526, oreRate: 100, oreW: [10,30,20,15,5,3],  monW: [5,10,0,10,5,10] },
+    { floorTo: 35, none: 0.30, hard: 0.30, rock: 0.04, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.1111, oreRate: 120, oreW: [4,30,20,15,8,6], monW: [4,10,0,10,5,10] },
+    { floorTo: 40, none: 0.30, hard: 0.30, rock: 0.04, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.1111, oreRate: 140, oreW: [6,30,10,20,8,9], monW: [2,10,0,10,5,5] },
   ],
   4: [
-    { floorTo: 10, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.0926, oreRate:   0, oreW: [46,10,40,0],  monW: [25,5,0,5,3,8] },
-    { floorTo: 15, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.0926, oreRate:  40, oreW: [43,10,40,3],  monW: [11,5,0,5,3,8] },
-    { floorTo: 20, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate:  80, oreW: [33,20,38,5],  monW: [8,5,0,5,3,8] },
-    { floorTo: 25, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 120, oreW: [31,20,38,7],  monW: [0,5,0,5,3,8] },
-    { floorTo: 30, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 160, oreW: [21,20,38,17], monW: [4,3,0,5,3,8] },
-    { floorTo: 35, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 200, oreW: [20,20,36,20], monW: [4,3,0,5,3,8] },
-    { floorTo: 40, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.2222, oreRate: 240, oreW: [10,20,41,25], monW: [2,5,0,5,3,8] },
-    { floorTo: 50, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.2222, oreRate: 280, oreW: [5,20,43,28],  monW: [2,5,0,5,3,8] },
+    { floorTo: 10, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.0926, oreRate:   0, oreW: [26,10,30,10,0,0],  monW: [25,5,0,5,3,8] },
+    { floorTo: 15, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.0926, oreRate:  40, oreW: [23,10,30,10,3,0],  monW: [11,5,0,5,3,8] },
+    { floorTo: 20, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate:  80, oreW: [3,20,28,10,5,0],  monW: [8,5,0,5,3,8] },
+    { floorTo: 25, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 120, oreW: [1,20,28,10,7,0],  monW: [0,5,0,5,3,8] },
+    { floorTo: 30, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 160, oreW: [1,20,28,10,9,8], monW: [4,3,0,5,3,8] },
+    { floorTo: 35, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.1481, oreRate: 200, oreW: [0,20,26,10,12,8], monW: [4,3,0,5,3,8] },
+    { floorTo: 40, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.2222, oreRate: 240, oreW: [0,20,26,15,15,10], monW: [2,5,0,5,3,8] },
+    { floorTo: 50, none: 0.16, hard: 0.30, rock: 0,    hazardRate: 0.38, magmaFrac: 0.50, avalancheRate: 0.2222, oreRate: 280, oreW: [0,20,26,17,18,10],  monW: [2,5,0,5,3,8] },
   ],
   5: [
-    { floorTo:   5, none: 0.10, hard: 0.80, rock: 0,    hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.20,   oreRate:   0, oreW: [50,30,20,0], monW: [36,10,0,30,0,20] },
-    { floorTo:  17, none: 0.10, hard: 0.75, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.20,   oreRate:  50, oreW: [40,30,30,0], monW: [16,10,0,30,0,20] },
-    { floorTo:  30, none: 0.09, hard: 0.70, rock: 0.05, hazardRate: 0.11, magmaFrac: 0,    avalancheRate: 0.125,  oreRate: 100, oreW: [39,30,30,1], monW: [20,20,0,20,0,10] },
-    { floorTo:  40, none: 0.09, hard: 0.60, rock: 0.10, hazardRate: 0.11, magmaFrac: 0,    avalancheRate: 0.0952, oreRate: 150, oreW: [39,30,30,1], monW: [20,20,0,20,0,10] },
-    { floorTo:  50, none: 0.08, hard: 0.60, rock: 0.10, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0909, oreRate: 200, oreW: [24,40,35,1], monW: [22,20,0,10,0,5] },
-    { floorTo:  60, none: 0.08, hard: 0.50, rock: 0.15, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0741, oreRate: 250, oreW: [14,40,45,1], monW: [22,30,0,0,0,5] },
-    { floorTo:  70, none: 0.08, hard: 0.50, rock: 0.15, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0741, oreRate: 300, oreW: [13,40,45,2], monW: [20,27,0,0,0,5] },
-    { floorTo:  80, none: 0.09, hard: 0.40, rock: 0.20, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0645, oreRate: 250, oreW: [12,40,45,3], monW: [22,25,0,0,0,0] },
-    { floorTo:  90, none: 0.09, hard: 0.40, rock: 0.20, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0645, oreRate: 400, oreW: [5,40,50,5],  monW: [22,10,0,0,0,0] },
-    { floorTo: 100, none: 0.10, hard: 0.30, rock: 0.25, hazardRate: 0.50, magmaFrac: 0.60, avalancheRate: 0.0571, oreRate: 450, oreW: [5,40,47,8],  monW: [27,5,0,0,0,0] },
+    { floorTo:   5, none: 0.10, hard: 0.80, rock: 0,    hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.20,   oreRate:   0, oreW: [45,30,20,0,0,0], monW: [36,10,0,30,0,20] },
+    { floorTo:  17, none: 0.10, hard: 0.75, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0.20,   oreRate:  50, oreW: [35,30,20,10,0,0], monW: [16,10,0,30,0,20] },
+    { floorTo:  30, none: 0.09, hard: 0.70, rock: 0.05, hazardRate: 0.11, magmaFrac: 0,    avalancheRate: 0.125,  oreRate: 100, oreW: [34,30,20,10,1,0], monW: [20,20,0,20,0,10] },
+    { floorTo:  40, none: 0.09, hard: 0.60, rock: 0.10, hazardRate: 0.11, magmaFrac: 0,    avalancheRate: 0.0952, oreRate: 150, oreW: [34,30,20,10,1,0], monW: [20,20,0,20,0,10] },
+    { floorTo:  50, none: 0.08, hard: 0.60, rock: 0.10, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0909, oreRate: 200, oreW: [19,40,25,10,1,0], monW: [22,20,0,10,0,5] },
+    { floorTo:  60, none: 0.08, hard: 0.50, rock: 0.15, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0741, oreRate: 250, oreW: [9,40,25,20,1,0], monW: [22,30,0,0,0,5] },
+    { floorTo:  70, none: 0.08, hard: 0.50, rock: 0.15, hazardRate: 0.38, magmaFrac: 0.67, avalancheRate: 0.0741, oreRate: 300, oreW: [8,40,25,20,2,0], monW: [20,27,0,0,0,5] },
+    { floorTo:  80, none: 0.09, hard: 0.40, rock: 0.20, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0645, oreRate: 250, oreW: [7,40,25,20,2,1], monW: [22,25,0,0,0,0] },
+    { floorTo:  90, none: 0.09, hard: 0.40, rock: 0.20, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0645, oreRate: 400, oreW: [0,40,25,25,3,2],  monW: [22,10,0,0,0,0] },
+    { floorTo: 100, none: 0.10, hard: 0.30, rock: 0.25, hazardRate: 0.50, magmaFrac: 0.60, avalancheRate: 0.0571, oreRate: 450, oreW: [0,40,22,25,5,3],  monW: [27,5,0,0,0,0] },
   ],
   6: [
-    { floorTo:  8, none: 0.01, hard: 0.10, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [64,30,5,0],  monW: [24,10,0,40,5,15] },
-    { floorTo: 16, none: 0.07, hard: 0.12, rock: 0.05, hazardRate: 0.57, magmaFrac: 0.50, avalancheRate: 0,      oreRate:  40, oreW: [63,30,5,0],  monW: [19,10,0,30,5,15] },
-    { floorTo: 24, none: 0.09, hard: 0.14, rock: 0.10, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0149, oreRate:  80, oreW: [46,35,15,1], monW: [6,20,0,30,5,10] },
-    { floorTo: 32, none: 0.07, hard: 0.16, rock: 0.10, hazardRate: 0.57, magmaFrac: 0.50, avalancheRate: 0.0149, oreRate: 120, oreW: [45,35,15,1], monW: [7,20,0,30,5,10] },
-    { floorTo: 48, none: 0.05, hard: 0.18, rock: 0.12, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0.0154, oreRate: 160, oreW: [30,40,25,1], monW: [9,20,0,15,5,5] },
-    { floorTo: 56, none: 0.11, hard: 0.20, rock: 0.12, hazardRate: 0.73, magmaFrac: 0.50, avalancheRate: 0.0351, oreRate: 200, oreW: [29,40,25,1], monW: [9,30,0,14,5,0] },
-    { floorTo: 64, none: 0.13, hard: 0.24, rock: 0.16, hazardRate: 0.62, magmaFrac: 0.50, avalancheRate: 0.0426, oreRate: 240, oreW: [18,45,30,2], monW: [1,25,0,14,5,0] },
-    { floorTo: 72, none: 0.11, hard: 0.26, rock: 0.16, hazardRate: 0.73, magmaFrac: 0.50, avalancheRate: 0.0426, oreRate: 280, oreW: [16,45,30,3], monW: [3,25,0,11,5,0] },
-    { floorTo: 76, none: 0.09, hard: 0.28, rock: 0.19, hazardRate: 0.89, magmaFrac: 0.50, avalancheRate: 0.0682, oreRate: 320, oreW: [4,50,35,5],  monW: [8,10,0,10,5,0] },
-    { floorTo: 80, none: 0.13, hard: 0.30, rock: 0.19, hazardRate: 0.77, magmaFrac: 0.50, avalancheRate: 0.0789, oreRate: 360, oreW: [1,50,35,8],  monW: [28,5,0,2,5,0] },
+    { floorTo:  8, none: 0.01, hard: 0.10, rock: 0.05, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [59,30,5,0,0,0],  monW: [24,10,0,40,5,15] },
+    { floorTo: 16, none: 0.07, hard: 0.12, rock: 0.05, hazardRate: 0.57, magmaFrac: 0.50, avalancheRate: 0,      oreRate:  40, oreW: [58,30,5,0,0,0],  monW: [19,10,0,30,5,15] },
+    { floorTo: 24, none: 0.09, hard: 0.14, rock: 0.10, hazardRate: 0.44, magmaFrac: 0.50, avalancheRate: 0.0149, oreRate:  80, oreW: [41,35,10,5,1,0], monW: [6,20,0,30,5,10] },
+    { floorTo: 32, none: 0.07, hard: 0.16, rock: 0.10, hazardRate: 0.57, magmaFrac: 0.50, avalancheRate: 0.0149, oreRate: 120, oreW: [40,35,10,5,1,0], monW: [7,20,0,30,5,10] },
+    { floorTo: 48, none: 0.05, hard: 0.18, rock: 0.12, hazardRate: 0.80, magmaFrac: 0.50, avalancheRate: 0.0154, oreRate: 160, oreW: [25,40,15,10,1,0], monW: [9,20,0,15,5,5] },
+    { floorTo: 56, none: 0.11, hard: 0.20, rock: 0.12, hazardRate: 0.73, magmaFrac: 0.50, avalancheRate: 0.0351, oreRate: 200, oreW: [24,40,15,10,1,0], monW: [9,30,0,14,5,0] },
+    { floorTo: 64, none: 0.13, hard: 0.24, rock: 0.16, hazardRate: 0.62, magmaFrac: 0.50, avalancheRate: 0.0426, oreRate: 240, oreW: [13,45,20,10,2,0], monW: [1,25,0,14,5,0] },
+    { floorTo: 72, none: 0.11, hard: 0.26, rock: 0.16, hazardRate: 0.73, magmaFrac: 0.50, avalancheRate: 0.0426, oreRate: 280, oreW: [11,45,20,10,2,1], monW: [3,25,0,11,5,0] },
+    { floorTo: 76, none: 0.09, hard: 0.28, rock: 0.19, hazardRate: 0.89, magmaFrac: 0.50, avalancheRate: 0.0682, oreRate: 320, oreW: [0,50,20,15,3,2],  monW: [8,10,0,10,5,0] },
+    { floorTo: 80, none: 0.13, hard: 0.30, rock: 0.19, hazardRate: 0.77, magmaFrac: 0.50, avalancheRate: 0.0789, oreRate: 360, oreW: [0,50,20,15,5,3],  monW: [28,5,0,2,5,0] },
   ],
   7: [
-    { floorTo:  8, none: 0.01, hard: 0.80, rock: 0.10, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [9,40,50,0],  monW: [85,0,0,0,0,15] },
-    { floorTo: 16, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 100, oreW: [9,40,50,0],  monW: [16,10,0,15,5,15] },
-    { floorTo: 24, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 200, oreW: [9,40,50,0],  monW: [18,10,0,15,5,15] },
-    { floorTo: 32, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 300, oreW: [9,40,50,0],  monW: [15,10,0,15,5,15] },
-    { floorTo: 48, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 400, oreW: [9,40,50,0],  monW: [17,10,0,15,5,15] },
-    { floorTo: 56, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 500, oreW: [9,40,50,0],  monW: [5,10,0,15,5,15] },
-    { floorTo: 64, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 600, oreW: [9,40,50,0],  monW: [7,10,0,15,5,15] },
-    { floorTo: 72, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 600, oreW: [9,40,50,0],  monW: [7,10,0,15,5,15] },
+    { floorTo:  8, none: 0.01, hard: 0.80, rock: 0.10, hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [4,40,0,50,0,0],  monW: [85,0,0,0,0,15] },
+    { floorTo: 16, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 100, oreW: [4,40,0,50,0,0],  monW: [16,10,0,15,5,15] },
+    { floorTo: 24, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 200, oreW: [4,40,0,50,0,0],  monW: [18,10,0,15,5,15] },
+    { floorTo: 32, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 300, oreW: [4,40,0,50,0,0],  monW: [15,10,0,15,5,15] },
+    { floorTo: 48, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 400, oreW: [4,40,0,50,0,0],  monW: [17,10,0,15,5,15] },
+    { floorTo: 56, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 500, oreW: [4,40,0,50,0,0],  monW: [5,10,0,15,5,15] },
+    { floorTo: 64, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 600, oreW: [4,40,0,50,0,0],  monW: [7,10,0,15,5,15] },
+    { floorTo: 72, none: 0.03, hard: 0.80, rock: 0.10, hazardRate: 0.67, magmaFrac: 0.50, avalancheRate: 0.2857, oreRate: 600, oreW: [4,40,0,50,0,0],  monW: [7,10,0,15,5,15] },
   ],
   8: [
-    { floorTo:  3, none: 0.20, hard: 0.30, rock: 0,    hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [56,10,30,0],  monW: [28,8,0,15,3,8] },
-    { floorTo: 10, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate:  40, oreW: [56,10,30,0],  monW: [11,8,0,8,3,8] },
-    { floorTo: 15, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate:  80, oreW: [53,10,30,3],  monW: [10,8,0,8,3,8] },
-    { floorTo: 20, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate: 120, oreW: [41,20,30,5],  monW: [7,8,0,8,3,8] },
-    { floorTo: 25, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 160, oreW: [41,20,30,5],  monW: [7,8,0,8,3,8] },
-    { floorTo: 30, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 200, oreW: [33,20,30,13], monW: [4,8,0,8,3,8] },
-    { floorTo: 35, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 240, oreW: [33,20,30,13], monW: [4,8,0,8,3,8] },
-    { floorTo: 40, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 280, oreW: [31,20,30,15], monW: [3,8,0,8,3,8] },
-    { floorTo: 50, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 320, oreW: [31,20,30,15], monW: [3,8,0,8,3,8] },
+    { floorTo:  3, none: 0.20, hard: 0.30, rock: 0,    hazardRate: 0,    magmaFrac: 0,    avalancheRate: 0,      oreRate:   0, oreW: [36,10,20,10,0,0],  monW: [28,8,0,15,3,8] },
+    { floorTo: 10, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate:  40, oreW: [36,10,20,10,0,0],  monW: [11,8,0,8,3,8] },
+    { floorTo: 15, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate:  80, oreW: [33,10,20,10,3,0],  monW: [10,8,0,8,3,8] },
+    { floorTo: 20, none: 0.26, hard: 0.30, rock: 0.13, hazardRate: 0.23, magmaFrac: 0.50, avalancheRate: 0.0323, oreRate: 120, oreW: [11,20,20,10,5,0],  monW: [7,8,0,8,3,8] },
+    { floorTo: 25, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 160, oreW: [11,20,20,10,5,0],  monW: [7,8,0,8,3,8] },
+    { floorTo: 30, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 200, oreW: [13,20,20,10,5,8], monW: [4,8,0,8,3,8] },
+    { floorTo: 35, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 240, oreW: [13,20,20,10,5,8], monW: [4,8,0,8,3,8] },
+    { floorTo: 40, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 280, oreW: [11,20,20,10,5,10], monW: [3,8,0,8,3,8] },
+    { floorTo: 50, none: 0.30, hard: 0.30, rock: 0.13, hazardRate: 0.33, magmaFrac: 0.50, avalancheRate: 0.037,  oreRate: 320, oreW: [11,20,20,10,5,10], monW: [3,8,0,8,3,8] },
   ],
 };
 
@@ -228,30 +228,37 @@ function tileType(col, row, seed) {
   return TILE.SOIL;
 }
 
-// ---- 鉱石(ore) — 原作 item.csv 忠実 + 決定論ドロップ(v0.4.0) -------------
+// ---- 鉱石(ore) — 原作 item.csv 忠実 + 決定論ドロップ(v0.4.0、v0.14.0 で原作実名へ名寄せ) ----
 // tileType には混ぜない(既存 girlPositions・determinism snapshot・タイル分布を一切
 // 変えないため)。SOIL/HARD を掘り抜いた瞬間に oreAt(col,row,seed) を引き、含有なら
-// インベントリへ加算する別レイヤー。鉱石種は深度帯で分布(深いほど高価)、含有率は控えめ。
+// インベントリへ加算する別レイヤー。鉱石種は深度帯で分布(dungeon.csv 実データ)、含有率は控えめ。
 //
-// 原作 item.csv の鉱石(ore, 売値): 銅鉱石8 / 鉄鉱石15 / 金鉱石60 / ダイヤ原石300。
+// v0.14.0 翻案判断A: v0.4.0 は「銅/鉄/金/ダイヤ」の独自4種体系だったが、原作 item.csv/craft.csv に
+// 存在しない翻案だったため、原作実名6種(石炭/鉄鉱石/化石/鋼/ルビー/ダイヤ)へ名寄せする。売値は
+// item.csv verbatim(石炭150/鉄鉱石200/化石400/鋼3000/ルビー1200/ダイヤ15000)。
 const ORE = {
   NONE: 0,
-  COPPER: 1, // 銅鉱石(売値8)。浅層。
-  IRON: 2, // 鉄鉱石(売値15)。中層。
-  GOLD: 3, // 金鉱石(売値60)。深層。
-  DIAMOND: 4, // ダイヤ原石(売値300)。最深層。
+  COAL: 1, // 石炭(item.csv ID4、売値150)。
+  IRON_ORE: 2, // 鉄鉱石(ID5、売値200)。
+  FOSSIL: 3, // 化石(ID6、売値400)。
+  STEEL: 4, // 鋼(ID9、売値3000)。
+  RUBY: 5, // ルビー(ID7、売値1200)。
+  DIAMOND: 6, // ダイヤ(ID8、売値15000)。
 };
 // 鉱石メタ(verbatim 売値 + 表示名 + HUD アイコン1字)。
 const ORE_META = {
-  [ORE.COPPER]: { key: "COPPER", name: "銅鉱石", price: 8, ico: "銅" },
-  [ORE.IRON]: { key: "IRON", name: "鉄鉱石", price: 15, ico: "鉄" },
-  [ORE.GOLD]: { key: "GOLD", name: "金鉱石", price: 60, ico: "金" },
-  [ORE.DIAMOND]: { key: "DIAMOND", name: "ダイヤ原石", price: 300, ico: "ダ" },
+  [ORE.COAL]: { key: "COAL", name: "石炭", price: 150, ico: "炭" },
+  [ORE.IRON_ORE]: { key: "IRON_ORE", name: "鉄鉱石", price: 200, ico: "鉄" },
+  [ORE.FOSSIL]: { key: "FOSSIL", name: "化石", price: 400, ico: "化" },
+  [ORE.STEEL]: { key: "STEEL", name: "鋼", price: 3000, ico: "鋼" },
+  [ORE.RUBY]: { key: "RUBY", name: "ルビー", price: 1200, ico: "ル" },
+  [ORE.DIAMOND]: { key: "DIAMOND", name: "ダイヤ", price: 15000, ico: "ダ" },
 };
 
 // ある (col,row) を掘り抜いたとき産出する鉱石種(決定論・乱数禁止)。含有しないなら ORE.NONE。
-// 深度帯で種を決め(浅=銅/中=鉄/深=金/最深=ダイヤ)、別シード位相のハッシュで含有率を絞る。
-// GIRL マスは鉱石を出さない(救出対象)。同じ (col,row,seed) は常に同じ結果。
+// 深度帯の重み oreW=[石炭,鉄鉱石,化石,鋼,ルビー,ダイヤ] は dungeon.csv 実データ(v0.14.0 名寄せ)。
+// 別シード位相のハッシュで含有率を絞る。GIRL マスは鉱石を出さない(救出対象)。
+// 同じ (col,row,seed) は常に同じ結果。
 function oreAt(col, row, seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
   if (row <= 0 || col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return ORE.NONE;
@@ -261,13 +268,15 @@ function oreAt(col, row, seed) {
   const h = hash3(col + 911, row + 733, seed + 5557);
   if (h >= band.oreRate / 1000) return ORE.NONE;
   const w = band.oreW;
-  const total = w[0] + w[1] + w[2] + w[3];
+  const total = w[0] + w[1] + w[2] + w[3] + w[4] + w[5];
   if (total <= 0) return ORE.NONE;
   const h2 = hash3(col + 733, row + 5557, seed + 911);
   const pick = h2 * total;
-  if (pick < w[0]) return ORE.COPPER;
-  if (pick < w[0] + w[1]) return ORE.IRON;
-  if (pick < w[0] + w[1] + w[2]) return ORE.GOLD;
+  if (pick < w[0]) return ORE.COAL;
+  if (pick < w[0] + w[1]) return ORE.IRON_ORE;
+  if (pick < w[0] + w[1] + w[2]) return ORE.FOSSIL;
+  if (pick < w[0] + w[1] + w[2] + w[3]) return ORE.STEEL;
+  if (pick < w[0] + w[1] + w[2] + w[3] + w[4]) return ORE.RUBY;
   return ORE.DIAMOND;
 }
 
@@ -288,24 +297,88 @@ const TILE_REQ_POWER = {
   [TILE.GIRL]: 1,
 };
 
-// ---- クラフトレシピ — 原作 craft.csv 忠実(v0.4.0) -----------------------
-// 材料(ore/品目→個数)→ 完成品。完成品は pick(ツルハシ段)/tool(はしご/アンテナ)/
-// consumable(回復薬)。材料が足りていれば実行可、足りなければ disabled 表示。
-//   石のツルハシ ← 銅鉱石3
-//   鉄のツルハシ ← 鉄鉱石2 + 銅鉱石2
-//   はしご       ← 銅鉱石1
-//   回復薬       ← 鉄鉱石1
-//   ダイヤのツルハシ ← ダイヤ原石1 + 鉄鉱石3
-//   アンテナ     ← 金鉱石1
-// cost のキーは ORE_META.key("COPPER"/"IRON"/"GOLD"/"DIAMOND")。
-// result: { type:"pick"|"tool"|"consumable", id, name }
+// ---- アイテムカタログ — 原作 item.csv 全45種 忠実書き起こし(v0.14.0) -------------------
+// 判断B: HP/SP/最大所持数は item.csv verbatim。説明文(note)は著作権境界のため自前要約。
+// open=true は本リメイクで取得経路(鉱石/モンスタードロップ/飲食/道具のいずれか)が開いている種
+// (工房「アイテム」タブで所持数を表示)。open=false は定義のみのカタログ表示(dead-item、クラフト/
+// 商人/ドロップに新規陳列しない=判断Bの非陳列方針。ただし 解毒薬/海綿 は v0.5.0 から既存のモンスター
+// ドロップ表に verbatim で残っているため実際には入手されうる — 本増分はその既存挙動に非介入、
+// カタログ上は「用途未実装」の dead 扱いのまま据え置く)。爆弾/バケツ3種/矢/マジックハンド/
+// フックショット/木の杭/天井フック/ロープ/浮島/海綿/タネ3種/かかし/レンガ/堅土/赤土/パンツ/
+// 幸運のお守り/解毒薬/作業台/鉄骨片/鉄骨ブロックは、投擲/汲取/放水/土設置/杭/育成/霊/毒などの
+// 新規メカが要り1増分を超えるため次増分候補として残す(判断B)。
+const ITEM_DATA = [
+  { id: 1, name: "爆弾", hp: 0, sp: 0, max: 99, open: false, note: "設置して数ターン後に爆発。爆発/破壊メカ未実装。" },
+  { id: 2, name: "ハシゴ", hp: 0, sp: 0, max: 99, open: true, note: "縦穴に設置すると上掘りができる(v0.13.1)。クラフトで入手。" },
+  { id: 3, name: "アンテナ", hp: 0, sp: 0, max: 99, open: true, note: "設置すると電波網が広がる。電波圏内は力尽きても持ち物を失わない(v0.14.0 保険)。" },
+  { id: 4, name: "石炭", hp: 0, sp: 0, max: 999, open: true, note: "鉱石。浅層に多い。クラフト/商人の素材。" },
+  { id: 5, name: "鉄鉱石", hp: 0, sp: 0, max: 999, open: true, note: "鉱石。クラフト/商人の素材。" },
+  { id: 6, name: "化石", hp: 0, sp: 0, max: 999, open: true, note: "鉱石。クラフト素材。" },
+  { id: 7, name: "ルビー", hp: 0, sp: 0, max: 999, open: true, note: "鉱石。深層に多い。モンスタードロップでも入手。" },
+  { id: 8, name: "ダイヤ", hp: 0, sp: 0, max: 999, open: true, note: "鉱石。最深層に多い。ダイヤのツルハシの素材。" },
+  { id: 9, name: "鋼", hp: 0, sp: 0, max: 999, open: true, note: "鉱石。ツルハシ/アンテナ/焼き肉交換の素材。" },
+  { id: 10, name: "生肉", hp: 0, sp: 250, max: 99, open: true, note: "モンスタードロップ。生のままは回復0、マグマで焼くと焼き肉になる(v0.14.0)。" },
+  { id: 11, name: "堅土", hp: 0, sp: 0, max: 99, open: false, note: "土を埋め立てる設置土。設置(土)メカ未実装。" },
+  { id: 12, name: "赤土", hp: 0, sp: 0, max: 99, open: false, note: "堅土より柔らかい設置土。設置(土)メカ未実装。" },
+  { id: 13, name: "バケツ", hp: 0, sp: 0, max: 99, open: false, note: "液体を汲むための道具。汲み取りメカ未実装。" },
+  { id: 14, name: "水入りバケツ", hp: 0, sp: 0, max: 99, open: false, note: "水を汲んだバケツ。放水メカ未実装。" },
+  { id: 15, name: "マグマのバケツ", hp: 0, sp: 0, max: 99, open: false, note: "マグマを汲んだバケツ。放水メカ未実装。" },
+  { id: 16, name: "種火", hp: 0, sp: 0, max: 999, open: true, note: "モンスタードロップ(原作)。本実装の6種モンスターからは出ない(ボス級のみ)。" },
+  { id: 17, name: "矢", hp: 5, sp: 0, max: 999, open: false, note: "遠距離攻撃用の矢。PER_ARROW/遠距離攻撃メカ未実装。" },
+  { id: 18, name: "作業台", hp: 0, sp: 0, max: 99, open: false, note: "アイテム加工用の設置台。既存クラフトUIで代替済み、設置メカ未実装。" },
+  { id: 19, name: "レンガ", hp: 0, sp: 0, max: 99, open: false, note: "丈夫な壁になる設置ブロック。設置(土)メカ未実装。" },
+  { id: 20, name: "動物の血", hp: 30, sp: 50, max: 99, open: true, note: "モンスタードロップ。食べると体力回復。" },
+  { id: 21, name: "骨", hp: 0, sp: 0, max: 999, open: true, note: "モンスタードロップ。ハシゴ/ツルハシのクラフト素材。" },
+  { id: 22, name: "パンツ", hp: 9999, sp: 9999, max: 999, open: false, note: "少女の遺物。原作ネタアイテム、収集メカ未実装。" },
+  { id: 23, name: "タネ", hp: 0, sp: 0, max: 999, open: false, note: "水をあげると育つ種。栽培メカ未実装。" },
+  { id: 24, name: "浮島", hp: 0, sp: 0, max: 99, open: false, note: "浮き沈みする足場。設置メカ未実装。" },
+  { id: 25, name: "海綿", hp: 0, sp: 0, max: 99, open: false, note: "水を吸うとブロック化する。用途未実装(v0.5.0 からモンスタードロップとしては既存)。" },
+  { id: 26, name: "焼き肉", hp: 40, sp: 500, max: 99, open: true, note: "生肉のマグマ変化 or 商人で鋼2と交換。食べると体力回復。" },
+  { id: 27, name: "ツルハシ", hp: 0, sp: 0, max: 99, open: true, note: "掘削の要。木/石/鉄/ダイヤの4段(v0.4.0)。クラフト/商人で強化。" },
+  { id: 28, name: "赤いタネ", hp: 0, sp: 0, max: 999, open: false, note: "水をあげると育つ赤い種。栽培メカ未実装。" },
+  { id: 29, name: "フルーツ", hp: 25, sp: 200, max: 99, open: true, note: "商人で鉄鉱石2と交換。食べると体力回復。" },
+  { id: 30, name: "マジックハンド", hp: 0, sp: 0, max: 99, open: false, note: "水/マグマ中の物を拾う道具。水中拾得メカ未実装。" },
+  { id: 31, name: "キノコ", hp: 1, sp: 3, max: 999, open: true, note: "SOIL 掘り抜きで採取できる交換通貨。商人で道具/夢キノコと交換。" },
+  { id: 32, name: "夢キノコ", hp: 10, sp: 100, max: 999, open: true, note: "商人でキノコ100と交換する高額通貨/高級回復実。" },
+  { id: 33, name: "青いタネ", hp: 0, sp: 0, max: 999, open: false, note: "水をあげると育つ青い種。栽培メカ未実装。" },
+  { id: 34, name: "天井フック", hp: 0, sp: 0, max: 99, open: false, note: "ロープを垂らす設置フック。設置メカ未実装。" },
+  { id: 35, name: "ロープ", hp: 0, sp: 0, max: 999, open: false, note: "天井フックから垂らすロープ。天井フックメカ未実装のため用途無し。" },
+  { id: 36, name: "動物の皮", hp: 0, sp: 0, max: 999, open: true, note: "モンスタードロップ。ハシゴのクラフト素材。" },
+  { id: 37, name: "木の杭", hp: 0, sp: 0, max: 99, open: false, note: "フックショットの的になる杭。フックショットメカ未実装。" },
+  { id: 38, name: "フックショット", hp: 0, sp: 0, max: 99, open: false, note: "離れた場所へ移動する道具。フックショットメカ未実装。" },
+  { id: 39, name: "クモの糸", hp: 0, sp: 0, max: 999, open: true, note: "モンスタードロップ(クモ)。表示のみ、次増分でクラフト素材化候補。" },
+  { id: 40, name: "解毒薬", hp: 0, sp: 0, max: 99, open: false, note: "毒を消す薬。毒状態メカ未実装(v0.5.0 からモンスタードロップとしては既存)。" },
+  { id: 41, name: "祈りのかかし", hp: 0, sp: 0, max: 99, open: false, note: "霊を浄化するかかし。霊メカ未実装。" },
+  { id: 42, name: "龍のウロコ", hp: 0, sp: 0, max: 999, open: true, note: "SOIL DRAGON(ボス級)のドロップ。本実装は未実装のため実際の入手経路は次増分。" },
+  { id: 43, name: "幸運のお守り", hp: 0, sp: 0, max: 99, open: false, note: "所持数で良いことがあるという噂のお守り。効果メカ未実装。" },
+  { id: 44, name: "鉄骨片", hp: 0, sp: 0, max: 99, open: false, note: "鉄骨ブロックの素材。建材設置メカ未実装。" },
+  { id: 45, name: "鉄骨ブロック", hp: 0, sp: 0, max: 99, open: false, note: "連結して配置できる建材。建材設置メカ未実装。" },
+];
+
+// ---- クラフトレシピ — 原作 craft.csv 忠実(v0.4.0、v0.14.0 で実レシピへ差し替え) -----------
+// 材料(ore/item→個数)→ 完成品。完成品は pick(ツルハシ段)/tool(はしご/アンテナ)。
+// 材料が足りていれば実行可、足りなければ disabled 表示。cost は SHOP_RECIPES と同じ形
+// { ore:{ORE_META.key→個数}, item:{G.drops のキー(日本語名)→個数} }(v0.14.0 で統一、canTrade で判定)。
+//
+// v0.14.0 判断B: 回復薬(原作に無い v0.4.0 独自アイテム)は廃し、item.csv 実在の飲食(生肉/焼き肉/
+// 動物の血/フルーツ/夢キノコ)へ置換(45 種外のアイテムを並走させない=体系1本化)。
+// v0.14.0 判断A(ツルハシ4段の材料スケール、翻案注記): 原作 craft.csv のツルハシは単一レシピ
+// (鋼2+骨1+石炭1、確率で壊れる=劣化なし4段ゲートとは相容れないため v0.4.0 で不採用のまま維持)。
+// 本リメイクは4段 power ゲートを掘削ゲートの核として維持するため、craft.csv 実レシピを「中段(鉄)」に
+// verbatim 採用し、初段(石)は単一素材の安価版、最上段(ダイヤ)は鉄段レシピを2倍スケール+ダイヤ原石1個
+// (原作に無い最上段のため、名前に沿わせダイヤ原石を素材へ加える翻案)とした。
+//   石のツルハシ     ← 石炭3(翻案・単一素材の安価な初段)
+//   鉄のツルハシ     ← 鋼2 + 骨1 + 石炭1(craft.csv id27 verbatim)
+//   ダイヤのツルハシ ← 鋼4 + 骨2 + 化石2 + ダイヤ1(鉄段の2倍スケール+ダイヤ、翻案)
+//   はしご           ← 骨2 + 鉄鉱石1 + 石炭1(craft.csv id2 verbatim)
+//   アンテナ         ← 鉄鉱石3 + 鋼2 + 化石1(craft.csv id3 verbatim)
+// result: { type:"pick"|"tool", id, name }
 const CRAFT_RECIPES = [
-  { id: "pick_stone", name: "石のツルハシ", result: { type: "pick", id: "STONE" }, cost: { COPPER: 3 } },
-  { id: "pick_iron", name: "鉄のツルハシ", result: { type: "pick", id: "IRON" }, cost: { IRON: 2, COPPER: 2 } },
-  { id: "ladder", name: "はしご", result: { type: "tool", id: "LADDER" }, cost: { COPPER: 1 } },
-  { id: "potion", name: "回復薬", result: { type: "consumable", id: "POTION" }, cost: { IRON: 1 } },
-  { id: "pick_diamond", name: "ダイヤのツルハシ", result: { type: "pick", id: "DIAMOND" }, cost: { DIAMOND: 1, IRON: 3 } },
-  { id: "antenna", name: "アンテナ", result: { type: "tool", id: "ANTENNA" }, cost: { GOLD: 1 } },
+  { id: "pick_stone", name: "石のツルハシ", result: { type: "pick", id: "STONE" }, cost: { ore: { COAL: 3 } } },
+  { id: "pick_iron", name: "鉄のツルハシ", result: { type: "pick", id: "IRON" }, cost: { ore: { STEEL: 2, COAL: 1 }, item: { "骨": 1 } } },
+  { id: "pick_diamond", name: "ダイヤのツルハシ", result: { type: "pick", id: "DIAMOND" }, cost: { ore: { STEEL: 4, FOSSIL: 2, DIAMOND: 1 }, item: { "骨": 2 } } },
+  { id: "ladder", name: "はしご", result: { type: "tool", id: "LADDER" }, cost: { ore: { IRON_ORE: 1, COAL: 1 }, item: { "骨": 2 } } },
+  { id: "antenna", name: "アンテナ", result: { type: "tool", id: "ANTENNA" }, cost: { ore: { IRON_ORE: 3, STEEL: 2, FOSSIL: 1 } } },
 ];
 
 // ---- モンスター — 原作 monster.csv 忠実(v0.5.0) -------------------------
@@ -537,30 +610,29 @@ function mushroomAt(col, row, seed) {
 // 原作 shop.csv は「作る品(craft ID/個数) ← 対価(SALE ITEM 名 + 個数、最大3対価)」の物々交換表。
 // 数値・設計意図のみ参照し、データは自前で書き起こす(原作テキスト/コードは転用しない)。
 //
-// 翻案判断(STATUS に記録): shop.csv のレシピは原作 item.csv の全アイテム(石炭/化石/鋼/種火/
-// バケツ/ロープ等)を対価/産物に使うが、本リメイクの経済系は現状 ① 鉱石 G.ore(COPPER/IRON/GOLD/
-// DIAMOND, v0.4.0 の抽象化)② モンスタードロップ G.drops(動物の血/生肉/ルビー/クモの糸/解毒薬等,
-// v0.5.0 verbatim)③ キノコ(本増分で採取を開く)の 3 系統しか存在しない。よって shop.csv の中から
-// 「対価が現経済系に実在し、かつ産物が既存メカに接続して dead-item にならない」行だけを忠実な
-// サブセットとして実装する(対価通貨が無い行=焼き肉←鋼/タネ←石炭/赤いタネ←化石、産物が使えない
-// 行=バケツ/ロープ/マジックハンド/木の杭/爆弾/種火/骨 は、支えるメカが未実装なので次以降に送る)。
-// 採用 5 行は ① 鉱石→消耗品(フルーツ←鉄鉱石2)で ore に商人サイドの sink を開き、② キノコ→道具
-// (ツルハシ←キノコ10/アンテナ←キノコ20)で原作の基軸=キノコ通貨を既存の power ゲート・透視へ接続、
-// ③ キノコ100→夢キノコ1 で原作の通貨統合(高額通貨化)を verbatim 再現する=「キノコ通貨の循環」を開く。
+// 翻案判断(STATUS に記録): shop.csv のレシピは原作 item.csv の全アイテム(タネ/バケツ/ロープ等)を
+// 対価/産物に使うが、本リメイクの経済系は① 鉱石 G.ore(v0.14.0 で原作実名6種へ名寄せ)② モンスター
+// ドロップ G.drops(動物の血/生肉/ルビー/クモの糸/解毒薬等, v0.5.0 verbatim)③ キノコ(v0.8.0)の
+// 3 系統。「対価が現経済系に実在し、かつ産物が既存メカに接続して dead-item にならない」行だけを実装
+// する(産物が使えない行=タネ各種/バケツ/ロープ/マジックハンド/木の杭/爆弾/種火/骨10←ルビー1/
+// キノコ100←夢キノコ1 は、支えるメカが未実装 or 既存経済の逆流になるため次以降に送る)。
+// v0.14.0 で焼き肉(shop.csv 行「焼き肉1←鋼2」verbatim)を追加=ore の鋼 sink をもう1つ開く。
 //
-// レシピモデルは CRAFT_RECIPES に揃える。cost は通貨種別ごとに分けて持つ:
-//   ore:  ORE_META.key (COPPER/IRON/GOLD/DIAMOND) → 個数
+// レシピモデルは CRAFT_RECIPES に揃える(v0.14.0 で cost 形を統一)。cost は通貨種別ごとに分けて持つ:
+//   ore:  ORE_META.key (COAL/IRON_ORE/FOSSIL/STEEL/RUBY/DIAMOND) → 個数
 //   item: G.drops のキー(日本語アイテム名) → 個数(モンスタードロップを対価にできる行用)
 //   mushroom / dreamMushroom: キノコ / 夢キノコ → 個数
 // result: { type:"pick"|"tool"|"consumable", id, name }(doShopTrade が消費/付与を解決)。
 const SHOP_RECIPES = [
   // フルーツ ← 鉄鉱石2(shop.csv 行2 の数値=鉄鉱石2。フルーツは item.csv HP25/SP200 の回復実=消耗品)。
-  { id: "shop_fruit", name: "フルーツ", desc: "体力+25", result: { type: "consumable", id: "FRUIT" }, cost: { ore: { IRON: 2 } } },
+  { id: "shop_fruit", name: "フルーツ", desc: "体力+25", result: { type: "consumable", id: "FRUIT" }, cost: { ore: { IRON_ORE: 2 } } },
+  // 焼き肉 ← 鋼2(shop.csv 行3 verbatim)。item.csv 焼き肉=HP40/SP500(生肉のマグマ変化品と同一)。
+  { id: "shop_roast", name: "焼き肉", desc: "体力+40", result: { type: "consumable", id: "ROAST_MEAT" }, cost: { ore: { STEEL: 2 } } },
   // ツルハシ ← キノコ10(shop.csv 行12)。原作の鋼ツルハシ(item27)= 本リメイクの IRON 段へ(power ゲート接続)。
   { id: "shop_pick", name: "ツルハシ", desc: "鉄のツルハシ", result: { type: "pick", id: "IRON" }, cost: { mushroom: 10 } },
-  // アンテナ ← キノコ20(shop.csv 行15)。原作 item3=透視/力尽きロスト防止。本リメイクは位置透視を付与。
-  { id: "shop_antenna", name: "アンテナ", desc: "女の子を透視", result: { type: "tool", id: "ANTENNA" }, cost: { mushroom: 20 } },
-  // 夢キノコ ← キノコ100(shop.csv 行16)。原作の通貨統合(キノコ100→夢キノコ1)。夢キノコ=item32 の高額通貨/回復実。
+  // アンテナ ← キノコ20(shop.csv 行15)。v0.14.0: 所持数を1個増やす(設置型ツールの補充)。
+  { id: "shop_antenna", name: "アンテナ", desc: "設置して電波網を広げる", result: { type: "tool", id: "ANTENNA" }, cost: { mushroom: 20 } },
+  // 夢キノコ ← キノコ100(shop.csv 行16。既存 v0.8.0 実装の向きを維持=次増分の再検討候補、本増分では非変更)。
   { id: "shop_dream", name: "夢キノコ", desc: "体力+回復の高級キノコ", result: { type: "consumable", id: "DREAM_MUSHROOM" }, cost: { mushroom: 100 } },
 ];
 
@@ -699,6 +771,8 @@ if (typeof window !== "undefined") {
   window.isGirlAt = isGirlAt;
   window.tilesHash3 = hash3;
   window.PALETTE = PALETTE;
+  // v0.14.0 アイテムカタログ(item.csv 全45種 verbatim)。
+  window.ITEM_DATA = ITEM_DATA;
   // v0.4.0 アイテム/クラフト系。
   window.ORE = ORE;
   window.ORE_META = ORE_META;

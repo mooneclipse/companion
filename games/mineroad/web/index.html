@@ -55,16 +55,21 @@
     </div>
   </section>
 
-  <!-- v0.4.0 インベントリ: 鉱石 4 種 + 所持道具(ツルハシ段/回復薬)。アイコン+数値主体。 -->
+  <!-- v0.4.0 インベントリ: 鉱石 + 所持道具(ツルハシ段/はしご/アンテナ)。アイコン+数値主体。
+       v0.14.0: 鉱石を独自4種(銅/鉄/金/ダイヤ)から原作実名6種(石炭/鉄鉱石/化石/鋼/ルビー/ダイヤ)へ名寄せ。
+       回復薬(原作に無い独自アイテム)は判断Bにより廃止、食べる系は工房「アイテム」タブへ集約。 -->
   <section id="inventory" class="inventory">
-    <span class="inv-ore cu"><span class="inv-ico">銅</span><span id="ore-cu">0</span></span>
-    <span class="inv-ore fe"><span class="inv-ico">鉄</span><span id="ore-fe">0</span></span>
-    <span class="inv-ore au"><span class="inv-ico">金</span><span id="ore-au">0</span></span>
-    <span class="inv-ore di"><span class="inv-ico">ダ</span><span id="ore-di">0</span></span>
+    <span class="inv-ore coal"><span class="inv-ico">炭</span><span id="ore-coal">0</span></span>
+    <span class="inv-ore iron"><span class="inv-ico">鉄</span><span id="ore-iron">0</span></span>
+    <span class="inv-ore fossil"><span class="inv-ico">化</span><span id="ore-fossil">0</span></span>
+    <span class="inv-ore steel"><span class="inv-ico">鋼</span><span id="ore-steel">0</span></span>
+    <span class="inv-ore ruby"><span class="inv-ico">ル</span><span id="ore-ruby">0</span></span>
+    <span class="inv-ore diamond"><span class="inv-ico">ダ</span><span id="ore-diamond">0</span></span>
     <span class="inv-tool pick"><span class="inv-ico">ツ</span><span id="pick-ico">木</span></span>
     <button id="btn-ladder" class="inv-btn" type="button" aria-label="はしごを設置／回収">梯 <span id="ladder-val">0</span></button>
-    <button id="btn-potion" class="inv-btn" type="button" aria-label="回復薬を使う">薬 <span id="potion-val">0</span></button>
-    <button id="btn-craft" class="inv-btn" type="button" aria-label="クラフト／商人を開く">作る</button>
+    <!-- v0.14.0: アンテナは設置型(はしごと同じ設置/回収トグル)。所持数を表示。 -->
+    <button id="btn-antenna" class="inv-btn" type="button" aria-label="アンテナを設置／回収">電 <span id="antenna-val">0</span></button>
+    <button id="btn-craft" class="inv-btn" type="button" aria-label="クラフト／商人／アイテムを開く">作る</button>
     <!-- v0.8.0 商人通貨(キノコ)はボタンの後ろに置く(span は pointer 素通し&ボタンの x 位置を
          動かさない=既存の地表タップ/カメラ前提を壊さない)。 -->
     <span class="inv-ore mush"><span class="inv-ico">茸</span><span id="mush-val">0</span></span>
@@ -100,6 +105,9 @@
       <!-- v0.10.0 仲間(同行)タブ。上部バーにボタンを増やさず工房パネル内タブで同居。
            v0.11.0: 同行候補を「救出済みストック(rescued)を地表で1人選んで次の潜行へ連れていく」へ作り直し。 -->
       <button id="tab-companion" class="craft-tab" type="button">仲間</button>
+      <!-- v0.14.0 アイテムタブ(item.csv 全45種カタログの読み取り専用 BAG ビュー)。上部バーにボタンを
+           増やさず工房パネル内タブで同居(既存の轍踏襲)。 -->
+      <button id="tab-items" class="craft-tab" type="button">アイテム</button>
     </div>
     <!-- クラフトタブ(craft.csv 6 レシピ)。 -->
     <div id="craft-list" class="craft-list"></div>
@@ -109,6 +117,8 @@
     <div id="grow-list" class="craft-list" hidden></div>
     <!-- v0.11.0 仲間タブ(救出済みストックから 1 人を地表で同行に指定/解除→次の潜行に追従)。既定は非表示。 -->
     <div id="companion-list" class="craft-list" hidden></div>
+    <!-- v0.14.0 アイテムタブ(45種カタログ+所持数、非インタラクティブな一覧)。既定は非表示。 -->
+    <div id="item-list" class="craft-list" hidden></div>
     <button id="craft-close" class="craft-close" type="button">とじる</button>
   </div>
 </div>

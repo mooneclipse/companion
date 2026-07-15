@@ -59,7 +59,13 @@
 // ワールドレイヤーには引き続き非介入。
 // v0.12.0: セーブ/永続(力尽き跨ぎで rescued/per/bp/info/pick/girls level を永続化)。保存=地上帰還時、
 // ロード=startDive 冒頭、クリアで消去。localStorage JSON 方式(既存 getInt/setInt と同じ try/catch)。
-const VERSION = "v0.13.1";
+// v0.13.0: 残り8ダンジョン + 解放連結チェーン(DUNGEON_DATA/DUNGEON_BANDS の per-dungeon×per-band 動的化)。
+// v0.13.1: はしご設置/回収 + 上掘り(placedLadders)。
+// v0.14.0: アイテム拡充(item.csv 全45種カタログ、工房「アイテム」タブ) + 鉱石名寄せ(独自4種→原作実名
+// 6種=石炭/鉄鉱石/化石/鋼/ルビー/ダイヤ) + craft/shop 実レシピ化 + 回復薬(原作に無い独自)を飲食
+// (焼き肉/動物の血)へ置換 + アンテナ設置型化(電波網 R0/R の連結判定) + 保険(電波圏内の力尽きは
+// 携行アイテムを1回だけ持ち越す、mineroad_insurance_N キー)。
+const VERSION = "v0.14.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -79,8 +85,10 @@ const CONST = {
   LONGPRESS_MS: 320, // 予備(将来の長押し操作用、現状未使用)。
   TAP_MAX_MOVE: 18, // タップ判定の移動許容(px)。
   // v0.4.0 アイテム系。
-  POTION_HEAL: 50, // 回復薬の体力回復量(原作 HP+50。現 HP_MAX=30 なので min で頭打ち)。
   INIT_PICK: "WOOD", // 初期ツルハシ(木 power1、岩は掘れない)。
+  // v0.14.0: 回復薬(原作に無い独自アイテム)は廃し、item.csv 実在の飲食で置換(判断B)。
+  ROAST_HEAL: 40, // 焼き肉の体力回復量(item.csv HP40 verbatim、HP_MAX で頭打ち)。
+  BLOOD_HEAL: 30, // 動物の血の体力回復量(item.csv HP30 verbatim、HP_MAX で頭打ち)。
   // v0.5.0 戦闘(CSV→実装の翻案。厳密式は原作資料に明記なし=忠実意図に沿わせた自前式)。
   // 自機は原作の STR/DEF/PER_ATTACK/PER_DEFENCE を持たない(育成未実装)ため、所持ツルハシ
   // power を戦力の代理にする。power1(木)→ATK2/DEF0、段が上がるほど攻防が増える(掘削と戦闘の
@@ -110,6 +118,18 @@ const CONST = {
   COMPANION_EXP_PER_LV: 10, // 同行中に貯めた経験値 10 ごとに仲間が 1 レベル上がる(地表で別れた瞬間に清算)。
   COMPANION_ATK_PER_LV: 1, // 同行中の仲間レベル 1 につき自機攻撃力へ +1 援護(原作「一緒に戦う」=戦力になる)。
   COMPANION_LV_MAX: 9, // 仲間レベルの上限(ランごとリセット=save 永続は §2-5 番の別増分)。
+  // v0.14.0 アンテナ(設置型 + 電波網 + 保険、item.csv ID3「設置すると地上からの電波がより遠くまで
+  // 届く。電波が届く範囲にいれば力尽きてもアイテムをロストしない」)。R0/R の実数値は原作資料に
+  // 明記が無いため翻案(実装時記録): 全9ダンジョンは深度(DEPTH_ROWS)が15〜99と大きく異なるため
+  // 固定値では小さいダンジョンで過大・大きいダンジョンで過小になる。→ 深度比例(ANTENNA_R0_FRAC/
+  // ANTENNA_R_FRAC)で applyDungeonConst が動的に ANTENNA_R0/ANTENNA_R を算出する(下限あり)。
+  ANTENNA_MAX: 20, // 1 ダンジョンに設置できるアンテナの上限(仕様まとめ §8 忠実)。
+  ANTENNA_R0_FRAC: 0.2, // 地表からの基礎電波到達深度 = DEPTH_ROWS のこの割合(最低 ANTENNA_R0_MIN)。
+  ANTENNA_R0_MIN: 3,
+  ANTENNA_R_FRAC: 0.28, // アンテナ1本の中継半径 = DEPTH_ROWS のこの割合(最低 ANTENNA_R_MIN)。
+  ANTENNA_R_MIN: 4,
+  ANTENNA_R0: 3, // 実値は applyDungeonConst で上書き(ここはフォールバック=裏庭相当)。
+  ANTENNA_R: 4,
 };
 // 計測 bot から係数を上書きできるよう公開(本番挙動は CONST の初期値で確定)。
 if (typeof window !== "undefined") window.CONST = CONST;
@@ -301,18 +321,21 @@ const btnRightEl = document.getElementById("btn-right");
 const btnSurfaceEl = document.getElementById("btn-surface");
 const btnMuteEl = document.getElementById("btn-mute");
 
-// v0.4.0 インベントリ + クラフト DOM 参照。
+// v0.4.0 インベントリ + クラフト DOM 参照。v0.14.0: 鉱石 4 種→原作実名 6 種(石炭/鉄鉱石/化石/鋼/ルビー/ダイヤ)へ。
 const invEl = document.getElementById("inventory");
-const oreCuEl = document.getElementById("ore-cu");
-const oreFeEl = document.getElementById("ore-fe");
-const oreAuEl = document.getElementById("ore-au");
-const oreDiEl = document.getElementById("ore-di");
+const oreCoalEl = document.getElementById("ore-coal");
+const oreIronEl = document.getElementById("ore-iron");
+const oreFossilEl = document.getElementById("ore-fossil");
+const oreSteelEl = document.getElementById("ore-steel");
+const oreRubyEl = document.getElementById("ore-ruby");
+const oreDiamondEl = document.getElementById("ore-diamond");
 const pickIcoEl = document.getElementById("pick-ico");
-const potionValEl = document.getElementById("potion-val");
-const btnPotionEl = document.getElementById("btn-potion");
 const btnCraftEl = document.getElementById("btn-craft");
 const ladderValEl = document.getElementById("ladder-val");
 const btnLadderEl = document.getElementById("btn-ladder");
+// v0.14.0: アンテナは設置型(はしごと同じ設置/回収トグル)。回復薬(btn-potion)は判断Bにより廃止。
+const antennaValEl = document.getElementById("antenna-val");
+const btnAntennaEl = document.getElementById("btn-antenna");
 const craftOverlayEl = document.getElementById("craft-overlay");
 const craftListEl = document.getElementById("craft-list");
 const craftCloseEl = document.getElementById("craft-close");
@@ -332,6 +355,10 @@ const tabGrowEl = document.getElementById("tab-grow");
 // v0.10.0 仲間同行 DOM 参照。工房オーバーレイの第4タブに同居(上部バーのボタンは増やさない=gate G 非退行)。
 const companionListEl = document.getElementById("companion-list");
 const tabCompanionEl = document.getElementById("tab-companion");
+
+// v0.14.0 アイテムタブ DOM 参照。工房オーバーレイの第5タブに同居(45種カタログの読み取り専用 BAG ビュー)。
+const itemListEl = document.getElementById("item-list");
+const tabItemsEl = document.getElementById("tab-items");
 
 // ---- canvas / 描画状態 -------------------------------------------------
 let DPR = 1;
@@ -400,11 +427,13 @@ const G = {
   enteredHpZone: false, // スタミナ切れ通知を一度だけ出すフラグ。
   totalTiles: 0, // 探索率の分母(GRID_COLS * DEPTH_ROWS)。
   // ---- v0.4.0 インベントリ(ランごと初期化。fail/再挑戦でリセット、save モデルは次増分) ----
-  ore: null, // { COPPER, IRON, GOLD, DIAMOND } 鉱石所持数。
+  ore: null, // { COAL, IRON_ORE, FOSSIL, STEEL, RUBY, DIAMOND } 鉱石所持数(v0.14.0 原作実名6種)。
   pick: "WOOD", // 所持する最強ツルハシの段(PICK のキー)。power ゲートに直結。
   ladders: 0, // はしご所持数(縦穴を登る移動補助。クラフトで増える)。
-  potions: 0, // 回復薬所持数(使用で体力 +POTION_HEAL)。
-  antenna: false, // アンテナ所持(女の子の位置を未発見でも透視)。
+  // ---- v0.14.0 アンテナ(設置型)。所持数 + 設置済み位置。1 ダンジョン上限 ANTENNA_MAX(仕様まとめ §8
+  // 「1ダンジョン最大20本、連結で範囲拡張」)。fail を跨いで位置が残る(保険の実用性の核、判断C)。クリアで消去。 ----
+  antennaItems: 0, // 未設置の所持アンテナ数(設置で消費)。
+  placedAntennas: null, // Set("col,row") 設置済みアンテナ位置。fail を跨いで残す(startDive ではクリアしない)。
   // ---- v0.5.0 モンスター系(ランごと初期化。fail/再挑戦でリセット = 既存スコープ境界踏襲) ----
   monsters: null, // [{key,col,row,hp,kind}, ...] 出現中のモンスター。kind: "space"/"bury"。
   spawned: null, // Set("col,row") 既に空間/埋没スポーンを解決したマス(二重スポーン防止)。
@@ -420,6 +449,7 @@ const G = {
   mushrooms: 0, // キノコ所持数(交換通貨。SOIL 掘り抜きで採取、商人で道具/夢キノコと交換)。
   dreamMushrooms: 0, // 夢キノコ所持数(キノコ100→1 で統合した高額通貨/高級回復実)。
   fruits: 0, // フルーツ所持数(商人で鉄鉱石2 と交換した回復消耗品)。
+  roastMeat: 0, // v0.14.0: 焼き肉所持数(商人で鋼2と交換 or 生肉のマグマ変化で得る回復消耗品)。
   // ---- v0.9.0 育成(PER_* レベルアップ。ランごと初期化=セーブ永続は §2-5 番の別増分) ----
   info: 0, // 救出した女の子の「情報」ストック(救出成立で +1、BP へ変換すると消費)。
   bp: 0, // ボーナスポイント(裏庭=BP100% に忠実な汎用ポイント。情報/EXP から変換、PER_* に振る)。
@@ -474,6 +504,9 @@ function applyDungeonConst(id) {
   CONST.DEPTH_ROWS = d.rows;
   CONST.GIRL_COUNT = d.girls;
   CONST.DUNGEON_ID = id;
+  // v0.14.0: アンテナの電波範囲はダンジョン深度(15〜99)に比例させる(固定値は規模差で破綻するため)。
+  CONST.ANTENNA_R0 = Math.max(CONST.ANTENNA_R0_MIN, Math.round(d.rows * CONST.ANTENNA_R0_FRAC));
+  CONST.ANTENNA_R = Math.max(CONST.ANTENNA_R_MIN, Math.round(d.rows * CONST.ANTENNA_R_FRAC));
 }
 
 // ---- v0.13.0 ダンジョン進捗(クリア/解放チェーン) -------------------------
@@ -596,11 +629,10 @@ function startDive() {
   G.enteredHpZone = false;
   G.totalTiles = CONST.GRID_COLS * CONST.DEPTH_ROWS;
   // v0.4.0 インベントリ初期化(ランごと。fail/再挑戦でリセット = v0.3.0 スコープ境界踏襲)。
-  G.ore = { COPPER: 0, IRON: 0, GOLD: 0, DIAMOND: 0 };
+  G.ore = { COAL: 0, IRON_ORE: 0, FOSSIL: 0, STEEL: 0, RUBY: 0, DIAMOND: 0 };
   G.pick = CONST.INIT_PICK;
   G.ladders = 0;
-  G.potions = 0;
-  G.antenna = false;
+  G.antennaItems = 0; // v0.14.0: アンテナ所持数(ランごとリセット。設置済み位置は別途 loadAntennas で復元)。
   // v0.5.0 モンスター初期化。空間スポーンは盤面確定時に決定論で配置(NONE マス全走査)。
   G.monsters = [];
   G.spawned = new Set();
@@ -613,12 +645,18 @@ function startDive() {
   G.mushrooms = 0; // v0.8.0: キノコ通貨(SOIL 掘り抜きで採取)。
   G.dreamMushrooms = 0; // v0.8.0: 夢キノコ(キノコ100 から統合)。
   G.fruits = 0; // v0.8.0: フルーツ(商人で鉄鉱石2 と交換)。
+  G.roastMeat = 0; // v0.14.0: 焼き肉(商人交換 or 生肉のマグマ変化)。
   G.placedLadders = new Set(); // v0.13.1: 設置済みはしご位置("col,row")。ランごとリセット。
+  // v0.14.0: 設置済みアンテナは fail を跨いで残す(判断C)ため、まず空で初期化し loadAntennas で
+  // 永続 state から復元する(クリア済みで消去済みなら空のまま=新規ダイブと同じ)。
+  G.placedAntennas = new Set();
   G.companion = null; // v0.10.0: 同行指定はランごとリセット(level/cexp は girls 配列の初期化で 0 へ)。
   G.playerTrail = [[G.px, G.py]]; // v0.11.0: 自機足跡履歴(追従の正本)。地表スタート位置を起点に。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
   spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
   loadPersistent(); // v0.12.0: 永続 state を復元(rescued/per/bp/info/pick/girls level)。
+  loadAntennas(); // v0.14.0: 設置済みアンテナ位置を復元(fail を無条件で跨ぐ、判断C)。
+  loadInsurance(); // v0.14.0: 直前 fail 時に電波圏内だった場合のみ携行アイテムを1回だけ持ち越す(保険)。
   G.screen = "dive";
   hideOverlay();
   hudEl.hidden = false;
@@ -675,6 +713,131 @@ function exploreRatio() {
   return Math.min(1, G.seen.size / G.totalTiles);
 }
 
+// ---- v0.14.0 電波網(判断C: player 操作由来の state のみで決定論。ハッシュ不要) -----------
+// 地表からの基礎電波(深度 ANTENNA_R0 以内は常時圏内)+ 設置済みアンテナが連結すると圏内が広がる
+// (圏内から半径 ANTENNA_R 以内のアンテナが新たに圏内に入る、を不動点まで繰り返すグラフ伝播)。
+// アンテナ位置は自機の設置操作でのみ増減する純 state なので、乱数・ハッシュは一切使わない。
+// アンテナ数は上限 ANTENNA_MAX=20 のため O(n^2) の不動点計算でも計算量は問題にならない。
+function antennaDist(ac, ar, bc, br) {
+  return Math.hypot(ac - bc, ar - br);
+}
+// 地表基礎範囲(row<=ANTENNA_R0)の縁までの距離(縁の内側なら 0)。垂直距離のみで足りる
+// (基礎範囲は「深度 ANTENNA_R0 以内」という帯状の領域なので、最短点は真上)。
+function distToBaseZone(row) {
+  return row <= CONST.ANTENNA_R0 ? 0 : row - CONST.ANTENNA_R0;
+}
+// 現在設置されている全アンテナのうち電波網に連結している([col,row] 一覧)。
+// 「連結」= 地表基礎範囲の縁から半径 ANTENNA_R 以内、または既に連結している別アンテナから
+// 半径 ANTENNA_R 以内(不動点まで繰り返すグラフ伝播=中継chainで範囲が伸びる、item.csv
+// 「連結で範囲拡張」に忠実)。基礎範囲の外に単独で置いたアンテナは中継元が無く機能しない
+// (現実の無線中継と同じ=受信できない中継機は再送できない)。
+function coveredAntennas() {
+  const list = G.placedAntennas ? [...G.placedAntennas].map((k) => k.split(",").map(Number)) : [];
+  const inCov = new Array(list.length).fill(false);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < list.length; i++) {
+      if (inCov[i]) continue;
+      const [ac, ar] = list[i];
+      const nearBase = distToBaseZone(ar) <= CONST.ANTENNA_R; // 基礎範囲の縁から中継届く距離。
+      const nearCovered = list.some((b, j) => inCov[j] && antennaDist(ac, ar, b[0], b[1]) <= CONST.ANTENNA_R);
+      if (nearBase || nearCovered) { inCov[i] = true; changed = true; }
+    }
+  }
+  return list.filter((_, i) => inCov[i]);
+}
+// (col,row) が電波圏内か(地表基礎範囲、または電波網に連結したアンテナから半径 ANTENNA_R 以内)。
+function inRadioCoverage(col, row) {
+  if (row <= CONST.ANTENNA_R0) return true;
+  for (const [ac, ar] of coveredAntennas()) {
+    if (antennaDist(col, row, ac, ar) <= CONST.ANTENNA_R) return true;
+  }
+  return false;
+}
+
+// ---- v0.14.0 アンテナ位置の永続(fail を無条件で跨ぐ、判断C) -------------
+// mineroad_save_N(v0.12.0 セーブ)とは別キー(スキーマ非改変)。設置/回収のたびに保存し、
+// startDive 冒頭で復元。クリアで消去(clearAntennas、showClear から呼ぶ)。
+const ANTENNA_KEY_PREFIX = "mineroad_antennas_";
+function antennaKeyForDungeon(id) { return ANTENNA_KEY_PREFIX + id; }
+function saveAntennas() {
+  try {
+    const data = { v: 1, positions: G.placedAntennas ? [...G.placedAntennas] : [] };
+    localStorage.setItem(antennaKeyForDungeon(G.dungeonId), JSON.stringify(data));
+  } catch (e) {
+    /* localStorage 不可環境でもゲームは成立(保存のみ諦める) */
+  }
+}
+function loadAntennas() {
+  try {
+    const raw = localStorage.getItem(antennaKeyForDungeon(G.dungeonId));
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1 || !Array.isArray(data.positions)) return;
+    G.placedAntennas = new Set(data.positions);
+  } catch (e) {
+    /* 破損/不正データでも進行可能(未設置扱い) */
+  }
+}
+function clearAntennas() {
+  try {
+    localStorage.removeItem(antennaKeyForDungeon(G.dungeonId));
+  } catch (e) {
+    /* noop */
+  }
+}
+
+// ---- v0.14.0 保険(携行アイテムの持ち越し、判断C本丸) ---------------------
+// 力尽き時に自機が電波圏内なら、そのランの携行アイテム(ore/drops/mushrooms/dreamMushrooms/fruits/
+// roastMeat/ladders/antennaItems/pick)を1回だけ次回 startDive へ持ち越す。圏外なら従来どおり全ロスト
+// (何もしない=既存の「新しいダイブで全リセット」がそのまま効く、v0.12.0「消耗品は力尽きロスト」と
+// 矛盾しない=原作自身がアンテナを保険として提供しており、保険の追加こそが忠実)。
+// mineroad_save_N(v0.12.0、rescued/per/bp/info/pick/girls level の永続)とは別キー(スキーマ非改変)。
+const INSURANCE_KEY_PREFIX = "mineroad_insurance_";
+function insuranceKeyForDungeon(id) { return INSURANCE_KEY_PREFIX + id; }
+function saveInsurance() {
+  try {
+    const data = {
+      v: 1,
+      ore: G.ore ? { ...G.ore } : null,
+      drops: G.drops ? { ...G.drops } : null,
+      mushrooms: G.mushrooms || 0,
+      dreamMushrooms: G.dreamMushrooms || 0,
+      fruits: G.fruits || 0,
+      roastMeat: G.roastMeat || 0,
+      ladders: G.ladders || 0,
+      antennaItems: G.antennaItems || 0,
+      pick: G.pick || CONST.INIT_PICK,
+    };
+    localStorage.setItem(insuranceKeyForDungeon(G.dungeonId), JSON.stringify(data));
+  } catch (e) {
+    /* localStorage 不可環境でもゲームは成立(保険なし扱い) */
+  }
+}
+// 1 回だけ持ち越し=読んだら即座に消す(次に力尽きたときまた圏内なら改めて保存される)。
+function loadInsurance() {
+  try {
+    const raw = localStorage.getItem(insuranceKeyForDungeon(G.dungeonId));
+    if (!raw) return;
+    localStorage.removeItem(insuranceKeyForDungeon(G.dungeonId));
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1) return;
+    if (data.ore && G.ore) for (const k of Object.keys(G.ore)) if (data.ore[k] != null) G.ore[k] = data.ore[k];
+    if (data.drops) G.drops = { ...data.drops };
+    G.mushrooms = data.mushrooms || 0;
+    G.dreamMushrooms = data.dreamMushrooms || 0;
+    G.fruits = data.fruits || 0;
+    G.roastMeat = data.roastMeat || 0;
+    G.ladders = data.ladders || 0;
+    G.antennaItems = data.antennaItems || 0;
+    if (data.pick && PICK[data.pick] && pickRank(data.pick) > pickRank(G.pick)) G.pick = data.pick;
+    showHint("電波が届いていたので持ち物は失われなかった", false);
+  } catch (e) {
+    /* 破損/不正データでも進行可能(保険なし扱い) */
+  }
+}
+
 // ---- v0.6.0 水/マグマ 浸水ハザード ヘルパー(係数を 1 箇所に集約) --------
 // 浸水判定: あるマスが空間(NONE=元空間 or 掘った跡)で、かつ hazardAt が浸水を示すか。
 // 固体土の中は浸水しない(掘り抜いて初めて水/マグマが現れる)。地表/範囲外/GIRL は NONE。
@@ -720,7 +883,10 @@ function spendAction() {
   }
   // マグマの直接 chip(SP 残があれば SP から、尽きていれば HP から=takeDamage が二段ゲージへ接続)。
   const chip = hazardHpChip();
-  if (chip > 0) takeDamage(chip);
+  if (chip > 0) {
+    takeDamage(chip);
+    cookMeatInMagma(); // v0.14.0: マグマ中の行動で所持生肉を焼き肉へ変換(決定論・状態遷移のみ)。
+  }
 }
 
 // ---- v0.5.0 被ダメージ = 既存二段ゲージへ接続(SP を削り、SP0 で HP を削る) ----
@@ -963,32 +1129,43 @@ function collectMushroom(col, row) {
   G.mushrooms = (G.mushrooms || 0) + 1;
   spawnPopupAt(col, row, "+茸", "cue"); // 採取を暖色ポップで明示(キノコ=茸)。
 }
-// クラフトレシピ rec の材料が現在のインベントリで足りているか。
+// クラフトレシピ rec の材料が現在のインベントリで足りているか(v0.14.0: cost を SHOP_RECIPES と
+// 同じ { ore:{...}, item:{...} } 形へ統一し tiles.js canTrade へ委譲。判定ロジックの二重化を避ける)。
 function canCraft(rec) {
-  if (!G.ore) return false;
-  for (const k of Object.keys(rec.cost)) {
-    if ((G.ore[k] || 0) < rec.cost[k]) return false;
-  }
-  return true;
+  return canTrade(rec, G);
 }
 // ツルハシ段の強さ比較(クラフトで弱い段に "ダウングレード" しないため)。
 function pickRank(key) {
   return PICK[key] ? PICK[key].power : 0;
 }
-// レシピを実行: 材料を消費し完成品を付与。実行できたら true。
-function doCraft(rec) {
-  if (!canCraft(rec)) return false;
-  for (const k of Object.keys(rec.cost)) G.ore[k] -= rec.cost[k];
-  const r = rec.result;
+// v0.14.0: クラフト/商人で共通化した「対価を払う」ヘルパー(cost 形は canTrade と同じ)。
+function payCost(cost) {
+  const c = cost || {};
+  if (c.ore) for (const k of Object.keys(c.ore)) G.ore[k] -= c.ore[k];
+  if (c.item) for (const k of Object.keys(c.item)) G.drops[k] -= c.item[k];
+  if (c.mushroom) G.mushrooms -= c.mushroom;
+  if (c.dreamMushroom) G.dreamMushrooms -= c.dreamMushroom;
+}
+// v0.14.0: クラフト/商人で共通化した「産物を付与する」ヘルパー(result.type = pick/tool/consumable)。
+// アンテナは v0.14.0 で設置型(placeAntenna)へ引き直したため、ここでは所持数を増やすだけ。
+function grantResult(r) {
   if (r.type === "pick") {
     // 最強の段だけを保持(より強い段を作ったら昇格、弱い段は無意味なので据え置き)。
     if (pickRank(r.id) > pickRank(G.pick)) G.pick = r.id;
   } else if (r.type === "tool") {
     if (r.id === "LADDER") G.ladders += 1;
-    else if (r.id === "ANTENNA") G.antenna = true;
+    else if (r.id === "ANTENNA") G.antennaItems = (G.antennaItems || 0) + 1;
   } else if (r.type === "consumable") {
-    if (r.id === "POTION") G.potions += 1;
+    if (r.id === "FRUIT") G.fruits += 1;
+    else if (r.id === "DREAM_MUSHROOM") G.dreamMushrooms += 1;
+    else if (r.id === "ROAST_MEAT") G.roastMeat += 1;
   }
+}
+// レシピを実行: 材料を消費し完成品を付与。実行できたら true。
+function doCraft(rec) {
+  if (!canCraft(rec)) return false;
+  payCost(rec.cost);
+  grantResult(rec.result);
   playSfx("heal"); // クラフト成功の合図(専用 SFX 無し、heal を流用)。
   renderHud();
   renderCraft(); // パネルの可否表示を更新。
@@ -1021,17 +1198,40 @@ function recoverLadder() {
   return true;
 }
 
-// 回復薬を使う(体力 +POTION_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
-function usePotion() {
-  if (G.screen !== "dive" || G.potions <= 0) return false;
-  if (G.hp >= effHpMax()) { // v0.9.0: PER_HP で上がった実効最大値で満タン判定。
-    showHint("体力は満タン", false);
+// ---- v0.14.0 アンテナ(設置型 + 電波網 + 保険) --------------------------
+// 判断C: v0.4.0 の「所持フラグで女の子全域透視」を廃し、原作忠実(item.csv ID3)の設置型へ引き直す。
+// 設置は placeLadder と同じ流儀(所持1個消費・isSpace かつ地中でのみ・重複設置不可)。1 ダンジョン
+// 上限 CONST.ANTENNA_MAX(仕様まとめ §8「1ダンジョン最大20本」)。設置済み位置は fail を無条件で跨いで
+// 残す(判断C「固定 seed 同一盤面で位置が意味を保つ=保険の実用性の核」、saveAntennas で永続化)。
+function placeAntenna() {
+  if (G.screen !== "dive") return false;
+  if ((G.antennaItems || 0) <= 0) return false;
+  if (!G.placedAntennas) G.placedAntennas = new Set();
+  if (G.placedAntennas.size >= CONST.ANTENNA_MAX) {
+    showHint("アンテナは上限(" + CONST.ANTENNA_MAX + "本)まで設置済み", true);
     return false;
   }
-  G.potions -= 1;
-  G.hp = Math.min(effHpMax(), G.hp + CONST.POTION_HEAL);
+  const key = G.px + "," + G.py;
+  if (!isSpace(G.px, G.py) || G.py <= 0) return false;
+  if (G.placedAntennas.has(key)) return false;
+  G.antennaItems -= 1;
+  G.placedAntennas.add(key);
+  saveAntennas();
   playSfx("heal");
-  showHint("回復薬を使った", false);
+  showHint("アンテナを設置した", false);
+  renderHud();
+  return true;
+}
+// アンテナ回収(自機位置の設置済みアンテナを拾って所持に戻す)。
+function recoverAntenna() {
+  if (G.screen !== "dive") return false;
+  const key = G.px + "," + G.py;
+  if (!G.placedAntennas || !G.placedAntennas.has(key)) return false;
+  G.placedAntennas.delete(key);
+  G.antennaItems = (G.antennaItems || 0) + 1;
+  saveAntennas();
+  playSfx("heal");
+  showHint("アンテナを回収した", false);
   renderHud();
   return true;
 }
@@ -1042,53 +1242,53 @@ function canTradeRec(rec) {
   return canTrade(rec, G);
 }
 // 商人レシピを実行: 対価を消費し産物を付与。実行できたら true(不足/非 dive は false)。
-// 対価は ore=G.ore / item=G.drops / mushroom=G.mushrooms / dreamMushroom=G.dreamMushrooms を減算。
-// 産物は doCraft と同じ pick/tool/consumable 体系で付与(consumable は FRUIT/DREAM_MUSHROOM も扱う)。
+// v0.14.0: 対価の消費/産物の付与は doCraft と共通の payCost/grantResult ヘルパーへ委譲(cost 形統一)。
 function doShopTrade(rec) {
   if (G.screen !== "dive" || !canTradeRec(rec)) return false;
-  const c = rec.cost || {};
-  if (c.ore) for (const k of Object.keys(c.ore)) G.ore[k] -= c.ore[k];
-  if (c.item) for (const k of Object.keys(c.item)) G.drops[k] -= c.item[k];
-  if (c.mushroom) G.mushrooms -= c.mushroom;
-  if (c.dreamMushroom) G.dreamMushrooms -= c.dreamMushroom;
-  const r = rec.result;
-  if (r.type === "pick") {
-    if (pickRank(r.id) > pickRank(G.pick)) G.pick = r.id; // 弱い段にはダウングレードしない(doCraft 流儀)。
-  } else if (r.type === "tool") {
-    if (r.id === "ANTENNA") G.antenna = true;
-    else if (r.id === "LADDER") G.ladders += 1;
-  } else if (r.type === "consumable") {
-    if (r.id === "FRUIT") G.fruits += 1;
-    else if (r.id === "DREAM_MUSHROOM") G.dreamMushrooms += 1;
-    else if (r.id === "POTION") G.potions += 1;
-  }
+  payCost(rec.cost);
+  grantResult(rec.result);
   playSfx("heal"); // 交換成立の合図(専用 SFX 無し、heal を流用=doCraft 流儀)。
   showHint(rec.name + "を交換した", false);
   renderHud();
   renderShop(); // パネルの可否表示を更新。
   return true;
 }
-// フルーツを使う(体力 +FRUIT_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
-function useFruit() {
-  if (G.screen !== "dive" || (G.fruits || 0) <= 0) return false;
-  if (G.hp >= effHpMax()) { showHint("体力は満タン", false); return false; }
-  G.fruits -= 1;
-  G.hp = Math.min(effHpMax(), G.hp + CONST.FRUIT_HEAL);
+
+// ---- v0.14.0 飲食(食べる)の汎用化 --------------------------------------
+// 回復薬(原作に無い v0.4.0 独自アイテム)は判断Bにより廃止し、item.csv 実在の飲食(フルーツ/夢キノコ/
+// 焼き肉/動物の血)へ置換。個々の usePotion/useFruit... の重複実装を作らず、所持元(G の専用フィールド
+// or G.drops)の違いを get/spend で吸収した単一経路 useConsumable に集約する(HP_MAX 上限は共通)。
+const CONSUMABLES = {
+  FRUIT: { name: "フルーツ", heal: () => CONST.FRUIT_HEAL, get: () => G.fruits || 0, spend: () => { G.fruits -= 1; } },
+  DREAM_MUSHROOM: { name: "夢キノコ", heal: () => CONST.DREAM_HEAL, get: () => G.dreamMushrooms || 0, spend: () => { G.dreamMushrooms -= 1; } },
+  ROAST_MEAT: { name: "焼き肉", heal: () => CONST.ROAST_HEAL, get: () => G.roastMeat || 0, spend: () => { G.roastMeat -= 1; } },
+  BLOOD: { name: "動物の血", heal: () => CONST.BLOOD_HEAL, get: () => (G.drops && G.drops["動物の血"]) || 0, spend: () => { G.drops["動物の血"] -= 1; } },
+};
+// 消耗品 id を 1 個消費して体力を回復する共通経路。所持無し/満タン/非 dive なら false。
+function useConsumable(id) {
+  const c = CONSUMABLES[id];
+  if (!c || G.screen !== "dive" || c.get() <= 0) return false;
+  if (G.hp >= effHpMax()) { showHint("体力は満タン", false); return false; } // v0.9.0 実効最大値で判定。
+  c.spend();
+  G.hp = Math.min(effHpMax(), G.hp + c.heal());
   playSfx("heal");
-  showHint("フルーツを食べた", false);
+  showHint(c.name + "を食べた", false);
   renderHud();
   return true;
 }
-// 夢キノコを食べる(体力 +DREAM_HEAL、HP_MAX 上限)。所持が無い/満タンなら何もしない。
-function useDreamMushroom() {
-  if (G.screen !== "dive" || (G.dreamMushrooms || 0) <= 0) return false;
-  if (G.hp >= effHpMax()) { showHint("体力は満タン", false); return false; }
-  G.dreamMushrooms -= 1;
-  G.hp = Math.min(effHpMax(), G.hp + CONST.DREAM_HEAL);
-  playSfx("heal");
-  showHint("夢キノコを食べた", false);
-  renderHud();
-  return true;
+// 既存呼び出し元(テスト含む)の関数名を維持したラッパー(useConsumable への薄い委譲)。
+function useFruit() { return useConsumable("FRUIT"); }
+function useDreamMushroom() { return useConsumable("DREAM_MUSHROOM"); }
+function useRoastMeat() { return useConsumable("ROAST_MEAT"); }
+function useBlood() { return useConsumable("BLOOD"); }
+
+// v0.14.0: 生肉のマグマ変化(item.csv MAGMA 変化列 verbatim=生肉→焼き肉)。マグマ中で行動する
+// たび、所持する生肉を1個ずつ焼き肉へ変換する(決定論・状態遷移のみ、ランタイム乱数不使用)。
+function cookMeatInMagma() {
+  if (!G.drops || !(G.drops["生肉"] > 0)) return;
+  G.drops["生肉"] -= 1;
+  G.roastMeat = (G.roastMeat || 0) + 1;
+  showHint("生肉が焼けた", false);
 }
 
 // ---- v0.9.0 育成(情報/EXP → BP → PER_* レベルアップ) -------------------
@@ -1756,6 +1956,8 @@ function surfaceReturn() {
 // ---- 失敗(体力 0) ----------------------------------------------------
 function checkFail() {
   if (G.hp <= 0 && G.py > 0 && G.screen === "dive") {
+    // v0.14.0 判断C(保険本丸): 力尽きた瞬間の自機位置が電波圏内なら携行アイテムを1回だけ持ち越す。
+    if (inRadioCoverage(G.px, G.py)) saveInsurance();
     showFail();
   }
 }
@@ -1881,6 +2083,7 @@ function showClear() {
   hudEl.hidden = true;
   playSfx("clear");
   clearPersistent();
+  clearAntennas(); // v0.14.0: 設置済みアンテナはクリアで消去(判断C)。
   if (!G.cleared) G.cleared = new Set();
   if (!G.unlocked) G.unlocked = new Set([0]);
   G.cleared.add(G.dungeonId);
@@ -1933,20 +2136,16 @@ function renderHud() {
 // ---- v0.4.0 インベントリ表示(鉱石数 + 所持道具)。canvas 外 DOM。 ---------
 function renderInventory() {
   if (!invEl || !G.ore) return;
-  // 鉱石 4 種(銅/鉄/金/ダイヤ)。
-  if (oreCuEl) oreCuEl.textContent = G.ore.COPPER || 0;
-  if (oreFeEl) oreFeEl.textContent = G.ore.IRON || 0;
-  if (oreAuEl) oreAuEl.textContent = G.ore.GOLD || 0;
-  if (oreDiEl) oreDiEl.textContent = G.ore.DIAMOND || 0;
-  // 道具: ツルハシ最強段アイコン / はしご数 / 回復薬数 / アンテナ有無。
+  // 鉱石 6 種(石炭/鉄鉱石/化石/鋼/ルビー/ダイヤ、v0.14.0 原作実名へ名寄せ)。
+  if (oreCoalEl) oreCoalEl.textContent = G.ore.COAL || 0;
+  if (oreIronEl) oreIronEl.textContent = G.ore.IRON_ORE || 0;
+  if (oreFossilEl) oreFossilEl.textContent = G.ore.FOSSIL || 0;
+  if (oreSteelEl) oreSteelEl.textContent = G.ore.STEEL || 0;
+  if (oreRubyEl) oreRubyEl.textContent = G.ore.RUBY || 0;
+  if (oreDiamondEl) oreDiamondEl.textContent = G.ore.DIAMOND || 0;
+  // 道具: ツルハシ最強段アイコン / はしご数 / アンテナ数。
   const p = PICK[G.pick];
   if (pickIcoEl) pickIcoEl.textContent = p ? p.ico : "木";
-  if (potionValEl) potionValEl.textContent = G.potions || 0;
-  // 回復薬ボタンは所持があるときだけ押下可。
-  if (btnPotionEl) {
-    btnPotionEl.disabled = (G.potions || 0) <= 0;
-    btnPotionEl.classList.toggle("disabled", (G.potions || 0) <= 0);
-  }
   // v0.13.1 はしご: 所持数表示 + 設置/回収トグルの disabled 制御。
   if (ladderValEl) ladderValEl.textContent = G.ladders || 0;
   if (btnLadderEl) {
@@ -1954,6 +2153,14 @@ function renderInventory() {
     const dis = (G.ladders || 0) <= 0 && !onLadder;
     btnLadderEl.disabled = dis;
     btnLadderEl.classList.toggle("disabled", dis);
+  }
+  // v0.14.0 アンテナ: 所持数表示 + 設置/回収トグルの disabled 制御(はしごと同じ流儀)。
+  if (antennaValEl) antennaValEl.textContent = G.antennaItems || 0;
+  if (btnAntennaEl) {
+    const onAntenna = G.placedAntennas && G.placedAntennas.has(G.px + "," + G.py);
+    const dis = (G.antennaItems || 0) <= 0 && !onAntenna;
+    btnAntennaEl.disabled = dis;
+    btnAntennaEl.classList.toggle("disabled", dis);
   }
   // v0.8.0 商人通貨: キノコ所持数を HUD バーに表示(夢キノコ/フルーツは工房=商人タブで扱う)。
   if (mushValEl) mushValEl.textContent = G.mushrooms || 0;
@@ -1983,37 +2190,48 @@ function closeCraft() {
     craftOverlayEl.hidden = true;
   }
 }
-// 工房タブ切り替え(クラフト/商人/育成)。リスト表示とタブ active 状態を同期し、選んだ側を再描画。
-// v0.9.0: 育成タブを第3タブとして追加(上部バーのボタンは増やさない=工房内タブ同居=gate G 非退行)。
+// 工房タブ切り替え(クラフト/商人/育成/仲間/アイテム)。リスト表示とタブ active 状態を同期し、選んだ側を再描画。
+// v0.9.0: 育成タブを第3タブとして追加。v0.14.0: アイテムタブを第5タブとして追加(いずれも上部バーの
+// ボタンは増やさない=工房内タブ同居=gate G 非退行)。
 function setWorkshopTab(tab) {
-  workshopTab = tab === "shop" ? "shop" : tab === "grow" ? "grow" : tab === "companion" ? "companion" : "craft";
+  workshopTab = ["shop", "grow", "companion", "items"].includes(tab) ? tab : "craft";
   if (craftListEl) craftListEl.hidden = workshopTab !== "craft";
   if (shopListEl) shopListEl.hidden = workshopTab !== "shop";
   if (growListEl) growListEl.hidden = workshopTab !== "grow";
   if (companionListEl) companionListEl.hidden = workshopTab !== "companion";
+  if (itemListEl) itemListEl.hidden = workshopTab !== "items";
   if (tabCraftEl) tabCraftEl.classList.toggle("active", workshopTab === "craft");
   if (tabShopEl) tabShopEl.classList.toggle("active", workshopTab === "shop");
   if (tabGrowEl) tabGrowEl.classList.toggle("active", workshopTab === "grow");
   if (tabCompanionEl) tabCompanionEl.classList.toggle("active", workshopTab === "companion");
+  if (tabItemsEl) tabItemsEl.classList.toggle("active", workshopTab === "items");
   if (workshopTab === "shop") renderShop();
   else if (workshopTab === "grow") renderGrow();
   else if (workshopTab === "companion") renderCompanion();
+  else if (workshopTab === "items") renderItems();
   else renderCraft();
 }
-// 材料コストを「銅3」等の verbatim 文字列に。
+// 材料コストを「鉄2 骨1」等の verbatim 文字列に(v0.14.0: CRAFT_RECIPES/SHOP_RECIPES で cost 形を
+// 統一したため、旧 costText/tradeCostText の重複実装を 1 本化。ore=アイコン1字、item=日本語名、
+// mushroom=茸、dreamMushroom=夢)。
 function costText(cost) {
+  const c = cost || {};
   const parts = [];
-  for (const k of Object.keys(cost)) {
-    // k = ORE_META.key。アイコン1字 + 個数。
-    let ico = "?";
-    for (const o of Object.keys(ORE_META)) {
-      if (ORE_META[o].key === k) { ico = ORE_META[o].ico; break; }
+  if (c.ore) {
+    for (const k of Object.keys(c.ore)) {
+      let ico = "?";
+      for (const o of Object.keys(ORE_META)) {
+        if (ORE_META[o].key === k) { ico = ORE_META[o].ico; break; }
+      }
+      parts.push(ico + c.ore[k]);
     }
-    parts.push(ico + cost[k]);
   }
+  if (c.item) for (const k of Object.keys(c.item)) parts.push(k + c.item[k]);
+  if (c.mushroom) parts.push("茸" + c.mushroom);
+  if (c.dreamMushroom) parts.push("夢" + c.dreamMushroom);
   return parts.join(" ");
 }
-// 既に最強段のツルハシを持っているレシピは「所持済み」で実質無効化(混乱防止)。
+// 既に最強段のツルハシを持っている pick レシピは「所持済み」で実質無効化(混乱防止。クラフト/商人共通)。
 function recipeRedundant(rec) {
   return rec.result.type === "pick" && pickRank(rec.result.id) <= pickRank(G.pick);
 }
@@ -2052,27 +2270,6 @@ function renderCraft() {
 // shop.csv 忠実サブセット(SHOP_RECIPES)を表示。対価充足なら「交換」可、不足は disabled。dive 中に
 // 開ける。アクセス導線はクラフトと同じ「作る」ボタン→工房オーバーレイ→商人タブ(上部バーにボタンを
 // 増やさず既存の地表タップ/カメラ前提を壊さない)。
-// 商人レシピの対価を「鉄2 / 茸10」等の verbatim 文字列に(ore=アイコン1字、item=日本語名、mushroom=茸/夢)。
-function tradeCostText(cost) {
-  const parts = [];
-  if (cost.ore) {
-    for (const k of Object.keys(cost.ore)) {
-      let ico = "?";
-      for (const o of Object.keys(ORE_META)) {
-        if (ORE_META[o].key === k) { ico = ORE_META[o].ico; break; }
-      }
-      parts.push(ico + cost.ore[k]);
-    }
-  }
-  if (cost.item) for (const k of Object.keys(cost.item)) parts.push(k + cost.item[k]);
-  if (cost.mushroom) parts.push("茸" + cost.mushroom);
-  if (cost.dreamMushroom) parts.push("夢" + cost.dreamMushroom);
-  return parts.join(" ");
-}
-// 既に最強段のツルハシを持っている pick レシピは「所持済み」で実質無効化(クラフトと同じ混乱防止)。
-function tradeRedundant(rec) {
-  return rec.result.type === "pick" && pickRank(rec.result.id) <= pickRank(G.pick);
-}
 function renderShop() {
   if (!shopListEl) return;
   shopListEl.innerHTML = "";
@@ -2086,13 +2283,13 @@ function renderShop() {
     nm.textContent = rec.desc ? rec.name + "（" + rec.desc + "）" : rec.name;
     const cost = document.createElement("span");
     cost.className = "craft-cost";
-    cost.textContent = tradeCostText(rec.cost);
+    cost.textContent = costText(rec.cost);
     info.appendChild(nm);
     info.appendChild(cost);
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "craft-make";
-    const redundant = tradeRedundant(rec);
+    const redundant = recipeRedundant(rec);
     const ok = canTradeRec(rec) && !redundant;
     btn.textContent = redundant ? "所持済み" : "交換";
     btn.disabled = !ok;
@@ -2102,10 +2299,12 @@ function renderShop() {
     row.appendChild(btn);
     shopListEl.appendChild(row);
   }
-  // 交換で得た消耗品(フルーツ/夢キノコ)を食べる行。所持している間だけ表示(HUD バーにボタンを
-  // 増やさずここから使う=上部バーの x 位置を動かさない設計)。回復薬は HUD の薬ボタンで使うため除外。
+  // 交換/ドロップで得た消耗品を食べる行。所持している間だけ表示(HUD バーにボタンを増やさずここから
+  // 使う=上部バーの x 位置を動かさない設計)。v0.14.0: 回復薬(廃止)の代わりに焼き肉/動物の血を追加。
   appendEatRow("フルーツ", G.fruits || 0, "体力+" + CONST.FRUIT_HEAL, useFruit);
   appendEatRow("夢キノコ", G.dreamMushrooms || 0, "体力+" + CONST.DREAM_HEAL, useDreamMushroom);
+  appendEatRow("焼き肉", G.roastMeat || 0, "体力+" + CONST.ROAST_HEAL, useRoastMeat);
+  appendEatRow("動物の血", (G.drops && G.drops["動物の血"]) || 0, "体力+" + CONST.BLOOD_HEAL, useBlood);
 }
 // 所持消耗品 name を「食べる」行として shopList に足す(数が 0 なら何も追加しない)。
 function appendEatRow(name, count, desc, useFn) {
@@ -2309,6 +2508,54 @@ function renderCompanion() {
   }
 }
 
+// ---- v0.14.0 アイテムタブ(item.csv 全45種カタログの読み取り専用 BAG ビュー) ------------
+// 工房第5タブ。判断B: dead-item(open=false)はボタン無しの非インタラクティブ表示に留め、45行の
+// 操作 UI は作らない(取得/使用の実操作は既存のクラフト/商人/HUD/食べる行が担う。ここは所持の一覧性
+// だけを担当)。所持数は既存 state(G.ore/G.drops/専用フィールド)から読むだけで新規 state は増やさない。
+function itemOwnedText(item) {
+  if (!item.open) return "—";
+  switch (item.name) {
+    case "石炭": return String((G.ore && G.ore.COAL) || 0);
+    case "鉄鉱石": return String((G.ore && G.ore.IRON_ORE) || 0);
+    case "化石": return String((G.ore && G.ore.FOSSIL) || 0);
+    case "鋼": return String((G.ore && G.ore.STEEL) || 0);
+    case "ルビー": return String((G.ore && G.ore.RUBY) || 0);
+    case "ダイヤ": return String((G.ore && G.ore.DIAMOND) || 0);
+    case "ツルハシ": { const p = PICK[G.pick]; return p ? p.name : "木のツルハシ"; }
+    case "ハシゴ": return (G.ladders || 0) + "(設置 " + ((G.placedLadders && G.placedLadders.size) || 0) + ")";
+    case "アンテナ": return (G.antennaItems || 0) + "(設置 " + ((G.placedAntennas && G.placedAntennas.size) || 0) + ")";
+    case "キノコ": return String(G.mushrooms || 0);
+    case "夢キノコ": return String(G.dreamMushrooms || 0);
+    case "フルーツ": return String(G.fruits || 0);
+    case "焼き肉": return String(G.roastMeat || 0);
+    default: return String((G.drops && G.drops[item.name]) || 0);
+  }
+}
+function renderItems() {
+  if (!itemListEl) return;
+  itemListEl.innerHTML = "";
+  for (const item of ITEM_DATA) {
+    const row = document.createElement("div");
+    row.className = "craft-row" + (item.open ? "" : " item-dead");
+    const info = document.createElement("div");
+    info.className = "craft-info";
+    const nm = document.createElement("span");
+    nm.className = "craft-name";
+    nm.textContent = item.name;
+    const note = document.createElement("span");
+    note.className = "craft-cost";
+    note.textContent = item.note;
+    info.appendChild(nm);
+    info.appendChild(note);
+    const val = document.createElement("span");
+    val.className = "item-owned";
+    val.textContent = itemOwnedText(item);
+    row.appendChild(info);
+    row.appendChild(val);
+    itemListEl.appendChild(row);
+  }
+}
+
 let hintTimer = null;
 function showHint(text, warn) {
   hudHintEl.textContent = text;
@@ -2398,14 +2645,19 @@ if (btnMuteEl) {
     btnMuteEl.classList.toggle("muted", !audioOn);
   });
 }
-// v0.4.0: クラフトを開く / 閉じる、回復薬を使う。
+// v0.4.0: クラフトを開く / 閉じる。
 if (btnCraftEl) btnCraftEl.addEventListener("click", () => openCraft());
 if (craftCloseEl) craftCloseEl.addEventListener("click", () => closeCraft());
-if (btnPotionEl) btnPotionEl.addEventListener("click", () => usePotion());
 if (btnLadderEl) btnLadderEl.addEventListener("click", () => {
   const key = G.px + "," + G.py;
   if (G.placedLadders && G.placedLadders.has(key)) recoverLadder();
   else placeLadder();
+});
+// v0.14.0: アンテナ設置/回収トグル(はしごと同じ流儀)。
+if (btnAntennaEl) btnAntennaEl.addEventListener("click", () => {
+  const key = G.px + "," + G.py;
+  if (G.placedAntennas && G.placedAntennas.has(key)) recoverAntenna();
+  else placeAntenna();
 });
 // v0.8.0: 工房のタブ切り替え(クラフト / 商人)。商人は「作る」ボタン→工房→商人タブで開く
 // (上部バーに 3 つ目のボタンを足さない=既存ボタン x 位置/地表タップ前提を壊さない)。
@@ -2413,6 +2665,7 @@ if (tabCraftEl) tabCraftEl.addEventListener("click", () => setWorkshopTab("craft
 if (tabShopEl) tabShopEl.addEventListener("click", () => setWorkshopTab("shop"));
 if (tabGrowEl) tabGrowEl.addEventListener("click", () => setWorkshopTab("grow")); // v0.9.0 育成タブ。
 if (tabCompanionEl) tabCompanionEl.addEventListener("click", () => setWorkshopTab("companion")); // v0.10.0 仲間タブ。
+if (tabItemsEl) tabItemsEl.addEventListener("click", () => setWorkshopTab("items")); // v0.14.0 アイテムタブ。
 
 // ---- 描画(タイル粒度、per-pixel 禁止) --------------------------------
 function caveColor(row) {
@@ -2549,6 +2802,20 @@ function render() {
           }
           ctx.stroke();
         }
+        // v0.14.0 設置済みアンテナ(電波色の縦棒+先端の輪、電波網の起点であることを視覚的に示す)。
+        if (G.placedAntennas && G.placedAntennas.has(col + "," + row)) {
+          const ax = sx + tile * 0.5;
+          const topY = sy + tile * 0.12;
+          ctx.strokeStyle = "rgba(120,220,200,0.85)";
+          ctx.lineWidth = Math.max(2, tile * 0.07);
+          ctx.beginPath();
+          ctx.moveTo(ax, sy + tile * 0.85);
+          ctx.lineTo(ax, topY);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(ax, topY, tile * 0.1, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       } else {
         // 固体タイル = スプライト(SOIL/HARD/ROCK、女の子マスは soil で描き上に重ねる)。
         const key = t === TILE.HARD ? "hard" : t === TILE.ROCK ? "rock" : "soil";
@@ -2580,11 +2847,12 @@ function render() {
   }
 
   // 女の子(暖色自発光。未発見でも可視マスなら気配として淡く光る)。全員ぶん描く。
-  // v0.4.0 D: アンテナ所持時は未可視・未発見の女の子も透視表示(原作「位置を透視」)。
+  // v0.14.0 判断C: 全域透視(所持フラグ)を廃し、電波圏内(地表基礎範囲 or 連結アンテナ半径内)の
+  // 女の子だけ透視表示へ引き直す(探索率/fog=seen には非介入、難度が原作方向へ戻る変更)。
   if (G.girls) {
     for (const g of G.girls) {
       if (g.state === "rescued") continue;
-      if (isVisible(g.col, g.row) || g.state === "following" || G.antenna) drawGirl(g);
+      if (isVisible(g.col, g.row) || g.state === "following" || inRadioCoverage(g.col, g.row)) drawGirl(g);
     }
   }
 

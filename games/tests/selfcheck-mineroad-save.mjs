@@ -46,7 +46,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.13.0", ver === "v0.13.0", { ver });
+check("VERSION = v0.14.0", ver === "v0.14.0", { ver });
 
 // ============================================================================
 // 1. fail→retry で永続 state 復元
@@ -144,12 +144,11 @@ const run4 = await page.evaluate(() => {
   G.pick = "DIAMOND";
   G.monsters = [];
   G.spawned = new Set();
-  G.ore.COPPER = 10;
-  G.ore.IRON = 5;
+  G.ore.COAL = 10;
+  G.ore.IRON_ORE = 5;
   G.mushrooms = 20;
-  G.potions = 3;
   G.ladders = 2;
-  G.antenna = true;
+  G.antennaItems = 4;
   G.exp = 50;
   G.kills = 10;
   // 1人救出して永続 state に値を入れる。
@@ -161,28 +160,33 @@ const run4 = await page.evaluate(() => {
 });
 check("4a 事前準備(鉱石/アイテム所持+救出)", run4.saved, run4);
 
+// v0.14.0: 電波圏内(ANTENNA_R0 以内)での力尽きは保険(判断C)で携行アイテムを持ち越すため、
+// 「ランごとリセット」の素の挙動(保険なし)を検証するには圏外(row > ANTENNA_R0)まで潜る
+// (この gate はアンテナ未設置=保険は電波圏外なら効かない)。
 const retry4 = await page.evaluate(() => {
-  act(0, 1); // 地中へ(checkFail は py>0 が条件)。
+  while (G.py <= CONST.ANTENNA_R0) act(0, 1); // 地中かつ電波圏外まで掘り下げる。
+  const coveredAtFail = inRadioCoverage(G.px, G.py);
   G.hp = 0;
   G.stamina = 0;
   checkFail();
   startDive();
   return {
+    coveredAtFail,
     ore: { ...G.ore },
     mushrooms: G.mushrooms,
-    potions: G.potions,
     ladders: G.ladders,
-    antenna: G.antenna,
+    antennaItems: G.antennaItems,
     exp: G.exp,
     kills: G.kills,
     rescued: G.rescued,
   };
 });
-check("4b ore リセット", retry4.ore && retry4.ore.COPPER === 0 && retry4.ore.IRON === 0, retry4);
-check("4c mushrooms/potions/ladders リセット", retry4.mushrooms === 0 && retry4.potions === 0 && retry4.ladders === 0, retry4);
-check("4d antenna リセット", retry4.antenna === false, retry4);
-check("4e exp/kills リセット", retry4.exp === 0 && retry4.kills === 0, retry4);
-check("4f rescued は永続(リセットされない)", retry4.rescued >= 1, retry4);
+check("4b 圏外での力尽き(保険なし)", retry4.coveredAtFail === false, retry4);
+check("4c ore リセット", retry4.ore && retry4.ore.COAL === 0 && retry4.ore.IRON_ORE === 0, retry4);
+check("4d mushrooms/ladders リセット", retry4.mushrooms === 0 && retry4.ladders === 0, retry4);
+check("4e antennaItems リセット", retry4.antennaItems === 0, retry4);
+check("4f exp/kills リセット", retry4.exp === 0 && retry4.kills === 0, retry4);
+check("4g rescued は永続(リセットされない)", retry4.rescued >= 1, retry4);
 
 // ============================================================================
 // 5. 決定論: 3 回連続一致

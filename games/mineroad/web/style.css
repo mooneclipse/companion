@@ -254,16 +254,23 @@ body {
   font-size: 0.82em;
   background: rgba(0, 0, 0, 0.5);
 }
-.inv-ore.cu .inv-ico {
-  color: #d98a5a;
+/* v0.14.0: 鉱石 4 種(銅/鉄/金/ダイヤ)→ 原作実名 6 種(石炭/鉄鉱石/化石/鋼/ルビー/ダイヤ)へ名寄せ。 */
+.inv-ore.coal .inv-ico {
+  color: #8a8078;
 }
-.inv-ore.fe .inv-ico {
+.inv-ore.iron .inv-ico {
   color: #c8c8d0;
 }
-.inv-ore.au .inv-ico {
-  color: #e6c35a;
+.inv-ore.fossil .inv-ico {
+  color: #b0a078;
 }
-.inv-ore.di .inv-ico {
+.inv-ore.steel .inv-ico {
+  color: #a8b4c0;
+}
+.inv-ore.ruby .inv-ico {
+  color: #d8506a;
+}
+.inv-ore.diamond .inv-ico {
   color: #7ec8e3;
 }
 .inv-tool.pick .inv-ico {
@@ -641,22 +648,26 @@ body {
 /* v0.8.0 工房タブ(クラフト / 商人)。1 パネルに同居させ、上部バーにボタンを増やさない。 */
 .craft-tabs {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.4rem;
   flex: 0 0 auto;
 }
+/* v0.14.0: 3→5 タブ(育成/仲間/アイテム追加)になり 1 行 flex:1 1 0 だけでは幅が足りないため、
+   flex-wrap:wrap で収まらない分を2行目へ折り返す + 文字サイズ下限を少し下げて詰まりを緩和。 */
 .craft-tab {
-  flex: 1 1 0;
+  flex: 1 1 30%;
   font-family: var(--mincho);
-  font-size: clamp(0.9rem, 4vw, 1.1rem);
-  letter-spacing: 0.1em;
+  font-size: clamp(0.72rem, 3.6vw, 1.1rem);
+  letter-spacing: 0.06em;
   color: rgba(244, 238, 226, 0.6);
   background: rgba(244, 238, 226, 0.06);
   border: 1px solid rgba(230, 178, 90, 0.3);
   border-radius: 0.6rem;
-  padding: 0.45rem 0.6rem;
+  padding: 0.4rem 0.4rem;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
+  white-space: nowrap;
 }
 .craft-tab.active {
   color: var(--ink);
@@ -722,6 +733,22 @@ body {
 .craft-make:disabled {
   opacity: 0.38;
   cursor: default;
+}
+/* v0.14.0 アイテムタブ: 45種カタログの読み取り専用行。説明文(note)は長いため折返しを許可し、
+   dead-item(open=false)は行全体を暗くして「未実装」を一目で区別する。 */
+#item-list .craft-cost {
+  white-space: normal;
+  line-height: 1.4;
+}
+.item-dead {
+  opacity: 0.5;
+}
+.item-owned {
+  flex: 0 0 auto;
+  font-size: clamp(0.74rem, 3.4vw, 0.88rem);
+  color: var(--ink);
+  white-space: nowrap;
+  text-align: right;
 }
 .craft-close {
   flex: 0 0 auto;

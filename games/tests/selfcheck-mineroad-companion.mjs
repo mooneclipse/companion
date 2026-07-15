@@ -50,7 +50,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.13.0", ver === "v0.13.0", { ver });
+check("VERSION = v0.14.0", ver === "v0.14.0", { ver });
 
 // ============================================================================
 // 実プレイ経路ドライバ(page 側で動かす純 JS。act() だけで自機を動かす=状態注入なし)。

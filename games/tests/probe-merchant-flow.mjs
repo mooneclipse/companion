@@ -22,14 +22,16 @@ page.on("pageerror", (e) => errors.push(String(e)));
 await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
 await page.waitForTimeout(400);
 
-// dive へ(seenHowto=1 なので もぐる で直行)。
+// dive へ(seenHowto=1 なので howto は挟まない)。
+// v0.13.0 でタイトル画面がダンジョン選択ボタン制になったため、#ov-action(旧「もぐる」単一ボタン、
+// 現在は howto/fail/clear 画面専用)ではなくダンジョン選択の先頭ボタン(#裏庭、解放済み)を実マウスタップする。
 async function tap(x, y) { await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.up(); }
-const ovBtn = await page.evaluate(() => {
-  const b = document.getElementById("ov-action");
+const dungeonBtn = await page.evaluate(() => {
+  const b = document.querySelector(".dungeon-btn:not([disabled])");
   const r = b.getBoundingClientRect();
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 });
-await tap(ovBtn.x, ovBtn.y);
+await tap(dungeonBtn.x, dungeonBtn.y);
 await page.waitForTimeout(800);
 const screen = await page.evaluate(() => G.screen);
 out("dive 遷移", screen);
@@ -46,15 +48,17 @@ const topAt = (x, y) => page.evaluate(([px, py]) => {
 //   ボタンの x を動かしていないこと、span 自身が elementFromPoint で前面に出ない(pointer-events
 //   none 継承)ことを実測する。
 // ---------------------------------------------------------------------------
+// v0.14.0: 回復薬(btn-potion)は判断Bにより廃止。同じ .inv-btn 語彙のボタンとして
+// アンテナ(btn-antenna、設置型)を代わりの幾何比較対象にする(baseline 比較の意図は不変)。
 const hudGeo = await page.evaluate(() => {
   const craft = document.getElementById("btn-craft").getBoundingClientRect();
-  const potion = document.getElementById("btn-potion").getBoundingClientRect();
+  const antenna = document.getElementById("btn-antenna").getBoundingClientRect();
   const mush = document.getElementById("mush-val").closest(".inv-ore.mush").getBoundingClientRect();
   const csMush = getComputedStyle(document.getElementById("mush-val").closest(".inv-ore.mush"));
   const csInv = getComputedStyle(document.getElementById("inventory"));
   return {
     craft: { l: +craft.left.toFixed(1), r: +craft.right.toFixed(1), w: +craft.width.toFixed(1), cx: +(craft.left + craft.width / 2).toFixed(1) },
-    potion: { l: +potion.left.toFixed(1), cx: +(potion.left + potion.width / 2).toFixed(1) },
+    antenna: { l: +antenna.left.toFixed(1), cx: +(antenna.left + antenna.width / 2).toFixed(1) },
     mush: { l: +mush.left.toFixed(1), r: +mush.right.toFixed(1) },
     mushPE: csMush.pointerEvents,
     invPE: csInv.pointerEvents,
@@ -62,7 +66,7 @@ const hudGeo = await page.evaluate(() => {
     mushAfterCraft: mush.left >= craft.right - 0.5,
   };
 });
-out("HUD geom (craft/potion/mush)", hudGeo);
+out("HUD geom (craft/antenna/mush)", hudGeo);
 
 // 茸 span の中心を elementFromPoint。pointer-events:none 継承なら span は前面に出ず、
 // その座標は canvas(#scene) か(span 配下に重なる)別要素になる。span 自身は出ないことを確認。
@@ -120,8 +124,8 @@ const col11TapOk =
 //   → 商人タブを実マウスでタップ → 充足行の「交換」ボタンを実マウスでタップ → 対価減算/産物加算
 //   → 不足行は disabled → クラフトタブへ戻せる。各タップ前に elementFromPoint で最前面を assert。
 // ---------------------------------------------------------------------------
-// キノコ10 だけ持たせる(ツルハシ行=充足、フルーツ行=鉄2 不足)。
-await page.evaluate(() => { startDive(); G.px = 7; G.py = 3; G.mushrooms = 10; G.ore.IRON = 0; G.pick = "WOOD"; renderHud(); });
+// キノコ10 だけ持たせる(ツルハシ行=充足、フルーツ行=鉄鉱石2 不足)。v0.14.0: G.ore.IRON→IRON_ORE 名寄せ。
+await page.evaluate(() => { startDive(); G.px = 7; G.py = 3; G.mushrooms = 10; G.ore.IRON_ORE = 0; G.pick = "WOOD"; renderHud(); });
 
 // 「作る」ボタンを実マウスタップ(最前面が btn-craft であることを確認してから)。
 const craftBtnPt = await page.evaluate(() => { const r = document.getElementById("btn-craft").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
