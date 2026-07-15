@@ -262,16 +262,20 @@ VAULT_LOCK_TIMEOUT_S = 15.0
 
 # 個人メモ捕獲 topic (ticket #84): BOT_THREAD_ID_MEMO topic の生テキスト投稿を
 # claude セッション無しで bot が直接 vault notes/ に日付ファイル保存する。
-# メッセージは投稿から 48h 後に定期 cleanup job が Telegram から削除する。それ
-# までは Telegram のユーザー編集ウィンドウ (48h) がそのまま生きるので、
+# メッセージは投稿から 36h 後に定期 cleanup job が Telegram から削除する。それ
+# までは Telegram のユーザー編集ウィンドウがそのまま生きるので、
 # edited_message を受けて保存済みファイルを上書き同期する (2026-07-11 設計改訂)。
 # message_id → 保存ファイルの対応は sessions/memo_state.json に永続化し、bot が
 # 保存したメッセージだけを削除・同期の対象にする。この直接書き込みは notes/ 限定
 # (上位 CLAUDE.md の vault 書き込み境界の内側)。
 MEMO_NOTES_DIR = VAULT_DIR / "notes"
 MEMO_STATE_PATH = Path(__file__).resolve().parent / "sessions" / "memo_state.json"
-# 48h = Telegram のユーザー編集ウィンドウを丸ごと活かしてから消す (#84)。
-MEMO_RETENTION_S = 48 * 3600.0
+# 36h: Bot API の実挙動では投稿から 48h を超えた他ユーザーのメッセージは
+# can_delete_messages 管理者権限があっても削除できない (公式 docs の
+# 「can delete any message there」に反する。2026-07-15 実測確定、#109)。
+# 48h ちょうど待つと削除可能な窓を逃して詰むため、cleanup 周期 (1h) と
+# 余裕を見て 36h で消す。編集ウィンドウは 36h ぶん活かす (#84 の意図を縮小)。
+MEMO_RETENTION_S = 36 * 3600.0
 MEMO_CLEANUP_INTERVAL_S = 3600.0
 # 削除が失敗し続けるエントリ (ユーザー手動削除済み等) を諦めて state から落とす
 # 時間上限。失敗理由の文言では分岐せず、saved_at (state) だけで打ち切りを確定する
@@ -2591,7 +2595,7 @@ def build_memo_note(text: str, created: str, edited: str | None = None) -> str:
 def select_memo_cleanup(state: dict, now_epoch: float) -> tuple[list[str], list[str]]:
     """Return ``(to_delete, to_purge)`` message_id keys from the memo state.
 
-    48h (MEMO_RETENTION_S) 超 → Telegram 削除対象、7 日 (MEMO_PURGE_S) 超 →
+    36h (MEMO_RETENTION_S) 超 → Telegram 削除対象、7 日 (MEMO_PURGE_S) 超 →
     諦めて state から落とす対象。判定は saved_at (state を持つ側) と現在時刻
     だけで確定する。削除失敗の理由文字列では分岐しない — 失敗は次周期の再試行に
     自然に乗り、7 日超で打ち切る。純関数 → unit-test。
@@ -2639,7 +2643,7 @@ async def _save_memo(bot, msg, chat_id: int) -> None:
 
     個人情報込みメモ前提なので 0o600 (umask 0o077 に加えて明示 chmod)。
     message_id → 保存ファイルの対応を memo_state.json に永続化する (編集同期と
-    48h cleanup の削除対象特定に使う = bot が保存したメッセージだけを扱う)。
+    36h cleanup の削除対象特定に使う = bot が保存したメッセージだけを扱う)。
     """
     text = msg.text or ""
     if not text.strip():
@@ -2719,14 +2723,15 @@ async def on_memo_edited(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def memo_cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """48h 超の memo メッセージを Telegram から削除する定期突合 job (#84)。
+    """36h 超の memo メッセージを Telegram から削除する定期突合 job (#84)。
 
     state (memo_state.json) と現在時刻だけで対象を確定し、bot が保存した
     メッセージのみ削除する。削除失敗は個別検知せず次周期の再試行に自然に乗せる
     (チケット要件の突合型)。7 日超は最後に 1 回試行してから state を purge する
     (恒久失敗の無限再試行を時間上限で打ち切る。vault のノート自体は消さない)。
-    前提: supergroup で bot に can_delete_messages 管理者権限 (Bot API 公式:
-    この権限があれば 48h 超・他ユーザーのメッセージも削除可、2026-07-11 確認)。
+    前提: supergroup で bot に can_delete_messages 管理者権限。ただし実挙動では
+    この権限があっても投稿から 48h を超えた他ユーザーのメッセージは削除できない
+    (2026-07-15 実測、#109) ため、retention は 48h 未満に収めること。
     """
     state = _load_memo_state()
     if not state:
@@ -3523,7 +3528,7 @@ async def post_init(application: Application) -> None:
         name="stall_check",
     )
 
-    # memo 48h cleanup job (#84)。topic 未設定なら登録しない (機能ごと無効)。
+    # memo 36h cleanup job (#84, retention は #109 で 48h→36h)。topic 未設定なら登録しない (機能ごと無効)。
     # first=60s で再起動またぎの取りこぼしも起動直後に突合する。
     if BOT_THREAD_ID_MEMO is not None:
         application.job_queue.run_repeating(

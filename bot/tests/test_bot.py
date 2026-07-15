@@ -3692,10 +3692,18 @@ class SelectMemoCleanupTest(unittest.TestCase):
         state = self._state({"1": 0.0, "2": self.bot.MEMO_RETENTION_S - 1}, now)
         self.assertEqual(self.bot.select_memo_cleanup(state, now), ([], []))
 
-    def test_over_48h_marked_for_delete(self) -> None:
+    def test_over_retention_marked_for_delete(self) -> None:
         now = 1_800_000_000.0
         state = self._state({"1": self.bot.MEMO_RETENTION_S + 1}, now)
         self.assertEqual(self.bot.select_memo_cleanup(state, now), (["1"], []))
+
+    def test_retention_within_telegram_delete_window(self) -> None:
+        # Bot API 実挙動: 48h 超は can_delete_messages でも削除不可 (#109 実測)。
+        # cleanup 周期 2 回ぶんの余裕を残して 48h 窓内に収まることを固定する。
+        self.assertLess(
+            self.bot.MEMO_RETENTION_S + 2 * self.bot.MEMO_CLEANUP_INTERVAL_S,
+            48 * 3600.0,
+        )
 
     def test_over_7d_marked_for_purge(self) -> None:
         now = 1_800_000_000.0
