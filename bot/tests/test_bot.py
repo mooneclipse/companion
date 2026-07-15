@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import logging
 import os
 import sys
@@ -3827,6 +3828,813 @@ class MemoCleanupJobTest(unittest.IsolatedAsyncioTestCase):
         )
         # 7 日超は削除失敗でも purge で打ち切る (無限再試行しない)
         self.assertNotIn("1", self.bot._load_memo_state())
+
+
+# ---------------------------------------------------------------------------
+# osekkai (#110 TODO 7): kind=="osekkai" 専用ディスパッチ
+# ---------------------------------------------------------------------------
+
+
+class ParseOsekkaiPayloadTest(unittest.TestCase):
+    """osekkai socket message の判別 (proactive と同じ marker、kind + mode で確定)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_valid_call_envelope(self) -> None:
+        text = (
+            '[[proactive-v1]]\n'
+            '{"kind": "osekkai", "version": 1, "mode": "call", "date": "2026-07-16", '
+            '"pull_ok": true, "backlog": [], "tonight": {}}'
+        )
+        out = self.bot.parse_osekkai_payload(text)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["mode"], "call")
+
+    def test_valid_retro_envelope(self) -> None:
+        text = (
+            '[[proactive-v1]]\n'
+            '{"kind": "osekkai", "version": 1, "mode": "retro", "date": "2026-07-16", '
+            '"pull_ok": false, "activity_summary": "データなし", "backlog": [], "tonight": {}}'
+        )
+        out = self.bot.parse_osekkai_payload(text)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["mode"], "retro")
+        self.assertEqual(out["activity_summary"], "データなし")
+
+    def test_plain_text_is_not_osekkai(self) -> None:
+        self.assertIsNone(self.bot.parse_osekkai_payload("システムレポート 2026-06-01"))
+
+    def test_proactive_kind_is_not_osekkai(self) -> None:
+        text = '[[proactive-v1]]\n{"kind": "proactive", "seed_kind": "recent_conversation"}'
+        self.assertIsNone(self.bot.parse_osekkai_payload(text))
+
+    def test_osekkai_kind_is_not_proactive(self) -> None:
+        # kind による専用ディスパッチが proactive_queue の whitelist ロジックを
+        # 一切通らないこと (osekkai-plan.md D-2) を parse 段階でも保証する。
+        text = '[[proactive-v1]]\n{"kind": "osekkai", "mode": "call"}'
+        self.assertIsNone(self.bot.parse_proactive_payload(text))
+
+    def test_missing_mode_returns_none(self) -> None:
+        text = '[[proactive-v1]]\n{"kind": "osekkai", "version": 1}'
+        self.assertIsNone(self.bot.parse_osekkai_payload(text))
+
+    def test_invalid_mode_returns_none(self) -> None:
+        text = '[[proactive-v1]]\n{"kind": "osekkai", "mode": "something_else"}'
+        self.assertIsNone(self.bot.parse_osekkai_payload(text))
+
+    def test_marker_with_invalid_json_returns_none(self) -> None:
+        self.assertIsNone(self.bot.parse_osekkai_payload("[[proactive-v1]]\nnot json"))
+
+    def test_no_marker_returns_none(self) -> None:
+        self.assertIsNone(self.bot.parse_osekkai_payload('{"kind": "osekkai", "mode": "call"}'))
+
+
+class BuildOsekkaiPromptTest(unittest.TestCase):
+    """build_osekkai_prompt (mode 振り分け) + call/retro 各 prompt の純関数検証。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_call_mode_dispatches_to_call_prompt(self) -> None:
+        payload = {"mode": "call", "backlog": [], "tonight": {}}
+        out = self.bot.build_osekkai_prompt(payload)
+        self.assertIn("号令", out)
+
+    def test_retro_mode_dispatches_to_retro_prompt(self) -> None:
+        payload = {"mode": "retro", "backlog": [], "tonight": {}, "activity_summary": "x"}
+        out = self.bot.build_osekkai_prompt(payload)
+        self.assertIn("振り返り", out)
+
+    def test_call_prompt_includes_existing_intent(self) -> None:
+        payload = {
+            "mode": "call", "backlog": [],
+            "tonight": {"intent": "積みゲーを崩す"},
+        }
+        out = self.bot.build_osekkai_call_prompt(payload)
+        self.assertIn("積みゲーを崩す", out)
+
+    def test_call_prompt_without_intent_asks_open(self) -> None:
+        payload = {"mode": "call", "backlog": [], "tonight": {}}
+        out = self.bot.build_osekkai_call_prompt(payload)
+        self.assertIn("まだ記録されていない", out)
+
+    def test_call_prompt_backlog_with_deadline(self) -> None:
+        payload = {
+            "mode": "call",
+            "backlog": [{"id": 1, "text": "確定申告", "deadline": "2026-08-01"}],
+            "tonight": {},
+        }
+        out = self.bot.build_osekkai_call_prompt(payload)
+        self.assertIn("確定申告", out)
+        self.assertIn("2026-08-01", out)
+
+    def test_call_prompt_backlog_without_deadline(self) -> None:
+        payload = {
+            "mode": "call",
+            "backlog": [{"id": 1, "text": "部屋の片付け", "deadline": None}],
+            "tonight": {},
+        }
+        out = self.bot.build_osekkai_call_prompt(payload)
+        self.assertIn("部屋の片付け", out)
+        self.assertNotIn("締切", out)
+
+    def test_call_prompt_empty_backlog(self) -> None:
+        payload = {"mode": "call", "backlog": [], "tonight": {}}
+        out = self.bot.build_osekkai_call_prompt(payload)
+        self.assertIn("バックログは空", out)
+
+    def test_retro_prompt_includes_activity_summary(self) -> None:
+        payload = {
+            "mode": "retro", "backlog": [], "tonight": {"intent": "積みゲーを崩す"},
+            "activity_summary": "galleyhouse.exe 1時間9分",
+        }
+        out = self.bot.build_osekkai_retro_prompt(payload)
+        self.assertIn("galleyhouse.exe", out)
+        self.assertIn("積みゲーを崩す", out)
+
+    def test_retro_prompt_without_intent(self) -> None:
+        payload = {"mode": "retro", "backlog": [], "tonight": {}, "activity_summary": "x"}
+        out = self.bot.build_osekkai_retro_prompt(payload)
+        self.assertIn("記録されていない", out)
+
+    def test_retro_prompt_without_activity_summary(self) -> None:
+        payload = {"mode": "retro", "backlog": [], "tonight": {}}
+        out = self.bot.build_osekkai_retro_prompt(payload)
+        self.assertNotIn("PC 活動ダイジェスト", out)
+
+
+class OsekkaiSystemPromptTest(unittest.TestCase):
+    """D-7: OSEKKAI_SYSTEM_PROMPT が PERSONA を土台に振る舞い基準を積み増すこと。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_extends_persona_without_duplicating(self) -> None:
+        sp = self.bot.OSEKKAI_SYSTEM_PROMPT
+        self.assertTrue(sp.startswith(self.bot.PERSONA_SYSTEM_PROMPT))
+
+    def test_behavior_rules_present(self) -> None:
+        sp = self.bot.OSEKKAI_SYSTEM_PROMPT
+        self.assertIn("押し付けない", sp)
+        self.assertIn("指摘は 1 回に 1 つだけ", sp)
+        self.assertIn("沈黙", sp)
+
+    def test_forbidden_expressions_and_rewrite_policy_present(self) -> None:
+        sp = self.bot.OSEKKAI_SYSTEM_PROMPT
+        self.assertIn("禁止表現", sp)
+        self.assertIn("サボってる", sp)
+        self.assertIn("書き換え方針", sp)
+
+
+class RunClaudeOverrideTest(unittest.IsolatedAsyncioTestCase):
+    """run_claude の timeout_s / system_prompt override (osekkai #110 用の唯一の経路)。
+
+    省略時は従来どおり CLAUDE_TIMEOUT / PERSONA_SYSTEM_PROMPT が使われることも
+    合わせて検証する (RunClaudePersonaWiringTest と対称)。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    async def test_override_passed_to_options(self) -> None:
+        from unittest import mock
+
+        from claude_runner import ClaudeResult, ErrorKind
+
+        captured = {}
+
+        async def _fake_run_session_prompt(prompt, options):
+            captured["options"] = options
+            return ClaudeResult(
+                rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
+                result_text="ok", session_id="dummy",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(self.bot.sessions, "_SESSIONS_DIR", Path(tmp) / "topics"), \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "record"), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt):
+            out = await self.bot.run_claude(
+                "hi", -1001234567890, 1115,
+                timeout_s=180.0, system_prompt="custom osekkai prompt",
+            )
+
+        self.assertEqual(out, "ok")
+        self.assertEqual(captured["options"].timeout_s, 180.0)
+        self.assertEqual(captured["options"].append_system_prompt, "custom osekkai prompt")
+
+    async def test_omitted_override_keeps_defaults(self) -> None:
+        from unittest import mock
+
+        from claude_runner import ClaudeResult, ErrorKind
+
+        captured = {}
+
+        async def _fake_run_session_prompt(prompt, options):
+            captured["options"] = options
+            return ClaudeResult(
+                rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
+                result_text="ok", session_id="dummy",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(self.bot.sessions, "_SESSIONS_DIR", Path(tmp) / "topics"), \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "record"), \
+             mock.patch.object(self.bot.runner, "run_session_prompt", side_effect=_fake_run_session_prompt):
+            await self.bot.run_claude("hi", -1001234567890, 5)
+
+        self.assertEqual(captured["options"].timeout_s, self.bot.CLAUDE_TIMEOUT)
+        self.assertEqual(
+            captured["options"].append_system_prompt, self.bot.PERSONA_SYSTEM_PROMPT
+        )
+
+
+class OnMessageOsekkaiSilenceTest(unittest.IsolatedAsyncioTestCase):
+    """on_message の osekkai 分岐が _osekkai_should_send で沈黙権を honor すること。
+
+    OSEKKAI_SYSTEM_PROMPT は返信経路 (OWNER が osekkai topic に発話するケース) でも
+    「返信が『特にない』の類なら黙ってよい」と明示している (D-7)。run_claude の
+    沈黙/timeout/エラーは空文字ではなく非空 sentinel で返る契約なので、素朴な
+    if output: send_text だけでは沈黙権が honor されない (worker 側 _run_osekkai の
+    同型の穴を先に塞いだのと対称、advisor 指摘で発覚)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _make_update(self):
+        from datetime import datetime, timezone
+
+        from telegram import Chat, Message, Update, User
+        user = User(id=self.bot.OWNER_ID, is_bot=False, first_name="x")
+        chat = Chat(id=self.bot.NOTIFY_CHAT_ID, type="supergroup")
+        msg = Message(
+            message_id=1,
+            date=datetime.now(timezone.utc),
+            chat=chat,
+            from_user=user,
+            text="今夜は特にないかな",
+            message_thread_id=1115,
+        )
+        return Update(update_id=1, message=msg)
+
+    def _make_context(self):
+        from unittest import mock
+        context = mock.MagicMock()
+        context.bot = mock.MagicMock()
+        context.bot.send_chat_action = mock.AsyncMock()
+        context.bot.send_message = mock.AsyncMock()
+        return context
+
+    async def test_silence_sentinel_from_run_claude_is_not_sent(self) -> None:
+        from unittest import mock
+
+        orig_thread_id = self.bot.BOT_THREAD_ID_OSEKKAI
+        self.bot.BOT_THREAD_ID_OSEKKAI = 1115
+        try:
+            async def _fake_record_manual_start(prompt):
+                return None
+
+            async def _fake_run_claude(prompt, chat_id, thread_id, **kw):
+                return "[empty output]"
+
+            with mock.patch.object(
+                self.bot, "_osekkai_record_manual_start", side_effect=_fake_record_manual_start
+            ), mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude):
+                context = self._make_context()
+                await self.bot.on_message(self._make_update(), context)
+
+            context.bot.send_message.assert_not_called()
+        finally:
+            self.bot.BOT_THREAD_ID_OSEKKAI = orig_thread_id
+
+    async def test_real_content_from_run_claude_is_sent(self) -> None:
+        from unittest import mock
+
+        orig_thread_id = self.bot.BOT_THREAD_ID_OSEKKAI
+        self.bot.BOT_THREAD_ID_OSEKKAI = 1115
+        try:
+            async def _fake_record_manual_start(prompt):
+                return None
+
+            async def _fake_run_claude(prompt, chat_id, thread_id, **kw):
+                return "今夜は積みゲー崩す予定だったね、進んでる?"
+
+            with mock.patch.object(
+                self.bot, "_osekkai_record_manual_start", side_effect=_fake_record_manual_start
+            ), mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude):
+                context = self._make_context()
+                await self.bot.on_message(self._make_update(), context)
+
+            context.bot.send_message.assert_awaited_once()
+        finally:
+            self.bot.BOT_THREAD_ID_OSEKKAI = orig_thread_id
+
+
+class OsekkaiShouldSendTest(unittest.TestCase):
+    """_osekkai_should_send: run_claude の sentinel 文字列を「送らない」に倒す純関数。
+
+    run_claude は沈黙/timeout/エラー時に空文字ではなく既知の sentinel 文字列を
+    返す契約 (run_claude 本体 docstring 参照)。素朴な `not output.strip()` だけの
+    チェックではこれらを一切捕まえられない (既存 _run_proactive talk 分岐に同じ
+    穴があることを確認済み、osekkai-plan.md TODO 7 実装時に発見、既存分岐は
+    スコープ外のため未修正)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_real_content_is_sendable(self) -> None:
+        self.assertTrue(self.bot._osekkai_should_send("今夜は積みゲー崩す予定だったね"))
+
+    def test_empty_string_is_not_sendable(self) -> None:
+        self.assertFalse(self.bot._osekkai_should_send(""))
+
+    def test_whitespace_only_is_not_sendable(self) -> None:
+        self.assertFalse(self.bot._osekkai_should_send("   \n  "))
+
+    def test_empty_output_sentinel_is_not_sendable(self) -> None:
+        self.assertFalse(self.bot._osekkai_should_send("[empty output]"))
+
+    def test_timeout_sentinel_is_not_sendable(self) -> None:
+        self.assertFalse(self.bot._osekkai_should_send("[timeout after 180s]"))
+
+    def test_claude_error_sentinel_is_not_sendable(self) -> None:
+        self.assertFalse(
+            self.bot._osekkai_should_send("[claude error: other rc=1]\nstderr tail")
+        )
+
+    def test_content_that_merely_starts_with_bracket_is_sendable(self) -> None:
+        # sentinel prefix と偶然一致しない限り、本文が `[` から始まっても弾かない
+        # (prefix 判定であり、単純な startswith("[") ではないことの確認)。
+        self.assertTrue(self.bot._osekkai_should_send("[了解] 今夜も積みゲー崩そう"))
+
+
+class RunOsekkaiTest(unittest.IsolatedAsyncioTestCase):
+    """_run_osekkai: budget guard 事前チェック / thread_id 未設定ガード / 送信配線。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._orig_thread_id = self.bot.BOT_THREAD_ID_OSEKKAI
+        self.bot.BOT_THREAD_ID_OSEKKAI = 1115
+
+    def tearDown(self) -> None:
+        self.bot.BOT_THREAD_ID_OSEKKAI = self._orig_thread_id
+
+    async def test_guard_denied_skips_without_sending(self) -> None:
+        from unittest import mock
+
+        async def _fail_run_claude(*a, **kw):
+            raise AssertionError("guard 拒否時に run_claude を呼んではいけない")
+
+        with mock.patch.object(self.bot.budget_guard, "allow", return_value=False), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fail_run_claude), \
+             mock.patch.object(self.bot, "send_text", new_callable=mock.AsyncMock) as send_mock:
+            app = mock.MagicMock()
+            await self.bot._run_osekkai(
+                app, {"mode": "call", "backlog": [], "tonight": {}}
+            )
+
+        send_mock.assert_not_called()
+
+    async def test_thread_id_unset_skips_without_sending(self) -> None:
+        from unittest import mock
+
+        self.bot.BOT_THREAD_ID_OSEKKAI = None
+
+        async def _fail_run_claude(*a, **kw):
+            raise AssertionError("送り先未設定時に run_claude を呼んではいけない")
+
+        with mock.patch.object(self.bot, "run_claude", side_effect=_fail_run_claude), \
+             mock.patch.object(self.bot, "send_text", new_callable=mock.AsyncMock) as send_mock:
+            app = mock.MagicMock()
+            await self.bot._run_osekkai(
+                app, {"mode": "call", "backlog": [], "tonight": {}}
+            )
+
+        send_mock.assert_not_called()
+
+    async def test_empty_string_output_skips_without_sending(self) -> None:
+        # run_claude が実際にこの値を返す経路は無いはずだが (契約上は常に非空
+        # sentinel)、防御的に空文字も弾く。
+        from unittest import mock
+
+        async def _fake_run_claude(prompt, chat_id, thread_id, **kw):
+            return ""
+
+        with mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new_callable=mock.AsyncMock) as send_mock:
+            app = mock.MagicMock()
+            await self.bot._run_osekkai(
+                app, {"mode": "call", "backlog": [], "tonight": {}}
+            )
+
+        send_mock.assert_not_called()
+
+    async def test_silence_sentinel_output_skips_without_sending(self) -> None:
+        # run_claude が実際に沈黙権行使時に返す値 ("[empty output]"、run_claude
+        # 本体参照)。単なる空文字チェックでは捕まえられないことを確認する回帰テスト。
+        from unittest import mock
+
+        async def _fake_run_claude(prompt, chat_id, thread_id, **kw):
+            return "[empty output]"
+
+        with mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new_callable=mock.AsyncMock) as send_mock:
+            app = mock.MagicMock()
+            await self.bot._run_osekkai(
+                app, {"mode": "call", "backlog": [], "tonight": {}}
+            )
+
+        send_mock.assert_not_called()
+
+    async def test_timeout_sentinel_output_skips_without_sending(self) -> None:
+        from unittest import mock
+
+        async def _fake_run_claude(prompt, chat_id, thread_id, **kw):
+            return "[timeout after 180s]"
+
+        with mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new_callable=mock.AsyncMock) as send_mock:
+            app = mock.MagicMock()
+            await self.bot._run_osekkai(
+                app, {"mode": "retro", "backlog": [], "tonight": {}}
+            )
+
+        send_mock.assert_not_called()
+
+    async def test_claude_error_sentinel_output_skips_without_sending(self) -> None:
+        from unittest import mock
+
+        async def _fake_run_claude(prompt, chat_id, thread_id, **kw):
+            return "[claude error: other rc=1]\nsome stderr"
+
+        with mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new_callable=mock.AsyncMock) as send_mock:
+            app = mock.MagicMock()
+            await self.bot._run_osekkai(
+                app, {"mode": "call", "backlog": [], "tonight": {}}
+            )
+
+        send_mock.assert_not_called()
+
+    async def test_happy_path_sends_to_osekkai_thread_with_override(self) -> None:
+        from unittest import mock
+
+        captured = {}
+
+        async def _fake_run_claude(prompt, chat_id, thread_id, **kw):
+            captured["prompt"] = prompt
+            captured["chat_id"] = chat_id
+            captured["thread_id"] = thread_id
+            captured["kw"] = kw
+            return "今夜は積みゲー崩す予定だったね、進んでる?"
+
+        with mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new_callable=mock.AsyncMock) as send_mock:
+            app = mock.MagicMock()
+            await self.bot._run_osekkai(
+                app,
+                {
+                    "mode": "call",
+                    "backlog": [],
+                    "tonight": {"intent": "積みゲーを崩す"},
+                },
+            )
+
+        self.assertEqual(captured["chat_id"], self.bot.NOTIFY_CHAT_ID)
+        self.assertEqual(captured["thread_id"], 1115)
+        self.assertEqual(captured["kw"]["timeout_s"], self.bot.OSEKKAI_CLAUDE_TIMEOUT)
+        self.assertEqual(captured["kw"]["system_prompt"], self.bot.OSEKKAI_SYSTEM_PROMPT)
+        self.assertIn("積みゲー", captured["prompt"])
+        send_mock.assert_awaited_once_with(
+            app.bot, self.bot.NOTIFY_CHAT_ID, 1115,
+            "今夜は積みゲー崩す予定だったね、進んでる?",
+        )
+
+
+class NotifyConnectionDispatchTest(unittest.IsolatedAsyncioTestCase):
+    """_handle_notify_connection: loop-read + osekkai/proactive/notify 3 方向振り分け。
+
+    実 sender (maintenance/lib/notify.sh・proactive-companion.sh・trigger.py) は
+    いずれも sendall 後に half-close (`nc -N` / `shutdown(SHUT_WR)`) するので、
+    asyncio.StreamReader を feed_data → feed_eof で模して同じ挙動を再現する。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    class _FakeWriter:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            return None
+
+    def _make_app_with_queues(self):
+        from unittest import mock
+
+        app = mock.MagicMock()
+        app.bot_data = {
+            "notify_queue": asyncio.Queue(),
+            "proactive_queue": asyncio.Queue(),
+            "osekkai_queue": asyncio.Queue(),
+        }
+        return app
+
+    class _CountingStreamReader(asyncio.StreamReader):
+        """`read()` の呼び出し回数を数える StreamReader (物理 read 複数回の検証用)。"""
+
+        def __init__(self):
+            super().__init__()
+            self.read_call_count = 0
+
+        async def read(self, n: int = -1) -> bytes:
+            self.read_call_count += 1
+            return await super().read(n)
+
+    async def _feed_and_handle(self, app, text: str):
+        reader = asyncio.StreamReader()
+        reader.feed_data(text.encode("utf-8"))
+        reader.feed_eof()
+        writer = self._FakeWriter()
+        await self.bot._handle_notify_connection(app, reader, writer)
+        self.assertTrue(writer.closed)
+
+    async def test_osekkai_envelope_routes_to_osekkai_queue(self) -> None:
+        app = self._make_app_with_queues()
+        text = (
+            '[[proactive-v1]]\n'
+            '{"kind": "osekkai", "version": 1, "mode": "call", "date": "2026-07-16", '
+            '"pull_ok": true, "backlog": [], "tonight": {}}'
+        )
+        await self._feed_and_handle(app, text)
+        self.assertEqual(app.bot_data["osekkai_queue"].qsize(), 1)
+        self.assertEqual(app.bot_data["proactive_queue"].qsize(), 0)
+        self.assertEqual(app.bot_data["notify_queue"].qsize(), 0)
+        got = app.bot_data["osekkai_queue"].get_nowait()
+        self.assertEqual(got["mode"], "call")
+
+    async def test_proactive_envelope_routes_to_proactive_queue(self) -> None:
+        app = self._make_app_with_queues()
+        text = '[[proactive-v1]]\n{"kind": "proactive", "seed_kind": "recent_conversation"}'
+        await self._feed_and_handle(app, text)
+        self.assertEqual(app.bot_data["proactive_queue"].qsize(), 1)
+        self.assertEqual(app.bot_data["osekkai_queue"].qsize(), 0)
+        self.assertEqual(app.bot_data["notify_queue"].qsize(), 0)
+
+    async def test_plain_text_routes_to_notify_queue(self) -> None:
+        app = self._make_app_with_queues()
+        await self._feed_and_handle(app, "システムレポート 2026-07-16")
+        self.assertEqual(app.bot_data["notify_queue"].qsize(), 1)
+        self.assertEqual(app.bot_data["osekkai_queue"].qsize(), 0)
+        self.assertEqual(app.bot_data["proactive_queue"].qsize(), 0)
+
+    async def test_osekkai_envelope_reassembled_across_multiple_reads(self) -> None:
+        # partial read 対応の本体: 1 回の sendall がソケットバッファに複数チャンクで
+        # 分割されて届いても loop-read が EOF まで結合すること (#110 TODO 6 申し送り)。
+        #
+        # feed_data を連続で呼ぶだけだと asyncio.StreamReader は内部バッファに
+        # 溜め込むため、1 回の read() で全部纏めて返ってしまい「複数回の物理
+        # read」を検証したことにならない (レビュー指摘、2026-07-16)。ハンドラを
+        # background task として起動し、各チャンクの間に `asyncio.sleep(0)` を
+        # 挟んで「read() が空バッファで await している状態」を作ってから次の
+        # チャンクを feed する。read 呼び出し回数を数える StreamReader で
+        # 実際に複数回 read() が呼ばれたことも直接検証する。
+        app = self._make_app_with_queues()
+        text = (
+            '[[proactive-v1]]\n'
+            '{"kind": "osekkai", "version": 1, "mode": "retro", "date": "2026-07-16", '
+            '"pull_ok": true, "activity_summary": "galleyhouse.exe 1時間9分", '
+            '"backlog": [{"id": 1, "text": "確定申告", "deadline": "2026-08-01"}], '
+            '"tonight": {"intent": "積みゲーを崩す"}}'
+        )
+        data = text.encode("utf-8")
+        reader = self._CountingStreamReader()
+        writer = self._FakeWriter()
+        handler_task = asyncio.create_task(
+            self.bot._handle_notify_connection(app, reader, writer)
+        )
+        for i in range(0, len(data), 3):
+            await asyncio.sleep(0)  # ハンドラを空バッファの read() で await させる
+            reader.feed_data(data[i:i + 3])
+        await asyncio.sleep(0)
+        reader.feed_eof()
+        await handler_task
+
+        # イベントループの内部スケジューリング次第で 1 sleep(0) あたり複数チャンクが
+        # まとめて消費されることがあるため feed 回数との厳密な 1:1 は要求しないが、
+        # 単発 read() で全部を纏めて返す (=1) ではないことは直接検証する
+        # (loop-read が実際に複数回の物理 read() に跨って動くことの担保)。
+        self.assertGreater(reader.read_call_count, 1)
+        self.assertEqual(app.bot_data["osekkai_queue"].qsize(), 1)
+        got = app.bot_data["osekkai_queue"].get_nowait()
+        self.assertEqual(got["mode"], "retro")
+        self.assertEqual(got["activity_summary"], "galleyhouse.exe 1時間9分")
+
+    async def test_empty_text_puts_nothing(self) -> None:
+        app = self._make_app_with_queues()
+        await self._feed_and_handle(app, "")
+        self.assertEqual(app.bot_data["osekkai_queue"].qsize(), 0)
+        self.assertEqual(app.bot_data["proactive_queue"].qsize(), 0)
+        self.assertEqual(app.bot_data["notify_queue"].qsize(), 0)
+
+    async def test_read_timeout_processes_data_received_so_far_without_hanging(self) -> None:
+        # half-close しない壊れた/悪意ある sender (feed_eof を一切呼ばない) でも
+        # read() の timeout でハンドラが必ず終了すること (task リーク防止、レビュー指摘)。
+        # timeout を短く patch してテストを高速に保つ。
+        from unittest import mock
+
+        app = self._make_app_with_queues()
+        text = '[[proactive-v1]]\n{"kind": "proactive", "seed_kind": "recent_conversation"}'
+        reader = asyncio.StreamReader()
+        reader.feed_data(text.encode("utf-8"))
+        # feed_eof() を意図的に呼ばない (half-close しない sender を模す)。
+        writer = self._FakeWriter()
+
+        with mock.patch.object(self.bot, "NOTIFY_SOCKET_READ_TIMEOUT_S", 0.05):
+            await asyncio.wait_for(
+                self.bot._handle_notify_connection(app, reader, writer), timeout=5.0
+            )
+
+        self.assertTrue(writer.closed)
+        self.assertEqual(app.bot_data["proactive_queue"].qsize(), 1)
+
+
+class TriggerEnvelopeIntegrationTest(unittest.IsolatedAsyncioTestCase):
+    """osekkai/scripts/trigger.py が実際に組む envelope を入力にした結合テスト。
+
+    trigger._send_envelope と同じ組み立て (marker + json.dumps) で作った envelope が
+    _handle_notify_connection → osekkai_queue → build_osekkai_prompt まで一気通貫で
+    通ることを確認する (TODO 7 テスト要件: 実 envelope でのパース〜ディスパッチ結合)。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    async def test_call_envelope_end_to_end(self) -> None:
+        import json as _json
+        from unittest import mock
+
+        # trigger.py run_call が組む envelope と同じ形 (osekkai/scripts/trigger.py
+        # run_call 参照)。
+        envelope = {
+            "kind": "osekkai",
+            "version": 1,
+            "mode": "call",
+            "date": "2026-07-16",
+            "pull_ok": True,
+            "backlog": [{"id": 1, "text": "確定申告", "deadline": "2026-08-01"}],
+            "tonight": {
+                "date": "2026-07-16", "intent": None, "intent_set_at": None,
+                "resting": False, "resting_set_at": None,
+                "called": True, "called_at": "2026-07-16T10:00:00+00:00",
+                "retro_sent": False, "retro_sent_at": None,
+                "updated_at": "2026-07-16T10:00:00+00:00",
+            },
+        }
+        message = "[[proactive-v1]]\n" + _json.dumps(envelope, ensure_ascii=False)
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(message.encode("utf-8"))
+        reader.feed_eof()
+        writer = NotifyConnectionDispatchTest._FakeWriter()
+        app = mock.MagicMock()
+        app.bot_data = {
+            "notify_queue": asyncio.Queue(),
+            "proactive_queue": asyncio.Queue(),
+            "osekkai_queue": asyncio.Queue(),
+        }
+        await self.bot._handle_notify_connection(app, reader, writer)
+
+        queued = app.bot_data["osekkai_queue"].get_nowait()
+        prompt = self.bot.build_osekkai_prompt(queued)
+        self.assertIn("確定申告", prompt)
+        self.assertIn("2026-08-01", prompt)
+        self.assertIn("号令", prompt)
+
+
+class OsekkaiRecordManualStartTest(unittest.IsolatedAsyncioTestCase):
+    """_osekkai_record_manual_start: 号令済みマーク常時 + 意図の check-then-set。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    async def test_marks_called_every_time(self) -> None:
+        from unittest import mock
+
+        calls = []
+
+        async def _fake_run(*args):
+            calls.append(args)
+            if args[0] == "tonight-status":
+                return 0, '{"intent": "既にある"}', ""
+            return 0, "{}", ""
+
+        with mock.patch.object(self.bot, "_osekkai_intent_store_run", side_effect=_fake_run):
+            await self.bot._osekkai_record_manual_start("今夜は積みゲー崩すよ")
+
+        self.assertIn(("tonight-called",), calls)
+        self.assertIn(("tonight-status",), calls)
+        # 既に intent がある場合は tonight-intent を叩かない (上書きしない)。
+        self.assertNotIn(("tonight-intent", "今夜は積みゲー崩すよ"), calls)
+
+    async def test_records_first_utterance_as_intent_when_unset(self) -> None:
+        from unittest import mock
+
+        calls = []
+
+        async def _fake_run(*args):
+            calls.append(args)
+            if args[0] == "tonight-status":
+                return 0, '{"intent": null}', ""
+            return 0, "{}", ""
+
+        with mock.patch.object(self.bot, "_osekkai_intent_store_run", side_effect=_fake_run):
+            await self.bot._osekkai_record_manual_start("今夜は積みゲー崩すよ")
+
+        self.assertIn(("tonight-intent", "今夜は積みゲー崩すよ"), calls)
+
+    async def test_tonight_status_failure_skips_intent_write_without_raising(self) -> None:
+        from unittest import mock
+
+        async def _fake_run(*args):
+            if args[0] == "tonight-status":
+                return 1, "", "boom"
+            return 0, "{}", ""
+
+        with mock.patch.object(self.bot, "_osekkai_intent_store_run", side_effect=_fake_run):
+            await self.bot._osekkai_record_manual_start("今夜は積みゲー崩すよ")  # raise しないこと
+
+
+class OsekkaiIntentStoreRunTest(unittest.IsolatedAsyncioTestCase):
+    """_osekkai_intent_store_run が実際に osekkai/scripts/intent_store.py を起動
+    できること (sys.executable + OSEKKAI_INTENT_STORE パスの配線ミスを検出する
+    結合テスト、モックでは検出できない層)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._env_patch = {
+            "OSEKKAI_TONIGHT": str(Path(self._tmp.name) / "tonight.json"),
+            "OSEKKAI_BACKLOG": str(Path(self._tmp.name) / "backlog.json"),
+        }
+        self._orig_env = {k: os.environ.get(k) for k in self._env_patch}
+        os.environ.update(self._env_patch)
+
+    def tearDown(self) -> None:
+        for k, v in self._orig_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self._tmp.cleanup()
+
+    async def test_real_script_exists_at_configured_path(self) -> None:
+        self.assertTrue(
+            self.bot.OSEKKAI_INTENT_STORE.is_file(),
+            f"osekkai intent_store.py not found at {self.bot.OSEKKAI_INTENT_STORE}",
+        )
+
+    async def test_tonight_status_roundtrip_via_real_subprocess(self) -> None:
+        rc, out, err = await self.bot._osekkai_intent_store_run("tonight-status")
+        self.assertEqual(rc, 0, msg=err)
+        status = json.loads(out)
+        self.assertIsNone(status.get("intent"))
+
+        rc, out, err = await self.bot._osekkai_intent_store_run(
+            "tonight-intent", "統合テストの意図"
+        )
+        self.assertEqual(rc, 0, msg=err)
+
+        rc, out, err = await self.bot._osekkai_intent_store_run("tonight-status")
+        self.assertEqual(rc, 0, msg=err)
+        status = json.loads(out)
+        self.assertEqual(status.get("intent"), "統合テストの意図")
 
 
 if __name__ == "__main__":

@@ -214,6 +214,13 @@ remote_video = _load_remote_video()
 VAULT_DIR = Path.home() / "companion" / "vault"
 VAULT_BRANCH = "develop"
 VAULT_REMOTE = "origin"
+
+# osekkai (#110) の意図ストア CLI。bot.py からは他プロジェクト (osekkai/) の
+# スクリプトなので import せず subprocess で叩く (/tweet の git 直叩き・
+# _fetch_official_usage の claude 直叩きと同型の境界越え方式)。stdlib のみの
+# スクリプト (osekkai/scripts/intent_store.py 冒頭 docstring 参照) なので
+# bot 自身の venv python (sys.executable) で足りる。
+OSEKKAI_INTENT_STORE = Path.home() / "companion" / "osekkai" / "scripts" / "intent_store.py"
 # push subprocess の hang 上限。BatchMode=yes で対話プロンプトは即 fail するが、
 # 通信 stall 等の保険として timeout を併設する。
 VAULT_PUSH_TIMEOUT_S = 60.0
@@ -354,6 +361,31 @@ PERSONA_SYSTEM_PROMPT = (
     " (実行は OWNER の依頼ループに委ねる)。"
     "「許可をください」ではなく「やっとこうか?」の対等な語気で。"
     "催促も引き止めもしない、言うだけ言って投げっぱなしでいい。"
+)
+
+# osekkai (#110) 専用 system prompt (D-7)。PERSONA_SYSTEM_PROMPT (口調ベース =
+# 「対等な相方」) の上に、夜時間おせっかいの役目と §3-4 の振る舞い基準 (押し付けない・
+# 指摘は1つだけ・短く・トリガーが薄ければ沈黙) を追記する。禁止表現列挙 + 書き換え
+# 方針は ytcheck config.py の EVALUATION_PROMPT_TEMPLATE 【表現ルール】節のパターン
+# (❌/⭕ 対比) を流用。PERSONA_SYSTEM_PROMPT を差し替えるのではなく積み増す形にして
+# 口調の二重定義を避ける (build_proactive_prompt が PERSONA と重複定義しない設計と同型)。
+OSEKKAI_SYSTEM_PROMPT = PERSONA_SYSTEM_PROMPT + (
+    "\n\nこの対話は osekkai (夜時間のおせっかい) 専用の topic。"
+    "平日 19:00〜24:00 の夜ブロックで、今夜やりたいこと (意図) → 実際の活動 → "
+    "振り返りを一緒に確認する役目。"
+    "\n振る舞いの基準 (§3-4):"
+    "\n- 押し付けない: 指摘や声かけは提案形にする (「〜しなよ」ではなく「〜する?」程度の軽さ)。"
+    "\n- 指摘は 1 回に 1 つだけ。気になる点が複数あっても最重要の 1 つに絞る。"
+    "\n- 本文は 1〜2 文の短さで返す (PERSONA の「数行」よりさらに短く)。"
+    "\n- 話しかける理由 (トリガー) が薄い、または OWNER の返信が「特にない」の類なら、"
+    "無理に話題を広げず、本文なしで黙ってよい (沈黙権)。"
+    "\n禁止表現 (使わない): 「ちゃんと」「しっかり」「頑張って」「サボってる」「ダメじゃん」"
+    "など評価・叱責に聞こえる言い回し。"
+    "\n書き換え方針:"
+    "\n- ❌「サボってないでやろう」 → ⭕「今夜は○○やる予定だったよね、進んでる?」"
+    "\n- ❌「もっと頑張って」 → ⭕「無理してなければそれでいい」"
+    "\n- ❌「activity_summary に○○が無いから何もしてないよね」 → ⭕「PC の記録は途切れてたみたい、今夜どうだった?」"
+    "\n（活動データが薄い/取れていない場合も、決めつけず本人に聞く言い方に倒す）"
 )
 
 # 自発発話 prompt (場面指示のみ)。口調・性格は PERSONA_SYSTEM_PROMPT が system
@@ -537,6 +569,17 @@ BOT_THREAD_ID_MAINTENANCE = _thread_id_env("BOT_THREAD_ID_MAINTENANCE")
 BOT_THREAD_ID_CHAT = _thread_id_env("BOT_THREAD_ID_CHAT")
 # BOT_THREAD_ID_MEMO は個人メモ捕獲 topic (#84)。未設定なら memo 機能は無効。
 BOT_THREAD_ID_MEMO = _thread_id_env("BOT_THREAD_ID_MEMO")
+# BOT_THREAD_ID_OSEKKAI は夜時間おせっかい topic (#110)。未設定なら osekkai 号令/
+# 振り返り envelope は送り先が無いためログ警告のみで送信をスキップする (_run_osekkai)。
+BOT_THREAD_ID_OSEKKAI = _thread_id_env("BOT_THREAD_ID_OSEKKAI")
+
+# osekkai (#110) の talk 型永続セッション (D-1) 向け短 timeout。既定 CLAUDE_TIMEOUT
+# (900s) は claude_lock をプロセス全体で直列化するため、号令/振り返りの短文生成に
+# そのまま使うと OWNER の通常チャットを最大 900s ブロックしかねない。
+# osekkai-plan.md v0.2 §3 の見積もり (長考不要、目安 180s) に従い個別指定する
+# (bot/CLAUDE.md「CLAUDE_TIMEOUT で統一・迂回しない」不変条件に対する、
+# plan 承認済み (2026-07-15 OWNER 承認) の意図的例外)。
+OSEKKAI_CLAUDE_TIMEOUT = float(os.environ.get("OSEKKAI_CLAUDE_TIMEOUT", "180"))
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # bot.log は OWNER 限定経路の URL 等を含む。本プロセスが作る file は 0o600 にする
@@ -651,7 +694,22 @@ async def send_text(
 # ---------------------------------------------------------------------------
 
 
-async def run_claude(prompt: str, chat_id: int, thread_id: int | None) -> str:
+async def run_claude(
+    prompt: str,
+    chat_id: int,
+    thread_id: int | None,
+    *,
+    timeout_s: float | None = None,
+    system_prompt: str | None = None,
+) -> str:
+    """topic の永続セッションを resume して claude を起動する (budget guard 込み)。
+
+    timeout_s / system_prompt は既定 (CLAUDE_TIMEOUT / PERSONA_SYSTEM_PROMPT) の
+    override。省略時は従来どおりの挙動で、既存呼び出し (on_message 等) は無変更。
+    osekkai (#110 D-1) の talk 型永続セッションが OSEKKAI_CLAUDE_TIMEOUT /
+    OSEKKAI_SYSTEM_PROMPT を渡すために追加した唯一の override 経路 (bot/CLAUDE.md
+    の統一原則に対する plan 承認済みの意図的例外、run_claude の外側では override しない)。
+    """
     topic_key = sessions.topic_key(chat_id, thread_id)
     now = datetime.now(quota.JST)
     if not budget_guard.allow(now):
@@ -666,8 +724,8 @@ async def run_claude(prompt: str, chat_id: int, thread_id: int | None) -> str:
     meta, is_new = sessions.start_or_resume(chat_id, thread_id)
     # 口調 (軸 1) は全 claude 呼び出し共通で system prompt に常駐させる。
     options = ClaudeOptions(
-        timeout_s=CLAUDE_TIMEOUT,
-        append_system_prompt=PERSONA_SYSTEM_PROMPT,
+        timeout_s=timeout_s if timeout_s is not None else CLAUDE_TIMEOUT,
+        append_system_prompt=system_prompt if system_prompt is not None else PERSONA_SYSTEM_PROMPT,
     )
     if is_new:
         options.session_id = meta.session_id
@@ -704,15 +762,15 @@ async def run_claude(prompt: str, chat_id: int, thread_id: int | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def parse_proactive_payload(text: str) -> dict | None:
-    """Return the proactive request dict if `text` is a proactive socket message.
+def _decode_envelope(text: str) -> dict | None:
+    """Marker 行 + JSON decode を 1 回で確定する共通ヘルパー。
 
-    socket message format: ``[[proactive-v1]]\\n<json>``. Returns None for any
-    text that is not a proactive request (so the caller falls back to the plain
-    text-forward path). Pure function → unit-testable.
-
-    判別は「marker 行 + JSON decode」の 1 回で確定する。stderr 文言マッチ的な
-    挙動分岐ではなく、構造化 envelope の素直なデコード (2 周目ルール非該当)。
+    proactive / osekkai (#110) は同じ ``[[proactive-v1]]`` marker を共有し
+    (osekkai-plan.md D-2、マーカー種別を増やさない = K-T9 上限ルール)、JSON の
+    `kind` フィールドで呼び出し側が振り分ける。ここではマーカー剥がし + decode
+    のみを行い、kind の判定・分岐は呼び出し側 (`parse_proactive_payload` /
+    `parse_osekkai_payload`) の責務にする。stderr 文言マッチ的な挙動分岐ではなく、
+    構造化 envelope の素直なデコード (2 周目ルール非該当)。Pure → unit-testable。
     """
     if not text.startswith(PROACTIVE_MARKER):
         return None
@@ -721,9 +779,121 @@ def parse_proactive_payload(text: str) -> dict | None:
         obj = json.loads(body)
     except (json.JSONDecodeError, ValueError):
         return None
-    if not isinstance(obj, dict) or obj.get("kind") != "proactive":
+    return obj if isinstance(obj, dict) else None
+
+
+def parse_proactive_payload(text: str) -> dict | None:
+    """Return the proactive request dict if `text` is a proactive socket message.
+
+    socket message format: ``[[proactive-v1]]\\n<json>``. Returns None for any
+    text that is not a proactive request (so the caller falls back to the plain
+    text-forward path). Pure function → unit-testable.
+    """
+    obj = _decode_envelope(text)
+    if obj is None or obj.get("kind") != "proactive":
         return None
     return obj
+
+
+def parse_osekkai_payload(text: str) -> dict | None:
+    """Return the osekkai envelope dict if `text` is an osekkai socket message
+    (#110 TODO 7)。同じ `[[proactive-v1]]` marker + JSON を `kind` フィールドで
+    proactive とは別の専用ディスパッチへ振り分ける (osekkai-plan.md D-2、
+    proactive_queue とは混ぜない)。
+
+    trigger.py の envelope 契約 (osekkai/docs/STATUS.md TODO 6 Done エントリ) は
+    `mode` が "call"/"retro" のいずれか必須なので、ここで機械的に検証する
+    (osekkai 側のスキーマ契約をこの 1 箇所で確定し、以降 build_osekkai_prompt 側は
+    mode の値が正しいことを前提にできる)。Pure function → unit-testable。
+    """
+    obj = _decode_envelope(text)
+    if obj is None or obj.get("kind") != "osekkai":
+        return None
+    if obj.get("mode") not in ("call", "retro"):
+        return None
+    return obj
+
+
+def _osekkai_backlog_lines(payload: dict) -> str:
+    """envelope の backlog (id/text/deadline の list) を箇条書きテキストへ整形する。
+
+    backlog[].text は OWNER 自身が書いた自由文であり、proactive 経路の
+    「サニタイズ済みフィールドのみ展開」規約 (build_proactive_prompt) とは前提が
+    異なる — 通常のチャット入力と同格に扱ってよい (trigger.py の設計どおり)。
+    """
+    items = payload.get("backlog")
+    if not isinstance(items, list):
+        return "(バックログは空)"
+    lines = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        text = it.get("text")
+        if not isinstance(text, str) or not text:
+            continue
+        deadline = it.get("deadline")
+        if isinstance(deadline, str) and deadline:
+            lines.append(f"- {text} (締切: {deadline})")
+        else:
+            lines.append(f"- {text}")
+    return "\n".join(lines) if lines else "(バックログは空)"
+
+
+def build_osekkai_call_prompt(payload: dict) -> str:
+    """号令 (19時台) の envelope から claude prompt を組む。純関数 → unit-test。
+
+    tonight.intent は OWNER 自身の自由文なので通常のチャット入力と同格に展開する
+    (osekkai/docs/STATUS.md TODO 7 前提条件、_osekkai_backlog_lines と同根)。
+    """
+    tonight = payload.get("tonight")
+    intent = tonight.get("intent") if isinstance(tonight, dict) else None
+    parts = [
+        "今は平日夜ブロック (19:00〜24:00) の号令タイミング。"
+        "今夜何をしたいか、OWNER に軽く聞く場面。",
+        f"積んであるバックログ:\n{_osekkai_backlog_lines(payload)}",
+    ]
+    if isinstance(intent, str) and intent:
+        parts.append(
+            f"今夜の意図として既に「{intent}」が記録されている。"
+            "これに軽く触れて確認するか、変わっていないか聞く。"
+        )
+    else:
+        parts.append("今夜の意図はまだ記録されていない。今夜何をしたいか聞いてみる。")
+    return "\n\n".join(parts)
+
+
+def build_osekkai_retro_prompt(payload: dict) -> str:
+    """振り返り (23:30) の envelope から claude prompt を組む。純関数 → unit-test。
+
+    activity_summary は collector.summarize() が生成した機械集計ダイジェスト
+    (アプリ名+時間+AFK 状態のみ、ウィンドウタイトル非含有、D-6)。pull_ok=false や
+    summary 生成失敗時も trigger.py 側が「データなし」文言に倒して渡してくるため、
+    ここでは値の真偽判定はせず、渡された文字列をそのまま展開する。
+    """
+    tonight = payload.get("tonight")
+    intent = tonight.get("intent") if isinstance(tonight, dict) else None
+    activity_summary = payload.get("activity_summary")
+    parts = [
+        "今は平日夜ブロックの振り返りタイミング (23:30 頃)。"
+        "今夜の活動を軽く振り返る場面。",
+    ]
+    if isinstance(intent, str) and intent:
+        parts.append(f"今夜の意図: {intent}")
+    else:
+        parts.append("今夜の意図は記録されていない。")
+    if isinstance(activity_summary, str) and activity_summary:
+        parts.append(f"PC 活動ダイジェスト:\n{activity_summary}")
+    return "\n\n".join(parts)
+
+
+def build_osekkai_prompt(payload: dict) -> str:
+    """mode ("call"/"retro") で号令/振り返り prompt を振り分ける。純関数 → unit-test。
+
+    payload は parse_osekkai_payload の戻り値 (mode は call/retro のいずれかである
+    ことが既に検証済み)。"""
+    if payload.get("mode") == "retro":
+        return build_osekkai_retro_prompt(payload)
+    return build_osekkai_call_prompt(payload)
 
 
 def _jst_time_band(hour: int) -> str:
@@ -2366,6 +2536,75 @@ def _authorized(update: Update) -> bool:
 # ---------------------------------------------------------------------------
 
 
+OSEKKAI_INTENT_STORE_TIMEOUT_S = 30.0
+
+
+async def _osekkai_intent_store_run(*args: str) -> tuple[int, str, str]:
+    """osekkai/scripts/intent_store.py の CLI を subprocess で叩く (#110 TODO 7)。
+
+    (rc, stdout, stderr) を返す。spawn 自体の失敗・timeout は rc=-1 + stderr に
+    メッセージを詰めて返す (呼び出し側は rc!=0 を一様に「失敗」として扱えばよい、
+    例外は投げない = best-effort)。timeout は _fetch_official_usage と同型
+    (flock(LOCK_EX) を持つ CLI なので通信 stall の保険として設定、単一ユーザー・
+    短時間ホールドで実害はほぼ無いが codebase 慣習に揃える)。"""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(OSEKKAI_INTENT_STORE), *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except Exception as e:
+        return -1, "", f"[osekkai intent_store] spawn failed: {e!r}"
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(), timeout=OSEKKAI_INTENT_STORE_TIMEOUT_S
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return -1, "", f"[osekkai intent_store] timed out after {OSEKKAI_INTENT_STORE_TIMEOUT_S}s"
+    rc = proc.returncode if proc.returncode is not None else -1
+    return (
+        rc,
+        stdout_b.decode("utf-8", errors="replace"),
+        stderr_b.decode("utf-8", errors="replace"),
+    )
+
+
+async def _osekkai_record_manual_start(prompt: str) -> None:
+    """osekkai topic への OWNER 発話ごとに号令済みマークを立てる (#110 TODO 7 (2))。
+
+    timer 号令 (trigger.py call) との二重発火防止 (§3-2「押し付けない」の担保、
+    osekkai-plan.md §4 Phase 1 末尾)。tonight_mark_called は冪等なので毎発話で
+    呼んでよい (2 回目以降は no-op)。
+
+    あわせて、今夜の意図が未記録ならこの発話をそのまま今夜の意図として記録する
+    (claude セッションに state 書き込みをさせない = OWNER 裁定を守るため bot の
+    Python 側で完結させる)。判定は tonight_status の 1 read → 未設定なら
+    tonight_set_intent の check-then-set。OWNER 1 人の手動発話であり並行書き込み
+    が起きない経路なので、read/set 間の race を潰す atomic な set-if-absent
+    機構は過剰と判断し導入しない (実装時の判断、STATUS.md に記録)。
+    失敗は警告ログのみで応答本体を道連れにしない (best-effort)。
+    """
+    rc, _out, err = await _osekkai_intent_store_run("tonight-called")
+    if rc != 0:
+        logger.warning("osekkai tonight-called failed rc=%d: %s", rc, err.strip())
+
+    rc, out, err = await _osekkai_intent_store_run("tonight-status")
+    if rc != 0:
+        logger.warning("osekkai tonight-status failed rc=%d: %s", rc, err.strip())
+        return
+    try:
+        status = json.loads(out)
+    except json.JSONDecodeError:
+        logger.warning("osekkai tonight-status returned non-JSON output: %r", out[:200])
+        return
+    if not status.get("intent"):
+        rc, _out, err = await _osekkai_intent_store_run("tonight-intent", prompt)
+        if rc != 0:
+            logger.warning("osekkai tonight-intent failed rc=%d: %s", rc, err.strip())
+
+
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
@@ -2381,6 +2620,41 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # 個人メモ捕獲 topic (#84): claude セッションを経由せず直接 vault へ保存する。
     if BOT_THREAD_ID_MEMO is not None and thread_id == BOT_THREAD_ID_MEMO:
         await _save_memo(context.bot, msg, chat_id)
+        return
+
+    # osekkai topic (#110): 永続セッション (D-1) + 専用 system prompt/timeout で
+    # resume する。号令済みマーク・意図記録は claude を起動する前に確定させる
+    # (claude 出力の成否に関わらず state を確定、trigger.py の first_call 判定と
+    # 同じ「state を持つ側を 1 回引いて決める」設計)。
+    if BOT_THREAD_ID_OSEKKAI is not None and thread_id == BOT_THREAD_ID_OSEKKAI:
+        await _osekkai_record_manual_start(prompt)
+        try:
+            async with _typing_action(context.bot, chat_id, thread_id):
+                output = await run_claude(
+                    prompt, chat_id, thread_id,
+                    timeout_s=OSEKKAI_CLAUDE_TIMEOUT,
+                    system_prompt=OSEKKAI_SYSTEM_PROMPT,
+                )
+        except Exception:
+            logger.exception("claude invocation failed (osekkai)")
+            await send_text(
+                context.bot, chat_id, thread_id,
+                "[internal error — see bot.log]",
+                reply_to=msg.message_id,
+            )
+            return
+        if not _osekkai_should_send(output):
+            # OSEKKAI_SYSTEM_PROMPT は返信経路でも沈黙権を明示的に許可している
+            # (OWNER の返信が「特にない」の類なら黙ってよい、D-7)。claude の沈黙は
+            # run_claude 契約上 "[empty output]" 等の非空 sentinel で返るため、
+            # _run_osekkai (worker) と対称に同じ判定を on_message 側にも適用する
+            # (どちらも黙らせないと sentinel 文字列が topic に post されてしまう)。
+            logger.info("osekkai skip: silent/empty claude output (on_message)")
+            return
+        logger.info("send len=%d (osekkai)", len(output))
+        await send_text(
+            context.bot, chat_id, thread_id, output, reply_to=msg.message_id,
+        )
         return
 
     try:
@@ -3039,6 +3313,87 @@ async def _proactive_worker(app: Application) -> None:
             queue.task_done()
 
 
+async def _osekkai_worker(app: Application) -> None:
+    """osekkai (#110) 号令/振り返り envelope を順序保証で消費する。
+
+    proactive_queue / notify_queue とは別 worker (kind による専用ディスパッチ、
+    osekkai-plan.md D-2)。claude 起動は run_claude (budget guard 込み) を再利用する。
+    """
+    queue: asyncio.Queue = app.bot_data["osekkai_queue"]
+    while True:
+        payload = await queue.get()
+        try:
+            await _run_osekkai(app, payload)
+        except Exception:
+            logger.exception("osekkai request failed")
+        finally:
+            queue.task_done()
+
+
+# run_claude が「送るべき本文が無い」ときに実際に返す値は空文字ではなく、
+# run_claude 自身が生成する既知の sentinel 文字列 (run_claude 本体参照: OK かつ
+# 空応答は "[empty output]"、TIMEOUT は "[timeout after {s}s]"、それ以外のエラーは
+# "[claude error: ...]" で始まる)。`not output.strip()` だけのチェックはこれらを
+# 一切捕まえない (existing bug: _run_proactive talk 分岐 (bot.py 内 `not output or
+# not output.strip()` 各所) も同じ穴を持つが、これは osekkai TODO 7 のスコープ外の
+# 既存挙動なので本タスクでは変更せず、報告のみで留める)。D-7「トリガーが薄ければ
+# 沈黙」を osekkai topic で確実に守るため、osekkai だけはこの sentinel を明示的に
+# 弾く。bot 自身が生成する閉じた 3 パターンの prefix 判定であり、claude の stderr
+# を文言マッチで分類して自動回復する話ではない (CLAUDE.md の禁止則とは別範疇)。
+_OSEKKAI_SILENT_OUTPUT_PREFIXES = ("[empty output]", "[timeout after ", "[claude error:")
+
+
+def _osekkai_should_send(output: str) -> bool:
+    """run_claude の戻り値が osekkai topic へ実際に送るべき本文かどうかを判定する。
+
+    Pure function → unit-testable。"""
+    if not output or not output.strip():
+        return False
+    return not output.strip().startswith(_OSEKKAI_SILENT_OUTPUT_PREFIXES)
+
+
+async def _run_osekkai(app: Application, payload: dict) -> None:
+    """osekkai 号令/振り返り envelope を消費して osekkai topic へ送信する (#110 TODO 7)。
+
+    D-1: talk 型永続セッション (thread_id=BOT_THREAD_ID_OSEKKAI) を run_claude で
+    resume する (proactive の ephemeral session とは異なる — 号令を覚えていて
+    OWNER の返信を受けて応答する要件のため、on_message 側と同じセッションに乗る)。
+
+    budget guard は run_claude 内で必ず通る (M-14 単一 guard 境界、迂回しない) が、
+    拒否時に run_claude が返す exceeded_message 文字列をそのまま osekkai topic に
+    投稿してしまわないよう、_run_proactive と同型の事前チェックで送信自体を skip
+    する (guard を迂回するのではなく、拒否結果の投稿だけを避ける)。
+    """
+    if BOT_THREAD_ID_OSEKKAI is None:
+        logger.warning("osekkai envelope received but BOT_THREAD_ID_OSEKKAI is unset, skipping")
+        return
+
+    now = datetime.now(quota.JST)
+    if not budget_guard.allow(now):
+        summary = budget_guard.summary(now)
+        logger.info(
+            "osekkai skip: budget guard not allowing (kind=%s, mode=%s)",
+            summary.guard_kind, payload.get("mode"),
+        )
+        return
+
+    prompt = build_osekkai_prompt(payload)
+    output = await run_claude(
+        prompt, NOTIFY_CHAT_ID, BOT_THREAD_ID_OSEKKAI,
+        timeout_s=OSEKKAI_CLAUDE_TIMEOUT,
+        system_prompt=OSEKKAI_SYSTEM_PROMPT,
+    )
+    if not _osekkai_should_send(output):
+        # 沈黙権行使 (OSEKKAI_SYSTEM_PROMPT の「トリガーが薄ければ黙ってよい」)、
+        # または timeout/エラーの sentinel 文字列。どちらも「送らない」の 1 状態に
+        # 倒す (分類 enum を増やさない、切り分けは bot.log の run_claude 側ログで可能)。
+        logger.info("osekkai skip: silent/empty claude output (mode=%s)", payload.get("mode"))
+        return
+
+    await send_text(app.bot, NOTIFY_CHAT_ID, BOT_THREAD_ID_OSEKKAI, output)
+    logger.info("osekkai sent mode=%s len=%d", payload.get("mode"), len(output))
+
+
 async def _run_proactive(app: Application, payload: dict) -> None:
     now = datetime.now(quota.JST)
     seed_kind = payload.get("seed_kind", "unknown")
@@ -3385,23 +3740,67 @@ async def _proactive_voice_worker(text: str) -> None:
     logger.info("proactive voice rc=%d duration_ms=%d", rc, duration_ms)
 
 
+NOTIFY_SOCKET_READ_TIMEOUT_S = 10.0
+
+
 async def _handle_notify_connection(
     app: Application,
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
     try:
-        # 同 UID 内 bug / 暴走による無制限メモリ消費を物理的に止める (Phase 2
-        # B4-4 と同じ意図、Telegram chunk 後でも rate limit を踏みかねない巨大
-        # push を socket 受信段階で打ち切る)。
-        data = await reader.read(NOTIFY_SOCKET_MAX_BYTES)
-        text = data.decode("utf-8", errors="replace").strip()
+        # 単発 read(N) は「バッファにある分をそのまま返す」仕様 (asyncio.StreamReader
+        # の EOF まで読み切るループではない) で、envelope が 1 回の recv バッファに
+        # 収まりきらない場合に理論上部分読みが起きる (#110 TODO 6 申し送り)。
+        # 既存 sender (maintenance/lib/notify.sh・proactive-companion.sh・
+        # trends-weekly.sh の `nc -U -N`、notify-claude-status.py の
+        # `shutdown(SHUT_WR)`、osekkai/scripts/trigger.py の同型 shutdown) は
+        # いずれも sendall 後に書き込み側を half-close して EOF を伝える実装
+        # なので、EOF まで読み切るループに変更しても既存 sender を壊さない
+        # (2026-07-16 実装時に全 sender を grep して確認)。
+        # 同 UID 内 bug / 暴走による無制限メモリ消費を防ぐ上限 (Phase 2 B4-4 と
+        # 同じ意図) は「読む総バイト数」に対して掛ける形に直す (単発 read の
+        # バッファ長上限のままでは巨大 push の一部だけを受理する取りこぼしになる)。
+        # half-close しない壊れた/悪意ある sender が EOF を送らないと read() が
+        # 永久に await し続け task がリークするため、各 read() に timeout を掛ける
+        # (外部呼び出しには timeout、の既存慣習と整合。レビュー指摘、2026-07-16)。
+        # timeout 時は「ここまで届いた分で処理する」に倒す (EOF と同じ扱い —
+        # 単発 read(N) だった旧実装も「その時点でバッファにあった分だけ処理」
+        # だったので、タイムアウト時にそこまでの受信を捨てるより後退しない)。
+        chunks: list[bytes] = []
+        total = 0
+        while total < NOTIFY_SOCKET_MAX_BYTES:
+            try:
+                chunk = await asyncio.wait_for(
+                    reader.read(NOTIFY_SOCKET_MAX_BYTES - total),
+                    timeout=NOTIFY_SOCKET_READ_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "notify socket recv timed out after %.0fs (sender may not have "
+                    "half-closed, processing %d bytes received so far)",
+                    NOTIFY_SOCKET_READ_TIMEOUT_S, total,
+                )
+                break
+            if not chunk:  # EOF (peer が half-close)
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        text = b"".join(chunks).decode("utf-8", errors="replace").strip()
         if not text:
             return
-        # 構造化 envelope なら proactive 経路へ、それ以外は従来の素通し forward。
+        # 構造化 envelope は kind で 3 方向へ振り分ける (osekkai / proactive /
+        # 従来の素通し forward)。osekkai を先に見るのは kind=="osekkai" が
+        # proactive_queue の whitelist ロジックを一切通らないことを保証するため
+        # (osekkai-plan.md D-2、#110 TODO 6 申し送り (1))。
+        osekkai = parse_osekkai_payload(text)
+        if osekkai is not None:
+            queue: asyncio.Queue = app.bot_data["osekkai_queue"]
+            await queue.put(osekkai)
+            return
         proactive = parse_proactive_payload(text)
         if proactive is not None:
-            queue: asyncio.Queue = app.bot_data["proactive_queue"]
+            queue = app.bot_data["proactive_queue"]
             await queue.put(proactive)
             return
         queue = app.bot_data["notify_queue"]
@@ -3505,6 +3904,9 @@ async def post_init(application: Application) -> None:
         pass
     application.bot_data["notify_queue"] = asyncio.Queue()
     application.bot_data["proactive_queue"] = asyncio.Queue()
+    # osekkai_queue は BOT_THREAD_ID_OSEKKAI 未設定でも常に用意する (envelope が
+    # 先に届いても KeyError にしない、_run_osekkai 側で送り先なしを検知して警告する)。
+    application.bot_data["osekkai_queue"] = asyncio.Queue()
     server = await asyncio.start_unix_server(
         lambda r, w: _handle_notify_connection(application, r, w),
         path=str(NOTIFY_SOCKET),
@@ -3517,8 +3919,13 @@ async def post_init(application: Application) -> None:
     application.bot_data["proactive_worker_task"] = asyncio.create_task(
         _proactive_worker(application)
     )
-    logger.info("notify socket listening at %s (proactive enabled=%s)",
-                NOTIFY_SOCKET, PROACTIVE_ENABLED)
+    application.bot_data["osekkai_worker_task"] = asyncio.create_task(
+        _osekkai_worker(application)
+    )
+    logger.info(
+        "notify socket listening at %s (proactive enabled=%s, osekkai thread_id=%s)",
+        NOTIFY_SOCKET, PROACTIVE_ENABLED, BOT_THREAD_ID_OSEKKAI,
+    )
 
     # stall check job (§4.6)
     application.job_queue.run_repeating(
@@ -3570,7 +3977,7 @@ async def post_shutdown(application: Application) -> None:
             await server.wait_closed()
         except Exception:
             pass
-    for key in ("notify_worker_task", "proactive_worker_task"):
+    for key in ("notify_worker_task", "proactive_worker_task", "osekkai_worker_task"):
         worker_task: asyncio.Task | None = application.bot_data.get(key)
         if worker_task is not None:
             worker_task.cancel()

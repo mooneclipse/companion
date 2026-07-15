@@ -43,3 +43,9 @@ paths:
 - 各 env スイッチ `PROACTIVE_*_ENABLED`（既定 1）+ `PROACTIVE_*_INTERVAL_DAYS`（既定 7）。毎回新規 ephemeral session（resume なし）で `#chat` セッションを汚さない。budget gate 必須。
 - **境界はプロンプトで強制**（bot-workspace settings は変えない）: investigate は vault `notes/` 新規生成のみ（既存/手書きノート上書き禁止）。ticket は `tickets.py add --by ai` 1 件のみ（OWNER 分は不可触、list/show は読み取り）。remind は read-only（tickets list/show のみ、起票・編集なし）。
 - **signal 政策 A**: 実 signal が無ければ動かない（index 空なら発話へフォールスルー）。`#chat last_prompt_at` を明示更新（最小間隔維持）。
+
+## osekkai（夜時間おせっかい topic、ticket #110）
+- **kind 専用ディスパッチ**（`_decode_envelope` → `parse_osekkai_payload`）: proactive と同じ `[[proactive-v1]]` marker + JSON を `kind` フィールドで判別し、`osekkai_queue`（`_osekkai_worker` → `_run_osekkai`）へ振り分ける。`proactive_queue` のサニタイズ済み whitelist 展開（`build_proactive_prompt`）は一切通らない — `backlog[].text` / `tonight.intent` は OWNER 自身の自由文なので `build_osekkai_prompt` では通常のチャット入力と同格に展開してよい。
+- **D-1 talk 型永続セッション**: `BOT_THREAD_ID_OSEKKAI` topic は `run_claude` を resume 型で再利用する唯一の proactive 系経路（ephemeral investigate/ticket/remind とは異なる）。`OSEKKAI_SYSTEM_PROMPT`（PERSONA に振る舞い基準を積み増し）と `OSEKKAI_CLAUDE_TIMEOUT`（既定 180s）を `run_claude(..., system_prompt=, timeout_s=)` の override 経路で渡す — この override は osekkai 専用、他経路で使わない。
+- **on_message 分岐**: `BOT_THREAD_ID_OSEKKAI` topic への OWNER 発話は `_osekkai_record_manual_start`（`intent_store.py` を subprocess 経由で叩き、号令済みマークを毎回 + 意図未記録なら check-then-set で記録）→ `run_claude`（override 込み）の順。claude セッションに state 書き込みをさせない（OWNER 裁定）。
+- **`_handle_notify_connection` の read はループ化済み**（partial read 対応、#110 TODO 6 申し送り）。既存 sender（`nc -U -N` / `shutdown(SHUT_WR)`）はいずれも half-close するため EOF 待ちで壊れない。新規 sender を追加する際もこの契約（sendall 後に半クローズ）を守ること。
