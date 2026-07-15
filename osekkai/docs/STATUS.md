@@ -34,8 +34,8 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 - [x] 1. **[OWNER 作業]** Windows (m-gamepc) に ActivityWatch 導入 — 手順書 `docs/SETUP-windows-aw.md` に従う (インストール / address 変更 / Firewall / タスクスケジューラ窓稼働) ✅ 2026-07-15 導入完了 + Linux 側から到達確認 OK (下記 Done 参照)
 - [x] 2. **[OWNER 作業]** Telegram supergroup に osekkai 用 topic 新設 → thread_id を `bot/.env` の `BOT_THREAD_ID_OSEKKAI` に追加 ✅ 2026-07-15 OWNER が topic 新設、thread_id=1115 を .env に追記済 (claude 実施)
 - [x] 4. collector: REST pull (query API、前回 pull 済み以降〜現在) + SQLite 蓄積 (蓄積前にタイトル破棄、exe 名+時間+AFK のみ、保持 90 日) + F3 要約器 ✅ 2026-07-15 `scripts/collector.py` 実装 + 実弾検証 + レビュー OK (下記 Done 参照)
-- [ ] 5. 意図ストア: backlog.json / tonight.json + flock+atomic write (ytcheck channel_store の型)
-- [ ] 6. trigger: 平日 19 時台 (RandomizedDelay) + 23:30 の systemd timer 2 本 + 判定スクリプト (休むフラグ / 号令済み / 平日判定は state 1 read)
+- [x] 5. 意図ストア: backlog.json / tonight.json + flock+atomic write (ytcheck channel_store の型) ✅ 2026-07-16 `scripts/intent_store.py` 実装 + 実弾検証 + レビュー OK (下記 Done 参照)
+- [ ] 6. trigger: 平日 19 時台 (RandomizedDelay) + 23:30 の systemd timer 2 本 + 判定スクリプト (休むフラグ / 号令済み / 平日判定は state 1 read)。**申し送り (TODO 5)**: 二重発火防止は `tonight_mark_called()` / CLI `tonight-called` が返す `first_call` を見る 1 発判定で組む (read→判断→mark の 2 段だと read/mark 間に二重送信が起き得るため禁止)
 - [ ] 7. bot 側: proactive-v1 envelope の kind 追加 + osekkai topic の on_message 分岐 (専用 system prompt、短 timeout 個別指定、手動開始時の号令済みマーク) — **反映後は改変規模に応じた短い様子見 (PROJECT.md 条件 #2 再定義ルール)**
 - [ ] 8. 実弾検証: 実際の夜ブロックを 1 周通す。完了条件 = 1 周通過 + OWNER が窮屈と感じないこと
 
@@ -43,10 +43,11 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 ## In progress
 
-- (なし — 次は TODO 5 意図ストア)
+- (なし — 次は TODO 6 trigger)
 
 ## Done
 
+- **2026-07-16 01:12**: TODO 5 完了 (commit 7d6928a、.gitignore 追補は d23b914) — `scripts/intent_store.py` 新設 (stdlib のみ)。ytcheck `channel_store.py` の flock(LOCK_EX) + 同ディレクトリ tmp + os.replace を流用しつつ、`data/` が git 管理外のため git 自動 commit 部分は持ち込まない。**スキーマ**: backlog.json = `{"items": [{"id", "text", "deadline", "created_at", "done", "done_at"}]}` (id は既存最大+1)。tonight.json = JST 日付キー付き dict、各エントリに intent/resting/called/retro_sent とそれぞれの `*_set_at`/`*_at` を持つ (前日フラグが当日判定を誤らせない構造、D-8)。**CLI 8 サブコマンド** (backlog-add/list/complete、tonight-intent/rest/called/retro/status) をモジュール関数と両方提供、TODO 6/7 は subprocess でも import でも呼べる。`tonight-status` は機械可読 JSON を stdout に出す契約。**二重発火防止**: `tonight_mark_called()` / `tonight_mark_retro_sent()` は冪等かつ、今回の呼び出しが初回マークだったかを示す `first_call` を返り値に含める (tonight.json には persist しない) — 消費側は「mark して first_call を見る」1 発で判定でき、read→判断→mark の 2 段 (二重送信の余地あり) を避けられる。**実弾検証**: CLI/import 両経路で backlog 追加→一覧→完了→冪等確認、tonight の意図記録→号令→休むフラグ→振り返り→当日状態読み、日付跨ぎ相当 (`--date` 別指定) での状態分離、20 並列プロセスでの flock 排他検証 (backlog-add / tonight-called 双方で lost update なし) を実施。code-reviewer レビュー = 修正必須なし、軽微 2 点 (JSON 破損と `--date` 不正のエラーメッセージ分離、`first_call` discriminator 追加) を反映済み
 - **2026-07-15 23:02**: TODO 4 完了 (commit ee4d070) — `scripts/collector.py` 新設 (stdlib のみ、`pull` / `summary` / `status` の 3 サブコマンド)。**設計の要点**: (1) aw-server Python v0.13.2 の query API は timeperiod 境界でイベントをクリップして返すことを実測確認 (狭い timeperiod 指定で ts=境界・duration=期間長ちょうど) → 「前回 pull 済み時刻〜現在」の連続 pull がタイル状に隙間なく蓄積でき、「pull 開始時刻以降 delete → insert」の単一トランザクションで冪等。(2) リトライ機構は「失敗時に last_pulled_at が進まない」ことのみ (プロセス内リトライ・pending ファイルなし、state 1 read の型)。(3) D-6 境界は pull 内の 1 箇所 — イベント data から app/status のみ取り出しタイトルは蓄積もログもしない (schema に title 列自体がない)。(4) state は SQLite 一元 (meta.last_pulled_at:デバイス別キー)、複数書き手は busy_timeout で直列化 (flock は JSON 意図ストア側の型)。遡り上限 MAX_PULL_DAYS=7、保持 90 日、`data/` は `.gitignore` で管理外。**実弾検証**: 窓内 (22:56) に pull 87+5 行 → 連続 pull で 1+1 セグメント追加のみ (重複なし) → summary ダイジェスト正常 (galleyhouse.exe 1時間9分 ほか) → 到達不可 URL で rc=1 + state 不変。code-reviewer レビュー = 修正必須なし (軽微 2 点反映: その他行の孤立整形、#114 へクリップ挙動再実測の追記)
 - **2026-07-15 21:57**: TODO 2 完了 — OWNER が osekkai topic 新設 (テスト投稿リンク `t.me/c/3851931893/1115/1116` → thread_id=1115)、`bot/.env` に `BOT_THREAD_ID_OSEKKAI=1115` を追記 (.env 中身は読まずキー件数のみで重複なし確認)。bot.py はまだこの変数を参照しないため bot 再起動は不要、TODO 7 の bot 分岐実装時に読み込む。thread_id の実効性 (その topic へ送れるか) の裏取りも TODO 7 で実施。OWNER 作業 2 件が出揃いチケット #111 完了
 - **2026-07-15 21:50**: TODO 1 完了 — OWNER が m-gamepc に AW v0.13.2 導入、Linux 側から Tailscale 越しに到達確認 OK (窓内 21:50 実施)。`/api/0/info` 応答 (hostname=m-gamepc, testing=false)、buckets に `aw-watcher-window_m-gamepc` / `aw-watcher-afk_m-gamepc` の両方が存在、window イベントも実データ流入中 (app/title 取得確認)。設定は Python 版 `aw-server.toml` の `host = "0.0.0.0"` で有効だった。残る OWNER 作業は TODO 2 (osekkai topic + thread_id) のみ、claude 側は TODO 4 (collector) から着手可
@@ -59,4 +60,4 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 ---
 
-**最終更新**: 2026-07-15 23:02 (TODO 4 collector 完了。次は TODO 5 意図ストア)
+**最終更新**: 2026-07-16 01:12 (TODO 5 意図ストア完了。次は TODO 6 trigger)
