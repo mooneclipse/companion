@@ -1,0 +1,8 @@
+[Unit]
+Description=osekkai trigger: 振り返り envelope 判定 + 送信
+After=companion-bot.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/miho/companion/osekkai/scripts
+ExecStart=/usr/bin/python3 /home/miho/companion/osekkai/scripts/trigger.py retro

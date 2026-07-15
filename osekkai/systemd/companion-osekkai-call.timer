@@ -1,0 +1,22 @@
+[Unit]
+Description=osekkai 号令 (今夜どうする、平日 19 時台)
+
+[Timer]
+# 平日 (Mon-Fri) 19:00 JST に発火機会を撒く。実際の発火判定 (平日判定の
+# 再確認 / 休むフラグ / 号令済み 1 発判定) は trigger.py call が state を
+# 1 回引いて確定するので、timer は「判定を試みる機会」を与えるだけ
+# (companion-proactive.timer と同方針)。host tz = Asia/Tokyo。
+OnCalendar=Mon..Fri 19:00:00
+# 定刻ぴったりの機械的な号令を避け、19 時台に収まる範囲でずらす
+# (20:00 に溢れないよう安全マージンを残して 50 分以内)。
+RandomizedDelaySec=50min
+# マシンが 19 時台に寝ていた場合、起床後に catch-up させない。号令は
+# 「夜ブロックの入口」を示す合図なので、時間が経ってからの遅延発火は
+# 文脈的に不自然 (23 時に号令が来る等) — 当日中の再送は retro 側や
+# OWNER からの手動発話 (osekkai topic への直接発話でも called マークが
+# 立つ、計画 §4 Phase 1 末尾) に委ねる (2026-07-16 実装時の判断)。
+Persistent=false
+Unit=companion-osekkai-call.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=osekkai trigger: 号令 envelope 判定 + 送信
+# bot 起動順だけ後ろに寄せる。bot が落ちていても trigger.py 自体は socket
+# 送信失敗として rc=1 で終わるだけなので Wants=/Requires= は付けない
+# (companion-proactive.service と同方針)。
+After=companion-bot.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/miho/companion/osekkai/scripts
+ExecStart=/usr/bin/python3 /home/miho/companion/osekkai/scripts/trigger.py call

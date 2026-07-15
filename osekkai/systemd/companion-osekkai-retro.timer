@@ -1,0 +1,15 @@
+[Unit]
+Description=osekkai 振り返り (今夜どうだった、平日 23:30)
+
+[Timer]
+# 平日 (Mon-Fri) 23:30 JST。host tz = Asia/Tokyo。
+OnCalendar=Mon..Fri 23:30:00
+# 就寝直前の合図なので号令ほど大きくずらさない (機械的すぎない程度の微調整のみ)。
+RandomizedDelaySec=10min
+# 号令と同じ理由で catch-up させない。23:30 台の合図が翌朝以降に遅延着信
+# するのは文脈的に不自然 (2026-07-16 実装時の判断、call 側と対称)。
+Persistent=false
+Unit=companion-osekkai-retro.service
+
+[Install]
+WantedBy=timers.target
