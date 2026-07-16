@@ -44,6 +44,7 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 ## In progress
 
 - **TODO 8 実弾検証**: 今夜 2026-07-16 の夜ブロックで 1 周 (19:11 号令 → 23:38 振り返り) を通す。完了条件 = 1 周通過 + OWNER が窮屈と感じないこと。あわせて TODO 7 の bot 改変 (commit `b009917`) への様子見も継続中。
+  - **前半 (号令) 通過確認 2026-07-16 19:11**: timer 発火 19:11:44 → envelope 送信完了 (trigger.log) → OWNER が Telegram 着信を確認 (19 時すぎ)。ただし collector pull は timeout で失敗 (`pull_ok=False` のまま送信、N3 の想定どおり続行)。19:31 時点で AW サーバ (100.100.152.68:5600) は 200/18ms で応答 — 発火時点の一時的な到達不能 (PC スリープ or Tailscale 経路) とみられる。last_pulled_at は 07-15 22:56 JST のまま進んでいないため、23:38 の retro 側 pull が同範囲を再取得して振り返りダイジェストは復旧する設計。残り = 23:38 振り返り通過 + OWNER 窮屈感ヒアリング。
 
 ## Done
 
@@ -62,4 +63,4 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 ---
 
-**最終更新**: 2026-07-16 (TODO 7 完了 — bot 側分岐 commit b009917 + OWNER 承認で `companion-osekkai-{call,retro}.timer` enable まで完了、次回発火は本日 19:11:23 JST / 23:38:58 JST。次は TODO 8 実弾検証 (今夜の夜ブロック 1 周)。前回 2026-07-16: TODO 6 trigger 完了、commit a05cfa6)
+**最終更新**: 2026-07-16 19時台 (TODO 8 前半通過 — 19:11 号令発火 + OWNER 着信確認。collector pull は一時的 timeout で `pull_ok=False`、retro 側 pull で復旧見込み。残りは 23:38 振り返り。前回 2026-07-16: TODO 7 完了 + timer enable)
