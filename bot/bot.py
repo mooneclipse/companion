@@ -694,6 +694,15 @@ async def send_text(
 # ---------------------------------------------------------------------------
 
 
+# run_claude が沈黙/timeout/エラー時に返す sentinel 文字列の定義点。生成側
+# (run_claude 本体) と判定側 (_SILENT_OUTPUT_PREFIXES、#115) が別リテラルで
+# 二重定義されていると、片側の文言変更で判定が無音で素通しに戻る drift リスク
+# があるため、ここに 1 箇所へ集約する。
+_SENTINEL_EMPTY = "[empty output]"
+_SENTINEL_TIMEOUT_PREFIX = "[timeout after "  # 完全形: "[timeout after {N}s]"
+_SENTINEL_ERROR_PREFIX = "[claude error:"  # 完全形: "[claude error: {kind} rc={rc}]\n{stderr}"
+
+
 async def run_claude(
     prompt: str,
     chat_id: int,
@@ -743,16 +752,16 @@ async def run_claude(
             session_id=meta.session_id,
         )
         body = result.result_text if result.result_text is not None else result.raw_stdout
-        return body or "[empty output]"
+        return body or _SENTINEL_EMPTY
 
     logger.warning(
         "claude error kind=%s rc=%s session_id=%s stderr_len=%d",
         result.error_kind.value, result.rc, meta.session_id, len(result.raw_stderr),
     )
     if result.error_kind == ErrorKind.TIMEOUT:
-        return f"[timeout after {int(options.timeout_s)}s]"
+        return f"{_SENTINEL_TIMEOUT_PREFIX}{int(options.timeout_s)}s]"
     return (
-        f"[claude error: {result.error_kind.value} rc={result.rc}]\n"
+        f"{_SENTINEL_ERROR_PREFIX} {result.error_kind.value} rc={result.rc}]\n"
         f"{result.raw_stderr[:1500]}"
     )
 
@@ -2643,7 +2652,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 reply_to=msg.message_id,
             )
             return
-        if not _osekkai_should_send(output):
+        if not _should_send_claude_output(output):
             # OSEKKAI_SYSTEM_PROMPT は返信経路でも沈黙権を明示的に許可している
             # (OWNER の返信が「特にない」の類なら黙ってよい、D-7)。claude の沈黙は
             # run_claude 契約上 "[empty output]" 等の非空 sentinel で返るため、
@@ -3331,25 +3340,37 @@ async def _osekkai_worker(app: Application) -> None:
 
 
 # run_claude が「送るべき本文が無い」ときに実際に返す値は空文字ではなく、
-# run_claude 自身が生成する既知の sentinel 文字列 (run_claude 本体参照: OK かつ
-# 空応答は "[empty output]"、TIMEOUT は "[timeout after {s}s]"、それ以外のエラーは
-# "[claude error: ...]" で始まる)。`not output.strip()` だけのチェックはこれらを
-# 一切捕まえない (existing bug: _run_proactive talk 分岐 (bot.py 内 `not output or
-# not output.strip()` 各所) も同じ穴を持つが、これは osekkai TODO 7 のスコープ外の
-# 既存挙動なので本タスクでは変更せず、報告のみで留める)。D-7「トリガーが薄ければ
-# 沈黙」を osekkai topic で確実に守るため、osekkai だけはこの sentinel を明示的に
-# 弾く。bot 自身が生成する閉じた 3 パターンの prefix 判定であり、claude の stderr
-# を文言マッチで分類して自動回復する話ではない (CLAUDE.md の禁止則とは別範疇)。
-_OSEKKAI_SILENT_OUTPUT_PREFIXES = ("[empty output]", "[timeout after ", "[claude error:")
+# run_claude 自身が生成する既知の sentinel 文字列 (定義点は run_claude 本体の
+# _SENTINEL_* 定数に一本化。OK かつ空応答は _SENTINEL_EMPTY、TIMEOUT は
+# _SENTINEL_TIMEOUT_PREFIX、それ以外のエラーは _SENTINEL_ERROR_PREFIX で始まる)。
+# `not output.strip()` だけのチェックはこれらを一切捕まえない。この判定を使う
+# 3 箇所は次のとおり: osekkai worker の自発投稿 / osekkai on_message の返信
+# (OWNER への返信経路だが #110 D-7 で「返信が『特にない』の類なら黙ってよい」と
+# 沈黙権を明示許可した記録済みの設計判断であり、timeout/エラーの sentinel も
+# 同じく沈黙側に倒す) / proactive talk 分岐の自発投稿 (#91 の沈黙権 + #115 の
+# sentinel 漏れ修正)。3 箇所とも見落とすと内部 sentinel 文字列がそのまま
+# Telegram へ流出するため、すべてで対処済み。bot 自身が生成する閉じた 3 パターン
+# の prefix 判定であり、claude の stderr を文言マッチで分類して自動回復する話
+# ではない (CLAUDE.md の禁止則とは別範疇)。
+_SILENT_OUTPUT_PREFIXES = (_SENTINEL_EMPTY, _SENTINEL_TIMEOUT_PREFIX, _SENTINEL_ERROR_PREFIX)
 
 
-def _osekkai_should_send(output: str) -> bool:
-    """run_claude の戻り値が osekkai topic へ実際に送るべき本文かどうかを判定する。
+def _should_send_claude_output(output: str) -> bool:
+    """run_claude の戻り値を、claude に沈黙権がある経路で実際に送るべきか判定する。
 
-    Pure function → unit-testable。"""
+    使う 3 箇所: osekkai worker (自発投稿) / osekkai on_message (OWNER への
+    返信経路だが、#110 D-7 で「返信が『特にない』の類なら黙ってよい」と沈黙権を
+    明示許可した記録済みの設計判断、timeout/エラーの sentinel も同じく沈黙に
+    倒す) / proactive talk 分岐 (自発投稿、#91 の沈黙権 + #115 の sentinel 漏れ
+    修正)。Pure function → unit-testable。
+
+    使わない 2 箇所: 通常 #chat の on_message / on_photo。OWNER が起動した
+    対話でエラー・timeout が見えないと無反応 = 全損になるため (#101 の教訓と
+    同根)、意図的にこの判定を使わず run_claude の戻り値をそのまま返信する。
+    """
     if not output or not output.strip():
         return False
-    return not output.strip().startswith(_OSEKKAI_SILENT_OUTPUT_PREFIXES)
+    return not output.strip().startswith(_SILENT_OUTPUT_PREFIXES)
 
 
 async def _run_osekkai(app: Application, payload: dict) -> None:
@@ -3383,7 +3404,7 @@ async def _run_osekkai(app: Application, payload: dict) -> None:
         timeout_s=OSEKKAI_CLAUDE_TIMEOUT,
         system_prompt=OSEKKAI_SYSTEM_PROMPT,
     )
-    if not _osekkai_should_send(output):
+    if not _should_send_claude_output(output):
         # 沈黙権行使 (OSEKKAI_SYSTEM_PROMPT の「トリガーが薄ければ黙ってよい」)、
         # または timeout/エラーの sentinel 文字列。どちらも「送らない」の 1 状態に
         # 倒す (分類 enum を増やさない、切り分けは bot.log の run_claude 側ログで可能)。
@@ -3480,10 +3501,13 @@ async def _run_proactive(app: Application, payload: dict) -> None:
             write_next_self_at(int(now.timestamp() + next_self_hours * 3600))
         except OSError as e:
             logger.warning("proactive next_self_at write failed: %s", e)
-    if not output or not output.strip():
+    if not _should_send_claude_output(output):
         # 空出力 = claude の沈黙権行使 (チケット #91、prompt で許可済み) または
-        # エラー時の空文字。どちらも「送らない」の 1 状態に倒す (切り分けは bot.log の
-        # run_claude 側ログで可能、ledger に分類 enum を増やさない)。script 側週カウント
+        # run_claude の sentinel 文字列 (timeout/エラー、#115。osekkai と同一 predicate
+        # で沈黙に倒す — sentinel は空文字ではないため素朴な `not output.strip()` だけ
+        # では捕まらず、そのまま #chat へ自発投稿されるバグだった)。どちらも
+        # 「送らない」の 1 状態に倒す (切り分けは bot.log の run_claude 側ログで可能、
+        # ledger に分類 enum を増やさない)。script 側週カウント
         # (proactive_fire_epochs) は socket handoff 時に消費済みで戻さない — investigate/
         # ticket/remind の「claude 起動を決めた時点で interval 消費、成否問わず」と同思想
         # (週カウントは送信数上限でなく発火試行の総量管理。沈黙分だけ発話が減る方向 =

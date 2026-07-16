@@ -1248,12 +1248,17 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("2026-06-19_today", topics)
 
 
-class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
-    """次回発話タイミングの自己申告 (チケット #92) の talk 経路配線。
+class _ProactiveTalkHarnessBase(unittest.IsolatedAsyncioTestCase):
+    """`_run_proactive` talk フォールスルーを 1 回回す共通テスト基盤。
 
-    - marker が送信本文から剥がれ、state に next_self_at (epoch) が書かれること。
-    - 本文なし + 申告のみの回は empty_output skip に落ちつつ申告は保存されること。
-    - クランプ (1〜72h) と toggle off (state 非書き込み、剥がしは維持) の境界。
+    ProactiveSelfScheduleTest (#92 自己申告) と ProactiveTalkSentinelTest
+    (#115 sentinel skip) の両方が同じ setUp/tearDown (ledger/state/interests/
+    thoughts のパス退避 + investigate/ticket/remind の一時無効化) と
+    `_run_talk` ヘルパーを必要とするため、ここへ 1 本化する (逐語コピーの解消)。
+    test メソッドは意図的に持たない — unittest はサブクラス側の test も
+    ここから再収集するため、test を持つクラスをこの基盤経由で継承すると
+    親のテストが二重実行されてしまう。test を持たないこの基盤だけを継承する
+    形にすることで二重実行を避ける。
     """
 
     @classmethod
@@ -1271,7 +1276,6 @@ class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
-            self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED,
         )
         self.bot.PROACTIVE_LEDGER_PATH = d / "proactive_ledger.jsonl"
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
@@ -1280,7 +1284,6 @@ class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_INVESTIGATE_ENABLED = False
         self.bot.PROACTIVE_TICKET_ENABLED = False
         self.bot.PROACTIVE_REMIND_ENABLED = False
-        self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED = True
 
     def tearDown(self) -> None:
         (
@@ -1291,7 +1294,6 @@ class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
-            self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED,
         ) = self._orig
         self._tmp.cleanup()
 
@@ -1325,6 +1327,24 @@ class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
             if l.strip()
         ]
         return send, _json.loads(lines[-1]), now
+
+
+class ProactiveSelfScheduleTest(_ProactiveTalkHarnessBase):
+    """次回発話タイミングの自己申告 (チケット #92) の talk 経路配線。
+
+    - marker が送信本文から剥がれ、state に next_self_at (epoch) が書かれること。
+    - 本文なし + 申告のみの回は empty_output skip に落ちつつ申告は保存されること。
+    - クランプ (1〜72h) と toggle off (state 非書き込み、剥がしは維持) の境界。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._orig_self_schedule = self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED
+        self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED = True
+
+    def tearDown(self) -> None:
+        self.bot.PROACTIVE_SELF_SCHEDULE_ENABLED = self._orig_self_schedule
+        super().tearDown()
 
     def _state_next_self_at(self) -> str | None:
         return self.bot._read_state_value(self.bot.PROACTIVE_STATE_FILE, "next_self_at")
@@ -1380,6 +1400,40 @@ class ProactiveSelfScheduleTest(unittest.IsolatedAsyncioTestCase):
         # off でも申告事実は ledger 同様に思考ログへ残る (写し原則、clamp なし生値)
         thoughts = self.bot.THOUGHTS_LOG_PATH.read_text(encoding="utf-8")
         self.assertIn("申告した", thoughts)
+
+
+class ProactiveTalkSentinelTest(_ProactiveTalkHarnessBase):
+    """_run_proactive talk 分岐が run_claude の sentinel 文字列を沈黙に倒すこと (#115)。
+
+    run_claude は沈黙/timeout/エラー時に空文字ではなく sentinel 文字列
+    ("[empty output]" / "[timeout after {s}s]" / "[claude error: ...]") を返す
+    契約。素朴な `not output.strip()` だけの判定ではこれらを捕まえられず、内部
+    文字列がそのまま #chat へ自発投稿されるバグだった (osekkai 対処と同型の穴、
+    _should_send_claude_output に一般化して talk 分岐にも適用して修正)。"""
+
+    async def test_empty_output_sentinel_is_not_sent(self) -> None:
+        send, rec, _now = await self._run_talk("[empty output]")
+        send.assert_not_awaited()
+        self.assertFalse(rec["sent"])
+        self.assertEqual(rec["reason"], "empty_output")
+
+    async def test_timeout_sentinel_is_not_sent(self) -> None:
+        send, rec, _now = await self._run_talk("[timeout after 900s]")
+        send.assert_not_awaited()
+        self.assertFalse(rec["sent"])
+        self.assertEqual(rec["reason"], "empty_output")
+
+    async def test_claude_error_sentinel_is_not_sent(self) -> None:
+        send, rec, _now = await self._run_talk("[claude error: other rc=1]\nstderr tail")
+        send.assert_not_awaited()
+        self.assertFalse(rec["sent"])
+        self.assertEqual(rec["reason"], "empty_output")
+
+    async def test_real_content_is_sent(self) -> None:
+        send, rec, _now = await self._run_talk("今日は涼しいね、進んでる?")
+        send.assert_awaited_once()
+        self.assertTrue(rec["sent"])
+        self.assertEqual(rec["reason"], "ok")
 
 
 class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
@@ -4057,7 +4111,7 @@ class RunClaudeOverrideTest(unittest.IsolatedAsyncioTestCase):
 
 
 class OnMessageOsekkaiSilenceTest(unittest.IsolatedAsyncioTestCase):
-    """on_message の osekkai 分岐が _osekkai_should_send で沈黙権を honor すること。
+    """on_message の osekkai 分岐が _should_send_claude_output で沈黙権を honor すること。
 
     OSEKKAI_SYSTEM_PROMPT は返信経路 (OWNER が osekkai topic に発話するケース) でも
     「返信が『特にない』の類なら黙ってよい」と明示している (D-7)。run_claude の
@@ -4138,43 +4192,42 @@ class OnMessageOsekkaiSilenceTest(unittest.IsolatedAsyncioTestCase):
             self.bot.BOT_THREAD_ID_OSEKKAI = orig_thread_id
 
 
-class OsekkaiShouldSendTest(unittest.TestCase):
-    """_osekkai_should_send: run_claude の sentinel 文字列を「送らない」に倒す純関数。
+class ShouldSendClaudeOutputTest(unittest.TestCase):
+    """_should_send_claude_output: run_claude の sentinel 文字列を「送らない」に倒す純関数。
 
     run_claude は沈黙/timeout/エラー時に空文字ではなく既知の sentinel 文字列を
     返す契約 (run_claude 本体 docstring 参照)。素朴な `not output.strip()` だけの
-    チェックではこれらを一切捕まえられない (既存 _run_proactive talk 分岐に同じ
-    穴があることを確認済み、osekkai-plan.md TODO 7 実装時に発見、既存分岐は
-    スコープ外のため未修正)。"""
+    チェックではこれらを一切捕まえられない。osekkai (worker/on_message) と
+    proactive talk 分岐 (#115) の自発投稿系 3 箇所が共通で使う predicate。"""
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.bot = _import_bot_with_stub_env()
 
     def test_real_content_is_sendable(self) -> None:
-        self.assertTrue(self.bot._osekkai_should_send("今夜は積みゲー崩す予定だったね"))
+        self.assertTrue(self.bot._should_send_claude_output("今夜は積みゲー崩す予定だったね"))
 
     def test_empty_string_is_not_sendable(self) -> None:
-        self.assertFalse(self.bot._osekkai_should_send(""))
+        self.assertFalse(self.bot._should_send_claude_output(""))
 
     def test_whitespace_only_is_not_sendable(self) -> None:
-        self.assertFalse(self.bot._osekkai_should_send("   \n  "))
+        self.assertFalse(self.bot._should_send_claude_output("   \n  "))
 
     def test_empty_output_sentinel_is_not_sendable(self) -> None:
-        self.assertFalse(self.bot._osekkai_should_send("[empty output]"))
+        self.assertFalse(self.bot._should_send_claude_output("[empty output]"))
 
     def test_timeout_sentinel_is_not_sendable(self) -> None:
-        self.assertFalse(self.bot._osekkai_should_send("[timeout after 180s]"))
+        self.assertFalse(self.bot._should_send_claude_output("[timeout after 180s]"))
 
     def test_claude_error_sentinel_is_not_sendable(self) -> None:
         self.assertFalse(
-            self.bot._osekkai_should_send("[claude error: other rc=1]\nstderr tail")
+            self.bot._should_send_claude_output("[claude error: other rc=1]\nstderr tail")
         )
 
     def test_content_that_merely_starts_with_bracket_is_sendable(self) -> None:
         # sentinel prefix と偶然一致しない限り、本文が `[` から始まっても弾かない
         # (prefix 判定であり、単純な startswith("[") ではないことの確認)。
-        self.assertTrue(self.bot._osekkai_should_send("[了解] 今夜も積みゲー崩そう"))
+        self.assertTrue(self.bot._should_send_claude_output("[了解] 今夜も積みゲー崩そう"))
 
 
 class RunOsekkaiTest(unittest.IsolatedAsyncioTestCase):
