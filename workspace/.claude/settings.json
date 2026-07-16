@@ -5,6 +5,7 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "permissions": {
+    "defaultMode": "auto",
     "deny": [
       "Bash(rm -rf /*)",
       "Bash(rm -rf /)",
@@ -130,17 +131,9 @@
       "Bash(ss:*)",
       "Bash(netstat:*)",
       "Edit(~/companion/workspace/**)",
-      "Write(~/companion/workspace/**)",
-      "MultiEdit(~/companion/workspace/**)",
       "Edit(~/companion/vault/notes/**)",
-      "Write(~/companion/vault/notes/**)",
-      "MultiEdit(~/companion/vault/notes/**)",
       "Edit(~/companion/logs/**)",
-      "Write(~/companion/logs/**)",
-      "MultiEdit(~/companion/logs/**)",
       "Edit(~/.claude/plans/**)",
-      "Write(~/.claude/plans/**)",
-      "MultiEdit(~/.claude/plans/**)",
       "WebSearch",
       "WebFetch"
     ],

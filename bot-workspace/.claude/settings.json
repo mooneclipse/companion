@@ -46,7 +46,6 @@
       "WebFetch",
       "Read(~/companion/**)",
       "Edit(~/companion/vault/notes/**)",
-      "Write(~/companion/vault/notes/**)",
       "Bash(git status:*)",
       "Bash(git status)",
       "Bash(git diff:*)",
