@@ -17,6 +17,15 @@
 - `Error: Session ID ... is already in use` は bot 側 state JSON と claude 側 jsonl の不整合事故、リトライしない (Telegram に報告 + 復旧は `/reset` or 管理者操作)
 - 詳細設計は `~/companion/workspace/redesign/design.md` §1.3-§1.5、運用は `~/companion/bot/docs/STATUS.md`
 
+## 長期タスク / 調査の扱い (2026-07-17)
+
+bot 経由セッションは reset / session 切り替え / subprocess 終了でバックグラウンド作業ごと落ちる。**長時間かかる調査・バックグラウンドタスクをこのセッションで走らせない。**
+
+- 自分でバックグラウンド調査を起動しない (走らせても reset で消え、notes 保存前にロストする)
+- 話題が調査に値すると思ったら、**自分で調べず OWNER に振る**。振り方は「手元 CLI セッション (CWD=`~/companion/workspace/`) で "◯◯をこう調べて" と頼んでください」と、**具体的な調査指示の形** を添えて提案する
+- 調査するほどでもなければ、その場の短い応答で完結させ調査自体を行わない
+- 根拠: 2026-07-17 hermes-agent のセキュリティ深掘り調査をバックグラウンド起動 → 直後の reset でタスクごと消失、notes 保存前にロスト。task handle も残らず復旧不能だった
+
 ## 書き込み境界
 
 - `~/companion/vault/notes/` のみ書き込み許可（`.claude/settings.json` で enforce）
@@ -63,5 +72,5 @@ CLAUDE.md auto-discovery は CWD 近いほど後勝ち（design.md §1.2 / resea
 
 ---
 
-**最終更新**: 2026-06-11 (共用 TODO の tickets.py 操作セクションを追加 — Telegram から起票/done できるように、OWNER 依頼)
+**最終更新**: 2026-07-17 (「長期タスク / 調査の扱い」セクションを追加 — bot は長期調査を走らせず CLI に具体指示で振る。hermes-agent 調査が reset で消失した件が契機、OWNER 依頼)。前回 2026-06-11 (共用 TODO の tickets.py 操作セクションを追加 — Telegram から起票/done できるように、OWNER 依頼)
 **根拠**: `~/companion/workspace/redesign/design.md` §1.2 (v0.2.3, 2026-05-14) + `~/companion/workspace/redesign/telegram-design.md` (Phase 2.6 設計確定版)
