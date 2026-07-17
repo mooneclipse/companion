@@ -30,7 +30,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import urlparse
@@ -2613,9 +2613,122 @@ async def _osekkai_record_manual_start(prompt: str) -> None:
         logger.warning("osekkai tonight-status returned non-JSON output: %r", out[:200])
         return
     if not status.get("intent"):
-        rc, _out, err = await _osekkai_intent_store_run("tonight-intent", prompt)
+        # `--` で positional を確定 (発話が `-` 始まりでも argparse がオプション誤認しない、#118 レビューと同型)
+        rc, _out, err = await _osekkai_intent_store_run("tonight-intent", "--", prompt)
         if rc != 0:
             logger.warning("osekkai tonight-intent failed rc=%d: %s", rc, err.strip())
+
+
+# ---------------------------------------------------------------------------
+# osekkai Telegram 入口: /rest・/backlog (#118)
+# ---------------------------------------------------------------------------
+# 要件 §3-4「『今日は休む』を常に尊重」/ §3-3「週次バックログ」の Telegram 入口。
+# state 書き込みは claude セッションにさせない (OWNER 裁定) ため、
+# _osekkai_record_manual_start と同型の intent_store subprocess で bot Python 側
+# 完結。自然文判定 (「今日は休む」発話の検出) は誤爆 +「文言マッチで挙動分岐
+# しない」原則 (上位 CLAUDE.md) に触れるため不採用 — 明示コマンドのみ。
+# CommandHandler 経由なので on_message (~filters.COMMAND) には流れず、コマンド
+# 文字列が今夜の意図として誤記録されることもない。
+
+
+BACKLOG_DEADLINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+REST_USAGE = (
+    "[rest] 使い方:\n"
+    "/rest — 今夜は休む (号令・振り返りを止める)\n"
+    "/rest off — 解除"
+)
+
+BACKLOG_USAGE = (
+    "[backlog] 使い方:\n"
+    "/backlog list — 一覧\n"
+    "/backlog add <内容> [YYYY-MM-DD] — 追加 (末尾に日付を置くと締切)\n"
+    "/backlog done <番号> — 完了"
+)
+
+
+def parse_backlog_add_args(args: list[str]) -> tuple[str, str | None]:
+    """`/backlog add` の引数列を (text, deadline) に分解する純関数。
+
+    末尾トークンが実在日付 (YYYY-MM-DD) かつ本文が残るときだけ締切として
+    切り出す。日付形式でも実在しない日 (2026-13-99 等) や日付単独トークンは
+    そのまま本文として扱う (誤解釈で本文を欠落させない側に倒す)。
+    """
+    if len(args) >= 2 and BACKLOG_DEADLINE_RE.match(args[-1]):
+        try:
+            date.fromisoformat(args[-1])
+        except ValueError:
+            pass
+        else:
+            return " ".join(args[:-1]), args[-1]
+    return " ".join(args), None
+
+
+async def cmd_rest(args: list[str]) -> str:
+    """/rest — tonight.json の休むフラグを立てる/解除する (#118)。
+
+    フラグが立つと trigger.py の号令・振り返りは当日中すべて沈黙する (D-8)。
+    失敗は intent_store の rc で一様に判定 (best-effort、リトライなし)。
+    """
+    if args and args != ["off"]:
+        return REST_USAGE
+    off = bool(args)
+    argv = ("tonight-rest", "--off") if off else ("tonight-rest",)
+    rc, _out, err = await _osekkai_intent_store_run(*argv)
+    if rc != 0:
+        logger.warning("osekkai %s failed rc=%d: %s", " ".join(argv), rc, err.strip())
+        return "[rest] 記録に失敗した (bot.log 参照)"
+    if off:
+        return "[rest] おやすみ解除。今夜の号令・振り返りは通常どおり動くよ"
+    return "[rest] 今夜はおやすみ。号令も振り返りも止めるね"
+
+
+async def cmd_backlog(args: list[str]) -> str:
+    """/backlog — 週次バックログの Telegram 入口 (#118、要件 §3-3)。
+
+    list の表示は intent_store CLI の人間可読出力 (`[ ] #id text (締切: …)`)
+    をそのまま流す (整形ロジックを 2 箇所に持たない)。
+    """
+    if args and args[0] == "list" and len(args) == 1:
+        rc, out, err = await _osekkai_intent_store_run("backlog-list")
+        if rc != 0:
+            logger.warning("osekkai backlog-list failed rc=%d: %s", rc, err.strip())
+            return "[backlog] 一覧の取得に失敗した (bot.log 参照)"
+        return f"[backlog]\n{out.strip()}"
+
+    if args and args[0] == "add" and len(args) >= 2:
+        text, deadline = parse_backlog_add_args(args[1:])
+        argv = ["backlog-add"]
+        if deadline:
+            argv += ["--deadline", deadline]
+        # `--` で positional を確定 (本文が `-` 始まりでも argparse がオプション誤認しない)
+        argv += ["--", text]
+        rc, out, err = await _osekkai_intent_store_run(*argv)
+        if rc != 0:
+            logger.warning("osekkai backlog-add failed rc=%d: %s", rc, err.strip())
+            return "[backlog] 追加に失敗した (bot.log 参照)"
+        try:
+            item_id = json.loads(out)["id"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            # 追加自体は成功している (rc=0)。id 表示だけ諦める
+            logger.warning("osekkai backlog-add returned unexpected output: %r", out[:200])
+            item_id = "?"
+        suffix = f" (締切: {deadline})" if deadline else ""
+        return f"[backlog] #{item_id} 追加したよ: {text}{suffix}"
+
+    if args and args[0] == "done" and len(args) == 2:
+        if not args[1].isdigit():
+            return "[backlog] 番号は数字で指定してね。例: /backlog done 2"
+        rc, _out, err = await _osekkai_intent_store_run("backlog-complete", args[1])
+        if rc != 0:
+            logger.warning("osekkai backlog-complete failed rc=%d: %s", rc, err.strip())
+            return (
+                f"[backlog] #{args[1]} が見つからないか、記録に失敗した"
+                " (一覧: /backlog list、詳細は bot.log)"
+            )
+        return f"[backlog] #{args[1]} 完了にしたよ"
+
+    return BACKLOG_USAGE
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3262,6 +3375,35 @@ async def slash_remind(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
 
     logger.info("cmd=/remind args=%r send len=%d", args, len(output))
+    await send_text(
+        context.bot, chat_id, thread_id, output,
+        reply_to=msg.message_id if msg else None,
+    )
+
+
+async def slash_rest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    output = await cmd_rest(context.args or [])
+    logger.info("cmd=/rest args=%r send len=%d", context.args, len(output))
+    await send_text(
+        context.bot, chat_id, thread_id, output,
+        reply_to=msg.message_id if msg else None,
+    )
+
+
+async def slash_backlog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+    thread_id = msg.message_thread_id if msg else None
+    output = await cmd_backlog(context.args or [])
+    # 本文が bot.log に残るのは既存 bot と同等で許容 (osekkai-plan.md D-9)
+    logger.info("cmd=/backlog args=%r send len=%d", context.args, len(output))
     await send_text(
         context.bot, chat_id, thread_id, output,
         reply_to=msg.message_id if msg else None,
@@ -3915,6 +4057,8 @@ async def post_init(application: Application) -> None:
         BotCommand("vault_push", "vault の commit 済変更を GitHub に push"),
         BotCommand("snooze", "自発発話を指定日数止める (例: /snooze 3、解除は /snooze 0)"),
         BotCommand("remind", "リマインダ設定 (例: /remind 30m 洗濯物)"),
+        BotCommand("rest", "今夜のおせっかいを休む (解除は /rest off)"),
+        BotCommand("backlog", "夜バックログ (list / add <内容> [締切日] / done <番号>)"),
     ]
     scope = BotCommandScopeChat(chat_id=NOTIFY_CHAT_ID)
     try:
@@ -4054,6 +4198,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("vault_push", slash_vault_push, filters=message_filter))
     app.add_handler(CommandHandler("snooze", slash_snooze, filters=message_filter))
     app.add_handler(CommandHandler("remind", slash_remind, filters=message_filter))
+    app.add_handler(CommandHandler("rest", slash_rest, filters=message_filter))
+    app.add_handler(CommandHandler("backlog", slash_backlog, filters=message_filter))
     # slash command 以外の text message → on_message
     app.add_handler(
         MessageHandler(

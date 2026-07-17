@@ -4628,7 +4628,7 @@ class OsekkaiRecordManualStartTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(self.bot, "_osekkai_intent_store_run", side_effect=_fake_run):
             await self.bot._osekkai_record_manual_start("今夜は積みゲー崩すよ")
 
-        self.assertIn(("tonight-intent", "今夜は積みゲー崩すよ"), calls)
+        self.assertIn(("tonight-intent", "--", "今夜は積みゲー崩すよ"), calls)
 
     async def test_tonight_status_failure_skips_intent_write_without_raising(self) -> None:
         from unittest import mock
@@ -4689,6 +4689,192 @@ class OsekkaiIntentStoreRunTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rc, 0, msg=err)
         status = json.loads(out)
         self.assertEqual(status.get("intent"), "統合テストの意図")
+
+
+class ParseBacklogAddArgsTest(unittest.TestCase):
+    """parse_backlog_add_args: /backlog add 引数の (text, deadline) 分解純関数 (#118)。
+
+    締切として切り出すのは「末尾トークンが実在日付 かつ 本文が残る」ときだけ。
+    迷ったら本文扱い (誤解釈で本文を欠落させない側に倒す)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_trailing_date_becomes_deadline(self) -> None:
+        self.assertEqual(
+            self.bot.parse_backlog_add_args(["原神", "イベント", "2026-07-25"]),
+            ("原神 イベント", "2026-07-25"),
+        )
+
+    def test_no_date_is_text_only(self) -> None:
+        self.assertEqual(
+            self.bot.parse_backlog_add_args(["創作", "の", "続き"]),
+            ("創作 の 続き", None),
+        )
+
+    def test_nonexistent_date_stays_in_text(self) -> None:
+        self.assertEqual(
+            self.bot.parse_backlog_add_args(["掃除", "2026-13-99"]),
+            ("掃除 2026-13-99", None),
+        )
+
+    def test_lone_date_token_is_text(self) -> None:
+        self.assertEqual(
+            self.bot.parse_backlog_add_args(["2026-07-25"]),
+            ("2026-07-25", None),
+        )
+
+    def test_date_not_at_tail_is_not_deadline(self) -> None:
+        self.assertEqual(
+            self.bot.parse_backlog_add_args(["2026-07-25", "まで"]),
+            ("2026-07-25 まで", None),
+        )
+
+
+class CmdRestTest(unittest.IsolatedAsyncioTestCase):
+    """cmd_rest: 休むフラグの Telegram 入口 (#118)。intent_store subprocess はモック。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _patch_store(self, calls, rc=0, out="{}", err=""):
+        from unittest import mock
+
+        async def _fake_run(*args):
+            calls.append(args)
+            return rc, out, err
+
+        return mock.patch.object(
+            self.bot, "_osekkai_intent_store_run", side_effect=_fake_run
+        )
+
+    async def test_no_args_sets_resting(self) -> None:
+        calls = []
+        with self._patch_store(calls):
+            out = await self.bot.cmd_rest([])
+        self.assertEqual(calls, [("tonight-rest",)])
+        self.assertIn("おやすみ", out)
+
+    async def test_off_clears_resting(self) -> None:
+        calls = []
+        with self._patch_store(calls):
+            out = await self.bot.cmd_rest(["off"])
+        self.assertEqual(calls, [("tonight-rest", "--off")])
+        self.assertIn("解除", out)
+
+    async def test_unknown_arg_returns_usage_without_store_call(self) -> None:
+        calls = []
+        with self._patch_store(calls):
+            out = await self.bot.cmd_rest(["tomorrow"])
+        self.assertEqual(calls, [])
+        self.assertEqual(out, self.bot.REST_USAGE)
+
+    async def test_store_failure_is_reported(self) -> None:
+        calls = []
+        with self._patch_store(calls, rc=1, err="boom"):
+            out = await self.bot.cmd_rest([])
+        self.assertIn("失敗", out)
+
+
+class CmdBacklogTest(unittest.IsolatedAsyncioTestCase):
+    """cmd_backlog: 週次バックログの Telegram 入口 (#118)。intent_store subprocess はモック。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _patch_store(self, calls, rc=0, out="{}", err=""):
+        from unittest import mock
+
+        async def _fake_run(*args):
+            calls.append(args)
+            return rc, out, err
+
+        return mock.patch.object(
+            self.bot, "_osekkai_intent_store_run", side_effect=_fake_run
+        )
+
+    async def test_no_args_returns_usage_without_store_call(self) -> None:
+        calls = []
+        with self._patch_store(calls):
+            out = await self.bot.cmd_backlog([])
+        self.assertEqual(calls, [])
+        self.assertEqual(out, self.bot.BACKLOG_USAGE)
+
+    async def test_list_relays_cli_output(self) -> None:
+        calls = []
+        with self._patch_store(calls, out="[ ] #1 原神イベント (締切: 2026-07-25)\n"):
+            out = await self.bot.cmd_backlog(["list"])
+        self.assertEqual(calls, [("backlog-list",)])
+        self.assertIn("#1 原神イベント", out)
+
+    async def test_list_failure_is_reported(self) -> None:
+        calls = []
+        with self._patch_store(calls, rc=1, err="boom"):
+            out = await self.bot.cmd_backlog(["list"])
+        self.assertIn("失敗", out)
+
+    async def test_add_with_deadline_passes_deadline_flag(self) -> None:
+        calls = []
+        with self._patch_store(calls, out='{"id": 7, "text": "原神 イベント"}'):
+            out = await self.bot.cmd_backlog(["add", "原神", "イベント", "2026-07-25"])
+        self.assertEqual(
+            calls, [("backlog-add", "--deadline", "2026-07-25", "--", "原神 イベント")]
+        )
+        self.assertIn("#7", out)
+        self.assertIn("締切: 2026-07-25", out)
+
+    async def test_add_without_deadline(self) -> None:
+        calls = []
+        with self._patch_store(calls, out='{"id": 3, "text": "創作の続き"}'):
+            out = await self.bot.cmd_backlog(["add", "創作の続き"])
+        self.assertEqual(calls, [("backlog-add", "--", "創作の続き")])
+        self.assertIn("#3", out)
+        self.assertNotIn("締切", out)
+
+    async def test_add_dash_leading_text_is_passed_as_positional(self) -> None:
+        # `--` セパレータにより `-` 始まりの本文でも argparse がオプション誤認しない
+        # (#118 レビュー指摘。実 CLI 挙動は OsekkaiIntentStoreRunTest 側で結合検証)
+        calls = []
+        with self._patch_store(calls, out='{"id": 4, "text": "-x"}'):
+            out = await self.bot.cmd_backlog(["add", "-x"])
+        self.assertEqual(calls, [("backlog-add", "--", "-x")])
+        self.assertIn("#4", out)
+
+    async def test_add_unexpected_output_still_reports_success(self) -> None:
+        # rc=0 なら追加自体は成功している。id 表示だけ諦めて成功として報告する
+        calls = []
+        with self._patch_store(calls, out="not json"):
+            out = await self.bot.cmd_backlog(["add", "創作の続き"])
+        self.assertIn("追加したよ", out)
+
+    async def test_add_failure_is_reported(self) -> None:
+        calls = []
+        with self._patch_store(calls, rc=1, err="boom"):
+            out = await self.bot.cmd_backlog(["add", "創作の続き"])
+        self.assertIn("失敗", out)
+
+    async def test_done_completes_item(self) -> None:
+        calls = []
+        with self._patch_store(calls, out='{"id": 2, "done": true}'):
+            out = await self.bot.cmd_backlog(["done", "2"])
+        self.assertEqual(calls, [("backlog-complete", "2")])
+        self.assertIn("完了", out)
+
+    async def test_done_non_numeric_rejected_without_store_call(self) -> None:
+        calls = []
+        with self._patch_store(calls):
+            out = await self.bot.cmd_backlog(["done", "abc"])
+        self.assertEqual(calls, [])
+        self.assertIn("数字", out)
+
+    async def test_done_failure_reports_not_found(self) -> None:
+        calls = []
+        with self._patch_store(calls, rc=1, err="not found"):
+            out = await self.bot.cmd_backlog(["done", "99"])
+        self.assertIn("見つからない", out)
 
 
 if __name__ == "__main__":
