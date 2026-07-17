@@ -45,6 +45,11 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 - (Phase 1 の TODO は全完了。当面は通常運用での様子見 — TODO 7 の bot 改変 (commit `b009917`) は初夜 1 周をエラーなしで通過済み、継続観察のみ)
 
+## Phase 2 への申し送り (チケット #112 着手時に読む)
+
+- **休むフラグの穴 (2026-07-17 OWNER 指示で登録)**: 要件 §3-4「『今日は休む』を常に尊重し、その日は静かに引き下がる」に対し、Phase 1 には **Telegram から休むフラグ (`tonight.json` の `resting`) を立てる経路がない** (`intent_store.py tonight-rest` の CLI のみ)。現状の挙動: OWNER が osekkai topic で「今日は休む」と返しても (1) 会話上は system prompt のトーン指示で引き下がるが、(2) `resting` は立たないので **23:30 の振り返りは普通に届く**、(3) それが今夜最初の発話なら `_osekkai_record_manual_start` により「今日は休む」がそのまま今夜の意図として原文記録される。修正方向の制約: 「claude セッションに state 書き込みをさせない」OWNER 裁定 (TODO 7 Done 参照) があるため、実装は `_osekkai_record_manual_start` と同型の **bot Python 側での判定** (発話の休む宣言判定 → `tonight-rest` subprocess) か、**明示コマンド** (`/rest` 等) のどちらか。自然文判定は誤爆 (「休むか迷う」等) と CLAUDE.md の文言マッチ禁止原則に触れる懸念があるため、明示コマンド案を有力候補としてメモしておく (決定は Phase 2 設計時)
+- **関連 (同根、優先度低)**: バックログ登録も Telegram 入口がない (CLI のみ)。要件 §3-3 の「週の頭に数個登録 (/want 流用を検討)」は未実装。休むフラグと同じ「Telegram からの state 書き込みは bot Python 側で完結させる」型で一緒に設計するとよい
+
 ## Done
 
 - **2026-07-17**: TODO 8 完了 — **Phase 1 (チケット #110-114) の全 TODO 完了、実運用入り**。2026-07-16 の夜ブロックを実弾で 1 周通過。**号令 (19:11)**: timer 発火 19:11:44 → envelope 送信 → bot ディスパッチ (`osekkai sent mode=call`) → OWNER 着信確認。collector pull は timeout で失敗し `pull_ok=False` のまま送信 (N3 の想定どおり続行。19:31 の事後確認では AW サーバ 200/18ms 応答 — 発火時点だけの一時的到達不能とみられ、原因深掘りはせず)。**振り返り (23:39)**: retro 側 pull が号令時の失敗分を同範囲再取得で復旧 (`pull 完了 ... window=191 afk=84`、`pull_ok=True`) → envelope 送信 → bot ディスパッチ (`osekkai sent mode=retro`)。N3 の「失敗しても state を進めず次回 pull で回収」が実弾で機能した初事例。**bot 側健全性**: 当夜 19:00〜24:00 の journal warning 0 件、bot.log で call/retro 両ディスパッチ + osekkai topic での OWNER 返信応答 2 件を確認、traceback なし。**OWNER 判定**: 着信 2 通とも確認、「一旦問題なし」(2026-07-17) — 完了条件 (1 周通過 + 窮屈でない) を満たす
@@ -64,4 +69,4 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 ---
 
-**最終更新**: 2026-07-17 (TODO 8 完了 — 2026-07-16 夜ブロック 1 周を実弾通過、OWNER「一旦問題なし」。Phase 1 全 TODO 完了・実運用入り。前回 2026-07-16: 前半 (号令) 通過確認)
+**最終更新**: 2026-07-17 (Phase 2 への申し送り新設 — 休むフラグの Telegram 入口欠落 + バックログ登録入口を #112 向けに記録。前回 2026-07-17: TODO 8 完了・Phase 1 実運用入り)
