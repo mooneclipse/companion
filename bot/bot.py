@@ -2198,7 +2198,8 @@ def build_tweet_markdown(data: dict, tweet_id: str, media: list[dict],
                          now: datetime) -> str:
     """Render the vault clip Markdown from a syndication `tweet-result` payload.
 
-    frontmatter / 本文は最新クリップ慣習 (`clips/2026-03-27 @trickcal_GW 1.md`) に寄せる。
+    frontmatter / 本文は最新クリップ慣習 (`clips/2026-03-27 @trickcal_GW 1.md`) に寄せる
+    (例外: `origin: external` は #117 で追加した信頼境界マーカーで手書きクリップにはない)。
     本文は ``expand_tweet_text`` で t.co 短縮 URL を実 URL に展開し、媒体 t.co を除去
     してから HTML エンティティをデコードする。frontmatter の ``url:`` は handle と
     tweet_id から正規形 ``https://x.com/<handle>/status/<tweet_id>`` を組み立てる
@@ -2237,6 +2238,9 @@ def build_tweet_markdown(data: dict, tweet_id: str, media: list[dict],
     fm.append('  - "processed"')
     fm.append(f"published: {published}")
     fm.append(f"created: {now.strftime('%Y-%m-%d')}")
+    # 外部由来テキストの印 (#117): 読み戻し時にデータ扱いさせる信頼境界マーカー。
+    # ルールの正は bot-workspace/CLAUDE.md「外部由来テキストの信頼境界」。
+    fm.append("origin: external")
     if photos:
         fm.append(f"image: {_yaml_quote(f'{TWEET_ATTACHMENTS_DIR}/' + photos[0]['filename'])}")
     fm.append("---")

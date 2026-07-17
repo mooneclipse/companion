@@ -3238,6 +3238,7 @@ class BuildTweetMarkdownTest(unittest.TestCase):
         self.assertIn('  - "processed"', md)
         self.assertIn("published: 2026-06-08", md)  # 01:00 UTC → 10:00 JST、同日
         self.assertIn("created: 2026-06-08", md)
+        self.assertIn("origin: external", md)  # 外部由来マーカー (#117)
         self.assertIn('image: "attachments/ErkSSFgW4AMKude.jpg"', md)
         self.assertIn("## Tweet", md)
         # HTML エンティティがデコードされること
