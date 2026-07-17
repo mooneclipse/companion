@@ -73,6 +73,14 @@
 
 **aw-android の REST 直接 pull は現状不可能** (待受が 127.0.0.1 固定で公開設定なし)。aw-sync の Android 対応は 2026-07 時点で開発版のみ + 不安定 (onboarding 起動不良 issue #170 等)。着手時に (a) aw-android sync の成熟待ち、(b) Tailscale 越し wireless ADB で `dumpsys usagestats` を pull、(c) 他 OSS、を再調査して決める。**Phase 1 の設計は Android が別経路になる前提 (収集器をデバイス別プラグイン型に)** で組む。
 
+**2026-07-17 再調査 (チケット #112、Phase 1 完了直後)** — 方式決定 = **(a) aw-android の aw-sync 対応リリースを watch し、それまで Phase 2 は保留** (Phase 3 との順序入替は #113 記載どおり可)。根拠 ((a) は GitHub releases/issues + aw-sync README を直接確認、(b)(c) は Web 検索ベース):
+
+- **(a) aw-sync**: 公式 README FAQ は "It doesn't support Android, yet" のまま。ただし上流は活発に前進中 — aw-server-rust の Android JNI sync 対応が v0.14.0b1 (2026-05-07、prerelease) に同梱、aw-android は dev ビルド v0.14.0dev20260712 (2026-07-12) のリリースノートに "playing around with aw-sync"。aw-android の安定版は v0.12.1 (2023-10) のまま、onboarding 起動不良 issue #170 (2026-07-02 起票) も open。転送はフォルダベース (sync-dir を rsync/Syncthing 等で複製) なので、成熟すれば Syncthing over Tailscale で Linux 側に自然に届き、収集器プラグイン型の設計にそのまま乗る
+- **(b) wireless ADB + dumpsys usagestats**: **不採用**。Android 14 以降 wireless debugging はスリープ/再起動でポートがランダム化・無効化され、無人の夜間 pull には都度の手動再有効化かサードパーティのブート時再有効化ハックが必須。公式の改善 (adb Wi-Fi 2.0 の自動再接続) は Android 17+ で、pixel-6 (OS 更新保証終了済み、セキュリティ更新も 2026-10 まで) には来ない。回避策の積み増し前提の方式は CLAUDE.md 対症療法上限に抵触するため見送り
+- **(c) 他 OSS**: usageDirect (F-Droid) は UsageStats を端末内 SQLite に蓄積するが手動エクスポートのみで自動送信経路なし。「UsageStats → ネットワーク push」の保守された OSS は見つからず。自作ミニアプリ (UsageStatsManager + Tailscale 越し POST) は技術的には可能だが、上流が aw-sync Android 対応を進めている最中に自前の保守面を増やす理由がない (D-3 の「AW は差し替え可能な収集部品」方針とも整合)
+
+**再確認トリガー**: aw-android の sync 同梱リリース、または ActivityWatch v0.14 安定版リリース (チケット #114 の watch と同時に確認できる)。
+
 ### Phase 3 — 中間チェック / 締切リマインド / プライバシーフィルタ / 頻度調整
 
 21〜22 時の逸脱判定 (宣言した意図 vs 直近活動の差分、逸れている時だけ 1 回)、締切アイテムの残り日数リマインド、ウィンドウタイトルのマスクフィルタ設計 + **蓄積・活用の開始** (D-6 で Phase 1 は非蓄積)、実運用フィードバックでの頻度・文面調整。
