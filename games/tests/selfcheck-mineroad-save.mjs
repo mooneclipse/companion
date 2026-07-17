@@ -46,7 +46,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.14.0", ver === "v0.14.0", { ver });
+check("VERSION = v0.15.0", ver === "v0.15.0", { ver }); // v0.15.0 掘削8方向(STATUS v0.15.0)へ機械追随。
 
 // ============================================================================
 // 1. fail→retry で永続 state 復元

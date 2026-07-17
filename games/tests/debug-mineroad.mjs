@@ -1,4 +1,6 @@
-// マインロード v0.14.0 実機相当デバッグ + 既存作回帰(gate A〜AE)。
+// マインロード v0.15.0 実機相当デバッグ + 既存作回帰(gate A〜AF)。
+// v0.15.0 = 掘削 8 方向の原作合わせ(タップ隣接判定 Chebyshev 1 / はしご無し上掘り / 斜めの
+// 前提条件付き移動・掘削 / bump-to-attack 8 方向)→ gate AF を新設(画面座標ヒットテスト経由)。
 // v0.12.0 = 中核作り直し(実機 FB で中核破綻が判明)。①女の子追従を「自機足跡履歴(G.playerTrail)を
 // 1手ずつ消化する snake 追従」へ引き直し(旧 bfsStep+独立重力の底張り付きを設計から消す)→ gate C/N/P を
 // 「状態注入/ワープ/縦坑先掘りなしの実プレイ経路(act でジグザグ掘削→足跡追従→地表救出)」へ作り直し。
@@ -370,7 +372,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.14.0" &&
+    version === "v0.15.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.dungeonBtnCount === 9 &&
@@ -399,7 +401,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.13.1)", corePass);
+  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.15.0)", corePass);
   await ctx.close();
 }
 
@@ -3736,6 +3738,138 @@ let itemsPass = true;
 }
 
 // ============================================================================
+// (AF) v0.15.0 掘削 8 方向(画面座標ヒットテスト経由、STATUS v0.15.0 判断 A〜D/F)。
+//   AF1 はしご無し上掘り: 真上が固体のセルで placedLadders 空のまま画面タップで真上を掘れる。
+//       掘り抜きで自機は移動しない → 次タップの既存クライムで 1 マス登る。
+//   AF2 斜めタップ受理: 斜め隣(Chebyshev 1)のタップが act に届き掘削が発生。斜め上の掘り抜きは非移動。
+//   AF3 斜め階段登り: AF2 の続きの斜めタップで 1 段上がる(横隣の足場で重力が止まる)。
+//   AF4 Chebyshev 距離 2 のタップは無反応(遠隔タップ誤爆なし)。
+//   シナリオ構築は G.dug/G.spawned 注入(player 由来 state)のみ。世界生成レイヤーには非介入。
+// ============================================================================
+let dig8Pass = true;
+{
+  console.log("== (AF) v0.15.0 掘削 8 方向(斜めタップ/はしご無し上掘り) ==");
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+  await startToDive(page);
+
+  const AF_HELPERS = `
+    function afFindCell(pred) {
+      for (let r = 2; r <= CONST.DEPTH_ROWS - 2; r++)
+        for (let c = 0; c < CONST.GRID_COLS - 1; c++)
+          if (pred(c, r)) return { c, r };
+      return null;
+    }
+    function afSolid(c, r) {
+      const t = tileAt(c, r);
+      return t !== TILE.NONE && t !== TILE.SURFACE;
+    }
+    function afPlace(c, r) {
+      G.dug.add(c + "," + r);
+      moveTo(c, r, true, true);
+    }
+  `;
+
+  // --- AF1 はしご無し上掘り(真上=固体) ---
+  const af1setup = await page.evaluate((helpers) => {
+    eval(helpers);
+    G.monsters = [];
+    G.pick = "DIAMOND";
+    const cell = afFindCell((c, r) =>
+      afSolid(c, r - 1) && tileAt(c, r - 1) !== TILE.GIRL &&
+      !G.girls.some((g) => g.col === c && g.row === r));
+    if (!cell) return { found: false };
+    G.spawned.add(cell.c + "," + (cell.r - 1)); // 埋没スポーン抑止(シナリオ安定化、player 由来 state)。
+    afPlace(cell.c, cell.r);
+    return { found: true, c: cell.c, r: cell.r, ladders: G.placedLadders.size, px: G.px, py: G.py };
+  }, AF_HELPERS);
+  await page.waitForTimeout(900); // カメラ追従(camY lerp)の整定待ち(タップ座標と描画座標を一致させる)。
+  out("AF1 setup(真上固体セル・はしご0)", af1setup);
+  if (!af1setup.found || af1setup.ladders !== 0) dig8Pass = false;
+
+  // 真上を画面タップで掘り抜く(最大4タップ。掘り抜けても自機非移動)。
+  let af1dig = null;
+  for (let i = 0; i < 4; i++) {
+    const t = await actTap(page, 0, -1);
+    if (!t.onScene) dig8Pass = false;
+    await page.waitForTimeout(40);
+    af1dig = await page.evaluate(([c, r]) => ({
+      dug: G.dug.has(c + "," + (r - 1)), px: G.px, py: G.py,
+    }), [af1setup.c, af1setup.r]);
+    if (af1dig.dug) break;
+  }
+  out("AF1 はしご無し上掘り(掘り抜き+自機非移動)", af1dig);
+  if (!af1dig || !af1dig.dug || af1dig.px !== af1setup.c || af1dig.py !== af1setup.r) dig8Pass = false;
+
+  // 次タップ = 既存クライムで 1 マス登る。
+  const tClimb = await actTap(page, 0, -1);
+  await page.waitForTimeout(40);
+  const af1climb = await page.evaluate(() => ({ px: G.px, py: G.py }));
+  out("AF1 掘り抜き後の次タップでクライム", { tClimb, af1climb });
+  if (!tClimb.onScene || af1climb.py !== af1setup.r - 1) dig8Pass = false;
+
+  // --- AF2/AF3 斜めタップ(掘削→階段登り) ---
+  const af2setup = await page.evaluate((helpers) => {
+    eval(helpers);
+    G.monsters = [];
+    const cell = afFindCell((c, r) =>
+      afSolid(c + 1, r) && afSolid(c, r - 1) && afSolid(c + 1, r - 1) &&
+      tileAt(c + 1, r - 1) !== TILE.GIRL &&
+      !G.girls.some((g) => g.col === c && g.row === r));
+    if (!cell) return { found: false };
+    const { c, r } = cell;
+    G.spawned.add(c + "," + (r - 1)); G.spawned.add((c + 1) + "," + (r - 1));
+    afPlace(c, r);
+    G.dug.add(c + "," + (r - 1)); // 真上を掘った跡に(斜め前提条件の「真上が空間」正例)。
+    G.unstableDug = new Set(); // なだれ土の遅延崩落でシナリオが乱れないよう明示クリア。
+    return { found: true, c, r, px: G.px, py: G.py };
+  }, AF_HELPERS);
+  await page.waitForTimeout(900); // カメラ整定待ち。
+  out("AF2 setup(横隣固体・斜め先固体・真上空間)", af2setup);
+  if (!af2setup.found) dig8Pass = false;
+
+  let af2dig = null;
+  for (let i = 0; i < 4; i++) {
+    const t = await actTap(page, 1, -1);
+    if (!t.onScene) dig8Pass = false;
+    await page.waitForTimeout(40);
+    af2dig = await page.evaluate(([c, r]) => ({
+      dug: G.dug.has((c + 1) + "," + (r - 1)), px: G.px, py: G.py,
+    }), [af2setup.c, af2setup.r]);
+    if (af2dig.dug) break;
+  }
+  out("AF2 斜めタップで掘削(掘り抜き+自機非移動)", af2dig);
+  if (!af2dig || !af2dig.dug || af2dig.px !== af2setup.c || af2dig.py !== af2setup.r) dig8Pass = false;
+
+  await page.evaluate(() => { G.unstableDug = new Set(); });
+  const tStair = await actTap(page, 1, -1);
+  await page.waitForTimeout(40);
+  const af3 = await page.evaluate(() => ({ px: G.px, py: G.py }));
+  out("AF3 斜めタップで階段登り(1 段上がる)", { tStair, af3 });
+  if (!tStair.onScene || af3.px !== af2setup.c + 1 || af3.py !== af2setup.r - 1) dig8Pass = false;
+
+  // --- AF4 Chebyshev 距離 2 のタップは無反応 ---
+  await page.waitForTimeout(900); // 階段登り後のカメラ整定待ち。
+  const af4before = await page.evaluate(() => ({ px: G.px, py: G.py, sp: G.stamina, hp: G.hp }));
+  const far = await tileCenter(page, af4before.px + 2, af4before.py);
+  await page.mouse.move(far.x, far.y);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(40);
+  const af4after = await page.evaluate(() => ({ px: G.px, py: G.py, sp: G.stamina, hp: G.hp }));
+  const af4ok = JSON.stringify(af4before) === JSON.stringify(af4after);
+  out("AF4 距離2タップ無反応", { af4before, af4after, af4ok });
+  if (!af4ok) dig8Pass = false;
+
+  const af_pe = errors.filter((e) => !e.includes("net::ERR_") && !e.includes("favicon"));
+  if (af_pe.length > 0) dig8Pass = false;
+  out("pageerror", af_pe);
+  out("PASS(AF: 掘削 8 方向)", dig8Pass);
+  await ctx.close();
+}
+
+// ============================================================================
 // (I) determinism 静的検査(lead 必須): app.js/tiles.js に Math.random/Date.now/
 //     performance.now の実呼び出しが無い(コメント言及は可)。配信中のソースを取得して検査。
 // ============================================================================
@@ -3766,7 +3900,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.14.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.15.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -3787,6 +3921,7 @@ out("(AA) v0.12.0 仲間同行(救出ストック→地表で同行→潜行で 
 out("(AB) v0.12.0 セーブ/永続(fail→retry 永続 state 復元/ランごとリセット/surfaceReturn 保存/クリア消去/決定論/非介入)", savePass);
 out("(AD) v0.13.1 はしご設置/回収/上掘り", ladderPass);
 out("(AE) v0.14.0 アイテム拡充 + アンテナ保険(タブ/クラフト5レシピ/設置/透視条件/保険 画面操作)", itemsPass);
+out("(AF) v0.15.0 掘削 8 方向(斜めタップ/はしご無し上掘り/階段登り/遠隔タップ無反応)", dig8Pass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
@@ -3800,7 +3935,7 @@ if (overflowFails.length) {
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
   mechPass && girlFollowPass && staticRescuePass && dungeonPass && clearGatePass && multiGirlPass &&
-  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && savePass && ladderPass && itemsPass && dpadPass && shortVpPass && regressionPass &&
+  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && savePass && ladderPass && itemsPass && dig8Pass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);

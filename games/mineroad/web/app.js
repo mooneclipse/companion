@@ -65,7 +65,11 @@
 // 6種=石炭/鉄鉱石/化石/鋼/ルビー/ダイヤ) + craft/shop 実レシピ化 + 回復薬(原作に無い独自)を飲食
 // (焼き肉/動物の血)へ置換 + アンテナ設置型化(電波網 R0/R の連結判定) + 保険(電波圏内の力尽きは
 // 携行アイテムを1回だけ持ち越す、mineroad_insurance_N キー)。
-const VERSION = "v0.14.0";
+// v0.15.0: 掘削 8 方向の原作合わせ(bc.java の 8 方向入力/cm.java の上・斜めハンドラ準拠)。タップの
+// 隣接判定を Chebyshev 1(隣接 8 マス)へ、真上掘りのはしご前提ゲート撤去(power ゲートのみ、掘り抜き
+// でも自機は移動しない)、斜め=横隣 or 縦隣が空間のとき可(空間なら重力あり moveTo=階段登り/ジャンプ
+// 同型、掘削可なら掘る。斜め下の掘り抜きは前進)、bump-to-attack を 8 方向へ。世界生成レイヤー非介入。
+const VERSION = "v0.15.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -909,9 +913,15 @@ function takeDamage(dmg) {
 }
 
 // ---- 入力 = 方向 1 つを解決(移動 or 掘り) ----------------------------
-// dc,dr は -1/0/1 のいずれか(上下左右の単位方向)。
-// ①空間 → そのマスへ移動(1 行動) ②土/硬土 → 1 手掘る(1 行動、規定手数で空間化し前進)
-// ③硬岩 → 無反応(軽フィードバック)。上移動は 1 マスだけ(足場がある時)。
+// dc,dr は各 -1/0/1(v0.15.0 で斜めを含む 8 方向。原作 bc.java exchangeTapToDirection が
+// dx/dy 独立の 8 方向であることに合わせた。STATUS v0.15.0 翻案判断 A〜D)。
+// ①空間 → そのマスへ移動(1 行動) ②掘削可タイル → 1 手掘る(1 行動、規定手数で空間化)
+// ③硬岩(power 不足) → 無反応(軽フィードバック)。
+// v0.15.0 上掘り: v0.13.1 の「はしご設置済みが前提」ゲートを撤去し、原作どおり power ゲート
+// のみで真上/斜め上も掘れる(cm.java:349-407 = 真上の付帯条件 w(i,i2) は常に真)。はしごの
+// 設置/回収メカ自体(placedLadders)は原作にも存在するアイテムなので非改変で温存。
+// 上方向(dr=-1)の掘り抜きでは自機は移動しない(原作は掘削と移動が別アクション。登るのは
+// 次タップの既存クライム)。
 function act(dc, dr) {
   if (G.screen !== "dive" || G.busy) return;
   const col = G.px + dc;
@@ -920,88 +930,39 @@ function act(dc, dr) {
   if (row < 0) return; // 地表より上は無い。
 
   // v0.5.0 bump-to-attack: 進もうとした先にモンスターが居れば、移動/掘りでなく攻撃(1 戦闘ターン)。
-  // 方向に関係なく(上下左右とも)成立。撃破するまでそのマスは塞がれ前進できない(死の緊張の核)。
+  // v0.15.0: 斜めを含む 8 方向で成立。斜めの前提条件(下記)より先に判定する=原作の入力観
+  // 「隣接タップはその方向へのアクション」に沿い、壁越しでも隣接モンスターへ反撃できる方が
+  // 遊びやすい(STATUS v0.15.0 判断 D、順序の選択は実装値として記録)。
   const foe = monsterAt(col, row);
   if (foe) {
     attackMonster(foe);
     return;
   }
 
-  // 上移動 = 掘った縦坑/階段を 1 マスよじ登る(「掘った跡が帰り道」の核)。真上が空間の時だけ。
-  // 上掘りは不可(土を上へは掘れない=はしご未実装)。1 行動で 1 マスのみ(連続上昇不可)。
-  // 設計判断(重力解決の順序、implementer 裁量): 上移動は意図的なクライム = この 1 歩は重力で
-  // 引き戻さない(ledge を掴んだ扱い)。重力は横移動・下掘り・落下の後にだけ作用させる。
-  // こうしないと単軸移動 + 全重力では掘った縦坑を登れず地表へ戻れない(= 全回復の撤退ループが
-  // 成立しない)ため。「上移動は 1 マスだけ」のスロットルは 1 行動 1 マスで担保。
-  if (dr === -1) {
-    if (isSpace(col, row)) {
-      moveTo(col, row, false, true); // noGravity = true。
-      return;
-    }
-    // v0.13.1 上掘り: 自機位置にはしごが設置済みなら、真上の固体タイルを掘れる。
-    if (G.placedLadders && G.placedLadders.has(G.px + "," + G.py)) {
-      const t = tileAt(col, row);
-      if (t === TILE.NONE || t === TILE.SURFACE) { moveTo(col, row, false, true); return; }
-      const req = TILE_REQ_POWER[t];
-      if (req === undefined || pickPower() < req) {
-        showHint(TEXT.cueRockHit, false);
-        spawnPopupAt(col, row, "×", "warn");
-        playSfx("blocked");
-        return;
-      }
-      const key = col + "," + row;
-      let remain = G.digProgress.get(key);
-      if (remain === undefined) remain = digTaps(t);
-      remain -= 1;
-      spawnPopupAt(col, row, "・");
-      playDig();
-      spendAction();
-      if (remain > 0) {
-        G.digProgress.set(key, remain);
-        renderHud();
-        checkFail();
-        return;
-      }
-      G.digProgress.delete(key);
-      G.dug.add(key);
-      G.fallen.delete(key);
-      let buried = null;
-      if (t === TILE.GIRL) discoverGirl(col, row);
-      else {
-        if (t === TILE.SOIL && avalancheAt(col, row, G.seed)) markUnstableDug(col, row);
-        collectOre(col, row);
-        if (t === TILE.SOIL) collectMushroom(col, row);
-        buried = trySpawnBuryMonster(col, row);
-      }
-      if (buried) {
-        revealAround();
-        monstersAct();
-        renderHud();
-        checkFail();
-        return;
-      }
-      moveTo(col, row, true, true);
-    }
+  // v0.15.0 斜め(dc≠0 かつ dr≠0)の前提条件: 横隣(px+dc,py) または 縦隣(px,py+dr) が空間。
+  // どちらも固体の「完全な壁中への斜めねじ込み」だけは不可(原作 cm.java の w() 判定と同型。
+  // 斜め下は上と鏡映の翻案=STATUS 判断 C)。満たさないときは行動消費もしない。
+  if (dc !== 0 && dr !== 0) {
+    if (!isSpace(G.px + dc, G.py) && !isSpace(G.px, G.py + dr)) return;
+  }
+
+  // 空間 → 移動。真上(0,-1)だけは意図的なクライム=noGravity(掘った縦坑/階段を 1 マスよじ登る
+  // 「掘った跡が帰り道」の核。v0.1.0 以来の設計判断: この 1 歩は重力で引き戻さない=ledge を
+  // 掴んだ扱い。1 行動 1 マスのスロットルで連続上昇はしない)。
+  // 斜め上(±1,-1)は重力ありの通常 moveTo=原作ジャンプと同型(横隣に足場があれば階段登りが
+  // 成立し、なければ moveTo 内の applyGravity で落ち戻る)。横/下/斜め下も重力あり。
+  // 地表(row<=0)は isSpace=true なので SURFACE の横歩き/帰還もここで成立
+  // (v0.4.0 の power ゲートに SURFACE を落とすと地表を歩けなくなる退行の回避と同じ整合)。
+  if (isSpace(col, row)) {
+    moveTo(col, row, false, dc === 0 && dr === -1);
     return;
   }
 
-  const t = tileAt(col, row);
-  if (t === TILE.NONE) {
-    // 空間 → 移動。
-    moveTo(col, row);
-    return;
-  }
-  if (t === TILE.SURFACE) {
-    // 地表は安全な歩行帯(全回復・帰還地点)。横移動で歩ける = isSpace(row<=0)=true と整合。
-    // v0.4.0 の power ゲート(下記)は SOIL/HARD/ROCK/GIRL 専用。地表に req は無いので、
-    // ゲートに落とすと SURFACE が「掘削不能」で弾かれ地表を横歩きできなくなる(v0.3.0 退行)。
-    // → 地表は掘らず素通りで移動する(v0.3.0 は digTaps(SURFACE)=1 の素通りで歩けていた)。
-    moveTo(col, row);
-    return;
-  }
   // v0.4.0 A: ツルハシ power ゲート。所持する最強ツルハシの power がタイル必要 power 未満なら
   // 掘れない(blocked 演出/SFX を流用)。木 power1 では HARD(2)/ROCK(3) が掘れず、石で HARD、
   // 鉄で ROCK、ダイヤで全部。GIRL は SOIL 相当=1(救出対象)。req が無いタイルは掘削不能扱い。
+  // v0.15.0: 真上/斜め上もこの共通ゲートだけで掘れる(原作 n.h() 共通掘削エンジンと同型)。
+  const t = tileAt(col, row);
   const req = TILE_REQ_POWER[t];
   if (req === undefined || pickPower() < req) {
     showHint(TEXT.cueRockHit, false);
@@ -1040,25 +1001,23 @@ function act(dc, dr) {
     if (t === TILE.SOIL) collectMushroom(col, row); // v0.8.0: SOIL 掘り抜きでキノコ通貨を採取(決定論)。
     buried = trySpawnBuryMonster(col, row); // v0.5.0 埋没掘りスポーン(bury% で出現)。
   }
-  // 埋没スポーンが起きたら、そのマスはモンスターが塞ぐ。前進せずその場に留まる
-  // (次の入力 = bump-to-attack で交戦)。掘りの行動コストは払い済み(spendAction)。
-  if (buried) {
+  // 前進しないケース 2 つ:
+  // ①埋没スポーン: そのマスはモンスターが塞ぐ。前進せずその場に留まる(次の入力 = bump-to-attack)。
+  // ②上方向(dr=-1、真上/斜め上)の掘り抜き: 原作は掘削と移動が別アクションなので自機は動かない
+  //   (登るのは次タップのクライム/斜め移動)。なだれ土(markUnstableDug)の崩落解決は次の moveTo の
+  //   resolveCaveins に委ねる=①の遅延解決と同じで、v0.13.1 はしご上掘り「掘り抜き後に登った時点で
+  //   崩れる」と等価のタイミング。
+  // 掘りの行動コストは払い済み(spendAction)。
+  if (buried || dr === -1) {
     revealAround();
     monstersAct(); // この 1 行動に対し出現中のモンスターが反応(行動頻度は SPD で律速)。
     renderHud();
     checkFail();
     return;
   }
-  // 横/下方向に掘ったらそのマスへ前進(原作: 土なら自動で掘って進む)。掘りで行動コストは
+  // 横/下/斜め下に掘ったらそのマスへ前進(原作: 土なら自動で掘って進む)。掘りで行動コストは
   // 払い済みなので、前進では二重に取らない(costPaid=true)。
-  if (dr === 1 || dc !== 0) {
-    moveTo(col, row, true);
-  } else {
-    // 真上を掘る経路は上で弾いているのでここは来ない。保険で再描画。
-    revealAround();
-    renderHud();
-    checkFail();
-  }
+  moveTo(col, row, true);
 }
 
 function digTaps(t) {
@@ -2616,10 +2575,14 @@ function pointerEnd(e) {
   pdActive = false;
   if (pdMoved >= CONST.TAP_MAX_MOVE) return;
   const { col, row } = screenToTile(e.clientX, e.clientY);
-  // タップしたマスが自機の上下左右隣接なら、その方向を解決。
+  // タップしたマスが自機の隣接 8 マス(Chebyshev 距離 1)なら、その方向を解決。
+  // v0.15.0: 上下左右(Manhattan 1)→ 斜めを含む 8 方向へ(原作 bc.java の 8 方向入力に合わせる。
+  // 原作の画面 5 分割象限入力は遠隔タップの誤爆を招くため不採用=STATUS v0.15.0 判断 A)。
+  // 自マス(0,0)は除外。方向ボタン UI は 4 方向のまま(斜めはタップで)。
   const dc = col - G.px;
   const dr = row - G.py;
-  if (Math.abs(dc) + Math.abs(dr) !== 1) return;
+  if (dc === 0 && dr === 0) return;
+  if (Math.abs(dc) > 1 || Math.abs(dr) > 1) return;
   act(dc, dr);
 }
 canvas.addEventListener("pointerup", pointerEnd, { passive: true });
