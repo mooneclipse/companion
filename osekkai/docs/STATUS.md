@@ -4,7 +4,7 @@
 
 - **要件正本**: `~/companion/workspace/redesign/osekkai-requirements.md` (§3 は変更不可の合意事項)
 - **実装計画正本**: `~/companion/workspace/redesign/osekkai-plan.md` v0.2 (2026-07-15 OWNER 承認済、設計判断 D-1〜D-9)
-- **チケット**: #110 (Phase 1 実装) / #111 (OWNER 作業 = AW 導入 + topic 新設、#110 のブロッカー) / #112 (Phase 2 Android) / #113 (Phase 3 中間チェック・締切・フィルタ) / #114 (aw-server Bearer 認証リリース追随 watch)。#108 (要件受領〜計画承認) は 2026-07-15 完了
+- **チケット**: #113 (Phase 3 中間チェック・締切・フィルタ) / #114 (aw-server Bearer 認証リリース追随 watch) / #118 (休むフラグ・バックログ登録の Telegram 入口)。完了分: #108 (要件受領〜計画承認、2026-07-15) / #110 (Phase 1 実装) + #111 (OWNER 作業、2026-07-17) / #112 (Phase 2 Android — 2026-07-17 OWNER 裁定で取りやめクローズ)
 
 ## 構成 (Phase 1 予定)
 
@@ -21,9 +21,11 @@ osekkai/
 
 ## 設計判断記録
 
-### 2026-07-17: Phase 2 (Android 収集) の方式は「aw-android sync のリリース待ち (watch)」に確定 (チケット #112 再調査)
+### 2026-07-17: Phase 2 (Android 収集) の方式は「aw-android sync のリリース待ち (watch)」に確定 (チケット #112 再調査) → 同日 OWNER 裁定で取りやめ (追記参照)
 
 チケット #112 指定の 3 案を再調査した結果、**現時点で健全に自動化できる経路がない**と判断し、Phase 2 は aw-android の aw-sync 対応リリースまで保留 (watch) とする。(a) aw-sync は公式 FAQ で Android 未対応のまま (ただし上流は活発: v0.14.0b1 に Android JNI sync、aw-android dev ビルド 2026-07-12 で実験中)、(b) wireless ADB は Android 14+ のポートランダム化で無人夜間 pull が成立せず回避ハックの積み増しが必須 → 対症療法上限に抵触するため不採用、(c) 他 OSS に自動送信経路なし・自作アプリは上流進行中につき見送り。詳細な根拠と再確認トリガー (aw-android の sync 同梱リリース or AW v0.14 安定版 = #114 と同時確認) は計画正本 §4 Phase 2 の 2026-07-17 追記を参照。
+
+**追記 (同日 OWNER 裁定)**: 上記 watch も含め **Phase 2 は取りやめ、#112 クローズ**。理由 = pixel-6 のバッテリー劣化で常駐収集アプリを載せたくない + PC の記録で夜の行動把握は足りる。再検討時は計画正本の再調査結果から読み直して新チケットで。
 
 ### 2026-07-15: proactive 3 モードに相乗りしない (チケット #97 非該当の整理)
 
@@ -49,13 +51,14 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 - (Phase 1 の TODO は全完了。当面は通常運用での様子見 — TODO 7 の bot 改変 (commit `b009917`) は初夜 1 周をエラーなしで通過済み、継続観察のみ)
 
-## Phase 2 への申し送り (チケット #112 着手時に読む)
+## 別セッション着手時に読む申し送り (チケット #118 = 休むフラグ・バックログ登録の Telegram 入口)
 
-- **休むフラグの穴 (2026-07-17 OWNER 指示で登録)**: 要件 §3-4「『今日は休む』を常に尊重し、その日は静かに引き下がる」に対し、Phase 1 には **Telegram から休むフラグ (`tonight.json` の `resting`) を立てる経路がない** (`intent_store.py tonight-rest` の CLI のみ)。現状の挙動: OWNER が osekkai topic で「今日は休む」と返しても (1) 会話上は system prompt のトーン指示で引き下がるが、(2) `resting` は立たないので **23:30 の振り返りは普通に届く**、(3) それが今夜最初の発話なら `_osekkai_record_manual_start` により「今日は休む」がそのまま今夜の意図として原文記録される。修正方向の制約: 「claude セッションに state 書き込みをさせない」OWNER 裁定 (TODO 7 Done 参照) があるため、実装は `_osekkai_record_manual_start` と同型の **bot Python 側での判定** (発話の休む宣言判定 → `tonight-rest` subprocess) か、**明示コマンド** (`/rest` 等) のどちらか。自然文判定は誤爆 (「休むか迷う」等) と CLAUDE.md の文言マッチ禁止原則に触れる懸念があるため、明示コマンド案を有力候補としてメモしておく (決定は Phase 2 設計時)
+- **休むフラグの穴 (2026-07-17 OWNER 指示で登録)**: 要件 §3-4「『今日は休む』を常に尊重し、その日は静かに引き下がる」に対し、Phase 1 には **Telegram から休むフラグ (`tonight.json` の `resting`) を立てる経路がない** (`intent_store.py tonight-rest` の CLI のみ)。現状の挙動: OWNER が osekkai topic で「今日は休む」と返しても (1) 会話上は system prompt のトーン指示で引き下がるが、(2) `resting` は立たないので **23:30 の振り返りは普通に届く**、(3) それが今夜最初の発話なら `_osekkai_record_manual_start` により「今日は休む」がそのまま今夜の意図として原文記録される。修正方向の制約: 「claude セッションに state 書き込みをさせない」OWNER 裁定 (TODO 7 Done 参照) があるため、実装は `_osekkai_record_manual_start` と同型の **bot Python 側での判定** (発話の休む宣言判定 → `tonight-rest` subprocess) か、**明示コマンド** (`/rest` 等) のどちらか。自然文判定は誤爆 (「休むか迷う」等) と CLAUDE.md の文言マッチ禁止原則に触れる懸念があるため、明示コマンド案を有力候補としてメモしておく (決定は #118 設計時。当初 Phase 2 設計時に決める予定だったが、Phase 2 取りやめに伴い 2026-07-17 独立チケット化)
 - **関連 (同根、優先度低)**: バックログ登録も Telegram 入口がない (CLI のみ)。要件 §3-3 の「週の頭に数個登録 (/want 流用を検討)」は未実装。休むフラグと同じ「Telegram からの state 書き込みは bot Python 側で完結させる」型で一緒に設計するとよい
 
 ## Done
 
+- **2026-07-17**: OWNER 裁定 2 件 — (1) **Phase 2 (Android 収集) は watch 含め取りやめ、#112 クローズ** (pixel-6 のバッテリー劣化で常駐収集アプリを載せたくない + PC の記録で足りる。再調査結果は残してあるので再検討時はそこから)。#114 の文面から #112 相互参照を除去。(2) **休むフラグ・バックログ登録の Telegram 入口を #118 として独立チケット化** (別セッションで着手予定)。申し送り節の見出しを #118 参照に更新
 - **2026-07-17**: チケット #112 再調査完了 — Phase 2 (Android 収集) の方式を「aw-android sync のリリース待ち (watch)」に確定 (上記設計判断参照)。計画正本 §4 Phase 2 に再調査結果を追記、#112 のチケット文面を watch 状態 + 着手トリガー付きに更新して todo に戻した。あわせて #114 の watch も確認: ActivityWatch 最新安定版は v0.13.2 のまま (トリガー未成立) だが、**v0.14.0b1 (2026-05-07 prerelease) に opt-in API key (Bearer) 認証が同梱済み**であることを確認し #114 に追記 — 安定版化したら即着手できる状態
 - **2026-07-17**: TODO 8 完了 — **Phase 1 (チケット #110-111) の全 TODO 完了、実運用入り**。2026-07-16 の夜ブロックを実弾で 1 周通過。**号令 (19:11)**: timer 発火 19:11:44 → envelope 送信 → bot ディスパッチ (`osekkai sent mode=call`) → OWNER 着信確認。collector pull は timeout で失敗し `pull_ok=False` のまま送信 (N3 の想定どおり続行。19:31 の事後確認では AW サーバ 200/18ms 応答 — 発火時点だけの一時的到達不能とみられ、原因深掘りはせず)。**振り返り (23:39)**: retro 側 pull が号令時の失敗分を同範囲再取得で復旧 (`pull 完了 ... window=191 afk=84`、`pull_ok=True`) → envelope 送信 → bot ディスパッチ (`osekkai sent mode=retro`)。N3 の「失敗しても state を進めず次回 pull で回収」が実弾で機能した初事例。**bot 側健全性**: 当夜 19:00〜24:00 の journal warning 0 件、bot.log で call/retro 両ディスパッチ + osekkai topic での OWNER 返信応答 2 件を確認、traceback なし。**OWNER 判定**: 着信 2 通とも確認、「一旦問題なし」(2026-07-17) — 完了条件 (1 周通過 + 窮屈でない) を満たす
 
@@ -74,4 +77,4 @@ osekkai の対話は bot の **talk 型 (永続セッション、専用 topic)**
 
 ---
 
-**最終更新**: 2026-07-17 (チケット #112 再調査 — Phase 2 方式を aw-android sync リリース待ち (watch) に確定、#114 watch 確認 (v0.14.0b1 beta に Bearer 認証同梱)。前回 2026-07-17: Phase 2 への申し送り新設)
+**最終更新**: 2026-07-17 (OWNER 裁定 — Phase 2 取りやめ #112 クローズ + 休むフラグ Telegram 入口を #118 起票。前回 2026-07-17: #112 再調査で watch 確定、#114 watch 確認)
