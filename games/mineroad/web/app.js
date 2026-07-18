@@ -69,7 +69,20 @@
 // 隣接判定を Chebyshev 1(隣接 8 マス)へ、真上掘りのはしご前提ゲート撤去(power ゲートのみ、掘り抜き
 // でも自機は移動しない)、斜め=横隣 or 縦隣が空間のとき可(空間なら重力あり moveTo=階段登り/ジャンプ
 // 同型、掘削可なら掘る。斜め下の掘り抜きは前進)、bump-to-attack を 8 方向へ。世界生成レイヤー非介入。
-const VERSION = "v0.15.0";
+// v0.16.0: 水/マグマ機構の原作合わせ(正本 spec §4/§2、STATUS v0.16.0 判断 A〜G、チケット #120)。
+// 固定オーバーレイ hazardAt + SP×3/×4 割増 + マグマ HP chip 2 を総取り替え:
+//  A. ランタイム流体 state G.fluid(Map "col,row"→{k,d:1..8})。hazardAt は流体の初期配置・掘り当て
+//     抽選として温存(ハッシュ・位相 非介入)。startDive で初期空間へ d=8 播種 + 掘り抜きで湧出
+//     (G.fluidReleased で 1 マス 1 回限り)。
+//  B. 毎ターンのセルオートマトン fluidStep(スナップショット row→col 昇順、下優先→塞がれたら左右、
+//     合流 d+1、d=8 満水 cap、非保存、毎ターン 1 マス拡張、決定論)。
+//  C. 浸水は HP 直撃(SP 割増全廃=spendAction は素の SP_PER_ACTION)。水= G.breath が swimTurns() を
+//     超えるまで無傷→超過後 drownDamage()/ターン直接減算・水から出ると息継ぎ。マグマ=猶予なし
+//     ceil(effHpMax()/MAGMA_HP_DIV)/ターン直接減算 + 生肉調理を滞在ターンへ移設。
+//  D. 浮力=水/マグマ中は重力無効(applyGravity は流体セルで停止=着水)。
+//  E. ターン解決を resolveTurn() 1 本に集約(fluidStep→tickSubmersion→ヒント→checkFail→monstersAct)。
+//     崩落土塊の着地マスは流体を消す(埋め立て)。
+const VERSION = "v0.16.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -100,13 +113,13 @@ const CONST = {
   ATK_BASE: 1, // 自機攻撃力 = ATK_BASE + pickPower()。木=2 / 石=3 / 鉄=4 / ダイヤ=6。
   DEF_BASE: 0, // 自機防御力 = DEF_BASE + floor((pickPower()-1)/2)。木=0 / 石=0 / 鉄=1 / ダイヤ=2。
   GIRL_HP: 30, // 護衛中の女の子の HP(monster.csv GIRL 行 verbatim=30)。GIRLATK で削られる。
-  // v0.6.0 水/マグマ 浸水ハザード(原作: 泳げるが激消耗、マグマは特に危険。SWIM で軽減)。消耗倍率
-  // と HP chip 量は CONST 単一ブロックに集約し、将来の育成(PER_SWIM)増分が SWIM_MITIGATION を
-  // 1 点で割れるよう hazardSpMult()/hazardHpChip() ヘルパーへ切り出す(ハードコードを散らさない)。
-  WATER_SP_MULT: 3, // 水中で行動したときの SP 消耗倍率(SP_PER_ACTION × これ)。
-  MAGMA_SP_MULT: 4, // マグマ中で行動したときの SP 消耗倍率(水より激しい)。
-  MAGMA_HP_CHIP: 2, // マグマ中で行動するたび、SP 割増に「加えて」直接 chip する体力(takeDamage 経路)。
-  SWIM_MITIGATION: 1.0, // SWIM 育成での消耗軽減(未実装の別増分=ベースライン 1.0 固定、軽減なし)。
+  // v0.16.0 水/マグマ(原作合わせ、spec §4)。旧 v0.6.0 の SP 割増(WATER_SP_MULT/MAGMA_SP_MULT/
+  // MAGMA_HP_CHIP/SWIM_MITIGATION)は撤去=移動コスト側の割増は原作に無い。浸水の消耗は HP 直撃:
+  // 水は swimTurns() ターンまで無傷→超過後 drownDamage()/ターン、マグマは猶予なし maxHP/5 /ターン。
+  SWIM_BREATH_BASE: 5, // 息の基礎ターン数(原作 SWIM 初期値は jadx 欠落=「掘り抜き水没から 1 往復戻れる猶予」の翻案)。
+  SWIM_BREATH_PER_LV: 5, // PER_SWIM 1 Lv あたりの息延長ターン(原作 SWIM 値 0..20 を Lv0..4 ×5 に直写像)。
+  DROWN_DMG_BASE: 4, // 息切れ後の毎ターン HP 直撃量の基礎(原作 clamp(4 − SWIM/5, 1, 4) の 4)。
+  MAGMA_HP_DIV: 5, // マグマの毎ターン HP 直撃 = ceil(effHpMax()/これ)(原作 maxHP/5 = 5 ターンで死)。
   // v0.7.0 なだれ/落盤 崩落物理(原作: なだれ土=支えを失うと崩れ落ちる不安定な土。落下で自機/女の子を
   // 埋めてダメージ + 掘った道を塞ぐ)。崩落ダメージ係数は CONST 単一ブロックに集約し、将来の育成
   // (支え木/落盤回避)増分が CAVEIN_MITIGATION を 1 点で割れるよう caveinDamage() ヘルパーへ切り出す。
@@ -275,8 +288,9 @@ const TEXT = {
   cueHpZone: "スタミナ切れ。ここから体力が減る",
   cueSurface: "地表。全回復した",
   cueRockHit: "硬岩は掘れない",
-  cueWater: "水の中。泳げるがスタミナを激しく消耗する",
-  cueMagma: "マグマの中。激しく消耗し、体力も削られる。長居は危険",
+  cueWater: "水の中。息が続く間は無事。息が切れると体力が削られる",
+  cueMagma: "マグマの中。体力が激しく削られる。長居は死ぬ",
+  cueDrown: "息が切れた。体力が削られていく。早く水から出よう",
   cueShop: "商人。キノコや鉱石を道具と交換できる",
   failTitle: "力尽きた",
   failSub: "地表へ戻れなかった",
@@ -446,6 +460,11 @@ const G = {
   drops: null, // { 素材名: 個数 } 撃破ドロップ(表示のみ、商人/クラフト連携は次増分)。
   // ---- v0.6.0 浸水ハザード(自機が今いるマスの浸水種。種が変わった時だけヒントを 1 回出す) ----
   lastHazard: 0, // 直前の自機マスの HAZARD 種(HAZARD.NONE/WATER/MAGMA)。連続滞在でヒント連発を抑止。
+  // ---- v0.16.0 流体(ダイブ内ランタイム state。セーブ対象外=savePersistent に入れない) ----
+  fluid: null, // Map("col,row" → {k: HAZARD.WATER|MAGMA, d: 1..8})。流動セルオートマトンの実体。
+  fluidReleased: null, // Set("col,row") 掘り当て湧出を解決済みのマス(再掘での無限湧き防止=1 マス 1 回限り)。
+  breath: 0, // 水中滞在ターンカウンタ(原作 c[34])。swimTurns() 超過で毎ターン HP 直撃、水から出ると 0。
+  drownNoted: false, // 息切れヒントの 1 回フラグ(lastHazard 流儀)。水から出るとリセット。
   // ---- v0.7.0 なだれ/落盤 崩落物理(掘削後に動的にタイル状態が変わる。初期生成系列には触れない) ----
   unstableDug: null, // Set("col,row") 掘り抜いた不安定土(なだれ土)マス。真下が空くと落下する候補。
   fallen: null, // Set("col,row") 崩落で塞がれた(土に戻った)マス。掘り直し可だが帰り道は消える。
@@ -644,6 +663,13 @@ function startDive() {
   G.kills = 0;
   G.drops = {};
   G.lastHazard = HAZARD.NONE; // v0.6.0: 地表スタートは浸水なし。
+  // v0.16.0 流体初期化(ダイブ内ランタイム state=セーブ対象外)。初期空間(tileType NONE)かつ
+  // hazardAt≠NONE のマスへ満水 d=8 で播種(判断 A。hazardAt は初期配置抽選として温存=非介入)。
+  G.fluid = new Map();
+  G.fluidReleased = new Set();
+  G.breath = 0;
+  G.drownNoted = false;
+  seedFluids();
   G.unstableDug = new Set(); // v0.7.0: 掘り抜いた不安定土(落下候補)。
   G.fallen = new Set(); // v0.7.0: 崩落で塞がれたマス。
   G.mushrooms = 0; // v0.8.0: キノコ通貨(SOIL 掘り抜きで採取)。
@@ -842,54 +868,146 @@ function loadInsurance() {
   }
 }
 
-// ---- v0.6.0 水/マグマ 浸水ハザード ヘルパー(係数を 1 箇所に集約) --------
-// 浸水判定: あるマスが空間(NONE=元空間 or 掘った跡)で、かつ hazardAt が浸水を示すか。
-// 固体土の中は浸水しない(掘り抜いて初めて水/マグマが現れる)。地表/範囲外/GIRL は NONE。
-function hazardOf(col, row) {
-  if (!isSpace(col, row)) return HAZARD.NONE; // 空間でなければ浸水しない。
-  return hazardAt(col, row, G.seed);
+// ---- v0.16.0 水/マグマ 流体ヘルパー(原作合わせ、spec §4。判断 A〜C) --------
+// 旧 v0.6.0 の hazardOf/hazardSpMult/hazardHpChip(固定オーバーレイ + SP 割増)は撤去。
+// 流体の実体はランタイム state G.fluid(Map "col,row"→{k,d})。hazardAt(tiles.js)は
+// 「初期配置・掘り当て抽選」の決定論ソースとして温存(ハッシュ・位相 非介入)。
+
+// 自機や任意マスの流体種(HAZARD.NONE/WATER/MAGMA)。流体が無ければ NONE。
+function fluidAt(col, row) {
+  if (!G.fluid) return HAZARD.NONE;
+  const f = G.fluid.get(col + "," + row);
+  return f ? f.k : HAZARD.NONE;
 }
-// 自機が今いるマスの SP 消耗倍率(浸水なら割増)。SWIM_MITIGATION で将来の育成軽減を 1 点で割る。
-// SWIM はベースライン 1.0 固定(育成未実装)なので現状は素の倍率がそのまま出る。
-function hazardSpMult() {
-  const h = hazardOf(G.px, G.py);
-  let mult = 1;
-  if (h === HAZARD.WATER) mult = CONST.WATER_SP_MULT;
-  else if (h === HAZARD.MAGMA) mult = CONST.MAGMA_SP_MULT;
-  if (mult <= 1) return 1;
-  // 軽減: 倍率の「割増ぶん」を SWIM 軽減係数で割る(v0.9.0 PER_SWIM レベルで増える=消耗軽減)。最低 1 倍は保証。
-  return Math.max(1, 1 + (mult - 1) / effSwimMitigation());
+// 息が続くターン数(原作 SWIM 値 c[33] 相当)。PER_SWIM Lv で延長。
+function swimTurns() {
+  return CONST.SWIM_BREATH_BASE + perLv("SWIM") * CONST.SWIM_BREATH_PER_LV;
 }
-// 自機が今いるマスがマグマなら 1 行動あたりの直接 HP chip 量(水/通常は 0)。SWIM で軽減。
-function hazardHpChip() {
-  if (hazardOf(G.px, G.py) !== HAZARD.MAGMA) return 0;
-  return Math.max(0, Math.round(CONST.MAGMA_HP_CHIP / effSwimMitigation())); // v0.9.0 PER_SWIM で chip も軽減。
+// 息切れ後の毎ターン HP 直撃量(原作 clamp(4 − SWIM/5, 1, 4)。SWIM/5 → perLv 直写像)。
+function drownDamage() {
+  return Math.max(1, Math.min(CONST.DROWN_DMG_BASE, CONST.DROWN_DMG_BASE - perLv("SWIM")));
+}
+
+// startDive の流体播種(判断 A-a): 初期空間(tileType NONE)かつ hazardAt≠NONE のマスへ満水 d=8。
+// 掘削前の isSpace は tileType===NONE と等価(dug/fallen とも空)なので tileType を直接引く
+// (spawnSpaceMonsters と同じ走査流儀)。
+function seedFluids() {
+  for (let row = 1; row <= CONST.DEPTH_ROWS; row++) {
+    for (let col = 0; col < CONST.GRID_COLS; col++) {
+      if (tileType(col, row, G.seed) !== TILE.NONE) continue;
+      const hz = hazardAt(col, row, G.seed);
+      if (hz === HAZARD.NONE) continue;
+      G.fluid.set(col + "," + row, { k: hz, d: 8 });
+    }
+  }
+}
+
+// 掘り抜き成立マスの湧出(判断 A-b): hazardAt≠NONE なら満水 d=8 で流体を置く。1 マス 1 回限り
+// (G.fluidReleased)=崩落埋め立て後の再掘や排水後の再掘で無限に湧かない。act の掘り抜き
+// (GIRL 分岐は対象外)から呼ぶ。
+function releaseFluidAt(col, row) {
+  if (!G.fluid || !G.fluidReleased) return;
+  const key = col + "," + row;
+  if (G.fluidReleased.has(key)) return;
+  G.fluidReleased.add(key);
+  const hz = hazardAt(col, row, G.seed);
+  if (hz === HAZARD.NONE) return;
+  G.fluid.set(key, { k: hz, d: 8 });
+}
+
+// ---- v0.16.0 流動セルオートマトン(判断 B。毎ターン 1 回、決定論) ------------
+// スナップショット走査(row 昇順→col 昇順)。そのターンに新規生成されたセルはスナップショットに
+// 居ないので同ターンは流動源にならない=毎ターン 1 マスずつ広がる(原作の落下 1 マス/ターンの律)。
+// 各流体セル: 真下が isSpace なら「流体なし→d=1 生成 / 同種 d<8→d+1(合流増密) / 異種→何もしない」。
+// 真下が固体 or 満水同種 or 異種なら左右それぞれへ同規則。非保存(源は減らない)。row0(地表)と
+// 範囲外へは生成しない。水/マグマは相互不干渉(翻案注記=原作 P() の走査範囲は jadx 欠落)。
+function fluidStep() {
+  if (!G.fluid || !G.fluid.size) return;
+  const snapshot = [];
+  for (const [key, f] of G.fluid) {
+    const [c, r] = key.split(",").map(Number);
+    snapshot.push({ c, r, k: f.k });
+  }
+  snapshot.sort((a, b) => (a.r - b.r) || (a.c - b.c));
+  // 1 ターゲットマスへの流入規則。流れ込めたら true(=下方向が成立し左右展開は不要)。
+  const flowInto = (c, r, kind) => {
+    if (r < 1 || r > CONST.DEPTH_ROWS || c < 0 || c >= CONST.GRID_COLS) return false;
+    if (!isSpace(c, r)) return false; // 固体へは流れ込まない。
+    const key = c + "," + r;
+    const f = G.fluid.get(key);
+    if (!f) { G.fluid.set(key, { k: kind, d: 1 }); return true; }
+    if (f.k !== kind) return false; // 異種→何もしない(相互不干渉)。
+    if (f.d < 8) { f.d += 1; return true; } // 同種合流で増密。
+    return false; // 満水 cap。
+  };
+  for (const cell of snapshot) {
+    if (!flowInto(cell.c, cell.r + 1, cell.k)) {
+      // 真下が固体/満水同種/異種 → 左右それぞれへ同規則(独立判定)。
+      flowInto(cell.c - 1, cell.r, cell.k);
+      flowInto(cell.c + 1, cell.r, cell.k);
+    }
+  }
+}
+
+// ---- v0.16.0 浸水判定(判断 C。毎ターン 1 回、HP 直撃=takeDamage の SP カスケードを通さない) ----
+// 水: G.breath を毎ターン +1、swimTurns() を超えるまで無傷、超過後は drownDamage()/ターンを HP へ
+// 直接減算。水から出ると G.breath=0(息継ぎ、cm.java:1082-1084)。マグマ: 猶予なし毎ターン
+// ceil(effHpMax()/MAGMA_HP_DIV) を HP へ直接減算(cm.java:1224-1226) + 生肉調理(行動時→滞在ターンへ
+// 移設=等価)。力尽き判定は resolveTurn の checkFail に委ねる。
+function tickSubmersion() {
+  const f = fluidAt(G.px, G.py);
+  if (f === HAZARD.WATER) {
+    G.breath += 1;
+    if (G.breath > swimTurns()) {
+      const dmg = drownDamage();
+      G.hp = Math.max(0, G.hp - dmg);
+      spawnPopupAt(G.px, G.py, "-" + dmg, "warn");
+      if (!G.drownNoted) {
+        G.drownNoted = true;
+        showHint(TEXT.cueDrown, true);
+      }
+    }
+    return;
+  }
+  // 水でなければ息継ぎ(マグマ含む=マグマは息でなく即時 HP 直撃)。
+  G.breath = 0;
+  G.drownNoted = false;
+  if (f === HAZARD.MAGMA) {
+    const dmg = Math.ceil(effHpMax() / CONST.MAGMA_HP_DIV);
+    G.hp = Math.max(0, G.hp - dmg);
+    spawnPopupAt(G.px, G.py, "-" + dmg, "warn");
+    cookMeatInMagma(); // v0.14.0 生肉→焼き肉変換をマグマ滞在ターンへ移設(行動時→滞在ターンで等価)。
+  }
+}
+
+// ---- v0.16.0 ターン解決(判断 E。旧 3 箇所の monstersAct() 直呼びを 1 本に集約) ----
+// 順序 = 流動(fluidStep)→浸水(tickSubmersion=水が自分へ流れ込んだターンから浸水扱い)→浸水ヒント
+// (noteHazardEntry=静止していても水が流れ込んでくる動的化に伴い moveTo から移設)→checkFail→
+// (dive 継続なら)monstersAct。呼び出し元 = moveTo / act の非前進経路 / attackMonster。
+function resolveTurn() {
+  if (G.screen !== "dive") return;
+  fluidStep();
+  tickSubmersion();
+  noteHazardEntry();
+  checkFail();
+  if (G.screen !== "dive") return; // 溺れ/マグマで力尽きたら離脱。
+  monstersAct();
 }
 
 // ---- 行動 1 回ぶんのコスト(スタミナ → 体力の二段) --------------------
 // SP がある間は SP を減らす。SP が 0 なら HP を減らす(二段ゲージの核)。HP が 0 になったら力尽き。
-// v0.6.0: 自機が浸水マス(水/マグマ)で行動するなら SP 消耗を hazardSpMult() 倍に割増し(原作
-// 「泳げるが激消耗」)、マグマなら更に hazardHpChip() を takeDamage 経路で直接 chip(「マグマは
-// 特に危険」)。いずれも新ゲージを作らず既存二段ゲージ(SP→HP カスケード)へ接続する。
+// v0.16.0: 浸水の SP 割増は全廃=常に素の SP_PER_ACTION(移動コスト側の割増は原作に無い、spec §4)。
+// 浸水の消耗は tickSubmersion の HP 直撃が担う。
 function spendAction() {
-  const cost = Math.max(1, Math.round(CONST.SP_PER_ACTION * hazardSpMult()));
+  const cost = CONST.SP_PER_ACTION;
   if (G.stamina > 0) {
-    const absorbed = Math.min(G.stamina, cost);
-    G.stamina = Math.max(0, G.stamina - absorbed);
-    const rest = cost - absorbed; // SP で吸収しきれない割増ぶんは HP へ(二段ゲージのカスケード)。
+    G.stamina = Math.max(0, G.stamina - cost);
     if (G.stamina === 0 && !G.enteredHpZone) {
       G.enteredHpZone = true;
       showHint(TEXT.cueHpZone, true);
     }
-    if (rest > 0) G.hp = Math.max(0, G.hp - rest);
   } else {
     G.hp = Math.max(0, G.hp - cost);
-  }
-  // マグマの直接 chip(SP 残があれば SP から、尽きていれば HP から=takeDamage が二段ゲージへ接続)。
-  const chip = hazardHpChip();
-  if (chip > 0) {
-    takeDamage(chip);
-    cookMeatInMagma(); // v0.14.0: マグマ中の行動で所持生肉を焼き肉へ変換(決定論・状態遷移のみ)。
   }
 }
 
@@ -1000,6 +1118,7 @@ function act(dc, dr) {
     collectOre(col, row); // v0.4.0 B: 掘り抜いたマスの鉱石を決定論で産出(GIRL は除外)。
     if (t === TILE.SOIL) collectMushroom(col, row); // v0.8.0: SOIL 掘り抜きでキノコ通貨を採取(決定論)。
     buried = trySpawnBuryMonster(col, row); // v0.5.0 埋没掘りスポーン(bury% で出現)。
+    releaseFluidAt(col, row); // v0.16.0: 掘り当て湧出(hazardAt≠NONE なら満水 d=8、1 マス 1 回限り)。
   }
   // 前進しないケース 2 つ:
   // ①埋没スポーン: そのマスはモンスターが塞ぐ。前進せずその場に留まる(次の入力 = bump-to-attack)。
@@ -1010,7 +1129,7 @@ function act(dc, dr) {
   // 掘りの行動コストは払い済み(spendAction)。
   if (buried || dr === -1) {
     revealAround();
-    monstersAct(); // この 1 行動に対し出現中のモンスターが反応(行動頻度は SPD で律速)。
+    resolveTurn(); // v0.16.0: 流動→浸水→ヒント→checkFail→モンスター反応(判断 E の 1 本化)。
     renderHud();
     checkFail();
     return;
@@ -1052,11 +1171,8 @@ function effAtkBase() {
 function effDefBase() {
   return CONST.DEF_BASE + perLv("DEFENCE") * PER_GAIN.DEF_PER_LV;
 }
-// PER_SWIM: 浸水軽減係数 = SWIM_MITIGATION(1.0) + Lv × SWIM_PER_LV。hazardSpMult/hazardHpChip が
-// この値で割る(レベルが上がるほど水/マグマ消耗が軽くなる=原作「SWIM で軽減」)。
-function effSwimMitigation() {
-  return CONST.SWIM_MITIGATION + perLv("SWIM") * PER_GAIN.SWIM_PER_LV;
-}
+// PER_SWIM: v0.16.0 で消費先を swimTurns()/drownDamage()(息の延長 + 溺れダメージ減額=原作の
+// 減算系)へ引き直した。旧 effSwimMitigation(乗算軽減)は撤去(原作 spec §4=乗算軽減ではない)。
 // v0.10.0 仲間同行: 同行中の仲間がレベルに応じて自機攻撃力へ乗せる援護(原作「一緒に戦う」=戦力になる)。
 // 同行が following 中(=実際に隣で戦える)ときだけ効く。未指定/ロスト/帰還後は 0=既存挙動に完全一致。
 function effCompanionAtk() {
@@ -1376,8 +1492,8 @@ function attackMonster(foe) {
   if (foe.hp <= 0) {
     killMonster(foe);
   }
-  // 自機の 1 行動に対しモンスターが反応(生き残った foe の反撃含む)。
-  monstersAct();
+  // 自機の 1 行動に対する解決(v0.16.0: 流動→浸水→生き残った foe の反撃含むモンスター反応)。
+  resolveTurn();
   renderHud();
   checkFail();
 }
@@ -1534,8 +1650,8 @@ function moveTo(col, row, costPaid, noGravity) {
     return;
   }
   if (G.py > G.maxDepthThisDive) G.maxDepthThisDive = G.py;
-  noteHazardEntry(); // v0.6.0: 浸水マス(水/マグマ)へ入った瞬間に 1 回だけヒントを出す。
-  monstersAct(); // v0.5.0: 自機の 1 行動に対しモンスターが反応(追跡/攻撃、SPD で律速)。
+  // v0.16.0: noteHazardEntry は resolveTurn へ移設(静止していても水が流れ込んでくる動的化)。
+  resolveTurn(); // 流動→浸水→ヒント→checkFail→モンスター反応(判断 E の 1 本化)。
   renderHud();
   checkFail();
 }
@@ -1581,6 +1697,7 @@ function resolveCaveins() {
     G.fallen.add(col + "," + dest);
     G.unstableDug.delete(col + "," + srcRow);
     G.dug.delete(col + "," + dest); // 掘った跡だったマスが塞がれる(帰り道の消失)。
+    if (G.fluid) G.fluid.delete(col + "," + dest); // v0.16.0: 着地マスの流体は消す(土での埋め立て、判断 E)。
     spawnPopupAt(col, dest, "▼", "warn"); // 崩落の視覚合図。
     playSfx("blocked"); // 専用 SFX 無し=塞がりの警告音を流用。
     // 埋没判定: 落ちてきたマスに自機/女の子が居れば埋まる。
@@ -1612,10 +1729,11 @@ function buryUnitsAt(col, row) {
   }
 }
 
-// v0.6.0: 自機が今いるマスの浸水種を見て、種が変わったとき(NONE→水/マグマ、水↔マグマ)だけ
-// 1 回ヒントを出す(連続滞在でヒント連発しないよう lastHazard と比較)。地表へ戻ると NONE に戻る。
+// v0.6.0→v0.16.0: 自機マスの浸水種(fluidAt=流体 state ベース)が変わったとき(NONE→水/マグマ、
+// 水↔マグマ)だけ 1 回ヒントを出す(連続滞在でヒント連発しないよう lastHazard と比較)。
+// v0.16.0 で moveTo から resolveTurn へ移設(静止していても水が流れ込んでくる)。
 function noteHazardEntry() {
-  const h = hazardOf(G.px, G.py);
+  const h = fluidAt(G.px, G.py);
   if (h === G.lastHazard) return;
   G.lastHazard = h;
   if (h === HAZARD.WATER) showHint(TEXT.cueWater, true);
@@ -1624,8 +1742,12 @@ function noteHazardEntry() {
 
 // 自機の重力落下(足元が空間の間、底まで落ちる)。落下はコスト無し(原作の落下と同様)。
 // 地表(row 0)は安全な地面 = 立てる帰還地点なので重力は作用しない(掘った縦坑へ吸い込まれない)。
+// v0.16.0 浮力(判断 D、原作 n.y()=水/マグマ上は重力無効): 現在マスに流体があれば落下しない。
+// 落下ループ中も流体セルへ入った時点で停止(着水して浮く)。上移動は既存クライム/斜め上 moveTo が
+// そのまま泳ぎとして機能(新規分岐なし)。女の子・モンスターは非介入。
 function applyGravity() {
   if (G.py <= 0) return; // 地表に立っている間は落ちない。
+  if (fluidAt(G.px, G.py) !== HAZARD.NONE) return; // 浮力: 流体中は落ちない。
   let guard = 0;
   while (guard < CONST.DEPTH_ROWS + 2) {
     guard++;
@@ -1635,6 +1757,7 @@ function applyGravity() {
     if (isSpace(G.px, below) && !monsterAt(G.px, below)) {
       G.py = below;
       if (G.py > G.maxDepthThisDive) G.maxDepthThisDive = G.py;
+      if (fluidAt(G.px, G.py) !== HAZARD.NONE) break; // 着水: 流体セルに入ったらそこで浮いて停止。
     } else break;
   }
 }
@@ -1906,6 +2029,10 @@ function surfaceReturn() {
   G.stamina = effStaminaMax();
   G.hp = effHpMax();
   G.enteredHpZone = false;
+  // v0.16.0: 地表 = 水の外なので息継ぎ(moveTo は surfaceReturn で early return し resolveTurn の
+  // tickSubmersion を通らないため、ここで明示リセット。残り息表示の地表残留も防ぐ)。
+  G.breath = 0;
+  G.drownNoted = false;
   savePersistent(); // v0.12.0: 地上帰還時に永続 state を保存(力尽きたら前回の地上帰還時点に戻る)。
   showHint(surfaceProgressText(), false);
   playSfx("heal");
@@ -2742,12 +2869,13 @@ function render() {
         const cc = caveColor(row);
         ctx.fillStyle = `rgb(${cc[0]},${cc[1]},${cc[2]})`;
         ctx.fillRect(sx, sy, tile + 1, tile + 1);
-        // v0.6.0 浸水ハザード: 空間が水/マグマで満たされていれば半透明オーバーレイ(新規アセット無し)。
-        // 水=青系/マグマ=赤橙系。矩形塗りの上に rgba を重ねる(タイル分布/既存色には触れない)。
-        const hz = hazardAt(col, row, G.seed);
-        if (hz !== HAZARD.NONE) {
-          const hc = hexToRgb(hz === HAZARD.MAGMA ? PALETTE.magma : PALETTE.water);
-          ctx.fillStyle = `rgba(${hc[0]},${hc[1]},${hc[2]},${hz === HAZARD.MAGMA ? 0.55 : 0.45})`;
+        // v0.16.0 流体(判断 F): hazardAt 直読み→G.fluid(ランタイム流体 state)読みへ差し替え。
+        // 密度 d(1..8)で alpha を変調(浅い水は薄く・満水は濃く)。PALETTE.water/magma は不変。
+        const fl = G.fluid ? G.fluid.get(col + "," + row) : null;
+        if (fl) {
+          const hc = hexToRgb(fl.k === HAZARD.MAGMA ? PALETTE.magma : PALETTE.water);
+          const fa = fl.k === HAZARD.MAGMA ? 0.3 + (fl.d / 8) * 0.3 : 0.2 + (fl.d / 8) * 0.35;
+          ctx.fillStyle = `rgba(${hc[0]},${hc[1]},${hc[2]},${fa})`;
           ctx.fillRect(sx, sy, tile + 1, tile + 1);
         }
         // v0.13.1 設置済みはしご(木の色で縦2本+横段3本の簡素はしご)。
@@ -2830,6 +2958,22 @@ function render() {
   const cx = G.px * tile + tile / 2;
   const cy = (G.py - camY) * tile + tile / 2;
   drawMiner(cx, cy);
+
+  // v0.16.0 残り息(判断 F): 水没中(G.breath>0)は自機頭上に残り息ターンを canvas 直描画(DOM 追加
+  // なし)。残 0(息切れ=HP 直撃中)は警告色。小さい数字 + 黒縁で可読性を確保。
+  if (G.breath > 0) {
+    const remainBreath = Math.max(0, swimTurns() - G.breath);
+    ctx.font = `bold ${Math.max(10, Math.round(tile * 0.36))}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const bx = cx;
+    const by = cy - tile * 0.62;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.strokeText(String(remainBreath), bx, by);
+    ctx.fillStyle = remainBreath > 0 ? "#dff3ff" : "#ff7b6a";
+    ctx.fillText(String(remainBreath), bx, by);
+  }
 }
 
 // セル中央にキャラスプライトを描く(縦長アスペクト維持・足元をマス中央付近に)。

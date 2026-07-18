@@ -47,7 +47,7 @@ await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle"
 
 const version = await page.evaluate(() => window.G ? document.getElementById("ov-version")?.textContent : null);
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.15.0", ver === "v0.15.0", { ver }); // v0.15.0 掘削8方向(STATUS v0.15.0)へ機械追随。
+check("VERSION = v0.16.0", ver === "v0.16.0", { ver }); // v0.16.0 水/マグマ原作合わせ(STATUS v0.16.0)へ機械追随。
 
 // ダイブ開始。
 await page.evaluate(() => startDive());
@@ -85,25 +85,19 @@ check("PER_DEFENCE で防御+1", grow.after.def === grow.before.def + 1, { b: gr
 check("PER_DIG で SOIL 手数 1(最低頭打ち)・HARD 2→1", grow.after.digSoil === 1 && grow.after.digHard === grow.before.digHard - 1, { soil: grow.after.digSoil, hardB: grow.before.digHard, hardA: grow.after.digHard });
 check("PER_HP レベルアップで現HPも実効最大へ底上げ", grow.after.hp === grow.after.hpMax && grow.after.sp === grow.after.spMax, { hp: grow.after.hp, sp: grow.after.sp });
 
-// SWIM の効果: 浸水マスでの消耗倍率が軽減されるか(自機を水マスに置いて hazardSpMult を見る)。
+// SWIM の効果: v0.16.0 で消費先を swimTurns()/drownDamage()(息の延長 + 溺れ減額=原作の減算系)へ
+// 引き直したため、旧 hazardSpMult ベースの assert を書き換え(STATUS v0.16.0 判断 G の明示的追随。
+// テスト緑化のためでなく仕様総取り替えに伴う書き換え)。
 const swim = await page.evaluate(() => {
-  // PER_SWIM を 0 と現在(1)で hazardSpMult を比較。自機を水のあるマスへ移し dug 化して空間にする。
-  // 決定論で hazardAt が WATER を返すマスを探す。
-  let found = null;
-  for (let c = 0; c < CONST.GRID_COLS && !found; c++)
-    for (let r = 5; r <= CONST.DEPTH_ROWS && !found; r++)
-      if (hazardAt(c, r, G.seed) === HAZARD.WATER) found = { c, r };
-  if (!found) return { found: false };
-  G.dug.add(found.c + "," + found.r); // 空間化(掘った跡)=浸水が現れる。
-  G.px = found.c; G.py = found.r;
-  const swimLv = G.per.SWIM;
-  const withSwim = hazardSpMult();
+  const swimLv = G.per.SWIM; // 直前の levelUpPer で 1 のはず。
+  const withSwim = { turns: swimTurns(), dmg: drownDamage() };
   G.per.SWIM = 0;
-  const noSwim = hazardSpMult();
+  const noSwim = { turns: swimTurns(), dmg: drownDamage() };
   G.per.SWIM = swimLv;
-  return { found: true, swimLv, withSwim, noSwim };
+  return { swimLv, withSwim, noSwim };
 });
-check("PER_SWIM で水中 SP 倍率が軽減(<無強化)", swim.found && swim.withSwim < swim.noSwim, swim);
+check("PER_SWIM で息が延長(5→10)・溺れダメージ減額(4→3)",
+  swim.swimLv === 1 && swim.withSwim.turns === 10 && swim.noSwim.turns === 5 && swim.withSwim.dmg === 3 && swim.noSwim.dmg === 4, swim);
 
 // UI: 工房オーバーレイを開き育成タブへ切替、grow-list に変換2行+PER6行=8行出るか。
 const ui = await page.evaluate(() => {

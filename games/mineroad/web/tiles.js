@@ -530,12 +530,13 @@ function buryMonsterAt(col, row, seed) {
 // 同盤面で同じ浸水配置が再現)。
 const HAZARD = {
   NONE: 0,
-  WATER: 1, // 水。中にいて行動するとスタミナ消耗が割増(WATER_SP_MULT)。中層帯(row>=5)から。
-  MAGMA: 2, // マグマ。水より危険=激消耗 + 滞在で体力を直接 chip(MAGMA_HP_CHIP)。深層帯(row>=9)から。
+  WATER: 1, // 水。v0.16.0: 息(swimTurns)が切れると毎ターン HP 直撃(drownDamage)。
+  MAGMA: 2, // マグマ。v0.16.0: 猶予なし毎ターン HP−ceil(maxHP/5) 直撃。長居は死。
 };
 
 // ある (col,row) の浸水ハザード種を返す(決定論・乱数禁止)。浸水しないなら HAZARD.NONE。
-// tileType=NONE のマス("空間")にのみ意味を持つ(呼び出し側 hazardOf が isSpace で律速)。
+// v0.16.0: 流体の実体はランタイム state G.fluid(app.js)へ移り、本関数は「初期配置(startDive の
+// seedFluids)・掘り当て湧出(releaseFluidAt)の決定論抽選」として温存(ハッシュ・位相 非介入)。
 // GIRL マス・地表・範囲外は NONE。tileType/oreAt/monster と別位相のハッシュ(+1597/+2389/+7919)。
 function hazardAt(col, row, seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
@@ -661,7 +662,7 @@ const PER_DEFS = [
   { key: "DIG", label: "掘削", effect: "手数 -1 / Lv", max: 2 }, // PER_DIG → 掘削手数を -1(最低 1 で頭打ち)。
   { key: "ATTACK", label: "攻撃", effect: "+1 / Lv", max: 5 }, // PER_ATTACK → ATK_BASE を +1 ずつ。
   { key: "DEFENCE", label: "防御", effect: "+1 / Lv", max: 5 }, // PER_DEFENCE → DEF_BASE を +1 ずつ。
-  { key: "SWIM", label: "水泳", effect: "浸水軽減 / Lv", max: 4 }, // PER_SWIM → SWIM_MITIGATION を段階増(消耗軽減)。
+  { key: "SWIM", label: "水泳", effect: "息+5ターン・溺れ軽減 / Lv", max: 4 }, // PER_SWIM → 息の延長 + 溺れダメージ減額(v0.16.0 原作合わせ=減算系)。
 ];
 // PER 別のレベルあたり効果量(app.js の effXxx ヘルパーが参照。単一ブロックに集約=対症療法回避)。
 const PER_GAIN = {
@@ -670,7 +671,8 @@ const PER_GAIN = {
   DIG_PER_LV: 1, // PER_DIG 1 レベルで掘削手数 -1(effDigTaps で最低 1 に clamp)。
   ATK_PER_LV: 1, // PER_ATTACK 1 レベルで ATK_BASE が +1。
   DEF_PER_LV: 1, // PER_DEFENCE 1 レベルで DEF_BASE が +1。
-  SWIM_PER_LV: 0.5, // PER_SWIM 1 レベルで SWIM_MITIGATION が +0.5(hazardSpMult/hazardHpChip がこれで割る)。
+  // SWIM_PER_LV(旧 0.5=乗算軽減の係数)は v0.16.0 で撤去。SWIM の効きは app.js の swimTurns()/
+  // drownDamage()(CONST.SWIM_BREATH_PER_LV / DROWN_DMG_BASE)= 原作の減算系へ引き直した。
 };
 // 育成通貨の換算(原作「情報→BP/スキルポイント、変換すると情報は消費」/ EXP 用途を自機育成へ開く)。
 const GROW_RATE = {

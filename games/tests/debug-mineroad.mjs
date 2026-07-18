@@ -1,4 +1,6 @@
-// マインロード v0.15.0 実機相当デバッグ + 既存作回帰(gate A〜AF)。
+// マインロード v0.16.0 実機相当デバッグ + 既存作回帰(gate A〜AF)。
+// v0.16.0 = 水/マグマ機構の原作合わせ(流動セルオートマトン G.fluid / 浸水は息切れ後 HP 直撃 /
+// マグマ maxHP/5 直撃 / 浮力)→ gate W3/W4 を新仕様 assert へ書き換え(STATUS v0.16.0 判断 G)。
 // v0.15.0 = 掘削 8 方向の原作合わせ(タップ隣接判定 Chebyshev 1 / はしご無し上掘り / 斜めの
 // 前提条件付き移動・掘削 / bump-to-attack 8 方向)→ gate AF を新設(画面座標ヒットテスト経由)。
 // v0.12.0 = 中核作り直し(実機 FB で中核破綻が判明)。①女の子追従を「自機足跡履歴(G.playerTrail)を
@@ -372,7 +374,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.15.0" &&
+    version === "v0.16.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.dungeonBtnCount === 9 &&
@@ -401,7 +403,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.15.0)", corePass);
+  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.16.0)", corePass);
   await ctx.close();
 }
 
@@ -2224,18 +2226,21 @@ let monsterPass = false;
 }
 
 // ============================================================================
-// (W) v0.6.0 水/マグマ 浸水ハザード(死の緊張をさらに上げる本命増分)。
+// (W) 水/マグマ ハザード。v0.16.0 で W3/W4 を新仕様 assert へ書き換え(STATUS v0.16.0 判断 G が
+//     根拠の「既存テストの明示的追随」。旧 v0.6.0 の SP 割増/HP chip 仕様 assert はテスト緑化の
+//     ためでなく仕様総取り替えに伴い廃止)。W1/W2/W6 は hazardAt 温存(ハッシュ非介入)により不変。
 //   W1 決定論: hazardAt(col,row,seed) が 2 回読みで一致(固定 seed 浸水配置が再現)。
 //   W2 深度ゲート: 浅層帯(row1-4)には浸水が一切出ない(原作 難度カーブに忠実)。
 //      水は中層帯(row>=5)から、マグマは深層帯(row>=9)から。
-//   W3 水で SP 消耗割増: 水マスで 1 行動すると、通常マスより多く SP が減る(WATER_SP_MULT)。
-//   W4 マグマで HP chip: マグママスで 1 行動すると、SP 激消耗に加え HP が直接削られる(MAGMA_HP_CHIP)。
+//   W3(v0.16.0) 水 = SP 消費は素の SP_PER_ACTION のみ・swimTurns() ターン無傷・超過後は
+//      SP 残があっても毎ターン drownDamage() が HP 直撃。
+//   W4(v0.16.0) マグマ = 猶予なし毎ターン ceil(effHpMax()/MAGMA_HP_DIV) が HP 直撃。
 //   W5 視覚: NONE 空間の浸水マスに塗りが重なる(新規アセット無し=URL 不変)。pageerror 0。
 //   W6 非介入: hazard レイヤーは tileType/girlPositions/oreAt・EXPECTED_GIRLS を変えない。
 // ============================================================================
 let hazardPass = false;
 {
-  console.log("== (W) v0.6.0 水/マグマ 浸水ハザード ==");
+  console.log("== (W) 水/マグマ ハザード(v0.16.0 原作合わせ: 息+HP直撃) ==");
   const { ctx, page, errors } = await openPage({ seedHowto: true });
   await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(400);
@@ -2265,65 +2270,51 @@ let hazardPass = false;
     o.midWaterExists = deepWater > 0; // 水は row 11 以降に実在。
     o.deepMagmaExists = false; // dungeon 0 にマグマなし(正常)。
 
-    // --- W3 水で SP 消耗割増: v0.13.0 dungeon 0 の水セル (0,11) に自機を置き 1 行動。
+    // --- W3(v0.16.0) 水 = SP 素の 1・swimTurns() 無傷・超過後 HP 直撃(SP 残があっても)。
+    //     水セル (0,11) を掘った跡にし、流体(ランタイム state)を満水で注入して滞在ターンを刻む。
     startDive();
     // 通常マス(浸水なし)での 1 行動の SP 減を測る基準。
     G.dug.add("7,1"); G.px = 7; G.py = 1; G.stamina = 100; G.hp = 30; G.monsters = []; G.spawned = new Set();
     const spBaseBefore = G.stamina;
     moveTo(7, 1, false);
     const baseDrain = spBaseBefore - G.stamina;
-    // 水セル (0,11) を空洞化して自機を置き、1 行動。
     o.waterHazardType = hazardAt(0, 11, SEED);
     G.dug.add("0,11"); G.px = 0; G.py = 11; G.stamina = 100; G.hp = 30; G.monsters = []; G.spawned = new Set();
+    G.fluid = new Map([["0,11", { k: HAZARD.WATER, d: 8 }]]);
+    G.breath = 0;
     const spWaterBefore = G.stamina, hpWaterBefore = G.hp;
-    moveTo(0, 11, false);
+    moveTo(0, 11, false); // 滞在ターン 1(breath=1)。
     const waterDrain = spWaterBefore - G.stamina;
-    o.waterDrainGreater = waterDrain > baseDrain;
     o.waterDrainValue = waterDrain;
     o.baseDrainValue = baseDrain;
-    o.waterNoHpChip = G.hp === hpWaterBefore;
+    o.waterDrainPlain = waterDrain === baseDrain && waterDrain === CONST.SP_PER_ACTION; // SP 割増の全廃。
+    // swimTurns()(SWIM Lv0=5)まで無傷。
+    for (let i = 0; i < 4; i++) moveTo(0, 11, false); // breath 2..5。
+    o.breathAtLimit = G.breath;
+    o.waterNoHpUntilLimit = G.hp === hpWaterBefore;
+    // 超過後: SP が残っていても毎ターン drownDamage()=4 が HP 直撃。
+    moveTo(0, 11, false); // breath 6 → HP-4。
+    o.drownHpLoss = hpWaterBefore - G.hp;
+    o.drownWithSpLeft = G.stamina > 0 && o.drownHpLoss === 4;
 
-    // --- W4 マグマ: dungeon 0 にはマグマが無い(magmaFrac=0)。マグマのメカ検証は dungeon 1 で行う。
-    //     dungeon 1 floorTo20 帯で magmaFrac=0.50。一時的に DUNGEON_ID を 1 にして検証。
+    // --- W4(v0.16.0) マグマ = 猶予なし毎ターン ceil(effHpMax()/MAGMA_HP_DIV)=6 が HP 直撃。
+    //     dungeon 0 にはマグマが無い(magmaFrac=0)ため dungeon 1 の座標系で検証(流体は注入)。
     const savedDid = CONST.DUNGEON_ID;
-    applyDungeonConst(1);
-    const magmaSeed = CONST.BASE_SEED + 1;
-    // dungeon 1 で row 16-20(hazardRate=0.29, magmaFrac=0.50)のマグマセルを検索。
-    let magmaCell = null;
-    for (let r = 16; r <= 20 && !magmaCell; r++)
-      for (let c = 0; c < CONST.GRID_COLS; c++)
-        if (hazardAt(c, r, magmaSeed) === HAZARD.MAGMA) { magmaCell = {c, r}; break; }
-    if (magmaCell) {
-      o.magmaHazardType = hazardAt(magmaCell.c, magmaCell.r, magmaSeed);
-      G.dungeonId = 1; startDive();
-      G.dug.add(magmaCell.c + "," + magmaCell.r);
-      G.px = magmaCell.c; G.py = magmaCell.r; G.stamina = 0; G.hp = 30; G.monsters = []; G.spawned = new Set();
-      const hpMagmaBefore = G.hp;
-      moveTo(magmaCell.c, magmaCell.r, false);
-      const magmaHpLoss = hpMagmaBefore - G.hp;
-      o.magmaHpLoss = magmaHpLoss;
-      o.magmaChips = magmaHpLoss > 0;
-      // 水セル(dungeon 1)と比較。
-      let waterCell1 = null;
-      for (let r = 6; r <= 15 && !waterCell1; r++)
-        for (let c = 0; c < CONST.GRID_COLS; c++)
-          if (hazardAt(c, r, magmaSeed) === HAZARD.WATER) { waterCell1 = {c, r}; break; }
-      if (waterCell1) {
-        G.dungeonId = 1; startDive();
-        G.dug.add(waterCell1.c + "," + waterCell1.r);
-        G.px = waterCell1.c; G.py = waterCell1.r; G.stamina = 0; G.hp = 30; G.monsters = []; G.spawned = new Set();
-        const hpW0 = G.hp;
-        moveTo(waterCell1.c, waterCell1.r, false);
-        o.waterHpLossAt0 = hpW0 - G.hp;
-        o.magmaWorseThanWater = magmaHpLoss > o.waterHpLossAt0;
-      } else {
-        o.waterHpLossAt0 = 0; o.magmaWorseThanWater = true;
-      }
-    } else {
-      o.magmaHazardType = 2; o.magmaHpLoss = 1; o.magmaChips = true;
-      o.waterHpLossAt0 = 0; o.magmaWorseThanWater = true;
-    }
-    G.dungeonId = savedDid;
+    G.dungeonId = 1; startDive();
+    const mc = { c: 3, r: 17 }; // 掘った跡 + マグマ注入(ランタイム state=世界生成非介入)。
+    G.dug.add(mc.c + "," + mc.r);
+    G.px = mc.c; G.py = mc.r; G.stamina = 50; G.hp = 30; G.monsters = []; G.spawned = new Set();
+    G.fluid = new Map([[mc.c + "," + mc.r, { k: HAZARD.MAGMA, d: 8 }]]);
+    G.breath = 0;
+    const hpMagmaBefore = G.hp, spMagmaBefore = G.stamina;
+    moveTo(mc.c, mc.r, false); // 滞在ターン 1 = 猶予なしで即 HP 直撃。
+    o.magmaHpLoss = hpMagmaBefore - G.hp;
+    o.magmaPerTurn = Math.ceil(effHpMax() / CONST.MAGMA_HP_DIV);
+    o.magmaChips = o.magmaHpLoss === o.magmaPerTurn; // ceil(30/5)=6。
+    o.magmaSpPlain = spMagmaBefore - G.stamina === CONST.SP_PER_ACTION; // SP は素の 1 のみ。
+    o.magmaWorseThanWater = o.magmaHpLoss > 4; // 溺れ(4)よりマグマ(6)が重い。
+    G.dungeonId = 0;
+    applyDungeonConst(savedDid);
 
     // --- W6 非介入: hazard レイヤーは既存決定論を変えない ---
     G.dungeonId = 0; startDive();
@@ -2336,18 +2327,19 @@ let hazardPass = false;
   const EXPECTED_GIRLS = "11,6|0,8|4,10|3,12|8,14";
   out("W1 決定論", r.deterministic);
   out("W2 深度ゲート", { 浅層浸水ゼロ: r.shallowHazardZero, マグマ深層のみ: r.magmaDeepOnly, 中層水実在: r.midWaterExists, 深層マグマ実在: r.deepMagmaExists });
-  out("W3 水 SP 割増", { 水種: r.waterHazardType, 基準減: r.baseDrainValue, 水減: r.waterDrainValue, 割増: r.waterDrainGreater, 水はHP非chip: r.waterNoHpChip });
-  out("W4 マグマ HP chip", { マグマ種: r.magmaHazardType, マグマHP損: r.magmaHpLoss, 水HP損SP0: r.waterHpLossAt0, マグマ激しい: r.magmaWorseThanWater, chip有: r.magmaChips });
+  out("W3 水 = SP 素の1 + 息 + 溺れHP直撃", { 水種: r.waterHazardType, 基準減: r.baseDrainValue, 水減: r.waterDrainValue, SP素の1: r.waterDrainPlain, 息5で無傷: r.waterNoHpUntilLimit, breath: r.breathAtLimit, 溺れHP損: r.drownHpLoss, SP残でもHP直撃: r.drownWithSpLeft });
+  out("W4 マグマ = 猶予なし maxHP/5 直撃", { マグマHP損: r.magmaHpLoss, 期待値: r.magmaPerTurn, 直撃: r.magmaChips, SP素の1: r.magmaSpPlain, 溺れより重い: r.magmaWorseThanWater });
   out("W6 非介入 girlPositions", r.girlPositions === EXPECTED_GIRLS);
   hazardPass =
     errors.length === 0 &&
     r.deterministic === true &&
     r.shallowHazardZero === true && r.magmaDeepOnly === true &&
     r.midWaterExists === true &&
-    r.waterHazardType === 1 && r.waterDrainGreater === true && r.waterNoHpChip === true &&
-    r.magmaHazardType === 2 && r.magmaChips === true && r.magmaWorseThanWater === true &&
+    r.waterHazardType === 1 && r.waterDrainPlain === true &&
+    r.breathAtLimit === 5 && r.waterNoHpUntilLimit === true && r.drownWithSpLeft === true &&
+    r.magmaChips === true && r.magmaSpPlain === true && r.magmaWorseThanWater === true &&
     r.girlPositions === EXPECTED_GIRLS && r.oreUnchanged === true;
-  out("PASS(W: 浸水決定論・深度ゲート・水SP割増・マグマHP chip・非介入)", hazardPass);
+  out("PASS(W: 浸水決定論・深度ゲート・水=息+溺れHP直撃・マグマ=maxHP/5直撃・非介入)", hazardPass);
   await ctx.close();
 }
 
@@ -3900,7 +3892,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.15.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.16.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -3913,7 +3905,7 @@ out("(P) 複数女の子 2人救出 HUD 0/5→1/5→2/5", multiGirlPass);
 out("(Q) v0.4.0 クラフト UI 6 レシピ / インベントリ / 鉱石決定論加算 / power ゲート回帰", v040Pass);
 out("(R) v0.4.1 UI ポリッシュ: 地表被り解消 + 作る/薬ボタン拡大(PC/モバイル/短高)", uiPolishPass);
 out("(S) v0.5.0 モンスター/戦闘/GIRLATK/埋没掘りスポーン(死の緊張)", monsterPass);
-out("(W) v0.6.0 水/マグマ 浸水ハザード(消耗割増 + マグマ HP chip)", hazardPass);
+out("(W) v0.16.0 水/マグマ ハザード(水=息+溺れHP直撃 / マグマ=maxHP/5直撃)", hazardPass);
 out("(X) v0.7.0 なだれ/落盤 崩落物理(落下で道塞ぎ + 埋没ダメージ)", caveinPass);
 out("(Y) v0.8.0 商人(キノコ採取/物々交換/商人タブ UI/非介入)", merchantPass);
 out("(Z) v0.9.0 育成(情報/EXP→BP→PER Lv.UP/実効値変化/育成タブ往復/決定論/非介入)", growthPass);
