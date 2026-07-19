@@ -119,7 +119,28 @@
 //  G. 接地種(BAT 以外)に重力導入(下が空間なら徘徊より先に 1 マス落下、落下ターンは攻撃しない。
 //     落下先が自機セルなら偶発バンプ経路で攻撃)。tileType/girlPositions/oreAt/hazardAt/流体/
 //     なだれ/埋没機構(v0.17.0)/moveTo/act/女の子追従/崩落再埋没は不変。
-const VERSION = "v0.18.0";
+// v0.19.0: ランタイムスポーンの原作合わせ(正本 spec §5 by.java:204-211、STATUS v0.19.0 判断
+// A〜D、チケット #124、差分台帳キュー 3 位)。v0.18.0 で導入した despawn(両軸 AND ±28 圏外)には
+// 補充源がなく大マップで人口が漸減する片肺状態だった。原作はこの 30% 追加湧きとセットで人口が
+// 回る設計:
+//  A. resolveTurn 末尾(monstersAct の直後、原作 by.a() 末尾と同位置)でプレイヤー行動ごとに 30%
+//     判定 → 自機位置基準の非対称オフセット(rand[0,55]+player−28 → 実効レンジ [-28,+27] verbatim)
+//     → x∈[1,GRID_COLS-2]/y∈[11,DEPTH_ROWS-2] へ clamp(by.java:205-206 verbatim。y≧11 はクランプの
+//     帰結であり「11 未満なら不成立」ではない)→ 活動箱 16 のいずれかの軸が圏外(OR)なら成立
+//     (by.java:207 verbatim。despawn の両軸 AND とは非対称=原作の癖をそのまま採る)。
+//  B. 未占有判定: 対象マス中心 Chebyshev 2(5x5)以内にモンスター(埋没含む)/未救出の女の子が
+//     居ないこと(by.java:207 !a(nVar,iA,iA2) verbatim)。ah()(overlay 層空きチェック)は port に
+//     同型レイヤーが無いため対象外(翻案)。
+//  C. 地形分岐: 対象マスが NONE(空間)なら生成時の空間テーブルと同一重み(runtimeSpawnSpecies
+//     wantBury=false)で可視個体を追加、SOIL/HARD/ROCK(固体)なら埋没テーブル(wantBury=true)で
+//     埋没個体(buried=true、spawnBuriedMonsters と同じ state 構造)を追加。by.java 自体は地形で
+//     絞っていない(nVar.f.a() が対象セルの地形を見て解決する)。advisor 指摘: 大マップの 16〜28
+//     リングはほぼ未掘の固体なので、NONE 限定にすると湧きがほぼ発生せず despawn を相殺できない。
+//  D. 決定論: spaceMonsterAt/buryMonsterAt の位置(col,row,seed)固定 presence ハッシュは流用しない
+//     (使い回すと既存個体と同一セルへの重複配置か、despawn 済み個体の決定論復活にしかならず新規
+//     人口を足せない=advisor 指摘)。行動カウンタ G.spawnRollCount(resolveTurn ごとに+1、
+//     startDive で 0 リセット)を鍵にした専用ストリーム(tiles.js runtimeSpawnChanceRoll 等)を新設。
+const VERSION = "v0.19.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -704,6 +725,7 @@ function startDive() {
   // v0.5.0 モンスター初期化。空間スポーンは盤面確定時に決定論で配置(NONE マス全走査)。
   G.monsters = [];
   G.spawned = new Set();
+  G.spawnRollCount = 0; // v0.19.0: ランタイムスポーンの行動カウンタ(resolveTurn ごとに+1)。
   G.exp = 0;
   G.kills = 0;
   G.drops = {};
@@ -1029,7 +1051,9 @@ function tickSubmersion() {
 // ---- v0.16.0 ターン解決(判断 E。旧 3 箇所の monstersAct() 直呼びを 1 本に集約) ----
 // 順序 = 流動(fluidStep)→浸水(tickSubmersion=水が自分へ流れ込んだターンから浸水扱い)→浸水ヒント
 // (noteHazardEntry=静止していても水が流れ込んでくる動的化に伴い moveTo から移設)→checkFail→
-// (dive 継続なら)monstersAct。呼び出し元 = moveTo / act の非前進経路 / attackMonster。
+// (dive 継続なら)monstersAct→runtimeSpawnStep(v0.19.0: プレイヤー行動ごと 30% の追加湧き、
+// #124。原作 by.a() 末尾の by.java:204-211 と同位置)。呼び出し元 = moveTo / act の非前進経路 /
+// attackMonster。
 function resolveTurn() {
   if (G.screen !== "dive") return;
   fluidStep();
@@ -1038,6 +1062,7 @@ function resolveTurn() {
   checkFail();
   if (G.screen !== "dive") return; // 溺れ/マグマで力尽きたら離脱。
   monstersAct();
+  runtimeSpawnStep(); // v0.19.0: プレイヤー行動ごと 30% の追加湧き(#124、判断 A)。
 }
 
 // ---- 行動 1 回ぶんのコスト(スタミナ → 体力の二段) --------------------
@@ -1677,6 +1702,68 @@ function monstersAct() {
     monsterStep(m, meta);
     if (G.screen !== "dive") return; // 力尽き等で離脱。
   }
+}
+
+// v0.19.0 ランタイムスポーン(#124、原作 by.java:204-211 verbatim)。despawn(v0.18.0、両軸 AND
+// ±28 圏外で除去)と対になる補充源=大マップでの人口漸減を解消する片肺状態の解消
+// (STATUS v0.18.0 follow-up・差分台帳キュー 3 位)。resolveTurn からプレイヤー行動ごとに 1 回呼ぶ。
+// 決定論は tiles.js の専用ストリーム(runtimeSpawnChanceRoll 等)。spaceMonsterAt/buryMonsterAt の
+// 位置決定論(presence ハッシュ)は流用しない(advisor 指摘: 使い回すと既存個体との重複配置か
+// despawn 済み個体の決定論復活にしかならず新規人口を足せない)。行動カウンタ G.spawnRollCount は
+// resolveTurn 呼び出しごとに進む(startDive で 0 リセット)。
+function runtimeSpawnStep() {
+  if (G.screen !== "dive" || !G.monsters) return;
+  G.spawnRollCount = (G.spawnRollCount || 0) + 1;
+  if (runtimeSpawnChanceRoll(G.px, G.py, G.seed, G.spawnRollCount) >= 0.30) return; // 30% ゲート。
+  // 非対称オフセット: rand[0,55] + player − 28 → 実効レンジ [-28, +27](o.b(56)+i-28 verbatim。
+  // ±28 は原作の実装が非対称なので +28 側が 1 マス広い翻案ではなく逐語)。
+  const offX = Math.floor(runtimeSpawnOffsetXRoll(G.px, G.py, G.seed, G.spawnRollCount) * 56);
+  const offY = Math.floor(runtimeSpawnOffsetYRoll(G.px, G.py, G.seed, G.spawnRollCount) * 56);
+  // clamp: x∈[1,GRID_COLS-2] / y∈[11,DEPTH_ROWS-2](by.java:205-206 verbatim)。y 下限はクランプの
+  // 帰結(spec §5「y≧11」はここが根拠。「11 未満なら不成立」ではなく「11 未満は 11 に丸められる」)。
+  const col = Math.min(Math.max(G.px + offX - 28, 1), CONST.GRID_COLS - 2);
+  const row = Math.min(Math.max(G.py + offY - 28, 11), CONST.DEPTH_ROWS - 2);
+  // 16 マス圏外(いずれかの軸、OR)チェック。両軸とも 16 以内なら不成立(by.java:207 verbatim。
+  // despawn の両軸 AND とは非対称な原作の癖 — STATUS v0.18.0 判断 E と同様、翻案せずそのまま採る)。
+  if (Math.abs(col - G.px) <= CONST.MONSTER_ACTIVE_RANGE && Math.abs(row - G.py) <= CONST.MONSTER_ACTIVE_RANGE) return;
+  // 未占有: 対象マス中心 Chebyshev 2(5x5)以内にモンスター(埋没含む)/未救出の女の子が居ないこと
+  // (by.java:207 !a(nVar,iA,iA2) verbatim。girls も §8「モンスターと同経路で type=3 生成」=同じ
+  // entity 層のため対象に含める)。ah()(overlay 層空きチェック)は port に同型レイヤーが無いため
+  // 対象外(翻案、STATUS 先記録)。
+  if (runtimeSpawnOccupied(col, row)) return;
+  const t = tileAt(col, row);
+  if (t === TILE.NONE) {
+    const sp = runtimeSpawnSpecies(row, G.seed, G.spawnRollCount, G.px, G.py, false);
+    if (sp) addMonster(sp, col, row, "runtime");
+  } else if (t === TILE.SOIL || t === TILE.HARD || t === TILE.ROCK) {
+    // 固体マスは埋没個体として配置(spawnBuriedMonsters と同じ state 構造。GIRL/SURFACE マスは
+    // runtimeSpawnOccupied 側で実質除外済み=女の子セルは entity 占有ゲートに掛かる)。
+    const sp = runtimeSpawnSpecies(row, G.seed, G.spawnRollCount, G.px, G.py, true);
+    const meta = sp ? MONSTER[sp] : null;
+    if (meta) {
+      G.monsters.push({
+        key: sp, col, row, hp: meta.hp, kind: "runtime-bury", buried: true, bt: 0, origCol: col, origRow: row,
+        sp: meta.sp, sleeping: false, tk: 0, rc: 0, spawnCol: col, spawnRow: row, dir: 0,
+      });
+    }
+  }
+}
+
+// (col,row) を中心に Chebyshev 2(5x5)以内にモンスター(埋没含む)/未救出の女の子が居るか
+// (runtimeSpawnStep 専用。ゲート判定のみで描画/攻撃対象化はしない)。
+function runtimeSpawnOccupied(col, row) {
+  if (G.monsters) {
+    for (const m of G.monsters) {
+      if (Math.abs(m.col - col) <= 2 && Math.abs(m.row - row) <= 2) return true;
+    }
+  }
+  if (G.girls) {
+    for (const g of G.girls) {
+      if (g.state === "rescued") continue;
+      if (Math.abs(g.col - col) <= 2 && Math.abs(g.row - row) <= 2) return true;
+    }
+  }
+  return false;
 }
 
 // ---- v0.18.0 モンスター AI(種別徘徊 + 2 層バンプ攻撃 + SP-睡眠。判断 A〜D/F/G) ----

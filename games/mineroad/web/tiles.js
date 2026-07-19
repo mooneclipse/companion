@@ -554,6 +554,63 @@ function monsterAiRoll(spawnCol, spawnRow, seed, rc) {
   return hash3(spawnCol + 6841, spawnRow + 7351, seed + 11939 + rc * 8117);
 }
 
+// v0.19.0 ランタイムスポーン(#124、原作 by.java:204-211 verbatim)のロールストリーム。プレイヤー
+// 行動ごとに 30% 判定 → x/y オフセット抽選 → 種抽選、の 4 draw を行動カウンタ actionCount
+// (app.js の G.spawnRollCount。resolveTurn 呼び出しごとに+1)で確定する。位置(col,row)固定の
+// spaceMonsterAt/buryMonsterAt の presence ハッシュとは別物 — あちらは「そのマスに初めから
+// 誰が居るか」を固定して返す関数で、同じ (col,row,seed) を引き直しても常に同じ結果にしかならず
+// (advisor 指摘): 既存個体と同一セルへ重複配置するか、despawn 済み個体を決定論で復活させるだけで
+// 新規人口を足せない。ランタイムスポーンは「行動イベント」ごとに新しい湧きを起こす必要があるため、
+// 自機位置 + actionCount を鍵にした専用ストリームを新設する。
+// 位相 a/b オフセット(9871/9127, 8737/9871, 9127/8737, 8419/9433。draw 種別ごとに変える=
+// spaceMonsterAt 等と同じ「a/b で draw 分岐・c で系列分岐」の慣習)は既存全系列
+// (tileType 素・girl(seed,7001,100+i)・ore(+911/+733/+5557, +733/+5557/+911)・
+// spaceMonster(+313/+197/+8821, +401/+89/+8821)・buryMonster(+233/+617/+3001, +557/+271/+6173)・
+// buryEscapeRoll(+5347/+6473/+9403+bt×7717)・hazard(+1597/+2389/+7919, +2389/+7919/+1597)・
+// avalanche(+2671/+3331/+9173)・mushroom(+4099/+5113/+2027)・drop(+1471/+829/+4493)・
+// monsterAiRoll(+6841/+7351/+11939+rc×8117))のどのペアとも一致しない新値。c 側の系列基底
+// +30011 も既存基底(最大 11939)と非衝突。
+function runtimeSpawnChanceRoll(px, py, seed, actionCount) {
+  return hash3(px + 9871, py + 9127, seed + 30011 + actionCount * 10007);
+}
+function runtimeSpawnOffsetXRoll(px, py, seed, actionCount) {
+  return hash3(px + 8737, py + 9871, seed + 30011 + actionCount * 10007);
+}
+function runtimeSpawnOffsetYRoll(px, py, seed, actionCount) {
+  return hash3(px + 9127, py + 8737, seed + 30011 + actionCount * 10007);
+}
+function runtimeSpawnSpeciesRoll(px, py, seed, actionCount) {
+  return hash3(px + 8419, py + 9433, seed + 30011 + actionCount * 10007);
+}
+// ランタイムスポーンの種抽選。band 重みは spaceMonsterAt(wantBury=false)/buryMonsterAt
+// (wantBury=true)と同一定義(spec §5「生成時と同一テーブル」= by.java の nVar.f.a() が生成時と
+// 同じ抽選器を再利用する部分に相当)。位置ハッシュでなく runtimeSpawnSpeciesRoll(行動イベント鍵)
+// で引く点だけが生成時スポーンと異なる(advisor 指摘どおり presence ハッシュは流用しない)。
+function runtimeSpawnSpecies(row, seed, actionCount, px, py, wantBury) {
+  const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
+  const pick = runtimeSpawnSpeciesRoll(px, py, seed, actionCount);
+  const dband = getDungeonBand(row);
+  if (dband) {
+    const mw = dband.monW;
+    const w = wantBury ? [mw[1], mw[2], mw[3], mw[4], mw[5]] : [mw[0], mw[1], mw[2], mw[3], mw[5]];
+    const species = wantBury
+      ? [MON.SLIME, MON.SLIME_HALF, MON.SNAKE, MON.WORM, MON.SPIDER]
+      : [MON.BAT, MON.SLIME, MON.SLIME_HALF, MON.SNAKE, MON.SPIDER];
+    const total = w[0] + w[1] + w[2] + w[3] + w[4];
+    if (total <= 0) return null;
+    const target = pick * total;
+    let acc = 0;
+    for (let i = 0; i < species.length; i++) { acc += w[i]; if (target < acc) return species[i]; }
+    return species[species.length - 1];
+  }
+  const bands = wantBury ? BURY_SPAWN_BANDS : SPACE_SPAWN_BANDS;
+  const frac = row / C.DEPTH_ROWS;
+  let band = bands[bands.length - 1];
+  for (const b of bands) { if (frac <= b.maxFrac) { band = b; break; } }
+  const idx = Math.floor(pick * band.species.length);
+  return band.species[Math.min(idx, band.species.length - 1)];
+}
+
 // ---- 水/マグマ 浸水ハザード — 原作忠実(v0.6.0) -------------------------
 // 原作仕様(MINE_ROAD_仕様まとめ 行34/104): 水中・マグマ中は泳げる(移動できる)がスタミナを
 // 激しく消耗。マグマは特に危険。深く潜るほど水/マグマが増える難度カーブ。

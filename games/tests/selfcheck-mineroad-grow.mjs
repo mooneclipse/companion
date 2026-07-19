@@ -47,7 +47,7 @@ await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle"
 
 const version = await page.evaluate(() => window.G ? document.getElementById("ov-version")?.textContent : null);
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.18.0", ver === "v0.18.0", { ver }); // v0.18.0 モンスター AI 原作合わせ(STATUS v0.18.0)へ機械追随。
+check("VERSION = v0.19.0", ver === "v0.19.0", { ver }); // v0.19.0 ランタイムスポーンの原作合わせ(STATUS v0.19.0)へ機械追随。
 
 // ダイブ開始。
 await page.evaluate(() => startDive());
