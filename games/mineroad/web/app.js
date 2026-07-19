@@ -82,7 +82,23 @@
 //  D. 浮力=水/マグマ中は重力無効(applyGravity は流体セルで停止=着水)。
 //  E. ターン解決を resolveTurn() 1 本に集約(fluidStep→tickSubmersion→ヒント→checkFail→monstersAct)。
 //     崩落土塊の着地マスは流体を消す(埋め立て)。
-const VERSION = "v0.16.0";
+// v0.17.0: 埋没モンスター機構の原作合わせ(正本 spec §5 bk.java:140-151、STATUS v0.17.0 判断 A〜G、
+// チケット #121)。v0.5.0 の掘削時抽選スポーン(trySpawnBuryMonster)を総取り替え:
+//  A. 生成時配置: startDive で全固体マス(SOIL/HARD/ROCK)を走査し、buryMonsterAt が種を返すマスへ
+//     埋没個体(buried=true)を配置=最初からそこに居る。配置 = BURY_PRESENCE_RATE(人口密度 0.05)×
+//     帯別重みのみで、bury% は脱出抽選専用(STATUS v0.17.0 設計見直し 2026-07-19 裁定①②の役割分離。
+//     当初の「bury% 込みテーブル温存=遭遇率保存」は掘りイベント率と人口密度の取り違えだったため改稿)。
+//  B. 土中 tick: 埋没個体は毎ターン HP−1(土中で衰弱)+ bury% の決定論抽選(buryEscapeRoll、覚醒
+//     カウンタ bt)に単発成功で覆い土を自力破壊して脱出。HP 0 は土中死=静かに除去(EXP/ドロップ/
+//     演出なし)。
+//  C. 活動範囲: 自機から Chebyshev 距離 BURIED_WAKE_RANGE(=4)圏内の個体のみ土中 tick(小マップでの
+//     一斉孵化防止=原作 by.java:189「16 マス以内のみ処理」の埋没個体への限定導入。初期値 8 は
+//     実測で一斉覚醒したため 4 へ一段見直し=CONST の根拠コメント参照)。
+//  E. 脱出の空間化はプレイヤー掘削の掘り抜きと同順(dug.add→fallen.delete→なだれ土なら
+//     markUnstableDug→releaseFluidAt。採取なし)。掘り当て=アクティブ化(activateBuriedAt、非前進の
+//     手触り不変)。崩落土塊の着地マスのアクティブ個体は buried へ戻す(再埋没、spec §6)。
+//  F. buried は bump 攻撃・移動ブロック(monsterAt)・描画の対象外(土の中は見えない)。
+const VERSION = "v0.17.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -113,6 +129,12 @@ const CONST = {
   ATK_BASE: 1, // 自機攻撃力 = ATK_BASE + pickPower()。木=2 / 石=3 / 鉄=4 / ダイヤ=6。
   DEF_BASE: 0, // 自機防御力 = DEF_BASE + floor((pickPower()-1)/2)。木=0 / 石=0 / 鉄=1 / ダイヤ=2。
   GIRL_HP: 30, // 護衛中の女の子の HP(monster.csv GIRL 行 verbatim=30)。GIRLATK で削られる。
+  // v0.17.0 埋没モンスター(原作合わせ、spec §5。STATUS v0.17.0 判断 C)。
+  BURIED_WAKE_RANGE: 4, // 土中 tick(衰弱+脱出抽選)が動く自機からの Chebyshev 距離。圏外は衰弱も
+  // 脱出もしない。初期値 8(原作 16 の半分スケール)は fun/funproxy 実測で裏庭 15×15 の実質全域=
+  // ほぼ全個体が序盤に一斉覚醒し波状の湧きになった(funproxy 最下層到達 20/20→0/20)ため、判断 G
+  // 先記録どおり判断 C を一段見直して 4 へ(裏庭半径の約半分・VISIBLE_RADIUS(2)の一回り外=
+  // 「見えない場所から近づくと動き出す」意図を保ったまま同時覚醒数を絞る)。
   // v0.16.0 水/マグマ(原作合わせ、spec §4)。旧 v0.6.0 の SP 割増(WATER_SP_MULT/MAGMA_SP_MULT/
   // MAGMA_HP_CHIP/SWIM_MITIGATION)は撤去=移動コスト側の割増は原作に無い。浸水の消耗は HP 直撃:
   // 水は swimTurns() ターンまで無傷→超過後 drownDamage()/ターン、マグマは猶予なし maxHP/5 /ターン。
@@ -684,6 +706,7 @@ function startDive() {
   G.playerTrail = [[G.px, G.py]]; // v0.11.0: 自機足跡履歴(追従の正本)。地表スタート位置を起点に。
   // 女の子に HP を持たせる(GIRLATK で削られうる。救出/退避で消える)。state は維持。
   spawnSpaceMonsters(); // 元から空間(NONE)のマスへ決定論配置(掘る前の初期気配)。
+  spawnBuriedMonsters(); // v0.17.0: 固体マスの土中へ埋没個体を決定論配置(最初からそこに居る、判断 A)。
   loadPersistent(); // v0.12.0: 永続 state を復元(rescued/per/bp/info/pick/girls level)。
   loadAntennas(); // v0.14.0: 設置済みアンテナ位置を復元(fail を無条件で跨ぐ、判断C)。
   loadInsurance(); // v0.14.0: 直前 fail 時に電波圏内だった場合のみ携行アイテムを1回だけ持ち越す(保険)。
@@ -1117,11 +1140,12 @@ function act(dc, dr) {
     if (t === TILE.SOIL && avalancheAt(col, row, G.seed)) markUnstableDug(col, row);
     collectOre(col, row); // v0.4.0 B: 掘り抜いたマスの鉱石を決定論で産出(GIRL は除外)。
     if (t === TILE.SOIL) collectMushroom(col, row); // v0.8.0: SOIL 掘り抜きでキノコ通貨を採取(決定論)。
-    buried = trySpawnBuryMonster(col, row); // v0.5.0 埋没掘りスポーン(bury% で出現)。
+    buried = activateBuriedAt(col, row); // v0.17.0 掘り当て: 生成時から潜む埋没個体をアクティブ化。
     releaseFluidAt(col, row); // v0.16.0: 掘り当て湧出(hazardAt≠NONE なら満水 d=8、1 マス 1 回限り)。
   }
   // 前進しないケース 2 つ:
-  // ①埋没スポーン: そのマスはモンスターが塞ぐ。前進せずその場に留まる(次の入力 = bump-to-attack)。
+  // ①埋没個体の掘り当て(v0.17.0): そのマスは露出した個体が塞ぐ。前進せずその場に留まる
+  //   (次の入力 = bump-to-attack)。旧 埋没掘りスポーンと同じ手触り。
   // ②上方向(dr=-1、真上/斜め上)の掘り抜き: 原作は掘削と移動が別アクションなので自機は動かない
   //   (登るのは次タップのクライム/斜め移動)。なだれ土(markUnstableDug)の崩落解決は次の moveTo の
   //   resolveCaveins に委ねる=①の遅延解決と同じで、v0.13.1 はしご上掘り「掘り抜き後に登った時点で
@@ -1417,8 +1441,9 @@ function levelUpPer(perKey) {
 
 // ---- v0.5.0 モンスター/戦闘/GIRLATK ------------------------------------
 // 設計(CSV→実装の翻案、STATUS に記録):
-//  - スポーン 2 系統: 空間スポーン(ダイブ開始時に元 NONE マスへ決定論配置)+ 埋没掘りスポーン
-//    (SOIL/HARD を掘り抜いた瞬間 bury% で出現)。配置/出現は tiles.js の決定論関数で確定。
+//  - スポーン 2 系統: 空間スポーン(ダイブ開始時に元 NONE マスへ決定論配置)+ 埋没配置
+//    (v0.17.0: ダイブ開始時に固体マスの土中へ決定論配置=最初からそこに居る。旧「掘り抜いた瞬間
+//    bury% で出現」は機構替えで廃止)。配置は tiles.js の決定論関数で確定。
 //  - 戦闘: bump-to-attack。1 ターンダメージ = max(1, 攻撃力 - 相手DEF)。自機攻撃力は
 //    ATK_BASE + pickPower()(ツルハシ段=戦力の代理、育成未実装の翻案)。被ダメは takeDamage で
 //    既存二段ゲージ(SP→HP)へ接続。SPD を行動頻度に反映(spd>=2 は毎ターン、spd1 は隔ターン)。
@@ -1433,10 +1458,22 @@ function playerAtk() { return effAtkBase() + pickPower() + effCompanionAtk(); }
 function playerDef() { return effDefBase() + Math.floor((pickPower() - 1) / 2); }
 
 // (col,row) に居る出現中のモンスターを返す(無ければ null)。
+// v0.17.0 判断 F: 埋没個体(buried)は返さない=bump 攻撃・移動ブロック・重力の対象外(土の中に
+// 居るだけで世界に干渉しない)。掘り当て判定は buriedMonsterAt で別に引く。
 function monsterAt(col, row) {
   if (!G.monsters) return null;
   for (const m of G.monsters) {
+    if (m.buried) continue;
     if (m.col === col && m.row === row) return m;
+  }
+  return null;
+}
+
+// (col,row) の土中に潜む埋没個体を返す(無ければ null)。act の掘り当て判定専用(判断 F)。
+function buriedMonsterAt(col, row) {
+  if (!G.monsters) return null;
+  for (const m of G.monsters) {
+    if (m.buried && m.col === col && m.row === row) return m;
   }
   return null;
 }
@@ -1458,19 +1495,82 @@ function spawnSpaceMonsters() {
   }
 }
 
-// 掘り抜いたマス(col,row)に埋没掘りスポーンを試みる。出たら追加して種キーを返す、出なければ null。
-function trySpawnBuryMonster(col, row) {
-  if (!G.monsters || !G.spawned) return null;
+// v0.17.0 生成時配置(判断 A 改稿、q.java:349-385): ダイブ開始時に全固体マス(SOIL/HARD/ROCK)を
+// 走査し、buryMonsterAt(配置 = 人口密度 BURY_PRESENCE_RATE × 帯別重みのみ。bury% は脱出抽選専用=
+// STATUS v0.17.0 設計見直し裁定①の役割分離)が種を返すマスへ埋没個体(buried=true)を配置する=
+// 「最初からそこに居る」。GIRL マスは buryMonsterAt 側で除外。
+// origCol/origRow は脱出抽選(buryEscapeRoll)の位相の起点、bt は覚醒 tick カウンタ(判断 D)。
+// fail/retry の再列挙は決定論で同一配置を再現(力尽きを跨いで「そこに居る」が成立)。
+// 旧 trySpawnBuryMonster(掘削時抽選スポーン)はこの機構替えで廃止(G.spawned は space 用途のみ残る)。
+function spawnBuriedMonsters() {
+  if (!G.monsters) return;
+  for (let row = 1; row <= CONST.DEPTH_ROWS; row++) {
+    for (let col = 0; col < CONST.GRID_COLS; col++) {
+      const t = tileType(col, row, G.seed);
+      if (t !== TILE.SOIL && t !== TILE.HARD && t !== TILE.ROCK) continue;
+      const sp = buryMonsterAt(col, row, G.seed);
+      if (!sp) continue;
+      const meta = MONSTER[sp];
+      if (!meta) continue;
+      G.monsters.push({ key: sp, col, row, hp: meta.hp, kind: "bury", cd: 0, buried: true, bt: 0, origCol: col, origRow: row });
+    }
+  }
+}
+
+// v0.17.0 土中 tick(判断 B/C/D、原作 bk.java:140-151)。monsterStep 冒頭から毎ターン呼ばれる。
+// 自機から Chebyshev BURIED_WAKE_RANGE 圏内の個体のみ: 毎ターン HP−1(土中で衰弱)、HP 0 は
+// 土中死=静かに除去(EXP/ドロップ/演出なし=自機が関与していない撃破ではない)。生きていれば
+// 覚醒カウンタ bt を進め、bury%(PER_BROKEN_SOIL 本来の意味=覆い土の自力破壊率)の決定論抽選に
+// 単発成功したら脱出。圏外は衰弱も脱出もしない(bt も進まない=近づいた時から動き出す)。
+function buriedTick(m, meta) {
+  const dist = Math.max(Math.abs(m.col - G.px), Math.abs(m.row - G.py));
+  if (dist > CONST.BURIED_WAKE_RANGE) return;
+  m.hp -= 1;
+  if (m.hp <= 0) {
+    const i = G.monsters.indexOf(m);
+    if (i >= 0) G.monsters.splice(i, 1);
+    return;
+  }
+  m.bt = (m.bt || 0) + 1;
+  if (buryEscapeRoll(m.origCol, m.origRow, G.seed, m.bt) < meta.bury / 100) escapeBuriedMonster(m);
+}
+
+// v0.17.0 脱出=覆い土の自力破壊(判断 E)。世界への作用はプレイヤー掘削の掘り抜きと同順
+// (digProgress 破棄→dug.add→fallen.delete→なだれ土なら markUnstableDug→releaseFluidAt)。ただし
+// collectOre/collectMushroom は呼ばない=埋没個体が破った土の採取物は失われる(翻案)。G.dug 入りで
+// 脱出跡は fog 越しに可視化されるが「土が崩れた場所は分かる」演出として許容(判断 E)。
+// 演出の裁量判断(判断 F、記録): SFX は常に鳴らす(見えない場所からの気配)、popup は脱出セルが
+// 既に可視(seen)のときだけ(見えていない出現にアイコンを出さない)。ヒント文は出さない=hint 枠は
+// 自機を主語とするイベント(発見/浸水/なだれ/掘り当て)専用で、非同期の脱出が直前の重要ヒント
+// (例: 女の子発見 cueGirlFound)を上書きしないため(掘り当て activateBuriedAt 側のヒントは維持)。
+function escapeBuriedMonster(m) {
+  const col = m.col, row = m.row;
   const key = col + "," + row;
-  if (G.spawned.has(key)) return null; // 同マスで二重に出さない。
-  G.spawned.add(key);
-  const sp = buryMonsterAt(col, row, G.seed);
-  if (!sp) return null;
-  addMonster(sp, col, row, "bury");
-  spawnPopupAt(col, row, MONSTER[sp] ? MONSTER[sp].ico : "敵", "warn");
+  const seenBefore = isVisible(col, row); // dug 入り前に判定(dug 入り後は必ず可視になるため)。
+  const t = tileAt(col, row); // なだれ土判定は空間化前のタイル種で(act の掘り抜きと同じ)。
+  m.buried = false;
+  G.digProgress.delete(key); // 自機の掘りかけは空間化で無意味になる(act の掘り抜きと同じ)。
+  G.dug.add(key);
+  G.fallen.delete(key);
+  if (t === TILE.SOIL && avalancheAt(col, row, G.seed)) markUnstableDug(col, row);
+  releaseFluidAt(col, row);
+  const meta = MONSTER[m.key];
+  playSfx("blocked"); // 専用 SFX 無し=出現の警告音を流用(旧 trySpawnBuryMonster 移設)。
+  if (seenBefore) spawnPopupAt(col, row, meta ? meta.ico : "敵", "warn");
+}
+
+// v0.17.0 掘り当て(判断 E): 自機が埋没個体のマスを掘り抜いた瞬間、その個体をアクティブ化する。
+// 旧 trySpawnBuryMonster(掘削時抽選)の置き換え=個体は生成時から居て、掘り当ては「そこに居た」
+// 個体を露出させるだけ。空間化は act の掘り抜きが済ませているのでここでは状態と演出のみ
+// (popup/SFX/ヒントと「前進しない」分岐は旧実装の手触りを流用)。出たら種キー、居なければ null。
+function activateBuriedAt(col, row) {
+  const m = buriedMonsterAt(col, row);
+  if (!m) return null;
+  m.buried = false;
+  spawnPopupAt(col, row, MONSTER[m.key] ? MONSTER[m.key].ico : "敵", "warn");
   playSfx("blocked"); // 専用 SFX 無し=出現の警告音を流用。
-  showHint((MONSTER[sp] ? MONSTER[sp].name : "敵") + "が飛び出した", true);
-  return sp;
+  showHint((MONSTER[m.key] ? MONSTER[m.key].name : "敵") + "が飛び出した", true);
+  return m.key;
 }
 
 // モンスターを 1 体出現リストへ追加(HP は monster.csv verbatim)。
@@ -1540,6 +1640,11 @@ function monstersAct() {
 // 隣接して交戦中の攻撃は毎ターン応酬する(殴り合いは常に危険=死の緊張の核)。原作 SPD=行動速度
 // の翻案として、攻撃の応酬は止めず、鈍足の差は「間合いを詰める速さ」に出す。
 function monsterStep(m, meta) {
+  // v0.17.0 判断 F: 埋没中は土中 tick(衰弱+脱出抽選)のみ。bump も追跡もしない(土の中に居る)。
+  if (m.buried) {
+    buriedTick(m, meta);
+    return;
+  }
   // 標的候補: 常に自機。GIRLATK=1 なら隣接する追従中の女の子も(より近い方を狙う)。
   const adjPlayer = isAdjacent(m.col, m.row, G.px, G.py);
   let targetGirl = null;
@@ -1700,6 +1805,17 @@ function resolveCaveins() {
     if (G.fluid) G.fluid.delete(col + "," + dest); // v0.16.0: 着地マスの流体は消す(土での埋め立て、判断 E)。
     spawnPopupAt(col, dest, "▼", "warn"); // 崩落の視覚合図。
     playSfx("blocked"); // 専用 SFX 無し=塞がりの警告音を流用。
+    // v0.17.0 判断 E: 着地マスのアクティブ個体は土中へ戻す(spec §6「崩落で埋まった個体は土中個体化」。
+    // v0.16.0 まで「土に取り残されたまま行動し続ける」既存エッジの解消)。埋没起点(origCol/origRow)と
+    // 覚醒カウンタ bt は着地マスで再スタート(実装値: 脱出抽選の位相を今埋まっている土に合わせる。
+    // 空間スポーン個体は origCol/origRow 未設定のためここで初めて持つ)。
+    const reburied = monsterAt(col, dest);
+    if (reburied) {
+      reburied.buried = true;
+      reburied.origCol = col;
+      reburied.origRow = dest;
+      reburied.bt = 0;
+    }
     // 埋没判定: 落ちてきたマスに自機/女の子が居れば埋まる。
     buryUnitsAt(col, dest);
     if (G.screen !== "dive") return; // 自機の埋没で力尽きたら離脱。
@@ -2948,9 +3064,10 @@ function render() {
   }
 
   // v0.5.0 モンスター(可視マスのみ)。冷色の脅威色 + 名称頭文字 + HP バー。
+  // v0.17.0 判断 F: 埋没個体は描画しない(土の中は見えない=テレグラフなしも原作どおり)。
   if (G.monsters) {
     for (const m of G.monsters) {
-      if (isVisible(m.col, m.row)) drawMonster(m);
+      if (!m.buried && isVisible(m.col, m.row)) drawMonster(m);
     }
   }
 

@@ -1,4 +1,7 @@
-// マインロード v0.16.0 実機相当デバッグ + 既存作回帰(gate A〜AF)。
+// マインロード v0.17.0 実機相当デバッグ + 既存作回帰(gate A〜AF)。
+// v0.17.0 = 埋没モンスター機構の原作合わせ(生成時配置 buried=true / 土中 tick HP−1 + bury% 脱出 /
+// 圏内 Chebyshev 4 ゲート(BURIED_WAKE_RANGE) / 掘り当てアクティブ化)→ gate S2 を新機構 assert へ書き換え
+// (STATUS v0.17.0 判断 G。掘削時抽選スポーンの assert は仕様総取り替えに伴い廃止)。
 // v0.16.0 = 水/マグマ機構の原作合わせ(流動セルオートマトン G.fluid / 浸水は息切れ後 HP 直撃 /
 // マグマ maxHP/5 直撃 / 浮力)→ gate W3/W4 を新仕様 assert へ書き換え(STATUS v0.16.0 判断 G)。
 // v0.15.0 = 掘削 8 方向の原作合わせ(タップ隣接判定 Chebyshev 1 / はしご無し上掘り / 斜めの
@@ -374,7 +377,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.16.0" &&
+    version === "v0.17.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.dungeonBtnCount === 9 &&
@@ -403,7 +406,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.16.0)", corePass);
+  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.17.0)", corePass);
   await ctx.close();
 }
 
@@ -2099,41 +2102,44 @@ let monsterPass = false;
     eval(driver);
     const o = {};
     // --- S1 空間スポーン決定論(2 回 startDive で一致) ---
+    // v0.17.0: startDive は埋没個体(buried=true、固体マス上)も配置するようになったため、空間
+    // スポーンの assert は !m.buried で絞る(STATUS v0.17.0 判断 G の明示的追随)。
     startDive();
-    const list1 = G.monsters.map((m) => `${m.key}@${m.col},${m.row}`).sort().join("|");
+    const list1 = G.monsters.filter((m) => !m.buried).map((m) => `${m.key}@${m.col},${m.row}`).sort().join("|");
     startDive();
-    const list2 = G.monsters.map((m) => `${m.key}@${m.col},${m.row}`).sort().join("|");
-    o.spaceSpawnCount = G.monsters.length;
-    o.spaceSpawnDeterministic = list1 === list2 && G.monsters.length > 0;
+    const list2 = G.monsters.filter((m) => !m.buried).map((m) => `${m.key}@${m.col},${m.row}`).sort().join("|");
+    o.spaceSpawnCount = G.monsters.filter((m) => !m.buried).length;
+    o.spaceSpawnDeterministic = list1 === list2 && o.spaceSpawnCount > 0;
     // 空間モンスターは元 NONE マスにのみ居る(tileType=NONE)。
-    o.spaceOnNone = G.monsters.every((m) => tileType(m.col, m.row, G.seed) === TILE.NONE);
+    o.spaceOnNone = G.monsters.filter((m) => !m.buried).every((m) => tileType(m.col, m.row, G.seed) === TILE.NONE);
 
-    // --- S2 埋没掘りスポーン(col7 を WOOD で掘り下げ、bury 出現を観測) ---
+    // --- S2 埋没機構(v0.17.0 機構替え、STATUS v0.17.0 判断 G): 旧「掘削時 bury% 抽選スポーン」の
+    //     assert を廃し、生成時配置の決定論 + 掘り当てで「そこに居た」個体が出ることを検証する ---
     startDive();
-    function moveCol(c) { let g = 0; while (G.px !== c && g < 40) { act(G.px < c ? 1 : -1, 0); g++; } }
-    moveCol(7);
-    let buried = null;
-    let guard = 0;
-    while (!buried && G.py < 6 && G.screen === "dive" && guard < 20) {
-      const before = G.monsters.length;
-      const pc = G.px, pr = G.py;
-      act(0, 1);
-      guard++;
-      if (G.monsters.length > before) {
-        buried = G.monsters.find((m) => m.col === G.px && m.row === G.py + 1) || G.monsters[G.monsters.length - 1];
-      } else if (G.px === pc && G.py === pr) {
-        // 進めない(敵 or 岩)。敵なら倒して続行。
-        const foe = G.monsters.find((m) => m.col === G.px && m.row === G.py + 1);
-        if (!foe) break;
-        let f = 0; while (G.monsters.indexOf(foe) >= 0 && G.screen === "dive" && f < 30) { act(0, 1); f++; }
-      }
-    }
-    o.burySpawned = !!buried;
-    o.buryKey = buried ? buried.key : null;
-    // 埋没スポーンは決定論(同マスの buryMonsterAt が 2 回一致)。
-    if (buried) {
-      o.buryDeterministic = buryMonsterAt(buried.col, buried.row, G.seed) === buryMonsterAt(buried.col, buried.row, G.seed)
-        && buryMonsterAt(buried.col, buried.row, G.seed) === buried.key;
+    const bl1 = G.monsters.filter((m) => m.buried).map((m) => `${m.key}@${m.col},${m.row}`).sort().join("|");
+    startDive();
+    const bl2 = G.monsters.filter((m) => m.buried).map((m) => `${m.key}@${m.col},${m.row}`).sort().join("|");
+    o.buriedCount = G.monsters.filter((m) => m.buried).length;
+    o.buriedPlacementDeterministic = bl1 === bl2 && o.buriedCount > 0;
+    // 配置分布の温存: 全埋没個体が固体マス上 + buryMonsterAt(ハッシュ不変)の返す種と一致。
+    o.buriedMatchTable = G.monsters.filter((m) => m.buried).every((m) => {
+      const t = tileType(m.col, m.row, G.seed);
+      return (t === TILE.SOIL || t === TILE.HARD || t === TILE.ROCK) && buryMonsterAt(m.col, m.row, G.seed) === m.key;
+    });
+    // 掘り当て: 埋没個体の真上から掘り抜くと「そこに居た」個体がアクティブ化し、自機は前進しない。
+    {
+      const b = G.monsters.find((m) => m.buried);
+      G.monsters = [b]; // 他個体の干渉を排除(純検証)。
+      G.pick = "DIAMOND"; G.stamina = 100; G.hp = 30;
+      G.dug.add(b.col + "," + (b.row - 1));
+      G.px = b.col; G.py = b.row - 1;
+      const py0 = G.py;
+      let taps = 0;
+      while (b.buried && taps < 5 && G.screen === "dive") { act(0, 1); taps++; }
+      o.burySpawned = b.buried === false; // 掘り当てで「そこに居た」個体が露出した。
+      o.buryKey = b.key;
+      o.buryNoAdvance = G.px === b.col && G.py === py0; // 露出マスへは前進しない(手触り不変)。
+      o.buryDeterministic = buryMonsterAt(b.col, b.row, G.seed) === b.key; // 配置テーブル一致(決定論)。
     }
 
     // --- S3/S4 戦闘で HP/SP 減 + bump-attack 撃破 + EXP/ドロップ ---
@@ -2206,7 +2212,7 @@ let monsterPass = false;
 
   const EXPECTED_GIRLS = "11,6|0,8|4,10|3,12|8,14";
   out("S1 空間スポーン", { count: r.spaceSpawnCount, 決定論: r.spaceSpawnDeterministic, NONE上: r.spaceOnNone });
-  out("S2 埋没掘りスポーン", { 出現: r.burySpawned, 種: r.buryKey, 決定論: r.buryDeterministic });
+  out("S2 埋没機構(v0.17.0 生成時配置 + 掘り当て)", { 配置数: r.buriedCount, 配置決定論: r.buriedPlacementDeterministic, テーブル一致: r.buriedMatchTable, 掘り当て露出: r.burySpawned, 種: r.buryKey, 非前進: r.buryNoAdvance, 決定論: r.buryDeterministic });
   out("S3/S4 戦闘", { foeHP減: r.foeHpDropped, 二段ゲージ減: r.gaugeDrained, 撃破: r.killed, EXP: r.expGained, kills: r.killsCounted, drop決定論: r.dropDeterministic });
   out("S5 GIRLATK", { 女の子ロスト: r.girlAtkWorks, 救出数不変: r.girlLostNotRescued, ロスト時hidden: r.lostState === "hidden", 原位置復帰: r.lostAtOrig });
   out("S5b ロスト→再侵入→再発見→救出到達", { 再発見_following復帰: r.rediscovered, 連れ帰り救出: r.rescuedAfterRediscover, 救出数増加: r.rescueCountIncreased });
@@ -2214,14 +2220,15 @@ let monsterPass = false;
   monsterPass =
     errors.length === 0 &&
     r.spaceSpawnCount > 0 && r.spaceSpawnDeterministic === true && r.spaceOnNone === true &&
-    r.burySpawned === true && r.buryDeterministic === true &&
+    r.buriedCount > 0 && r.buriedPlacementDeterministic === true && r.buriedMatchTable === true &&
+    r.burySpawned === true && r.buryNoAdvance === true && r.buryDeterministic === true &&
     r.foeHpDropped === true && r.gaugeDrained === true && r.killed === true &&
     r.expGained === true && r.killsCounted === true && r.dropDeterministic === true &&
     r.girlAtkWorks === true && r.girlLostNotRescued === true &&
     r.lostState === "hidden" && r.lostAtOrig === true &&
     r.rediscovered === true && r.rescuedAfterRediscover === true && r.rescueCountIncreased === true &&
     r.girlPositions === EXPECTED_GIRLS;
-  out("PASS(S: 空間/埋没スポーン決定論・戦闘で HP/SP 減・bump 撃破/EXP/ドロップ・GIRLATK ロスト・非介入)", monsterPass);
+  out("PASS(S: 空間スポーン決定論・埋没 生成時配置+掘り当て(v0.17.0)・戦闘で HP/SP 減・bump 撃破/EXP/ドロップ・GIRLATK ロスト・非介入)", monsterPass);
   await ctx.close();
 }
 
@@ -3892,7 +3899,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.16.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.17.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
@@ -3904,7 +3911,7 @@ out("(O) v0.3.0 クリアゲート §7 忠実 / 旧1人=即クリア回帰防止
 out("(P) 複数女の子 2人救出 HUD 0/5→1/5→2/5", multiGirlPass);
 out("(Q) v0.4.0 クラフト UI 6 レシピ / インベントリ / 鉱石決定論加算 / power ゲート回帰", v040Pass);
 out("(R) v0.4.1 UI ポリッシュ: 地表被り解消 + 作る/薬ボタン拡大(PC/モバイル/短高)", uiPolishPass);
-out("(S) v0.5.0 モンスター/戦闘/GIRLATK/埋没掘りスポーン(死の緊張)", monsterPass);
+out("(S) モンスター/戦闘/GIRLATK + 埋没機構 v0.17.0(生成時配置/掘り当て)(死の緊張)", monsterPass);
 out("(W) v0.16.0 水/マグマ ハザード(水=息+溺れHP直撃 / マグマ=maxHP/5直撃)", hazardPass);
 out("(X) v0.7.0 なだれ/落盤 崩落物理(落下で道塞ぎ + 埋没ダメージ)", caveinPass);
 out("(Y) v0.8.0 商人(キノコ採取/物々交換/商人タブ UI/非介入)", merchantPass);

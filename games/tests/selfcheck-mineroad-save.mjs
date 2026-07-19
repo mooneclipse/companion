@@ -46,7 +46,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.16.0", ver === "v0.16.0", { ver }); // v0.16.0 水/マグマ原作合わせ(STATUS v0.16.0)へ機械追随。
+check("VERSION = v0.17.0", ver === "v0.17.0", { ver }); // v0.17.0 埋没モンスター原作合わせ(STATUS v0.17.0)へ機械追随。
 
 // ============================================================================
 // 1. fail→retry で永続 state 復元

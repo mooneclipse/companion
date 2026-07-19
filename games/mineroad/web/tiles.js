@@ -385,7 +385,7 @@ const CRAFT_RECIPES = [
 // 死の緊張(撤退判断の重み)を設計から出す本命増分。浅層向けの忠実サブセット 6 種を採用
 // (BAT/SLIME/SLIME HALF/SNAKE/WORM/SPIDER)。各ステータスは monster.csv verbatim
 //   HP / SP / STR(攻撃) / DEF(防御) / SPD(行動頻度) / EXP / GIRLATK(女の子を狙うか=1) /
-//   bury(埋没掘りper=掘り抜き時に出現する%) / space(空間スポーン可=1)。
+//   bury(PER_BROKEN_SOIL=土中からの脱出抽選%。v0.17.0 役割分離で配置には使わない) / space(空間スポーン可=1)。
 // ドロップ表(ITEM, PER%)も verbatim。全 20 種ロスター・ボス級(SOIL DRAGON/BEAR 等)は次以降。
 //
 // 決定論厳守: スポーン配置・戦闘解決・行動すべて seed 由来ハッシュ(hash3)で決める。
@@ -448,11 +448,13 @@ const BURY_SPAWN_BANDS = [
 // 空間スポーン率(NONE マスにモンスターが居る確率)。決定論ハッシュしきい値。控えめに
 // (空間の一部だけ)出し、深いほど気配が増す。tileType/oreAt と別位相のハッシュを使う。
 const SPACE_SPAWN_RATE = 0.55;
-// 埋没掘り「住人居住率」(掘り抜くマスのうちモンスターが潜んでいる割合)。掘りの何割で出るか
-// を決める単一ノブ(密度)。各種の bury%(埋没掘りper, verbatim) は「住人が居るマスを掘ったとき
-// 飛び出す確率」として住人居住の上に重ねる(WORM=100 は居れば必ず出る土の主)。密度を 1.0 に
-// すると毎掘り出現で過密になるため、掘削テンポを保てる水準に絞る(対症療法でなく密度の設計値)。
-const BURY_PRESENCE_RATE = 0.16;
+// 埋没人口密度(固体マスのうち埋没個体が潜んでいる割合)。v0.5.0 の 0.16 は「掘りイベント率」
+// (掘った面でしか実体化しない前提の、掘り 1 回あたりの遭遇率)として設計された値で、v0.17.0 の
+// 生成時全実体化ではそのまま「盤面の常備人口」へ意味が変わり過密になった(裏庭で 29 体=空間
+// スポーンと同規模、fun/funproxy 実測で bot 全滅)。意味替えに伴う再導出で 0.05 へ(裏庭で約 9 体
+// = 原作「埋没配置は生成時 WORM 特例のみ」の疎な脇役規模。STATUS v0.17.0 設計見直し裁定②が根拠、
+// 難度ノブの単独いじりではない)。
+const BURY_PRESENCE_RATE = 0.05;
 
 // ある (col,row) の NONE 空間にモンスターが居るか(決定論)。居れば種キー、居なければ null。
 // tileType が NONE のマスだけが対象(呼び出し側で保証)。GIRL マスは別レイヤーで対象外。
@@ -483,9 +485,12 @@ function spaceMonsterAt(col, row, seed) {
   return band.species[Math.min(pick, band.species.length - 1)];
 }
 
-// SOIL/HARD を掘り抜いた瞬間、埋没掘りスポーンが起きるか(決定論)。起きれば種キー、なければ null。
-// 深度帯から候補種を 1 つ選び、その種の bury%(埋没掘りper) を決定論ハッシュしきい値で判定。
-// これが「気を抜くと死ぬ」核(掘る手が止まらない緊張)。GIRL マスは呼び出し側で除外。
+// ある固体マス(col,row)の土中に埋没個体が居るか(決定論)。居れば種キー、居なければ null。
+// 配置 = BURY_PRESENCE_RATE(人口密度)× 帯別重み(bury>0 種)のみ。v0.17.0 設計見直し(STATUS
+// v0.17.0「設計見直し 2026-07-19」裁定①役割分離)で配置最終ゲート h<bury/100(旧位相
+// +1019/+643/+6173)を撤去した: bury%(PER_BROKEN_SOIL)は脱出抽選(buryEscapeRoll)専用=原作の
+// 役割どおり。旧ゲートは bury100 種を素通しして配置を SPIDER/WORM に偏らせていた(28/29 体)。
+// GIRL マスは除外。同じ (col,row,seed) は常に同じ結果。
 function buryMonsterAt(col, row, seed) {
   const C = (typeof window !== "undefined" && window.CONST) || TILES_FALLBACK_CONST;
   if (row <= 0 || col < 0 || col >= C.GRID_COLS || row > C.DEPTH_ROWS) return null;
@@ -514,8 +519,21 @@ function buryMonsterAt(col, row, seed) {
   }
   const m = MONSTER[key];
   if (!m) return null;
-  const h = hash3(col + 1019, row + 643, seed + 6173);
-  return h < m.bury / 100 ? key : null;
+  return key;
+}
+
+// v0.17.0 埋没個体の脱出抽選ハッシュ(STATUS v0.17.0 判断 D)。個体の埋没起点(origCol,origRow)と
+// 覚醒 tick カウンタ bt(自機圏内で過ごしたターン数)から [0,1) を返す。呼び出し側(app.js
+// buriedTick)が bury%/100 と比較=単発成功で覆い土を自力破壊して脱出。ランタイム乱数を使わない
+// ので、同一 seed + 同一操作列 → bt 系列一致 → 脱出タイミングまで完全再現。
+// 位相 +5347/+6473/(+9403 + bt×7717) は既存全系列と非衝突の新値: tileType(素)・girl(+7001系)・
+// ore(+911/+733/+5557, +733/+5557/+911)・spaceMonster(+313/+197/+8821, +401/+89/+8821)・
+// buryMonster(+233/+617/+3001, +557/+271/+6173。旧配置ゲート +1019/+643/+6173 は v0.17.0 設計
+// 見直しで撤去=空き位相)・hazard(+1597/+2389/+7919,
+// +2389/+7919/+1597)・avalanche(+2671/+3331/+9173)・mushroom(+4099/+5113/+2027)・
+// drop(+1471/+829/+4493)。
+function buryEscapeRoll(origCol, origRow, seed, bt) {
+  return hash3(origCol + 5347, origRow + 6473, seed + 9403 + bt * 7717);
 }
 
 // ---- 水/マグマ 浸水ハザード — 原作忠実(v0.6.0) -------------------------
@@ -787,6 +805,7 @@ if (typeof window !== "undefined") {
   window.MONSTER = MONSTER;
   window.spaceMonsterAt = spaceMonsterAt;
   window.buryMonsterAt = buryMonsterAt;
+  window.buryEscapeRoll = buryEscapeRoll; // v0.17.0 埋没個体の脱出抽選(判断 D)。
   window.monsterDrop = monsterDrop;
   // v0.6.0 水/マグマ 浸水ハザード(別オーバーレイレイヤー、決定論)。
   window.HAZARD = HAZARD;
