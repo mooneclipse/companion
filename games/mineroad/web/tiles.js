@@ -401,34 +401,36 @@ const MON = {
 };
 // verbatim ステータス + ドロップ(monster.csv 一次データ)。drops は確率の高い順に並べ、
 // 各 per は独立判定でなく「累積しきい値で 1 種だけ落とす」抽選(決定論ハッシュ)に使う。
+// v0.18.0: sprec(monster.csv SP回復列 verbatim)を追加=眠り中の毎ターン SP 回復量(STATUS
+// v0.18.0 判断 C)。WORM は SP 消費なし(cj に SP コスト呼び出しなし)= sprec 0 でも眠らない。
 const MONSTER = {
   [MON.BAT]: {
-    key: MON.BAT, name: "コウモリ", ico: "蝙", hp: 5, sp: 20, str: 1, def: 0, spd: 2,
+    key: MON.BAT, name: "コウモリ", ico: "蝙", hp: 5, sp: 20, str: 1, def: 0, spd: 2, sprec: 2,
     exp: 2, girlatk: 1, bury: 0, space: 1,
     drops: [{ item: "動物の血", per: 50 }, { item: "動物の皮", per: 30 }, { item: "骨", per: 20 }],
   },
   [MON.SLIME]: {
-    key: MON.SLIME, name: "スライム", ico: "粘", hp: 15, sp: 5, str: 3, def: 0, spd: 1,
+    key: MON.SLIME, name: "スライム", ico: "粘", hp: 15, sp: 5, str: 3, def: 0, spd: 1, sprec: 2,
     exp: 4, girlatk: 1, bury: 30, space: 1,
     drops: [{ item: "生肉", per: 70 }, { item: "海綿", per: 27 }, { item: "ルビー", per: 3 }],
   },
   [MON.SLIME_HALF]: {
-    key: MON.SLIME_HALF, name: "小スライム", ico: "粘", hp: 8, sp: 5, str: 2, def: 0, spd: 1,
+    key: MON.SLIME_HALF, name: "小スライム", ico: "粘", hp: 8, sp: 5, str: 2, def: 0, spd: 1, sprec: 2,
     exp: 2, girlatk: 1, bury: 15, space: 1,
     drops: [{ item: "生肉", per: 65 }, { item: "海綿", per: 32 }, { item: "ルビー", per: 3 }],
   },
   [MON.SNAKE]: {
-    key: MON.SNAKE, name: "ヘビ", ico: "蛇", hp: 10, sp: 8, str: 5, def: 1, spd: 1,
+    key: MON.SNAKE, name: "ヘビ", ico: "蛇", hp: 10, sp: 8, str: 5, def: 1, spd: 1, sprec: 2,
     exp: 6, girlatk: 1, bury: 80, space: 1,
     drops: [{ item: "動物の血", per: 30 }, { item: "動物の皮", per: 25 }, { item: "生肉", per: 25 }, { item: "解毒薬", per: 20 }],
   },
   [MON.WORM]: {
-    key: MON.WORM, name: "ミミズ", ico: "蟲", hp: 5, sp: 0, str: 1, def: 0, spd: 3,
+    key: MON.WORM, name: "ミミズ", ico: "蟲", hp: 5, sp: 0, str: 1, def: 0, spd: 3, sprec: 0,
     exp: 1, girlatk: 1, bury: 100, space: 0, // space=0: 埋没掘りでのみ出る(土の中の住人)。
     drops: [{ item: "生肉", per: 70 }, { item: "動物の皮", per: 20 }, { item: "動物の血", per: 10 }],
   },
   [MON.SPIDER]: {
-    key: MON.SPIDER, name: "クモ", ico: "蛛", hp: 6, sp: 5, str: 2, def: 1, spd: 1,
+    key: MON.SPIDER, name: "クモ", ico: "蛛", hp: 6, sp: 5, str: 2, def: 1, spd: 1, sprec: 2,
     exp: 3, girlatk: 1, bury: 100, space: 1,
     drops: [{ item: "クモの糸", per: 70 }, { item: "解毒薬", per: 30 }],
   },
@@ -534,6 +536,22 @@ function buryMonsterAt(col, row, seed) {
 // drop(+1471/+829/+4493)。
 function buryEscapeRoll(origCol, origRow, seed, bt) {
   return hash3(origCol + 5347, origRow + 6473, seed + 9403 + bt * 7717);
+}
+
+// v0.18.0 モンスター AI ロールストリーム(STATUS v0.18.0 判断 F)。徘徊方向・バンプ攻撃ゲート・
+// 眠り明けなど個体の全確率判定を、個体別ロールカウンタ rc(draw ごと +1、活動箱 16 圏内でのみ
+// 進む=app.js 側で担保)の決定論ハッシュで確定する。ランタイム乱数を使わないので、同一 seed +
+// 同一操作列 → rc 系列一致 → 徘徊・攻撃・睡眠・despawn とも完全再現。
+// 位相 +6841/+7351/(+11939 + rc×8117) は既存全系列と非衝突の新値(v0.18.0 採番):
+// tileType(素)・girl(seed,7001,100+i)・ore(+911/+733/+5557, +733/+5557/+911)・
+// spaceMonster(+313/+197/+8821, +401/+89/+8821)・buryMonster(+233/+617/+3001, +557/+271/+6173)・
+// buryEscapeRoll(+5347/+6473/+9403+bt×7717)・hazard(+1597/+2389/+7919, +2389/+7919/+1597)・
+// avalanche(+2671/+3331/+9173)・mushroom(+4099/+5113/+2027)・drop(+1471/+829/+4493)。
+// 第 1 引数オフセット 6841 は既存最近値 5347 と 1494 差(> 最大 cols 80)、第 2 引数オフセット
+// 7351 は既存最近値 7001/7919 と 350/568 差(> 最大 rows 99)なので、盤面内の座標では他系列と
+// 同一入力 (a,b,c) に到達しえない。
+function monsterAiRoll(spawnCol, spawnRow, seed, rc) {
+  return hash3(spawnCol + 6841, spawnRow + 7351, seed + 11939 + rc * 8117);
 }
 
 // ---- 水/マグマ 浸水ハザード — 原作忠実(v0.6.0) -------------------------
@@ -806,6 +824,7 @@ if (typeof window !== "undefined") {
   window.spaceMonsterAt = spaceMonsterAt;
   window.buryMonsterAt = buryMonsterAt;
   window.buryEscapeRoll = buryEscapeRoll; // v0.17.0 埋没個体の脱出抽選(判断 D)。
+  window.monsterAiRoll = monsterAiRoll; // v0.18.0 AI ロールストリーム(判断 F)。
   window.monsterDrop = monsterDrop;
   // v0.6.0 水/マグマ 浸水ハザード(別オーバーレイレイヤー、決定論)。
   window.HAZARD = HAZARD;

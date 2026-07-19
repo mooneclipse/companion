@@ -98,7 +98,28 @@
 //     markUnstableDug→releaseFluidAt。採取なし)。掘り当て=アクティブ化(activateBuriedAt、非前進の
 //     手触り不変)。崩落土塊の着地マスのアクティブ個体は buried へ戻す(再埋没、spec §6)。
 //  F. buried は bump 攻撃・移動ブロック(monsterAt)・描画の対象外(土の中は見えない)。
-const VERSION = "v0.17.0";
+// v0.18.0: モンスター AI/活動範囲の原作合わせ(正本 spec §5(2026-07-19 訂正済み)、STATUS v0.18.0
+// 判断 A〜H、チケット #123)。bfsStep 追跡(v0.5.0 以来のリメイク独自)を総取り替え:
+//  A/B. 原作モンスターは自機へ接近しない。移動は種別の徘徊のみ(BAT=8方向ランダム飛行 /
+//     SLIME・HALF=重力落下優先+dx∈{-1,0,1}·dy∈{-1,0} / SNAKE=方向持続パトロール(反転・1段登降) /
+//     SPIDER=dx∈{-1,0,1}·dy=75%:0/25%:−1 / WORM=落下+横ランダム(tk%SPD(=3) ターンのみ))。攻撃は
+//     2 層: ①偶発バンプ=徘徊/落下の移動先が自機セルなら移動せず攻撃(bo.java:359-367、WORM 含む
+//     全種) ②意図的バンプゲート=8方向隣接時に種別確率・種別順序(BUMP_GATE)。斜めは corner-cut
+//     規則(両直交隣が塞がりなら不可=v0.15.0 斜め掘り規則と同型)。ゲート失敗時は徘徊へ落ちる=
+//     交戦ロックしない。女の子攻撃対象は following のみ、ダメージ現行式 max(1,STR) 維持。
+//  C. SP-睡眠サイクル: 徘徊移動 1 歩=SP−1、SP0 で入眠。眠り中は行動なし+毎ターン sprec 回復、
+//     満タン覚醒、被弾即覚醒(attackMonster)。WORM は SP 消費なし=眠らない。
+//  D. 現行の spd≦1 隔ターン cd スロットルは撤去。SPD 剰余は WORM の tk%3 が唯一の適用。
+//  E. 活動範囲: 自機から両軸 ±16 の箱(MONSTER_ACTIVE_RANGE、by.java:227-229 verbatim)内の個体
+//     のみターン処理(徘徊・攻撃・SP回復・睡眠・土中 tick)。圏外は完全凍結(tk/rc も進まない)。
+//     BURIED_WAKE_RANGE(4) は撤去しこの活動箱へ統一。despawn=x・y 両軸とも ±28 圏外のとき
+//     splice(MONSTER_DESPAWN_RANGE、by.java:170-172 の逐語 AND。片軸のみでは消えない)。毎ターン
+//     全個体対象、補充なし。
+//  F. 決定論: 徘徊方向・全確率ゲートは個体別ロールカウンタ rc の monsterAiRoll(tiles.js)で確定。
+//  G. 接地種(BAT 以外)に重力導入(下が空間なら徘徊より先に 1 マス落下、落下ターンは攻撃しない。
+//     落下先が自機セルなら偶発バンプ経路で攻撃)。tileType/girlPositions/oreAt/hazardAt/流体/
+//     なだれ/埋没機構(v0.17.0)/moveTo/act/女の子追従/崩落再埋没は不変。
+const VERSION = "v0.18.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -129,12 +150,14 @@ const CONST = {
   ATK_BASE: 1, // 自機攻撃力 = ATK_BASE + pickPower()。木=2 / 石=3 / 鉄=4 / ダイヤ=6。
   DEF_BASE: 0, // 自機防御力 = DEF_BASE + floor((pickPower()-1)/2)。木=0 / 石=0 / 鉄=1 / ダイヤ=2。
   GIRL_HP: 30, // 護衛中の女の子の HP(monster.csv GIRL 行 verbatim=30)。GIRLATK で削られる。
-  // v0.17.0 埋没モンスター(原作合わせ、spec §5。STATUS v0.17.0 判断 C)。
-  BURIED_WAKE_RANGE: 4, // 土中 tick(衰弱+脱出抽選)が動く自機からの Chebyshev 距離。圏外は衰弱も
-  // 脱出もしない。初期値 8(原作 16 の半分スケール)は fun/funproxy 実測で裏庭 15×15 の実質全域=
-  // ほぼ全個体が序盤に一斉覚醒し波状の湧きになった(funproxy 最下層到達 20/20→0/20)ため、判断 G
-  // 先記録どおり判断 C を一段見直して 4 へ(裏庭半径の約半分・VISIBLE_RADIUS(2)の一回り外=
-  // 「見えない場所から近づくと動き出す」意図を保ったまま同時覚醒数を絞る)。
+  // v0.18.0 モンスター活動範囲/despawn(原作 verbatim、STATUS v0.18.0 判断 E)。v0.17.0 の
+  // BURIED_WAKE_RANGE(4、原作 16 の半分スケール前提)は、DUNGEONS 寸法が原作 dungeon_info.csv と
+  // 同一と照合されて前提が崩れたため撤去し、原作の活動箱 1 本(土中 tick 含む全ターン処理を律速)
+  // へ統一した。
+  MONSTER_ACTIVE_RANGE: 16, // 活動箱: 自機から両軸 ±16(Chebyshev 16、by.java:227-229 verbatim)内の
+  // 個体のみターン処理(徘徊・攻撃・SP回復・睡眠・土中 tick)。圏外は完全凍結(tk/rc も進まない)。
+  MONSTER_DESPAWN_RANGE: 28, // despawn: x・y 両軸とも ±28 圏外のとき除去(by.java:170-172 の逐語
+  // AND=片軸のみ圏外では消えない、という原作の癖をそのまま)。毎ターン全個体対象、補充なし。
   // v0.16.0 水/マグマ(原作合わせ、spec §4)。旧 v0.6.0 の SP 割増(WATER_SP_MULT/MAGMA_SP_MULT/
   // MAGMA_HP_CHIP/SWIM_MITIGATION)は撤去=移動コスト側の割増は原作に無い。浸水の消耗は HP 直撃:
   // 水は swimTurns() ターンまで無傷→超過後 drownDamage()/ターン、マグマは猶予なし maxHP/5 /ターン。
@@ -1512,19 +1535,24 @@ function spawnBuriedMonsters() {
       if (!sp) continue;
       const meta = MONSTER[sp];
       if (!meta) continue;
-      G.monsters.push({ key: sp, col, row, hp: meta.hp, kind: "bury", cd: 0, buried: true, bt: 0, origCol: col, origRow: row });
+      G.monsters.push({
+        key: sp, col, row, hp: meta.hp, kind: "bury", buried: true, bt: 0, origCol: col, origRow: row,
+        // v0.18.0: SP-睡眠(判断 C)+ AI ロール(判断 F)の個体 state。spawnCol/spawnRow はロール
+        // ストリームの恒久 ID(rebury で動く origCol/origRow とは別に、生成マスで固定)。
+        sp: meta.sp, sleeping: false, tk: 0, rc: 0, spawnCol: col, spawnRow: row, dir: 0,
+      });
     }
   }
 }
 
-// v0.17.0 土中 tick(判断 B/C/D、原作 bk.java:140-151)。monsterStep 冒頭から毎ターン呼ばれる。
-// 自機から Chebyshev BURIED_WAKE_RANGE 圏内の個体のみ: 毎ターン HP−1(土中で衰弱)、HP 0 は
-// 土中死=静かに除去(EXP/ドロップ/演出なし=自機が関与していない撃破ではない)。生きていれば
-// 覚醒カウンタ bt を進め、bury%(PER_BROKEN_SOIL 本来の意味=覆い土の自力破壊率)の決定論抽選に
-// 単発成功したら脱出。圏外は衰弱も脱出もしない(bt も進まない=近づいた時から動き出す)。
+// v0.17.0 土中 tick(判断 B/D、原作 bk.java:140-151)。monsterStep 冒頭から毎ターン呼ばれる:
+// 毎ターン HP−1(土中で衰弱)、HP 0 は土中死=静かに除去(EXP/ドロップ/演出なし=自機が関与して
+// いない撃破ではない)。生きていれば覚醒カウンタ bt を進め、bury%(PER_BROKEN_SOIL 本来の意味=
+// 覆い土の自力破壊率)の決定論抽選に単発成功したら脱出。
+// v0.18.0 判断 E ③: 距離ゲート(旧 BURIED_WAKE_RANGE)はここから撤去し、monstersAct の活動箱 16
+// (MONSTER_ACTIVE_RANGE)が全ターン処理と共通で律速する。圏外は衰弱も脱出もしない(bt も進まない
+// =近づいた時から動き出す)のは同じで、しきい値だけ原作の単一ゲートへ統一。
 function buriedTick(m, meta) {
-  const dist = Math.max(Math.abs(m.col - G.px), Math.abs(m.row - G.py));
-  if (dist > CONST.BURIED_WAKE_RANGE) return;
   m.hp -= 1;
   if (m.hp <= 0) {
     const i = G.monsters.indexOf(m);
@@ -1573,11 +1601,15 @@ function activateBuriedAt(col, row) {
   return m.key;
 }
 
-// モンスターを 1 体出現リストへ追加(HP は monster.csv verbatim)。
+// モンスターを 1 体出現リストへ追加(HP/SP は monster.csv verbatim)。
+// v0.18.0: cd(隔ターン追跡スロットル)は判断 D で撤去。SP-睡眠 + AI ロールの個体 state を持つ。
 function addMonster(key, col, row, kind) {
   const meta = MONSTER[key];
   if (!meta) return;
-  G.monsters.push({ key, col, row, hp: meta.hp, kind, cd: 0 });
+  G.monsters.push({
+    key, col, row, hp: meta.hp, kind,
+    sp: meta.sp, sleeping: false, tk: 0, rc: 0, spawnCol: col, spawnRow: row, dir: 0,
+  });
 }
 
 // 自機が foe を攻撃する 1 戦闘ターン。撃破するまで前進できない(死の緊張の核)。
@@ -1587,6 +1619,7 @@ function attackMonster(foe) {
   spendAction(); // 攻撃も 1 行動(SP/HP を 1 消費=既存の行動コスト)。
   const dmg = Math.max(1, playerAtk() - meta.def);
   foe.hp -= dmg;
+  foe.sleeping = false; // v0.18.0 判断 C: 被弾で即覚醒(各 AI クラスの j() 相当)。
   spawnPopupAt(foe.col, foe.row, "-" + dmg);
   playDig(); // 打撃音(専用 SFX 無し=掘削音を流用)。
   if (foe.hp <= 0) {
@@ -1621,8 +1654,12 @@ function killMonster(foe) {
   playSfx("found"); // 撃破の合図(専用 SFX 無し=発見音を流用)。
 }
 
-// 出現中の全モンスターが自機の 1 行動に反応(SPD で行動頻度を律速)。隣接していれば攻撃、
-// 隣接していなければ自機(または GIRLATK=1 なら隣接する女の子)へ 1 歩近づく(掘った空洞のみ移動可)。
+// 出現中の全モンスターが自機の 1 行動に反応(v0.18.0 判断 E)。個体ごとに:
+// ①despawn 判定(毎ターン全個体対象、活動圏外・buried 含む): x・y 両軸とも ±MONSTER_DESPAWN_RANGE
+//   圏外なら splice(by.java:170-172 の逐語 AND。片軸のみ圏外では消えない)。補充なし=ランタイム
+//   スポーン導入(次増分候補)までは大マップ遠方の人口が漸減する片肺状態(STATUS 判断 E 明記)。
+// ②活動箱: Chebyshev MONSTER_ACTIVE_RANGE 圏内の個体のみターン処理。圏外は完全凍結
+//   (tk/rc/SP/睡眠/土中 tick すべて進まない=by.java:227-229 verbatim)。
 function monstersAct() {
   if (!G.monsters || !G.monsters.length) return;
   // splice 中の添字ズレを避けるためスナップショットを走査。撃破等での除去は indexOf で安全。
@@ -1630,61 +1667,207 @@ function monstersAct() {
     if (G.monsters.indexOf(m) < 0) continue; // 既に除去済み。
     const meta = MONSTER[m.key];
     if (!meta) continue;
+    if (Math.abs(m.col - G.px) > CONST.MONSTER_DESPAWN_RANGE && Math.abs(m.row - G.py) > CONST.MONSTER_DESPAWN_RANGE) {
+      const i = G.monsters.indexOf(m);
+      if (i >= 0) G.monsters.splice(i, 1); // despawn(静かに除去。EXP/ドロップ/演出なし)。
+      continue;
+    }
+    if (Math.max(Math.abs(m.col - G.px), Math.abs(m.row - G.py)) > CONST.MONSTER_ACTIVE_RANGE) continue;
+    m.tk = (m.tk || 0) + 1; // 活動ターンカウンタ(圏内でのみ進む。WORM の SPD 剰余ゲートが参照)。
     monsterStep(m, meta);
     if (G.screen !== "dive") return; // 力尽き等で離脱。
   }
 }
 
-// モンスター 1 体の行動: 隣接する標的(自機/護衛中の女の子)を攻撃、無ければ標的へ 1 歩寄る。
-// SPD は「追跡(移動)の頻度」を律速する(spd<=1 は隔ターンしか寄れない=逃げやすい)。一方
-// 隣接して交戦中の攻撃は毎ターン応酬する(殴り合いは常に危険=死の緊張の核)。原作 SPD=行動速度
-// の翻案として、攻撃の応酬は止めず、鈍足の差は「間合いを詰める速さ」に出す。
+// ---- v0.18.0 モンスター AI(種別徘徊 + 2 層バンプ攻撃 + SP-睡眠。判断 A〜D/F/G) ----
+// 意図的バンプゲートの種別確率・種別順序(原作 AI クラス verbatim: bl.java:28 / ce.java:31 /
+// cf.java:29 / cg.java:24-31 / ci.a)。girl 優先種は 女→自、自機優先種は 自→女 の順に試行し、
+// 各試行は「対象が 8 方向隣接(corner-cut 可)している場合のみ」ロールを 1 回引く。ゲート失敗時は
+// 徘徊へ落ちる=隣接しても交戦ロックしない(原作どおり出入りする)。WORM はゲートなし(cj に攻撃
+// 呼び出しなし=無害な土の住人。偶発バンプのみ)。
+const BUMP_GATE = {
+  [MON.BAT]: { order: "girl", girl: 80, self: 80 },
+  [MON.SLIME]: { order: "girl", girl: 100, self: 80 },
+  [MON.SLIME_HALF]: { order: "girl", girl: 100, self: 80 },
+  [MON.SNAKE]: { order: "self", self: 100, girl: 50 },
+  [MON.SPIDER]: { order: "self", self: 100, girl: 50 },
+};
+// BAT の 8 方向ランダム飛行の方向表(monsterAiRoll の [0,1) を 8 等分で引く)。
+const DIRS8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+
+// 個体 m のロールを 1 回引く(rc を進める)。monsterStep 系からのみ呼ばれる=活動箱 16 圏内で
+// しか rc が進まない(判断 F の「活動圏内でのみ進む」を呼び出し構造で担保)。
+function aiRoll(m) {
+  m.rc = (m.rc || 0) + 1;
+  return monsterAiRoll(m.spawnCol, m.spawnRow, G.seed, m.rc);
+}
+
+// (mc,mr) から (dc,dr) 方向へ移動/攻撃できるか(corner-cut 規則、判断 B)。斜めは両直交隣が
+// どちらも塞がりなら不可(原作 n.c = v0.15.0 斜め掘り規則と同型)。直交方向は常に可。
+function monsterDiagPassable(mc, mr, dc, dr) {
+  if (dc === 0 || dr === 0) return true;
+  return isSpace(mc + dc, mr) || isSpace(mc, mr + dr);
+}
+
+// m が自機を攻撃(偶発バンプ/意図的ゲートの共通実行)。ダメージ現行式 max(1, STR − 自機DEF)、
+// 被ダメは二段ゲージへ(判断 B: 乱数幅式は台帳④既知の別翻案のまま非介入)。
+function monsterAttackPlayer(m, meta) {
+  const dmg = Math.max(1, meta.str - playerDef());
+  takeDamage(dmg);
+  spawnPopupAt(G.px, G.py, "-" + dmg, "warn");
+}
+
+// m が追従中の女の子 g を攻撃。ダメージ現行式 max(1, STR)(女の子は DEF を別に持たない)。
+function monsterAttackGirl(m, meta, g) {
+  const dmg = Math.max(1, meta.str);
+  g.hp -= dmg;
+  spawnPopupAt(g.col, g.row, "-" + dmg, "warn");
+  if (g.hp <= 0) loseGirl(g);
+}
+
+// m に 8 方向隣接(corner-cut 可)している追従中の女の子を収集(判断 B: 攻撃対象は following のみ。
+// hidden は土中で別レイヤーのため対象外=v0.17.0 と同じ前提)。
+function adjacentFollowingGirls(m) {
+  const out = [];
+  if (!G.girls) return out;
+  for (const g of G.girls) {
+    if (g.state !== "following") continue;
+    const dc = g.col - m.col, dr = g.row - m.row;
+    if (Math.max(Math.abs(dc), Math.abs(dr)) !== 1) continue;
+    if (!monsterDiagPassable(m.col, m.row, dc, dr)) continue;
+    out.push(g);
+  }
+  return out;
+}
+
+// 意図的バンプゲート(判断 B ②)。攻撃を実行したら true、両ゲート不成立なら false(徘徊へ落ちる)。
+function tryBumpGate(m, meta) {
+  const gate = BUMP_GATE[m.key];
+  if (!gate) return false; // WORM: 攻撃なし。
+  const tryGirl = () => {
+    const cands = adjacentFollowingGirls(m);
+    if (!cands.length) return false;
+    if (aiRoll(m) >= gate.girl / 100) return false;
+    // 複数隣接時は周囲から収集してランダム 1 体(bk.java:44-56 と同型。1 体なら追加ロールなし)。
+    const g = cands.length === 1 ? cands[0] : cands[Math.floor(aiRoll(m) * cands.length)];
+    monsterAttackGirl(m, meta, g);
+    return true;
+  };
+  const trySelf = () => {
+    const dc = G.px - m.col, dr = G.py - m.row;
+    if (Math.max(Math.abs(dc), Math.abs(dr)) !== 1) return false;
+    if (!monsterDiagPassable(m.col, m.row, dc, dr)) return false;
+    if (aiRoll(m) >= gate.self / 100) return false;
+    monsterAttackPlayer(m, meta);
+    return true;
+  };
+  return gate.order === "girl" ? tryGirl() || trySelf() : trySelf() || tryGirl();
+}
+
+// 徘徊 1 歩ぶんの SP 消費(判断 C: 徘徊移動 1 歩 = SP−1、SP0 で入眠)。落下・方向反転・攻撃は
+// 消費しない(SP コストは bk の徘徊移動ヘルパー由来=移動成立時のみ)。WORM は SP 0 =消費なし・
+// 眠らない(cj に SP コスト呼び出しなし)。
+function spendMonsterSp(m, meta) {
+  if (!meta.sp || meta.sp <= 0) return;
+  m.sp = Math.max(0, (m.sp === undefined ? meta.sp : m.sp) - 1);
+  if (m.sp <= 0) m.sleeping = true;
+}
+
+// 徘徊候補 (dc,dr) を 1 つ解決する。移動先が自機セルなら移動せず攻撃(偶発バンプ、bo.java:359-367
+// verbatim=WORM 含む全種)。移動が成立したら SP を消費して true。盤外/固体/他個体/corner-cut
+// 不可なら false(何もしない)。女の子セルはブロックしない(既存挙動どおり=偶発バンプは自機のみ)。
+function tryWanderStep(m, meta, dc, dr) {
+  if (dc === 0 && dr === 0) return false;
+  const c = m.col + dc, r = m.row + dr;
+  if (c < 0 || c >= CONST.GRID_COLS || r < 0 || r > CONST.DEPTH_ROWS) return false;
+  if (!monsterDiagPassable(m.col, m.row, dc, dr)) return false;
+  if (c === G.px && r === G.py) {
+    monsterAttackPlayer(m, meta); // 偶発バンプ: 移動せず攻撃。
+    return true;
+  }
+  if (!isSpace(c, r) || monsterAt(c, r)) return false;
+  m.col = c;
+  m.row = r;
+  spendMonsterSp(m, meta);
+  return true;
+}
+
+// 種別徘徊(判断 A/B。方向・確率はすべて aiRoll = 個体別決定論ストリーム)。
+function monsterWander(m, meta) {
+  if (m.key === MON.BAT) {
+    // BAT: 8 方向ランダム飛行(bl。重力なし)。
+    const [dc, dr] = DIRS8[Math.min(7, Math.floor(aiRoll(m) * 8))];
+    tryWanderStep(m, meta, dc, dr);
+    return;
+  }
+  if (m.key === MON.SNAKE) {
+    // SNAKE: 方向持続パトロール(cg)。持続方向へ 平行→1 段登→1 段降 の順に試し、全部塞がりなら
+    // 反転(このターンは移動なし。反転は SP 非消費)。初期方向はロールで確定。
+    if (!m.dir) m.dir = aiRoll(m) < 0.5 ? -1 : 1;
+    if (tryWanderStep(m, meta, m.dir, 0)) return;
+    if (tryWanderStep(m, meta, m.dir, -1)) return;
+    if (tryWanderStep(m, meta, m.dir, 1)) return;
+    m.dir = -m.dir;
+    return;
+  }
+  if (m.key === MON.SPIDER) {
+    // SPIDER: dx∈{-1,0,1}・dy=75%:0 / 25%:−1(ci。糸・天井状態機械はスコープ外=既知残差分)。
+    const dc = Math.min(2, Math.floor(aiRoll(m) * 3)) - 1;
+    const dr = aiRoll(m) < 0.25 ? -1 : 0;
+    tryWanderStep(m, meta, dc, dr);
+    return;
+  }
+  if (m.key === MON.WORM) {
+    // WORM: 空間では横ランダム(cj。落下は monsterStep の共通重力が先に済ませる)。
+    const dc = Math.min(2, Math.floor(aiRoll(m) * 3)) - 1;
+    tryWanderStep(m, meta, dc, 0);
+    return;
+  }
+  // SLIME / SLIME_HALF: dx∈{-1,0,1}・dy∈{-1,0} ランダム(ce/cf。重力落下優先は共通重力が担う)。
+  const dc = Math.min(2, Math.floor(aiRoll(m) * 3)) - 1;
+  const dr = Math.min(1, Math.floor(aiRoll(m) * 2)) - 1;
+  tryWanderStep(m, meta, dc, dr);
+}
+
+// モンスター 1 体の行動(v0.18.0 機構替え、判断 A〜D/G)。分岐順は原作準拠:
+// 埋没(土中 tick)→ 眠り(回復のみ)→ WORM の SPD 剰余ゲート → 重力落下(接地種、落下ターンは
+// 攻撃しない)→ 意図的バンプゲート → 種別徘徊(移動先が自機なら偶発バンプ)。
 function monsterStep(m, meta) {
-  // v0.17.0 判断 F: 埋没中は土中 tick(衰弱+脱出抽選)のみ。bump も追跡もしない(土の中に居る)。
+  // v0.17.0 判断 F: 埋没中は土中 tick(衰弱+脱出抽選)のみ。bump も徘徊もしない(土の中に居る)。
   if (m.buried) {
     buriedTick(m, meta);
     return;
   }
-  // 標的候補: 常に自機。GIRLATK=1 なら隣接する追従中の女の子も(より近い方を狙う)。
-  const adjPlayer = isAdjacent(m.col, m.row, G.px, G.py);
-  let targetGirl = null;
-  if (meta.girlatk === 1 && G.girls) {
-    for (const g of G.girls) {
-      if (g.state !== "following") continue;
-      if (isAdjacent(m.col, m.row, g.col, g.row)) { targetGirl = g; break; }
+  // 判断 C: 眠り中は行動なし(攻撃もしない)+ 毎ターン sprec 回復、満タンで覚醒。被弾即覚醒は
+  // attackMonster 側(各 j() 相当)。
+  if (m.sleeping) {
+    m.sp = Math.min(meta.sp, (m.sp || 0) + (meta.sprec || 0));
+    if (m.sp >= meta.sp) m.sleeping = false;
+    return;
+  }
+  // 判断 D: SPD 剰余ゲートは WORM のみ(cj.java:31-33/72-74 が唯一の一次確認)。行動関数の冒頭
+  // ゲートなので落下含む全行動を律速する。tk % SPD(=3) == 0 のターンだけ動く。他 5 種は毎ターン。
+  if (m.key === MON.WORM && meta.spd > 1 && m.tk % meta.spd !== 0) return;
+  // 判断 G: 接地種(BAT 以外)は下が空間なら徘徊より先に 1 マス落下し、そのターンは攻撃しない
+  // (原作の分岐順)。落下先が自機セルなら偶発バンプ経路で攻撃(上から降ってくる)。BAT は飛行=
+  // 重力なし。流体との相互作用は未実装のまま(既知残差分=流体セルも空間として落ち抜ける)。
+  if (m.key !== MON.BAT) {
+    const below = m.row + 1;
+    if (below <= CONST.DEPTH_ROWS) {
+      if (G.px === m.col && G.py === below) {
+        monsterAttackPlayer(m, meta); // 落下バンプ(bo.a 経路)。移動しない。
+        return;
+      }
+      if (isSpace(m.col, below) && !monsterAt(m.col, below)) {
+        m.row = below; // 1 マス落下(SP 非消費)。落下ターンは攻撃しない。
+        return;
+      }
     }
   }
-  if (targetGirl && !adjPlayer) {
-    // 隣接する女の子を攻撃(自機が隣接していなければ女の子優先=誘導難度)。毎ターン応酬。
-    const dmg = Math.max(1, meta.str); // 女の子は DEF を別に持たない(monster.csv GIRL DEF=1 は小)。
-    targetGirl.hp -= dmg;
-    spawnPopupAt(targetGirl.col, targetGirl.row, "-" + dmg, "warn");
-    if (targetGirl.hp <= 0) loseGirl(targetGirl);
-    return;
-  }
-  if (adjPlayer) {
-    // 自機を攻撃。1 ターンダメージ = max(1, STR - 自機DEF)。被ダメは二段ゲージへ。毎ターン応酬。
-    const dmg = Math.max(1, meta.str - playerDef());
-    takeDamage(dmg);
-    spawnPopupAt(G.px, G.py, "-" + dmg, "warn");
-    return;
-  }
-  // 隣接していなければ標的へ 1 歩寄る(掘った空洞=自機が通れる経路のみ)。追跡だけ SPD で律速:
-  // spd<=1 は隔ターン(cd)、spd>=2 は毎ターン寄れる。
-  if (meta.spd <= 1) {
-    m.cd = (m.cd + 1) % 2;
-    if (m.cd === 0) return; // この追跡ターンはスキップ(鈍足)。
-  }
-  const step = bfsStep(m.col, m.row, G.px, G.py);
-  if (step && !monsterAt(step[0], step[1])) {
-    m.col = step[0];
-    m.row = step[1];
-  }
-}
-
-// (a) と (b) が 4 近傍で隣接(上下左右いずれか 1 マス)か。
-function isAdjacent(ac, ar, bc, br) {
-  return Math.abs(ac - bc) + Math.abs(ar - br) === 1;
+  // 判断 B ②: 意図的バンプゲート(種別確率・種別順序)。失敗時は徘徊へ落ちる。
+  if (tryBumpGate(m, meta)) return;
+  // 判断 A: 種別徘徊(移動先が自機セルなら偶発バンプ=判断 B ①)。
+  monsterWander(m, meta);
 }
 
 // 護衛中の女の子が HP 0 でロスト。following → hidden へ戻し、元の埋没位置(col, origRow)へ戻す。
@@ -1991,51 +2174,8 @@ function advanceOneGirl(g) {
   if (g.row === 0 || caughtUpAtSurface(g)) rescueGirl(g);
 }
 
-// 掘った空間(+地表)を辿って (sc,sr) から (tc,tr) へ 1 歩進む BFS。最初の 1 歩を返す。
-function bfsStep(sc, sr, tc, tr) {
-  if (sc === tc && sr === tr) return null;
-  const start = sc + "," + sr;
-  const goal = tc + "," + tr;
-  const prev = new Map();
-  const q = [[sc, sr]];
-  const seen = new Set([start]);
-  let guard = 0;
-  let found = false;
-  while (q.length && guard < 4000) {
-    guard++;
-    const [col, row] = q.shift();
-    if (col === tc && row === tr) {
-      found = true;
-      break;
-    }
-    const nb = [
-      [col, row - 1],
-      [col, row + 1],
-      [col - 1, row],
-      [col + 1, row],
-    ];
-    for (const [c, r] of nb) {
-      if (r < 0 || c < 0 || c >= CONST.GRID_COLS) continue;
-      if (r > CONST.DEPTH_ROWS) continue;
-      const k = c + "," + r;
-      if (seen.has(k)) continue;
-      // 通れる = 空間(掘った跡 or 元空間) or 地表 or 目標(自機)位置。
-      if (!isSpace(c, r) && !(c === tc && r === tr)) continue;
-      seen.add(k);
-      prev.set(k, col + "," + row);
-      q.push([c, r]);
-    }
-  }
-  if (!found) return null;
-  let cur = goal;
-  let step = null;
-  while (cur && cur !== start) {
-    step = cur;
-    cur = prev.get(cur);
-  }
-  if (!step) return null;
-  return step.split(",").map(Number);
-}
+// (v0.18.0 判断 B: 旧 bfsStep(モンスター追跡 BFS)は機構替えで参照が無くなったため削除。
+//  女の子追従は v0.11.0 から足跡キュー方式で bfsStep 非依存。)
 
 // 追従中の女の子が地表(row0)へ到達したときの処理(advanceOneGirl / surfaceReturn の合流点)。
 // v0.11.0 ②: 2 経路に分かれる。
@@ -3161,6 +3301,13 @@ function drawMonster(m) {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(meta ? meta.ico : "敵", mx, my + tile * 0.02);
+  // v0.18.0 判断 C(眠り描画は実装裁量として記録): 専用スプライトは無いので、眠り個体は本体の
+  // 右上に淡色の「z」を重ねる最小表現(識別はできるが目立たせない=脅威が下がっている合図)。
+  if (m.sleeping) {
+    ctx.fillStyle = "rgba(200,220,255,0.9)";
+    ctx.font = `${Math.round(tile * 0.3)}px serif`;
+    ctx.fillText("z", mx + r * 0.9, my - r * 0.9);
+  }
   // HP バー(上辺に細く)。残 HP 比で朱→寒色。
   if (meta && meta.hp > 0) {
     const ratio = Math.max(0, Math.min(1, m.hp / meta.hp));

@@ -1,6 +1,10 @@
-// マインロード v0.17.0 実機相当デバッグ + 既存作回帰(gate A〜AF)。
+// マインロード v0.18.0 実機相当デバッグ + 既存作回帰(gate A〜AF)。
+// v0.18.0 = モンスター AI/活動範囲の原作合わせ(bfsStep 追跡全廃→種別徘徊 + 2 層バンプ攻撃ゲート /
+// SP-睡眠 / 活動箱 16・despawn 28 / BURIED_WAKE_RANGE 撤去)→ gate S3-S5 の交戦・GIRLATK 構成を
+// 徘徊/重力/確率ゲート前提へ書き換え(STATUS v0.18.0 判断 A〜H。追跡前提の assert は仕様総取り替えに
+// 伴い廃止。専用の機構 assert は tests/selfcheck-mineroad-ai.mjs)。
 // v0.17.0 = 埋没モンスター機構の原作合わせ(生成時配置 buried=true / 土中 tick HP−1 + bury% 脱出 /
-// 圏内 Chebyshev 4 ゲート(BURIED_WAKE_RANGE) / 掘り当てアクティブ化)→ gate S2 を新機構 assert へ書き換え
+// 掘り当てアクティブ化)→ gate S2 を新機構 assert へ書き換え
 // (STATUS v0.17.0 判断 G。掘削時抽選スポーンの assert は仕様総取り替えに伴い廃止)。
 // v0.16.0 = 水/マグマ機構の原作合わせ(流動セルオートマトン G.fluid / 浸水は息切れ後 HP 直撃 /
 // マグマ maxHP/5 直撃 / 浮力)→ gate W3/W4 を新仕様 assert へ書き換え(STATUS v0.16.0 判断 G)。
@@ -377,7 +381,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.17.0" &&
+    version === "v0.18.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.dungeonBtnCount === 9 &&
@@ -406,7 +410,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.17.0)", corePass);
+  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.18.0)", corePass);
   await ctx.close();
 }
 
@@ -2145,8 +2149,12 @@ let monsterPass = false;
     // --- S3/S4 戦闘で HP/SP 減 + bump-attack 撃破 + EXP/ドロップ ---
     startDive();
     // 既知の盤面に SNAKE を隣接配置(戦闘式と二段ゲージ接続の検証)。低 SP にして HP 減を観測。
+    // v0.18.0: 追跡が徘徊+ゲートに替わったため、SNAKE が重力落下/徘徊で隣接から外れないよう
+    // 足元を固体化し他個体を排除(SNAKE 自機ゲートは 100% なので隣接中は毎ターン応酬=旧 assert 維持)。
     G.px = 7; G.py = 5; G.stamina = 2; G.hp = 30; G.exp = 0; G.kills = 0; G.drops = {};
+    G.monsters = []; G.spawned = new Set(); // 他個体の干渉を排除(戦闘式の純検証)。
     G.dug.add("8,5"); // 右を空洞化(モンスターを置けるよう)。
+    G.fallen.add("8,6"); // SNAKE の足元を固体化(v0.18.0 重力で落ちて離れない)。
     addMonster("SNAKE", 8, 5, "space");
     const snake = G.monsters.find((m) => m.col === 8 && m.row === 5);
     const foeHp0 = snake.hp, sp0 = G.stamina, hp0 = G.hp;
@@ -2163,15 +2171,20 @@ let monsterPass = false;
     o.dropDeterministic = monsterDrop("SNAKE", 8, 5, G.seed) === monsterDrop("SNAKE", 8, 5, G.seed);
 
     // --- S5 GIRLATK: 護衛中の女の子が隣接モンスターに削られロスト(救出数は不変) ---
+    // v0.18.0 判断 B で書き換え(STATUS v0.18.0 エントリ根拠): 女の子攻撃は種別確率ゲートになった
+    // (SNAKE は女 50% で徘徊落ちがありうる)ため、女 100% の SLIME(STR3)で決定論の 1 ターンロストを
+    // 構成する。足元固体化 + 他個体排除で徘徊/落下の揺らぎも断つ。
     startDive();
     const rescuedBefore = G.rescued;
-    G.girls[0].state = "following"; G.girls[0].col = 5; G.girls[0].row = 5; G.girls[0].hp = 4;
+    G.girls[0].state = "following"; G.girls[0].col = 5; G.girls[0].row = 5; G.girls[0].hp = 3;
     // v0.12.0: 護衛中の検証なので追従(足跡消化)で女の子をその場から動かさないよう trailIdx を末尾へ
     // 合わせる(advanceOneGirl が「もう自機の真後ろまで来ている」と判断して移動しない=GIRLATK の純検証)。
     G.girls[0].trailIdx = (G.playerTrail || []).length;
     G.px = 0; G.py = 1; // 自機は遠い(女の子優先標的)。
+    G.monsters = []; G.spawned = new Set(); // 他個体の干渉を排除(ゲートの純検証)。
     G.dug.add("5,5"); G.dug.add("6,5"); G.dug.add("4,5");
-    addMonster("SNAKE", 6, 5, "space"); // SNAKE GIRLATK=1, STR=5 → 1 撃で 4HP の女の子を倒す。
+    G.fallen.add("6,6"); // SLIME の足元を固体化(v0.18.0 重力で落ちて離れない)。
+    addMonster("SLIME", 6, 5, "space"); // SLIME 女100%(ce.java:31)・STR=3 → 1 撃で 3HP の女の子を倒す。
     const girlHp0 = G.girls[0].hp, girlState0 = G.girls[0].state;
     let f3 = 0; while (G.girls[0].state === "following" && f3 < 6) { act(0, 1); f3++; } // 自機の行動でモンスターが反応。
     o.girlAtkWorks = girlState0 === "following" && G.girls[0].state !== "following"; // following から外れた。
@@ -3899,7 +3912,7 @@ let determinismPass = true;
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.17.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
+out("(A) コア遷移 + VERSION v0.18.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
 out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
