@@ -27,4 +27,7 @@ export YTCHECK_VIEWING_DIR="$HOME/companion/vault/notes/ytcheck"
 # (2026-07-07 初回実行: 71 本中 34 本失敗、docs/STATUS.md 参照)
 export MAX_CONCURRENT_TASKS=2
 
+# Stop hook ボイスの発生源申告 (チケット #125): バッチ実行は手元で鳴らさない
+export COMPANION_VOICE_SOURCE=batch
+
 exec "$ROOT/.venv/bin/python" "$ROOT/python/youtube_checker/main.py" --all --output markdown "$@"

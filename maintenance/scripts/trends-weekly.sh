@@ -131,6 +131,8 @@ notify_failure() {
 }
 
 # --- claude バイナリ解決 (node バージョンをハードコードしない) -------------------
+# Stop hook ボイスの発生源申告 (チケット #125): バッチ実行は手元で鳴らさない
+export COMPANION_VOICE_SOURCE=batch
 CLAUDE_BIN="$(command -v claude || true)"
 if [[ -z "$CLAUDE_BIN" ]]; then
     CLAUDE_BIN="$(ls "$HOME"/.nvm/versions/node/*/bin/claude 2>/dev/null | head -1 || true)"

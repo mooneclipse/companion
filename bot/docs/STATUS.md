@@ -189,6 +189,14 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 
 ## Done
 
+### #125 Stop hook ボイスの発生源申告 — claude -p 実行に COMPANION_VOICE_SOURCE=bot を付与 (2026-07-21、**bot restart 待ち**)
+
+- **背景**: 手元の「終わったよ」ボイス (グローバル `~/.claude/settings.json` の Stop hook) がこの端末の全 claude プロセスで発火し、発生源を区別できなかった (#125)。実ログ照合で bot の osekkai (23:34、len=37 一致) と ytcheck バッチ (05:14〜05:21 に 8 連発) が犯人と特定。Agent tool のサブエージェント終了では Stop hook は発火しないことを実機検証済み (公式仕様とも整合: サブは SubagentStop 別イベント)
+- **設計**: 呼び出し側が env `COMPANION_VOICE_SOURCE` で名乗り、hook 側は「発生源→挙動」テーブルを 1 回引く。local (既定/未知値フェイルオープン)=従来どおり 6 分類、bot=renbot.wav 専用 1 音 (Stop のみ。Notification/StopFailure は Telegram 通知と二重のため無音)、batch=全無音。分岐積み増しではなくデータテーブル (対症療法 2 周目ルール整合、code-reviewer 確認済み)
+- **変更**: `claude_runner.py _claude_env()` に `COMPANION_VOICE_SOURCE=bot` 1 行 (bot 系は osekkai / proactive 含め全経路がここを通る)。batch 側は `ytcheck/run.sh` / `maintenance/scripts/trends-weekly.sh` に export 追加。hook 3 本 (`~/.claude/hooks/complete-dispatch.sh` / `notify-dispatch.sh` / `error-dispatch.sh`、git 管理外) に SRC テーブル + 診断ログへ `src=` 追加。`~/.claude/sounds/renbot.wav` 新規 (VOICEVOX speaker_id=2、既存音と同形式・同パディング、engine は一時起動→停止で復元)
+- **レビュー/テスト**: code-reviewer 修正必須 0、軽微 1 (env 申告の直接テスト) を反映 — ただしレビュアー提示の diff 当て先 (`test_claude_env_strips_host_auth`) は実在せず、新クラス `ClaudeEnvTest` として追加。発生源×分類マトリクス 9 件 + bash -n 5 本 + py_compile 全 PASS、tests.test_claude_runner 9 件 OK
+- **デプロイ状態**: ytcheck / trends は次回 timer 実行から有効 (プロセス常駐なし)。**bot は restart するまで旧 env のまま** = renbot 音にならずカテゴリ別ボイスが鳴り続ける。restart は OWNER 名指し承認が必要 (2026-07-16 運用ルール)
+
 ### #118 /rest・/backlog コマンド新設 — osekkai 休むフラグ・バックログ登録の Telegram 入口 (2026-07-18、commit `9c9eba7`)
 
 - **背景**: OWNER が osekkai topic で「今日は休む」と返しても `tonight.json` の `resting` が立たず、23:30 の振り返りは普通に届く + それが今夜最初の発話なら `_osekkai_record_manual_start` により意図として原文記録される穴 (2026-07-17 OWNER 起票、設計材料は osekkai/docs/STATUS.md の申し送り節 → 本実装で解消し撤去)

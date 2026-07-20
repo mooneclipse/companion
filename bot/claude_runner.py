@@ -143,6 +143,9 @@ def _claude_env() -> dict[str, str]:
         "CLAUDE_CODE_SESSION_ID",
     ):
         env.pop(key, None)
+    # Stop hook ボイスの発生源申告 (チケット #125)。手元の
+    # ~/.claude/hooks/complete-dispatch.sh がこの値で renbot 専用音に切り替える。
+    env["COMPANION_VOICE_SOURCE"] = "bot"
     return env
 
 

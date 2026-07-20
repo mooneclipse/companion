@@ -16,6 +16,7 @@ from claude_runner import (
     ClaudeOptions,
     ClaudeResult,
     ErrorKind,
+    _claude_env,
     _warn_if_session_id_mismatch,
 )
 
@@ -25,6 +26,13 @@ def _ok_result(session_id: str | None) -> ClaudeResult:
         rc=0, error_kind=ErrorKind.OK, raw_stdout="", raw_stderr="",
         session_id=session_id,
     )
+
+
+class ClaudeEnvTest(unittest.TestCase):
+    def test_declares_voice_source_bot(self) -> None:
+        # チケット #125: Stop hook ボイスの発生源申告。この行が欠落すると
+        # bot の claude -p が手元でカテゴリ別ボイスを鳴らす回帰になる。
+        self.assertEqual(_claude_env()["COMPANION_VOICE_SOURCE"], "bot")
 
 
 class WarnIfSessionIdMismatchTest(unittest.TestCase):
