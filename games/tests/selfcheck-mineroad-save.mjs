@@ -46,7 +46,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.19.0", ver === "v0.19.0", { ver }); // v0.19.0 ランタイムスポーンの原作合わせ(STATUS v0.19.0)へ機械追随。
+check("VERSION = v0.20.0", ver === "v0.20.0", { ver }); // v0.20.0 実機 FB の原作合わせ(STATUS v0.20.0)へ機械追随。
 
 // ============================================================================
 // 1. fail→retry で永続 state 復元
@@ -64,6 +64,9 @@ const run1 = await page.evaluate(() => {
   while (G.py < 6) act(0, 1);
   const girl = G.girls.find(g => g.origRow === 6);
   if (!girl || girl.state !== "following") return { err: "girl not following" };
+  // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない。縦一直線に掘り進んだ経路
+  // (px=11, row 1..6)へはしごを一括注入してから登る(player-state 注入方針、G.dug 注入と同じ)。
+  for (let r = 1; r <= G.py; r++) G.placedLadders.add(G.px + "," + r);
   // 地表へ戻る(surfaceReturn が自動発火)。
   while (G.py > 0) act(0, -1);
   // 育成: 情報→BP→PER_HP。
@@ -154,6 +157,9 @@ const run4 = await page.evaluate(() => {
   // 1人救出して永続 state に値を入れる。
   while (G.px < 11) act(1, 0);
   while (G.py < 6) act(0, 1);
+  // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない。縦一直線に掘り進んだ経路
+  // (px=11, row 1..6)へはしごを一括注入してから登る(player-state 注入方針、G.dug 注入と同じ)。
+  for (let r = 1; r <= G.py; r++) G.placedLadders.add(G.px + "," + r);
   while (G.py > 0) act(0, -1);
   // surfaceReturn は自動発火済み。
   return { saved: true };
@@ -205,6 +211,9 @@ for (let trial = 0; trial < 3; trial++) {
     G.spawned = new Set();
     while (G.px < 11) act(1, 0);
     while (G.py < 6) act(0, 1);
+    // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない。縦一直線に掘り進んだ経路
+    // (px=11, row 1..6)へはしごを一括注入してから登る(player-state 注入方針、G.dug 注入と同じ)。
+    for (let r = 1; r <= G.py; r++) G.placedLadders.add(G.px + "," + r);
     while (G.py > 0) act(0, -1);
     convertInfoToBp();
     if (G.bp >= bpCostFor("HP", 0)) levelUpPer("HP");

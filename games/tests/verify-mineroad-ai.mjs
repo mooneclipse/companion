@@ -2,8 +2,14 @@
 //
 // 実装側テスト(selfcheck-mineroad-ai.mjs / debug-mineroad.mjs)とは**別実装・別シナリオ**:
 // selfcheck は state 注入でシナリオを構築するが、本テストは seed 41027(裏庭)の実盤面から事前導出した
-// 固定経路を**実タップのみ**で踏む(state 注入 0 件、読み取りのみ)。期待値は probe(盤面ダンプ +
-// 経路リハーサル、2026-07-19 導出)の決定論リテラルを直接 assert。
+// 固定経路を**実タップのみ**で踏む。期待値は probe(盤面ダンプ + 経路リハーサル、2026-07-19 導出)の
+// 決定論リテラルを直接 assert。
+//
+// v0.20.0 追随(2026-07-20): B1..B22 バウンスの上昇分は climbUp ヘルパーが目的セルへ
+// G.placedLadders を transient 注入(タップ直後に即撤去)する 1 点のみ state に触れる
+// (クライム廃止・判断C の代替経路。世界生成/モンスター state には非介入)。単発 1 マスの
+// 移動として旧クライムと物理的に等価(SP 消費/ターン進行は不変)なため、既存の S41_TRACK/
+// SP_TRACK/DUG_B 等のリテラルは変更不要と当初想定したが、実機再走で無傷一致を確認済み。
 //
 // 経路計画(seed 41027 実測、2026-07-19 導出):
 //   - 裏庭 15×15 は自機からの Chebyshev 最大距離が 15 のため、活動箱 MONSTER_ACTIVE_RANGE=16 が
@@ -188,11 +194,16 @@ async function startDive(page) {
 
 // 自機隣接オフセット(dc,dr)のタイル中心へ実マウスタップ。canvas rect + 実 camY から画面座標を算出。
 async function tapTileOffset(page, dc, dr) {
+  // v0.20.0 フレーク対策: タップ座標算出→クリック着弾の間にカメラ lerp が動くと着弾タイルが
+  // ずれる。旧仕様は「隣接圏外タップ=無視」で無害だったが、ゾーン入力導入で「別方向の行動」に
+  // 化けて run 間分岐する(V8 実測)。毎タップ前にカメラ収束を待って座標を確定させる。
+  await camSettle(page);
   const p = await page.evaluate(([dc, dr]) => {
     const r = document.getElementById("scene").getBoundingClientRect();
     const cam = window.__camY || 0;
+    const camx = window.__camX || 0;
     return {
-      x: r.left + (G.px + dc) * tile + tile / 2,
+      x: r.left + (G.px + dc - camx) * tile + tile / 2, // camX: 裏庭 0 で不変、広域で堅牢。
       y: r.top + (G.py + dr - cam) * tile + tile / 2,
     };
   }, [dc, dr]);
@@ -202,6 +213,20 @@ async function tapTileOffset(page, dc, dr) {
   await page.mouse.up();
   await page.waitForTimeout(110);
   return { front, x: +p.x.toFixed(1), y: +p.y.toFixed(1) };
+}
+
+// v0.20.0 追随(判断C): クライム(真上への noGravity 移動)廃止に伴い、B1..B22 の
+// (10,3)↔(10,2) バウンス上昇分はタップ直前だけ目的セルへ G.placedLadders を transient
+// 注入→タップ直後に撤去する(verify-mineroad-dig8.mjs/verify-mineroad-water.mjs と同じ手段。
+// 残すと次の下降タップで着地セルの重力が無効化されたままになり後続の位置トレースが狂う)。
+// この 1 手 1 マスの移動そのものは旧クライムと物理的に等価(SP 消費/ターン進行は不変)なので、
+// S41_TRACK/SP_TRACK 等の既存リテラルは実機再走で無傷一致を確認できたため据え置き(下記参照)。
+async function climbUp(page) {
+  const target = await page.evaluate(() => ({ c: G.px, r: G.py - 1 }));
+  await page.evaluate(([c, r]) => { G.placedLadders.add(c + "," + r); }, [target.c, target.r]);
+  const t = await tapTileOffset(page, 0, -1);
+  await page.evaluate(([c, r]) => { G.placedLadders.delete(c + "," + r); }, [target.c, target.r]);
+  return t;
 }
 
 // AI 機構スナップショット。s41 = spawn(4,1) SPIDER、den = spawn(10,5) SPIDER。
@@ -266,7 +291,7 @@ async function runScenario(recording) {
     const el = document.getElementById("ov-version");
     return el ? el.textContent : "";
   });
-  ck("A1 タイトルに v0.18.0 表示", ver.includes("v0.18.0"), ver);
+  ck("A1 タイトルに v0.20.0 表示(機械追随)", ver.includes("v0.20.0"), ver);
   const dive = await startDive(page);
   ck("A1 ダンジョン選択タップ(最前面)→dive", dive.ok && dive.t.front, dive);
   await camSettle(page);
@@ -339,7 +364,7 @@ async function runScenario(recording) {
   for (let i = 0; i < 25; i++) {
     // T5..T7 = 下掘り(前進)、B1.. = (10,3)↔(10,2) クライム/降下交互。
     const dr = i < 3 ? 1 : (i - 3) % 2 === 0 ? -1 : 1;
-    t = await tapTileOffset(page, 0, dr);
+    t = dr === -1 ? await climbUp(page) : await tapTileOffset(page, 0, dr);
     if (!t.front) ck(`turn#${i + 1} 最前面=scene`, false, t);
     const bn = i - 2; // B 番号(1..22)。i=0..2 は T5..T7。
     const full = bn === 10 || bn === 22;

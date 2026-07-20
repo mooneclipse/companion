@@ -140,7 +140,26 @@
 //     (使い回すと既存個体と同一セルへの重複配置か、despawn 済み個体の決定論復活にしかならず新規
 //     人口を足せない=advisor 指摘)。行動カウンタ G.spawnRollCount(resolveTurn ごとに+1、
 //     startDive で 0 リセット)を鍵にした専用ストリーム(tiles.js runtimeSpawnChanceRoll 等)を新設。
-const VERSION = "v0.19.0";
+// v0.20.0: 実機 FB 4 点の原作合わせ増分(正本 spec §2/§5、MainView.java:124/816-824、
+// bf.java:530-532、n.java:1834-1845 逐語確認済み)。
+//  A. ビューポート導入: 原作の横 17 タイル固定画面(MainView.java:124 verbatim、裏庭 15 列は
+//     min(17,cols) で全幅のまま=既存互換)に合わせ、横カメラ camX を新設(既存 camY と同じ
+//     追従/clamp 流儀)。「モンスターが全部見える」の真因はマップ全幅を1画面に収める現行
+//     レイアウトだったため。縦カメラは既存 camY のまま(スマホ縦画面+下部 HUD 前提の翻案、
+//     ズーム機能 5〜17 列可変も未実装=翻案として記録)。
+//  B. 画面 5 等分ゾーン入力(bf.java:530-532 verbatim)を実効化。v0.15.0 判断A(誤爆懸念で
+//     不採用)の差し戻し=実機 FB「8 方向にならない」+ 原作準拠優先の指示。隣接 8 マス精密
+//     タップは引き続き優先(原作も同じ優先構造)。
+//  C. クライム(真上への noGravity 移動)を廃止し原作ジャンプへ寄せる: 真上入力は重力ありの
+//     通常 moveTo(斜め上と同型)。かわりに「はしごマスは重力無効」(n.java:1834-1845
+//     verbatim=効果は重力無効化のみ、上下移動は通常入力)を applyGravity に追加。縦坑の
+//     正攻法(はしご設置して登る)が機能するようになる。moveTo の noGravity 第4引数自体は
+//     テスト/シナリオ構築ヘルパー(dig8/items 等の placeAt)が使い続けるため関数シグネチャは
+//     温存し、act() からの意図的クライム呼び出しのみ撤去。
+//  E. モンスターに自作 16px ドット絵スプライト(×4 拡大)を追加。原作画像は転用しない方針
+//     (companion-games 共通)のため自作、手持ち Kenney 素材にモンスター用は無い(2026-07-20
+//     確認)。読込前/失敗時は既存の寒色マーカー+頭文字へ fallback(非改変で温存)。
+const VERSION = "v0.20.0";
 
 // ---- CONSTANTS(lead 確定値。単一ブロックに集約。playtester 実測で微調整は可だが構造不変) ----
 const CONST = {
@@ -229,7 +248,21 @@ const SPRITE_SRC = {
   rock: "/mineroad/assets/tiles/rock.png", // 硬岩(掘れない・灰石)
   miner: "/mineroad/assets/chars/miner.png", // 自機(alienBeige)
   girl: "/mineroad/assets/chars/girl.png", // 女の子(alienPink・暖色グロー併用)
+  // v0.20.0 判断E: モンスター自作スプライト(原作画像は転用しない方針のため。手持ち Kenney 素材に
+  // モンスター用は無いことを 2026-07-20 確認。生成元 tools/gen-monster-sprites.py)。キーは
+  // tiles.js MON の値を小文字化したもの(BAT→"bat" 等、monsterSpriteKey で対応)。
+  bat: "/mineroad/assets/monsters/bat.png",
+  slime: "/mineroad/assets/monsters/slime.png",
+  slime_half: "/mineroad/assets/monsters/slime_half.png",
+  snake: "/mineroad/assets/monsters/snake.png",
+  worm: "/mineroad/assets/monsters/worm.png",
+  spider: "/mineroad/assets/monsters/spider.png",
 };
+// v0.20.0 判断E: MONSTER.key(tiles.js MON.* の文字列値、大文字スネーク)→ SPRITE_SRC のキー
+// (小文字)への変換。MON の値は全て toLowerCase() で一致するため専用テーブルは持たない。
+function monsterSpriteKey(key) {
+  return String(key).toLowerCase();
+}
 const SPRITES = {};
 function loadSprites() {
   if (typeof Image === "undefined") return;
@@ -449,8 +482,14 @@ let DPR = 1;
 let W = 0;
 let H = 0;
 let lastT = 0;
-let tile = 28; // タイル一辺(px)。resize で W/GRID_COLS から決める。
+let tile = 28; // タイル一辺(px)。resize で W/VIEW_COLS から決める。
 let camY = 0; // カメラ縦オフセット(行単位、自機追従)。
+// v0.20.0 判断A: ビューポート幅(列数)。原作 MainView.java:124(this.k=17)verbatim=横 17 タイル
+// 固定。GRID_COLS はダンジョンごとに動的(applyDungeonConst)なので resize() で都度再計算する
+// (裏庭=15 列は min(17,15)=15=GRID_COLS のまま全幅表示=既存互換、大マップ(17 列超)だけ窓が
+// 開く)。ズーム(原作は 5〜17 列可変)は未実装=翻案として記録。
+let VIEW_COLS = 15;
+let camX = 0; // カメラ横オフセット(列単位、自機追従。camY と同じ lerp/clamp 流儀)。
 // 上部 HUD 帯(深度 / 二段ゲージ / インベントリ)の高さ(px)。地表でこの帯ぶん世界を下げ、
 // 自機・体力バー・インベントリとの被りを無くす(カメラに負ヘッドルームを許す)。
 // インベントリは clamp+vw でスケールし rem 推定とずれるため、実値は render で invEl の実
@@ -468,13 +507,23 @@ function resize() {
   canvas.style.width = W + "px";
   canvas.style.height = H + "px";
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  tile = W / CONST.GRID_COLS;
+  VIEW_COLS = Math.min(17, CONST.GRID_COLS);
+  tile = W / VIEW_COLS;
   // フォールバック: root font-size 基準の概算。実値は render で invEl bottom から確定。
   const remPx =
     parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   hudBandPx = HUD_BAND_REM * remPx;
   hudBandMeasured = false; // viewport 変化で再計測。
 }
+
+// v0.20.0 判断A: 横カメラの目標値(自機列中心 clamp、camY の targetCam と同じ流儀)。render() の
+// lerp 収束と切り離して純関数化し、セルフチェックから直接叩けるようにする(window 公開)。
+// GRID_COLS<=VIEW_COLS(裏庭など)なら常に 0(全幅表示、既存互換)。
+function camXTarget(px) {
+  const maxCamX = Math.max(0, CONST.GRID_COLS - VIEW_COLS);
+  return Math.min(maxCamX, Math.max(0, px - VIEW_COLS / 2));
+}
+if (typeof window !== "undefined") window.camXTarget = camXTarget;
 
 // ---- 色補間 ------------------------------------------------------------
 function hexToRgb(h) {
@@ -759,6 +808,7 @@ function startDive() {
   hideOverlay();
   hudEl.hidden = false;
   camY = 0;
+  camX = camXTarget(G.px); // v0.20.0: 横カメラも自機の初期列中心へ即時合わせる(lerp 待ちなし)。
   revealAround(); // 開始時の地表まわりを可視化。
   startBgm(); // ダイブ開始(ユーザー操作起点)で BGM。モバイル autoplay 制約を満たす。
   renderHud();
@@ -1110,7 +1160,7 @@ function takeDamage(dmg) {
 // のみで真上/斜め上も掘れる(cm.java:349-407 = 真上の付帯条件 w(i,i2) は常に真)。はしごの
 // 設置/回収メカ自体(placedLadders)は原作にも存在するアイテムなので非改変で温存。
 // 上方向(dr=-1)の掘り抜きでは自機は移動しない(原作は掘削と移動が別アクション。登るのは
-// 次タップの既存クライム)。
+// 次タップの重力あり moveTo=v0.20.0 判断C、足場/はしごが無ければ原作ジャンプ同様に落ち戻る)。
 function act(dc, dr) {
   if (G.screen !== "dive" || G.busy) return;
   const col = G.px + dc;
@@ -1135,15 +1185,15 @@ function act(dc, dr) {
     if (!isSpace(G.px + dc, G.py) && !isSpace(G.px, G.py + dr)) return;
   }
 
-  // 空間 → 移動。真上(0,-1)だけは意図的なクライム=noGravity(掘った縦坑/階段を 1 マスよじ登る
-  // 「掘った跡が帰り道」の核。v0.1.0 以来の設計判断: この 1 歩は重力で引き戻さない=ledge を
-  // 掴んだ扱い。1 行動 1 マスのスロットルで連続上昇はしない)。
-  // 斜め上(±1,-1)は重力ありの通常 moveTo=原作ジャンプと同型(横隣に足場があれば階段登りが
-  // 成立し、なければ moveTo 内の applyGravity で落ち戻る)。横/下/斜め下も重力あり。
+  // 空間 → 移動。v0.20.0 判断C: 真上(0,-1)の意図的クライム(noGravity)は廃止し、斜め上/横/下/
+  // 斜め下と同じ重力ありの通常 moveTo へ統一(原作ジャンプに寄せる=cm.c[11] ジャンプ高さ1固定・
+  // 足場/はしご/流体が無ければ重力で戻る)。足場があれば止まる(階段登り)、はしごマスなら
+  // applyGravity 側の重力無効(判断C 下記)で登った先に留まる、どちらも無ければ元の位置へ即
+  // 落ち戻る(原作は毎ターン1マス落下でリメイクは即時落下だが、net 挙動=「上がって戻る」は同等)。
   // 地表(row<=0)は isSpace=true なので SURFACE の横歩き/帰還もここで成立
   // (v0.4.0 の power ゲートに SURFACE を落とすと地表を歩けなくなる退行の回避と同じ整合)。
   if (isSpace(col, row)) {
-    moveTo(col, row, false, dc === 0 && dr === -1);
+    moveTo(col, row, false);
     return;
   }
 
@@ -1195,9 +1245,9 @@ function act(dc, dr) {
   // ①埋没個体の掘り当て(v0.17.0): そのマスは露出した個体が塞ぐ。前進せずその場に留まる
   //   (次の入力 = bump-to-attack)。旧 埋没掘りスポーンと同じ手触り。
   // ②上方向(dr=-1、真上/斜め上)の掘り抜き: 原作は掘削と移動が別アクションなので自機は動かない
-  //   (登るのは次タップのクライム/斜め移動)。なだれ土(markUnstableDug)の崩落解決は次の moveTo の
-  //   resolveCaveins に委ねる=①の遅延解決と同じで、v0.13.1 はしご上掘り「掘り抜き後に登った時点で
-  //   崩れる」と等価のタイミング。
+  //   (登るのは次タップの重力あり moveTo=v0.20.0 判断C)。なだれ土(markUnstableDug)の崩落解決は
+  //   次の moveTo の resolveCaveins に委ねる=①の遅延解決と同じで、v0.13.1 はしご上掘り
+  //   「掘り抜き後に登った時点で崩れる」と等価のタイミング。
   // 掘りの行動コストは払い済み(spendAction)。
   if (buried || dr === -1) {
     revealAround();
@@ -2007,12 +2057,13 @@ function tryRediscoverGirlAt(col, row) {
 // 指定マスへ移動した後、重力で足元が空間の間 1 マスずつ落下する。
 // 落下も追従もまとめて 1 行動(掘り/移動)としてコストは呼び出し側で済んでいる前提だが、
 // 移動単体(空間への踏み込み)はここで spendAction する。
+// v0.20.0 判断C: noGravity は「意図的クライム」用途としては act() から撤去済み(現在プレイヤー
+// 操作からは常に false=通常の重力あり移動)。引数自体はシナリオ構築用の内部フックとして温存
+// (selfcheck の placeAt 系ヘルパーが「特定セルへ重力介入なしで直接配置する」用途で使い続ける)。
 function moveTo(col, row, costPaid, noGravity) {
   G.px = col;
   G.py = row;
   if (!costPaid) spendAction(); // 移動/掘り後の前進。掘りは act 側で消費済みなので二重にしない。
-  // 重力: 足元が空間なら 1 マスずつ落下(落下中は入力解決を 1 マスずつ)。
-  // ただし上移動(クライム)の 1 歩は引き戻さない(noGravity)。
   if (!noGravity) applyGravity();
   revealAround();
   resolveCaveins(); // v0.7.0: 支えを失った不安定土(なだれ土)が崩れ落ちて道を塞ぎ、自機/女の子を埋める。
@@ -2129,11 +2180,16 @@ function noteHazardEntry() {
 // 自機の重力落下(足元が空間の間、底まで落ちる)。落下はコスト無し(原作の落下と同様)。
 // 地表(row 0)は安全な地面 = 立てる帰還地点なので重力は作用しない(掘った縦坑へ吸い込まれない)。
 // v0.16.0 浮力(判断 D、原作 n.y()=水/マグマ上は重力無効): 現在マスに流体があれば落下しない。
-// 落下ループ中も流体セルへ入った時点で停止(着水して浮く)。上移動は既存クライム/斜め上 moveTo が
-// そのまま泳ぎとして機能(新規分岐なし)。女の子・モンスターは非介入。
+// 落下ループ中も流体セルへ入った時点で停止(着水して浮く)。
+// v0.20.0 判断C(はしご重力無効、原作 n.java:1834-1845 verbatim=はしごオブジェクトの効果は重力
+// 無効化のみ・上下移動自体は通常の上下入力): 自機マスが設置済みはしご(placedLadders)なら
+// 落下しない。落下ループ中もはしごマスへ入った時点で着水(判断D)と同じ扱いで停止する(着はしご)。
+// これで v0.13.1 のはしご設置/回収メカが「登る」の実用手段として機能する(旧クライム廃止の代替)。
+// 女の子・モンスターは非介入。
 function applyGravity() {
   if (G.py <= 0) return; // 地表に立っている間は落ちない。
   if (fluidAt(G.px, G.py) !== HAZARD.NONE) return; // 浮力: 流体中は落ちない。
+  if (G.placedLadders && G.placedLadders.has(G.px + "," + G.py)) return; // はしご: 重力無効。
   let guard = 0;
   while (guard < CONST.DEPTH_ROWS + 2) {
     guard++;
@@ -2144,6 +2200,7 @@ function applyGravity() {
       G.py = below;
       if (G.py > G.maxDepthThisDive) G.maxDepthThisDive = G.py;
       if (fluidAt(G.px, G.py) !== HAZARD.NONE) break; // 着水: 流体セルに入ったらそこで浮いて停止。
+      if (G.placedLadders && G.placedLadders.has(G.px + "," + G.py)) break; // 着はしご。
     } else break;
   }
 }
@@ -2998,7 +3055,7 @@ function showHint(text, warn) {
 
 // ---- 数値ポップ --------------------------------------------------------
 function spawnPopupAt(col, row, text, cls) {
-  const sx = col * tile + tile / 2;
+  const sx = (col - camX) * tile + tile / 2; // v0.20.0 判断A: 横カメラを通す。
   const sy = (row - camY) * tile + tile / 2;
   const p = document.createElement("div");
   p.className = "popup" + (cls ? " " + cls : "");
@@ -3016,7 +3073,7 @@ let pdMoved = 0;
 let pdActive = false;
 
 function screenToTile(x, y) {
-  const col = Math.floor(x / tile);
+  const col = Math.floor(x / tile + camX); // v0.20.0 判断A: 横カメラを通す。
   const row = Math.floor(y / tile + camY);
   return { col, row };
 }
@@ -3045,15 +3102,24 @@ function pointerEnd(e) {
   pdActive = false;
   if (pdMoved >= CONST.TAP_MAX_MOVE) return;
   const { col, row } = screenToTile(e.clientX, e.clientY);
-  // タップしたマスが自機の隣接 8 マス(Chebyshev 距離 1)なら、その方向を解決。
-  // v0.15.0: 上下左右(Manhattan 1)→ 斜めを含む 8 方向へ(原作 bc.java の 8 方向入力に合わせる。
-  // 原作の画面 5 分割象限入力は遠隔タップの誤爆を招くため不採用=STATUS v0.15.0 判断 A)。
+  // タップしたマスが自機の隣接 8 マス(Chebyshev 距離 1)なら、その方向を優先して解決。
+  // v0.15.0: 上下左右(Manhattan 1)→ 斜めを含む 8 方向へ(原作 bc.java の 8 方向入力に合わせる)。
   // 自マス(0,0)は除外。方向ボタン UI は 4 方向のまま(斜めはタップで)。
   const dc = col - G.px;
   const dr = row - G.py;
   if (dc === 0 && dr === 0) return;
-  if (Math.abs(dc) > 1 || Math.abs(dr) > 1) return;
-  act(dc, dr);
+  if (Math.abs(dc) <= 1 && Math.abs(dr) <= 1) {
+    act(dc, dr);
+    return;
+  }
+  // v0.20.0 判断B: 隣接圏外のタップは画面 5 等分の粗ゾーン判定へ(原作 bf.java:530-532
+  // verbatim= dx=sign(floor(x/(W/5))-2), dy=sign(floor(y/(H/5))-2))。v0.15.0 判断A(遠隔タップの
+  // 誤爆懸念で不採用)の差し戻し(実機 FB「8 方向にならない」+ 原作準拠優先の指示、2026-07-20)。
+  // 隣接精密タップは上で優先済み(原作 bf.java も同じ優先構造)なので誤爆リスクは原作と同等。
+  const zc = Math.sign(Math.floor(e.clientX / (W / 5)) - 2);
+  const zr = Math.sign(Math.floor(e.clientY / (H / 5)) - 2);
+  if (zc === 0 && zr === 0) return; // 中央ゾーン(自マス相当)は無視。原作の SP1 その場タップは未実装。
+  act(zc, zr);
 }
 canvas.addEventListener("pointerup", pointerEnd, { passive: true });
 canvas.addEventListener("pointercancel", () => {
@@ -3156,6 +3222,9 @@ function render() {
   const targetCam = Math.min(maxCam, G.py - followRows);
   camY += (targetCam - camY) * 0.2;
   if (typeof window !== "undefined") window.__camY = camY;
+  // v0.20.0 判断A: 横カメラも同じ lerp 追従(自機列中心、マップ端 clamp)。
+  camX += (camXTarget(G.px) - camX) * 0.2;
+  if (typeof window !== "undefined") window.__camX = camX;
 
   const fog = hexToRgb(PALETTE.fog);
   const surf = hexToRgb(PALETTE.surface);
@@ -3174,13 +3243,18 @@ function render() {
 
   const rows = Math.ceil(H / tile) + 2;
   const startRow = Math.floor(camY) - 1;
+  // v0.20.0 判断A: 横方向も画面に映る列だけ走査する(全列描画をやめる。camY と同じ流儀)。
+  const cols = Math.ceil(W / tile) + 2;
+  const startCol = Math.floor(camX) - 1;
 
   for (let ri = 0; ri < rows; ri++) {
     const row = startRow + ri;
     if (row < 0) continue;
     const sy = (row - camY) * tile;
-    for (let col = 0; col < CONST.GRID_COLS; col++) {
-      const sx = col * tile;
+    for (let ci = 0; ci < cols; ci++) {
+      const col = startCol + ci;
+      if (col < 0 || col >= CONST.GRID_COLS) continue;
+      const sx = (col - camX) * tile;
 
       if (row === 0) {
         // 地表(明るい安全行) = 緑トップのタイル。
@@ -3299,7 +3373,7 @@ function render() {
   }
 
   // 自機(暖色グロー + スプライト)。
-  const cx = G.px * tile + tile / 2;
+  const cx = (G.px - camX) * tile + tile / 2; // v0.20.0 判断A: 横カメラを通す。
   const cy = (G.py - camY) * tile + tile / 2;
   drawMiner(cx, cy);
 
@@ -3337,7 +3411,7 @@ function drawCharSprite(key, cx, cy) {
 }
 
 function drawGirl(g) {
-  const gx = g.col * tile + tile / 2;
+  const gx = (g.col - camX) * tile + tile / 2; // v0.20.0 判断A: 横カメラを通す。
   const gy = (g.row - camY) * tile + tile / 2;
   if (gy < -tile || gy > H + tile) return;
   const strong = g.state === "following";
@@ -3366,28 +3440,30 @@ function drawGirl(g) {
   }
 }
 
-// v0.5.0 モンスター描画(専用スプライト無し=冷色の脅威マーカー + 名称頭文字 + HP バー)。
-// 暖色の女の子/自機と画面上で明確に弁別できるよう寒色(青緑)に振る。
+// v0.5.0 モンスター描画。v0.20.0 判断E: 自作スプライト(dot 絵 ×4 拡大)で描画。読込前/失敗時は
+// 既存の寒色(青緑)マーカー + 名称頭文字へ fallback(非改変で温存=暖色の女の子/自機との弁別)。
 function drawMonster(m) {
-  const mx = m.col * tile + tile / 2;
+  const mx = (m.col - camX) * tile + tile / 2; // v0.20.0 判断A: 横カメラを通す。
   const my = (m.row - camY) * tile + tile / 2;
   if (my < -tile || my > H + tile) return;
   const meta = MONSTER[m.key];
   const r = tile * 0.36;
-  // 寒色の本体(角丸の塊)。
-  ctx.fillStyle = "#3a6b78";
-  ctx.beginPath();
-  ctx.arc(mx, my, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(180,230,235,0.85)";
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  // 名称頭文字(漢字 1 字、可読性の核は DOM だが識別用に小さく焼く)。
-  ctx.fillStyle = "#eaffff";
-  ctx.font = `${Math.round(tile * 0.42)}px serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(meta ? meta.ico : "敵", mx, my + tile * 0.02);
+  if (!drawCharSprite(monsterSpriteKey(m.key), mx, my)) {
+    // 寒色の本体(角丸の塊)。
+    ctx.fillStyle = "#3a6b78";
+    ctx.beginPath();
+    ctx.arc(mx, my, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(180,230,235,0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // 名称頭文字(漢字 1 字、可読性の核は DOM だが識別用に小さく焼く)。
+    ctx.fillStyle = "#eaffff";
+    ctx.font = `${Math.round(tile * 0.42)}px serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(meta ? meta.ico : "敵", mx, my + tile * 0.02);
+  }
   // v0.18.0 判断 C(眠り描画は実装裁量として記録): 専用スプライトは無いので、眠り個体は本体の
   // 右上に淡色の「z」を重ねる最小表現(識別はできるが目立たせない=脅威が下がっている合図)。
   if (m.sleeping) {

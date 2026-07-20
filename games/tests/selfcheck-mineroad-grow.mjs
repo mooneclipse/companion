@@ -47,7 +47,7 @@ await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle"
 
 const version = await page.evaluate(() => window.G ? document.getElementById("ov-version")?.textContent : null);
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.19.0", ver === "v0.19.0", { ver }); // v0.19.0 ランタイムスポーンの原作合わせ(STATUS v0.19.0)へ機械追随。
+check("VERSION = v0.20.0", ver === "v0.20.0", { ver }); // v0.20.0 実機 FB の原作合わせ(STATUS v0.20.0)へ機械追随。
 
 // ダイブ開始。
 await page.evaluate(() => startDive());

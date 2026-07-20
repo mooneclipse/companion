@@ -54,7 +54,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.19.0", ver === "v0.19.0", { ver }); // v0.19.0 ランタイムスポーンの原作合わせ(STATUS v0.19.0)へ機械追随。
+check("VERSION = v0.20.0", ver === "v0.20.0", { ver }); // v0.20.0 実機 FB の原作合わせ(STATUS v0.20.0)へ機械追随。
 
 // ============================================================================
 // 1. 45種カタログ整合(item.csv verbatim 書き起こし)

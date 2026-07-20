@@ -63,7 +63,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.19.0", ver === "v0.19.0", { ver }); // v0.19.0 ランタイムスポーンの原作合わせ(STATUS v0.19.0)へ機械追随。
+check("VERSION = v0.20.0", ver === "v0.20.0", { ver }); // v0.20.0 実機 FB の原作合わせ(STATUS v0.20.0)へ機械追随。
 
 // シナリオ構築ヘルパー(各 evaluate に注入)。世界生成には非介入=ランタイム state のみ操作。
 // - buildBox: 領域をまるごと固体化(G.fallen=崩落跡 SOIL は player 由来 state。tileAt は fallen 優先)。
@@ -254,7 +254,10 @@ const breath = await page.evaluate((helpers) => {
   act(-1, 0); // breath 7 → HP -4。
   o.after7 = { breath: G.breath, hp: G.hp, sp: G.stamina };
   // 息継ぎ: 水から出ると breath=0、追加ダメージなし。
-  act(0, -1); // (6,6)→(6,5) クライムで出水。
+  // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない(足場/はしごが無ければ落ち戻る)。
+  // 出口マス(6,5)へはしごを注入してから通常の重力あり移動で出水する(player-state 注入方針)。
+  G.placedLadders.add("6,5");
+  act(0, -1); // (6,6)→(6,5) 出水。
   o.out = { breath: G.breath, hp: G.hp, sp: G.stamina };
   return o;
 }, HELPERS);

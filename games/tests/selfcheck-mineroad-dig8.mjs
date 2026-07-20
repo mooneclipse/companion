@@ -60,7 +60,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.19.0", ver === "v0.19.0", { ver }); // v0.19.0 ランタイムスポーンの原作合わせ(STATUS v0.19.0)へ機械追随。
+check("VERSION = v0.20.0", ver === "v0.20.0", { ver }); // v0.20.0 実機 FB の原作合わせ(STATUS v0.20.0)へ機械追随。
 
 // シナリオ構築ヘルパー(各 evaluate に注入)。
 // - findCell(pred): 世界レイヤーを読み取り専用で走査して条件セルを探す(生成には非介入)。
@@ -94,7 +94,8 @@ const HELPERS = `
 `;
 
 // ============================================================================
-// 1. 真上掘り: はしご無しで power ゲートのみ。掘り抜きで自機非移動 → 次タップの既存クライムで登る。
+// 1. 真上掘り: はしご無しで power ゲートのみ。掘り抜きで自機非移動 → 次タップは v0.20.0 判断C
+//    (クライム廃止)により重力ありの通常移動 = はしご無しでは登れず即座に元の位置へ落ち戻る。
 // ============================================================================
 console.log("\n== 1. 真上掘り(はしご前提ゲート撤去) ==");
 
@@ -125,9 +126,11 @@ const up = await page.evaluate((helpers) => {
   o.digTaps = dig.taps; // HARD = digTaps 2 のはず。
   o.digCost = spBeforeDig - G.stamina; // 掘りは行動消費する。
   o.noMoveOnDigThrough = G.px === c && G.py === r; // 掘り抜いても自機は動かない(原作=掘削と移動は別)。
-  // 既存クライム(変更なし): 空間化した真上へ次タップで 1 マス登る。
+  // v0.20.0 判断C: クライム廃止。空間化した真上へ次タップで踏み込んでも、はしご/足場が無ければ
+  // moveTo 内の applyGravity で足元(掘った跡=空間)へ即座に落ち戻る(原作ジャンプの net 挙動)。
   act(0, -1);
-  o.climbedAfter = G.px === c && G.py === r - 1;
+  o.climbedAfter = G.px === c && G.py === r - 1; // 素登りできてはいけない(false が正)。
+  o.fellBackToOrigin = G.px === c && G.py === r; // 落ち戻って元の位置(true が正)。
   return o;
 }, HELPERS);
 check("1a シナリオセル発見(真上=HARD)", up.found === true, up);
@@ -135,7 +138,8 @@ check("1b はしご未設置(placedLadders 0)のまま検証", up.laddersPlaced 
 check("1c power 不足(WOOD vs HARD)は真上でも掘れない・行動消費なし", up.blockedNoDig && up.blockedNoCost && up.blockedNoMove, up);
 check("1d はしご無しで真上を掘り抜ける(power ゲートのみ)", up.digThrough === true && up.digTaps === 2, up);
 check("1e 掘り抜いても自機は移動しない", up.noMoveOnDigThrough === true, up);
-check("1f 掘り抜き後の次タップは既存クライムで 1 マス登る(変更なし)", up.climbedAfter === true, up);
+check("1f v0.20.0 判断C: クライム廃止=はしご無しでは素登りできず元の位置へ落ち戻る",
+  up.climbedAfter === false && up.fellBackToOrigin === true, up);
 check("1g 掘りは行動消費する(タップ数ぶん)", up.digCost >= up.digTaps, up);
 
 // ============================================================================

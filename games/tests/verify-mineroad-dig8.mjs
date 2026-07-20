@@ -11,17 +11,22 @@
 // タップ座標は canvas getBoundingClientRect + 実 camY(window.__camY、lerp 整定をポーリングで待つ)から
 // 独自に算出(debug-mineroad の tileCenter とは別実装)。
 //
-// state 注入は 3 点のみ(すべてシナリオノイズ除去。世界生成レイヤー tileType/oreAt/girlPositions/
-// hazard/avalanche には非介入):
+// state 注入は 4 点(すべてシナリオノイズ除去/機構変更追随。世界生成レイヤー tileType/oreAt/
+// girlPositions/hazard/avalanche には非介入):
 //   ①ダイブ開始時 G.monsters = [](空間スポーン敵の戦闘ノイズ除去)
 //   ②G.pick 昇格 WOOD→STONE(プレイヤー進行度 state。power ゲート正負の検証用)
 //   ③G.spawned.add("7,8")(埋没スポーン抑止 1 マス。ROCK 真上負例の足場作り)
+//   ④v0.20.0 追随: G.placedLadders.add(掘り抜いた真上セル)。v0.20.0 判断C でクライム(真上への
+//     noGravity 移動)が廃止され、はしごマスのみ重力無効になった。V3 は「はしご無しでは登れず
+//     落ち戻る」を先に正で確認してから、はしご注入 1 マスで「はしご有りでは登れる」を確認する
+//     2 段構成へ再設計(旧クライム機構の代替経路をなぞる。本番コードは不変)。
 //
-// 検証項目(親指示):
+// 検証項目(親指示、v0.20.0 追随で V3 を再設計):
 //   V1 斜め隣接タップで行動(斜め下掘り/斜め移動) + 非隣接(Chebyshev 2)タップ無反応
 //   V2 はしご無し真上掘り: 複数タップで掘り抜け(HARD 2 タップ)、SP 減を HUD で確認、掘り抜き非移動
-//   V3 掘り抜いた真上へ次タップでクライム
-//   V4 階段登り: 斜め上を掘る→斜め上へ移動で 1 段上がる
+//   V3 v0.20.0 判断C: 掘り抜いた真上への次タップは、はしご無しでは登れず落ち戻る(SP のみ消費)+
+//      はしご設置後は登れる(V3 の代替経路。旧クライムの直接検証は廃止)
+//   V4 階段登り(判断Cの影響を受けない): 斜め上を掘る→斜め上へ移動で 1 段上がる
 //   V5 負例: 横隣も真上も固体のとき斜め上タップ無反応(SP 不変)
 //   V6 power 不足(WOOD vs HARD / STONE vs ROCK)は真上でも掘れない(×ポップ、SP 不変)
 //   V7 決定論: 同一 seed で同一操作列を 2 コンテキストで実行し全手のトレース一致
@@ -115,11 +120,16 @@ async function startDive(page) {
 // 自機隣接オフセット(dc,dr)のタイル中心へ実マウスタップ。canvas rect + 実 camY から画面座標を独自算出。
 // 戻り値 front: タップ点の最前面が #scene だったか(毎手 assert する)。
 async function tapTileOffset(page, dc, dr) {
+  // v0.20.0 フレーク対策: タップ座標算出→クリック着弾の間にカメラ lerp が動くと着弾タイルが
+  // ずれる。旧仕様は「隣接圏外タップ=無視」で無害だったが、ゾーン入力導入で「別方向の行動」に
+  // 化けて run 間分岐する(V8 実測)。毎タップ前にカメラ収束を待って座標を確定させる。
+  await camSettle(page);
   const p = await page.evaluate(([dc, dr]) => {
     const r = document.getElementById("scene").getBoundingClientRect();
     const cam = window.__camY || 0;
+    const camx = window.__camX || 0;
     return {
-      x: r.left + (G.px + dc) * tile + tile / 2,
+      x: r.left + (G.px + dc - camx) * tile + tile / 2, // camX: 裏庭 0 で不変、広域で堅牢。
       y: r.top + (G.py + dr - cam) * tile + tile / 2,
     };
   }, [dc, dr]);
@@ -242,11 +252,27 @@ async function runScenario(recording) {
     s.spHud === String(Math.round(s.sp)) && s.ladders === 0 && s.placedLadders === 0,
     { pos: `${s.px},${s.py}`, spHud: s.spHud, ladders: s.ladders });
 
-  // ---- V3a: 次タップで掘り抜いた真上へクライム ----
+  // ---- V3a v0.20.0 判断C: はしご無しでは登れず落ち戻る(SP のみ消費)----
+  const spPerAction = await page.evaluate(() => CONST.SP_PER_ACTION);
+  const sp3aPre = (await snap(page)).sp;
   t = await tapTileOffset(page, 0, -1);
-  ck("V3a クライムタップ 最前面=scene", t.front, t);
+  ck("V3a-neg 真上タップ(はしご無し) 最前面=scene", t.front, t);
+  s = await rec("climb43-noladder");
+  ck("V3a-neg はしご無しでは登れず (4,4) へ落ち戻る(SP のみ 1 消費)",
+    s.px === 4 && s.py === 4 && s.sp === sp3aPre - spPerAction && s.placedLadders === 0,
+    { pos: `${s.px},${s.py}`, sp: s.sp, spPre: sp3aPre });
+
+  // ---- V3a-pos: はしご注入④(掘り抜いた真上セルへ 1 個)→次タップで登れる ----
+  await page.evaluate(() => { G.placedLadders.add("4,3"); });
+  t = await tapTileOffset(page, 0, -1);
+  ck("V3a-pos クライムタップ(はしご有り) 最前面=scene", t.front, t);
   s = await rec("climb43");
-  ck("V3a クライムで (4,3) へ", s.px === 4 && s.py === 3, { px: s.px, py: s.py });
+  ck("V3a-pos はしご有りで (4,3) へ登れる", s.px === 4 && s.py === 3 && s.placedLadders === 1,
+    { px: s.px, py: s.py, placedLadders: s.placedLadders });
+  // はしごは検証済み次第すぐ撤去(残すと以降の斜め移動/落下経路の重力が変わってしまう=検証の
+  // 副作用汚染。placedLadders は本来 recoverLadder 経由だが、ここは state 注入で置いた分の
+  // 後片付けなので同じ手段で戻す)。
+  await page.evaluate(() => { G.placedLadders.delete("4,3"); });
   await camSettle(page);
 
   // ---- V4: 階段登り。真上(4,2)を掘る→斜め上(5,2)を掘る(非移動)→斜め上へ移動で 1 段上がる ----
@@ -310,15 +336,28 @@ async function runScenario(recording) {
   t = await tapTileOffset(page, 0, -1);
   ck("V2b 真上 HARD 2 タップ目 最前面=scene", t.front, t);
   s = await rec("upDigHard");
-  ck("V2b 2 タップ目で掘り抜け + 自機非移動 + はしご0",
+  ck("V2b 2 タップ目で掘り抜け + 自機非移動 + はしご0(V3a-pos 注入分は使用後に撤去済み)",
     (await hasDug(page, 5, 6)) && s.px === 5 && s.py === 7 && s.prog === "" && s.ladders === 0 && s.placedLadders === 0,
-    { pos: `${s.px},${s.py}`, spHud: s.spHud });
+    { pos: `${s.px},${s.py}`, spHud: s.spHud, placedLadders: s.placedLadders });
 
-  // ---- V3b: クライムで (5,6) へ ----
+  // ---- V3b v0.20.0 判断C: はしご無しでは登れず落ち戻る(HARD 掘削後の 2 マス目でも同型)----
+  const sp3bPre = (await snap(page)).sp;
   t = await tapTileOffset(page, 0, -1);
-  ck("V3b クライムタップ 最前面=scene", t.front, t);
+  ck("V3b-neg 真上タップ(はしご無し) 最前面=scene", t.front, t);
+  s = await rec("climb56-noladder");
+  ck("V3b-neg はしご無しでは登れず (5,7) へ落ち戻る(SP のみ 1 消費)",
+    s.px === 5 && s.py === 7 && s.sp === sp3bPre - spPerAction && s.placedLadders === 0,
+    { pos: `${s.px},${s.py}`, sp: s.sp, spPre: sp3bPre });
+
+  // ---- V3b-pos: はしご注入④(2 個目)→次タップで登れる ----
+  await page.evaluate(() => { G.placedLadders.add("5,6"); });
+  t = await tapTileOffset(page, 0, -1);
+  ck("V3b-pos クライムタップ(はしご有り) 最前面=scene", t.front, t);
   s = await rec("climb56");
-  ck("V3b クライムで (5,6) へ", s.px === 5 && s.py === 6, { px: s.px, py: s.py });
+  ck("V3b-pos はしご有りで (5,6) へ登れる", s.px === 5 && s.py === 6 && s.placedLadders === 1,
+    { px: s.px, py: s.py, placedLadders: s.placedLadders });
+  // V3a-pos と同じ理由で使用後すぐ撤去(以降の ROCK 経路の重力/落下前提を汚染しない)。
+  await page.evaluate(() => { G.placedLadders.delete("5,6"); });
   await camSettle(page);
 
   // ---- ROCK(7,7) 真下の足場へ: (5,6)→(5,7)→(6,7)H→(6,8)→(7,8) ----

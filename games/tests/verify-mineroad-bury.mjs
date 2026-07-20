@@ -1,5 +1,10 @@
 // verify-mineroad-bury.mjs — マインロード v0.17.0「埋没モンスター機構の原作合わせ」独立検証(playtester)。
 //
+// **v0.20.0 追随(2026-07-20)**: VERSION 文字列のみの機械追随。本テストのシナリオ(掘り当て/bump/
+// 撃破)はクライム(真上移動)にもタップ入力方式(判断B 5等分ゾーン)にも一切依存していないため、
+// v0.20.0 の判断A〜E(camera windowing/5等分ゾーン/クライム廃止/モンスタースプライト)による
+// 挙動変更を受けない(実タップ経路が全て隣接 8 マス直接タップのみで構成されているため)。
+//
 // **v0.18.0 追随(2026-07-19、STATUS v0.18.0 判断 E③/H が根拠。テスト緑化目的ではない)**:
 // v0.18.0 の活動範囲統一(判断 E③: BURIED_WAKE_RANGE(4) 撤去 → MONSTER_ACTIVE_RANGE(16) へ統一)により、
 // 裏庭(15×15、自機から最大 Chebyshev 距離 15)は**常に全個体が活動箱内**になった。旧 v0.17.0 テストの
@@ -146,11 +151,16 @@ async function startDive(page) {
 
 // 自機隣接オフセット(dc,dr)のタイル中心へ実マウスタップ。canvas rect + 実 camY から画面座標を算出。
 async function tapTileOffset(page, dc, dr) {
+  // v0.20.0 フレーク対策: タップ座標算出→クリック着弾の間にカメラ lerp が動くと着弾タイルが
+  // ずれる。旧仕様は「隣接圏外タップ=無視」で無害だったが、ゾーン入力導入で「別方向の行動」に
+  // 化けて run 間分岐する(V8 実測)。毎タップ前にカメラ収束を待って座標を確定させる。
+  await camSettle(page);
   const p = await page.evaluate(([dc, dr]) => {
     const r = document.getElementById("scene").getBoundingClientRect();
     const cam = window.__camY || 0;
+    const camx = window.__camX || 0;
     return {
-      x: r.left + (G.px + dc) * tile + tile / 2,
+      x: r.left + (G.px + dc - camx) * tile + tile / 2, // camX: 裏庭 0 で不変、広域で堅牢。
       y: r.top + (G.py + dr - cam) * tile + tile / 2,
     };
   }, [dc, dr]);
@@ -228,7 +238,7 @@ async function runScenario(recording) {
     const el = document.getElementById("ov-version");
     return el ? el.textContent : "";
   });
-  ck("遷移 タイトルに v0.18.0 表示(機械追随)", ver.includes("v0.18.0"), ver);
+  ck("遷移 タイトルに v0.20.0 表示(機械追随)", ver.includes("v0.20.0"), ver);
   const dive = await startDive(page);
   ck("遷移 ダンジョン選択タップ(最前面)→dive", dive.ok && dive.t.front, dive);
   await camSettle(page);

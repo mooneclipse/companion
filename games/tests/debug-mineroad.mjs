@@ -199,10 +199,20 @@ async function startToDive(page) {
 // 理想経路だけを通し、足跡追従(①)の破綻をすり抜けた。この driver は act() で実際にジグザグ掘削し、
 // 女の子を足跡追従で連れ帰る=作り直した追従を実経路で検証する。eval(MR_DRIVER) で各 evaluate に注入。
 const MR_DRIVER = `
+  // v0.20.0 判断C: クライム(noGravity)廃止によりはしご無しでは登れない(足場/はしごが無ければ
+  // moveTo 内の applyGravity で即座に落ち戻る=原作ジャンプの net 挙動)。実プレイの正攻法は
+  // 「掘り下がるたびに今いる位置へはしごを設置してから進む」ことで縦列全体にはしごが敷かれ、
+  // 登りは act(0,-1) の連打だけで機能する。player-state 注入方針(G.dug 注入と同じ)に倣い、
+  // mrStep の 1 手が掘り抜き+重力落下で複数マス進む場合も通過区間まるごとへ敷設する
+  // (playerTrail は following 中の女の子が居ない間は末尾1点へ畳まれる=v0.11.0 GC の仕様のため
+  // 事後の一括注入では経路が失われて使えない)。
   function mrStep(dc, dr) {
     const bx = G.px, by = G.py;
     let guard = 0;
     while (G.screen === "dive" && G.px === bx && G.py === by && guard < 8) { act(dc, dr); guard++; }
+    const top = Math.min(by, G.py), bot = Math.max(by, G.py);
+    for (let r = top; r <= bot; r++) { if (r > 0) G.placedLadders.add(G.px + "," + r); }
+    if (bx !== G.px && by > 0) G.placedLadders.add(bx + "," + by);
     return { px: G.px, py: G.py };
   }
   // (tcol,trow) まで掘り進む: 横へ寄せ→下へ掘る を交互(=ジグザグ経路)。各 act 後の実位置で適応。
@@ -217,7 +227,8 @@ const MR_DRIVER = `
     }
     return { px: G.px, py: G.py };
   }
-  // 自機を地表へ実 climb(足跡=自機が通った空洞を上へ/横へ act で辿る。縦坑先掘りに頼らない)。
+  // 自機を地表へ実 climb(mrStep が掘り進む際に経路へ敷設済みのはしごを使う。塞がっていれば
+  // 足跡=自機が通った空洞を横へ辿ってから登る。縦坑先掘りに頼らない)。
   function mrClimbToSurface(maxGuard) {
     let guard = 0;
     while (G.screen === "dive" && G.py > 0 && guard < (maxGuard || 400)) {
@@ -381,7 +392,7 @@ let corePass = false;
   corePass =
     errors.length === 0 &&
     status === 200 &&
-    version === "v0.19.0" &&
+    version === "v0.20.0" &&
     screenBefore === "title" &&
     inOverlayTitle === true &&
     titleButtons.dungeonBtnCount === 9 &&
@@ -410,7 +421,7 @@ let corePass = false;
     init.allHidden === true &&
     init.rescued === 0 &&
     init.rescueHud === "0/5";
-  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.19.0)", corePass);
+  out("PASS(コア遷移/初回howto/ダンジョン選択9個(裏庭のみ解放)/5人配置/HUD 0\/5/飛び越えなし/可読性/VERSION v0.20.0)", corePass);
   await ctx.close();
 }
 
@@ -418,6 +429,9 @@ let corePass = false;
 // (J) v0.2.1 アセット配信: 新 BGM theme.ogg(audio/ogg) を含む 14 本が 200 + 正 Content-Type。
 //     かつ v0.2.1 で削除された旧 theme.mp3 が 404(allowlist から除去された証明)。
 //     allowlist 配信なので 1 本ずつ HTTP で叩いて status + Content-Type を検証する。
+//     v0.20.0 追随: 判断E のモンスタースプライト 6 本(monsters/*.png)を追加(計 20 本)。
+//     server/app.py の STATIC allowlist 未登録により全 404 だった実配信バグを本ゲートで検出
+//     (playtester 実測 2026-07-20、lead が STATIC dict へ追加して解消済み)。
 // ============================================================================
 let assetPass = true;
 {
@@ -441,6 +455,13 @@ let assetPass = true;
     ["/mineroad/assets/sfx/fail.ogg", "audio/ogg"],
     // bgm 1 (v0.2.1: maou mp3 → Kenney Infinite Descent ogg)
     ["/mineroad/assets/bgm/theme.ogg", "audio/ogg"],
+    // monsters 6 (v0.20.0 判断E)
+    ["/mineroad/assets/monsters/bat.png", "image/png"],
+    ["/mineroad/assets/monsters/slime.png", "image/png"],
+    ["/mineroad/assets/monsters/slime_half.png", "image/png"],
+    ["/mineroad/assets/monsters/snake.png", "image/png"],
+    ["/mineroad/assets/monsters/worm.png", "image/png"],
+    ["/mineroad/assets/monsters/spider.png", "image/png"],
   ];
   const results = [];
   for (const [path, wantCt] of expect) {
@@ -460,7 +481,7 @@ let assetPass = true;
   out("旧 theme.mp3(404 であるべき)", { status: mp3.status, gone: mp3Gone });
   if (!mp3Gone) assetPass = false;
 
-  out("PASS(14 アセット 200 + 正 Content-Type / 旧 mp3 404)", assetPass);
+  out("PASS(20 アセット 200 + 正 Content-Type / 旧 mp3 404)", assetPass);
 }
 
 // ============================================================================
@@ -882,25 +903,35 @@ let mechPass = false;
     return { landedRow: G.py, fell: G.py > 1 };
   });
 
-  // --- (D2) 上移動 = 掘った縦坑を 1 マスずつ登って地表へ戻れる(全回復ループ)。
-  //          固い土の上へは登れない(クライムで岩抜けしない)。---
+  // --- (D2) v0.20.0 判断C: クライム(noGravity)廃止。掘った縦坑でもはしご無しでは登れず
+  //          moveTo 内の applyGravity で即座に落ち戻る(原作ジャンプの net 挙動)。はしごを
+  //          敷いた縦坑は 1 マスずつ確実に登れる。固い土の上へは(はしごがあっても)登れない
+  //          (掘っていないマスへは移動できない=別ゲート)。---
   const upLimit = await page.evaluate(() => {
     startDive();
     const col = G.px;
     for (let r = 1; r <= 6; r++) G.dug.add(col + "," + r); // 縦坑 row1..6。
     G.py = 6; G.stamina = 50;
+    const beforeNoLadder = G.py;
+    act(0, -1); // はしご無しでは登れず落ち戻る。
+    const noLadderBlocked = G.py === beforeNoLadder;
+    // はしごを敷いて登れることを確認(降りながら敷く正攻法の代替、player-state 注入)。
+    for (let r = 1; r <= 6; r++) G.placedLadders.add(col + "," + r);
     const before = G.py;
     act(0, -1); // 1 マス登る。
     const after1 = G.py;
     act(0, -1); // もう 1 マス。
     const after2 = G.py;
     const climbsOne = after1 === before - 1 && after2 === after1 - 1; // 1 マスずつ確実に登る。
-    // 固い土の上へは登れない。
-    G.px = 3; G.py = 8; G.dug = new Set();
+    // 固い土の上へは(はしごがあっても)登れない。
+    G.px = 3; G.py = 8; G.dug = new Set(); G.placedLadders = new Set();
     const solidBefore = G.py;
     act(0, -1);
     const blockedBySolid = G.py === solidBefore;
-    return { before, after1, after2, climbsOne, blockedBySolid, movedOne: climbsOne && blockedBySolid };
+    return {
+      noLadderBlocked, before, after1, after2, climbsOne, blockedBySolid,
+      movedOne: noLadderBlocked && climbsOne && blockedBySolid,
+    };
   });
 
   // --- (D3) 探索率%が増える。---
@@ -1110,6 +1141,14 @@ let staticRescuePass = false;
       else sel = "#btn-up";
       const r = await tapBtnTop(page, sel);
       if (!r.wasTop) allTopOk = false;
+      // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない。掘り下がった区間(掘り抜き+
+      // 重力落下で複数マス進むことがある)まるごとへ都度はしごを敷く(降りながら敷く正攻法の
+      // 代替、player-state 注入)。
+      await page.evaluate(([by]) => {
+        const ay = G.py;
+        const top = Math.min(by, ay), bot = Math.max(by, ay);
+        for (let r = top; r <= bot; r++) { if (r > 0) G.placedLadders.add(G.px + "," + r); }
+      }, [s.py]);
       await page.evaluate(() => { G.monsters = []; }); // 戦闘ノイズを毎手除去(追従の純検証)。
     }
   }
@@ -1422,7 +1461,14 @@ let e2ePass = false;
         return { py: G.py, scr: G.screen, foeBelow, spaceBelow, digging, diggable };
       });
       if (now.scr !== "dive") return true;
-      if (now.py > before.py) return true; // 1 段以上下がった。
+      if (now.py > before.py) {
+        // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない。掘り下がった区間まるごとへ
+        // はしごを敷いておく(降りながら敷く正攻法の代替、climbUpStep 側で使う。player-state 注入)。
+        await page.evaluate(([by, ay]) => {
+          for (let r = by + 1; r <= ay; r++) { if (r > 0) G.placedLadders.add(G.px + "," + r); }
+        }, [before.py, now.py]);
+        return true; // 1 段以上下がった。
+      }
       // py 不動でも継続タップする条件: 敵が塞ぐ(撃破中) / 直下が空間(撃破直後で次タップで入れる) /
       // 掘削途中(HARD 複数手) / 現ツルハシで掘り抜ける土。いずれも次タップで前進しうる。
       if (now.foeBelow || now.spaceBelow || now.digging || now.diggable) continue;
@@ -2203,6 +2249,9 @@ let monsterPass = false;
       const oc = g.origCol, orow = g.origRow; // この seed では (11,6)。
       // 原位置まで一直線の縦坑を掘り抜き済みにする(自機が侵入できる帰り道)。
       for (let r = 1; r <= orow; r++) G.dug.add(oc + "," + r);
+      // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない。掘り抜き済みにした縦列へも
+      // 一括ではしごを敷く(player-state 注入方針、G.dug 注入と同じ)。
+      for (let r = 1; r <= orow; r++) G.placedLadders.add(oc + "," + r);
       const rescuedPre = G.rescued;
       // 自機を女の子の 1 つ上へ置き、その後 origRow へ「侵入」して再発見(moveTo 経由)。
       G.monsters = []; G.spawned = new Set(); // 再侵入の検証中は新規スポーンを排除(再発見の純検証)。
@@ -3201,6 +3250,9 @@ let savePass = true;
     // 女の子を発見して追従開始。
     const found = target.state === "following";
     if (!found) return { err: "not following", state: target.state, px: G.px, py: G.py };
+    // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない。縦一直線に掘り進んだ経路
+    // (px=11, row 1..6)へはしごを一括注入してから登る(player-state 注入方針、G.dug 注入と同じ)。
+    for (let r = 1; r <= G.py; r++) G.placedLadders.add(G.px + "," + r);
     // 地表へ戻る。
     while (G.py > 0) act(0, -1);
     const rescued = G.rescued;
@@ -3308,6 +3360,9 @@ let savePass = true;
       G.spawned = new Set();
       while (G.px < 11) act(1, 0);
       while (G.py < 6) act(0, 1);
+      // v0.20.0 判断C: クライム廃止によりはしご無しでは登れない。縦一直線に掘り進んだ経路
+      // (px=11, row 1..6)へはしごを一括注入してから登る(player-state 注入方針、G.dug 注入と同じ)。
+      for (let r = 1; r <= G.py; r++) G.placedLadders.add(G.px + "," + r);
       while (G.py > 0) act(0, -1);
       convertInfoToBp();
       if (G.bp >= bpCostFor("HP", 0)) levelUpPer("HP");
@@ -3517,6 +3572,9 @@ let ladderPass = true;
   const ad2 = await page.evaluate((driver) => {
     eval(driver);
     mrStep(0, 1); mrStep(0, 1);
+    // v0.20.0 判断C: mrStep はシナリオ構築のため通過区間へ自動ではしごを敷く。AD ゲート自体が
+    // 検証したいのは「はしごボタンでの設置/回収」なので、素の状態(未設置)からタップさせる。
+    G.placedLadders.clear();
     G.ladders = 3;
     renderInventory();
     const px = G.px, py = G.py;
@@ -3751,11 +3809,15 @@ let itemsPass = true;
 
 // ============================================================================
 // (AF) v0.15.0 掘削 8 方向(画面座標ヒットテスト経由、STATUS v0.15.0 判断 A〜D/F)。
+// v0.20.0 判断B/C 追随: AF1(クライム不能)/AF4(5等分ゾーン入力の実効化)は STATUS v0.20.0 判断B/C
+// に合わせて期待値を書き換え済み(コメント本文は当時の記述のまま、実装は下記各ステップの直近
+// コメント参照)。
 //   AF1 はしご無し上掘り: 真上が固体のセルで placedLadders 空のまま画面タップで真上を掘れる。
-//       掘り抜きで自機は移動しない → 次タップの既存クライムで 1 マス登る。
+//       掘り抜きで自機は移動しない → 次タップは v0.20.0 判断C によりクライムできず落ち戻る。
 //   AF2 斜めタップ受理: 斜め隣(Chebyshev 1)のタップが act に届き掘削が発生。斜め上の掘り抜きは非移動。
 //   AF3 斜め階段登り: AF2 の続きの斜めタップで 1 段上がる(横隣の足場で重力が止まる)。
-//   AF4 Chebyshev 距離 2 のタップは無反応(遠隔タップ誤爆なし)。
+//   AF4 v0.20.0 判断B: 画面 5 等分の中央ゾーン(自マス相当)タップのみ無反応。隣接圏外は粗ゾーン
+//       判定で方向入力になる(旧 v0.15.0 の「距離2は無反応」から差し戻し)。
 //   シナリオ構築は G.dug/G.spawned 注入(player 由来 state)のみ。世界生成レイヤーには非介入。
 // ============================================================================
 let dig8Pass = true;
@@ -3814,12 +3876,13 @@ let dig8Pass = true;
   out("AF1 はしご無し上掘り(掘り抜き+自機非移動)", af1dig);
   if (!af1dig || !af1dig.dug || af1dig.px !== af1setup.c || af1dig.py !== af1setup.r) dig8Pass = false;
 
-  // 次タップ = 既存クライムで 1 マス登る。
+  // 次タップ = v0.20.0 判断C: クライム廃止によりはしご無しでは登れず、moveTo 内の applyGravity で
+  // 即座に落ち戻る(原作ジャンプの net 挙動)。元の位置(r)に留まることを確認する。
   const tClimb = await actTap(page, 0, -1);
   await page.waitForTimeout(40);
   const af1climb = await page.evaluate(() => ({ px: G.px, py: G.py }));
-  out("AF1 掘り抜き後の次タップでクライム", { tClimb, af1climb });
-  if (!tClimb.onScene || af1climb.py !== af1setup.r - 1) dig8Pass = false;
+  out("AF1 v0.20.0 判断C: 掘り抜き後の次タップはクライム不能(はしご無しでは落ち戻る)", { tClimb, af1climb });
+  if (!tClimb.onScene || af1climb.py !== af1setup.r) dig8Pass = false;
 
   // --- AF2/AF3 斜めタップ(掘削→階段登り) ---
   const af2setup = await page.evaluate((helpers) => {
@@ -3861,17 +3924,22 @@ let dig8Pass = true;
   out("AF3 斜めタップで階段登り(1 段上がる)", { tStair, af3 });
   if (!tStair.onScene || af3.px !== af2setup.c + 1 || af3.py !== af2setup.r - 1) dig8Pass = false;
 
-  // --- AF4 Chebyshev 距離 2 のタップは無反応 ---
+  // --- AF4 v0.20.0 判断B: 画面 5 等分ゾーン入力の実効化(v0.15.0 判断A の差し戻し)により、隣接
+  // 8 マス圏外のタップは「無反応」ではなく粗ゾーン判定(bf.java:530-532 verbatim)へ入るようになった。
+  // 無反応であるべきなのは画面 5 等分の中央ゾーン(自マス相当)のタップのみ(dx=dy=0 の早期 return、
+  // §B 未実装スコープ)。画面座標の絶対中央(2/5〜3/5 の中間)は自機位置によらず常に中央ゾーンに
+  // 入るので、そこをタップして無反応を確認する(旧 AF4 の「Chebyshev 距離 2 は無反応」という
+  // 前提は判断B で置き換わったため書き換え)。
   await page.waitForTimeout(900); // 階段登り後のカメラ整定待ち。
   const af4before = await page.evaluate(() => ({ px: G.px, py: G.py, sp: G.stamina, hp: G.hp }));
-  const far = await tileCenter(page, af4before.px + 2, af4before.py);
-  await page.mouse.move(far.x, far.y);
+  const vp = page.viewportSize();
+  await page.mouse.move(vp.width / 2, vp.height / 2);
   await page.mouse.down();
   await page.mouse.up();
   await page.waitForTimeout(40);
   const af4after = await page.evaluate(() => ({ px: G.px, py: G.py, sp: G.stamina, hp: G.hp }));
   const af4ok = JSON.stringify(af4before) === JSON.stringify(af4after);
-  out("AF4 距離2タップ無反応", { af4before, af4after, af4ok });
+  out("AF4 v0.20.0 判断B: 画面5等分の中央ゾーン(自マス相当)タップは無反応", { af4before, af4after, af4ok });
   if (!af4ok) dig8Pass = false;
 
   const af_pe = errors.filter((e) => !e.includes("net::ERR_") && !e.includes("favicon"));
@@ -3907,13 +3975,312 @@ let determinismPass = true;
 }
 
 // ============================================================================
+// (AG) v0.20.0 新規挙動 4 点 + 可視性解消(画面座標ヒットテスト経由、playtester 追加)。
+//   AG1 判断A: 広域ダンジョン(dungeonId=6「孤独な山」80x80)で VIEW_COLS=17(全列は出さない)+
+//       自機の横移動実タップで camX が camXTarget(G.px) へ追従すること。
+//   AG2 判断B: 隣接8マス圏外のタップが画面5等分ゾーンで act(zc,zr) を実際に呼び、横/下ゾーンでは
+//       px/py が実際に動くこと(act を一時的にラップして呼び出し引数を観測。実タップは画面座標
+//       のまま送るので入力経路そのものは変えていない)。上ゾーンは判断C の重力落ち戻りが乗り
+//       「見える移動」にならないため対象外(落ち戻り自体は AF1/AG3 が別途担保)。
+//   AG3 判断C: 掘り抜いた真上への次タップは、はしご無しでは落ち戻り(AF1 既出)、はしご設置後は
+//       登れてそのまま留まる(重力で戻らない)ことを実タップで確認。
+//   AG4 判断E: モンスター自作スプライト 6 種(bat/slime/slime_half/snake/worm/spider)が
+//       complete && naturalWidth>0(実デコード済み)+ 実描画がテクスチャあり(fallback の単色円
+//       ではない)ことをピクセル分散で確認。
+//   AG5 可視性解消(発端「全部見える」の直接対策): 広域ダンジョンで fog を強制解除しても、
+//       camX 窓の外にいる個体は canvas に描画されない(窓内の同条件個体は描画される、の対で示す)。
+// ============================================================================
+let newBehaviorPass = true;
+{
+  console.log("== (AG) v0.20.0 新規挙動 4 点 + 可視性解消 ==");
+  const { ctx, page, errors } = await openPage({ seedHowto: true });
+  await page.goto(`${BASE}/mineroad/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(300);
+
+  // 広域ダンジョン(孤独な山、dungeonId=6, 80x80)へ直接注入。タイトルは裏庭のみ解放済みのため
+  // 選択ボタン到達不能(debug-mineroad-runtimespawn.mjs の前例踏襲、規律違反ではない)。
+  const agSetup = await page.evaluate(() => {
+    G.dungeonId = 6;
+    startDive();
+    G.pick = "DIAMOND";
+    G.monsters = [];
+    return { cols: CONST.GRID_COLS, viewCols: VIEW_COLS, px: G.px, py: G.py };
+  });
+  out("AG1 setup(広域80x80直接注入)", agSetup);
+  if (!(agSetup.cols === 80 && agSetup.viewCols === 17)) newBehaviorPass = false;
+
+  // 共有 tileCenter/actTap は camY のみ対応(v0.15.0 以来の既存ゲート専用、裏庭 camX=0 前提で
+  // 動いている)。広域は camX が動くため本ゲート専用に camX 対応版を独立実装する(共有ヘルパーは
+  // 既存ゲートの座標計算に触れないよう不変のまま残す)。
+  async function tileCenterX(col, row) {
+    return page.evaluate(([col, row]) => {
+      const t = tile;
+      const cx = window.__camX || 0;
+      const cy = window.__camY || 0;
+      return { x: (col - cx) * t + t / 2, y: (row - cy) * t + t / 2 };
+    }, [col, row]);
+  }
+  async function actTapX(dc, dr) {
+    const cur = await page.evaluate(() => ({ px: G.px, py: G.py }));
+    const pt = await tileCenterX(cur.px + dc, cur.py + dr);
+    const onScene = await isSceneAt(page, pt.x, pt.y);
+    await page.mouse.move(pt.x, pt.y);
+    await page.mouse.down();
+    await page.mouse.up();
+    return { onScene, pt };
+  }
+  async function camXSettle(timeoutMs = 3000) {
+    const t0 = Date.now();
+    let prev = await page.evaluate(() => window.__camX || 0);
+    while (Date.now() - t0 < timeoutMs) {
+      await page.waitForTimeout(100);
+      const cur = await page.evaluate(() => window.__camX || 0);
+      if (Math.abs(cur - prev) < 0.02) return cur;
+      prev = cur;
+    }
+    return prev;
+  }
+
+  await camXSettle();
+  const camXInit = await page.evaluate(() => window.__camX || 0);
+
+  // 自機を右へ 10 手 実タップ(power ゲート撤去済み=DIAMOND なので地形に依らず必ず前進/掘削できる)。
+  let ag1TapFails = 0;
+  for (let i = 0; i < 10; i++) {
+    const t = await actTapX(1, 0);
+    if (!t.onScene) ag1TapFails++;
+    await page.waitForTimeout(30);
+  }
+  const camXAfter = await camXSettle();
+  const ag1After = await page.evaluate(() => ({ px: G.px, py: G.py, target: camXTarget(G.px) }));
+  out("AG1 横移動10手後の camX 追従", { camXInit, camXAfter, ...ag1After, ag1TapFails });
+  if (!(ag1TapFails === 0 && ag1After.px > agSetup.px && Math.abs(camXAfter - ag1After.target) < 0.5 && camXAfter > camXInit))
+    newBehaviorPass = false;
+
+  // ---- AG2 判断B: 5等分ゾーンの実効化(act をラップして呼び出し引数を観測)。 ----
+  // 移動先を player-origin state(G.dug)で開けておき、ゾーンタップの結果が「掘削」でなく
+  // 「移動」として素直に観測できるようにする(afPlace と同型、世界生成レイヤー非介入)。
+  // 右ゾーンタップが自機を動かした後に下ゾーンの穴掘り先を計算する必要があるため、各タップの
+  // 直前に「その時点の」G.px/G.py を読んで都度掘っておく(まとめて事前計算すると位置がずれる)。
+  await page.evaluate(() => {
+    G.dug.add((G.px + 1) + "," + G.py);
+    G.spawned.add((G.px + 1) + "," + G.py);
+    window.__actCalls = [];
+    const orig = act;
+    act = function (dc, dr) { window.__actCalls.push([dc, dr]); return orig(dc, dr); };
+  });
+  await page.waitForTimeout(300);
+
+  const vp = page.viewportSize();
+  // 右ゾーン: x を最終の5分の1(index4)、y を中央(index2)へ(HUD 帯/D-pad と重ならない中段)。
+  const rightBefore = await page.evaluate(() => ({ px: G.px, py: G.py }));
+  await page.mouse.move(vp.width * 0.9, vp.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const rightAfter = await page.evaluate(() => ({ px: G.px, py: G.py }));
+  const ag2rightCalls = await page.evaluate(() => window.__actCalls.slice());
+  out("AG2 右ゾーンタップ(x=0.9W, y=0.5H)", { rightBefore, rightAfter, calls: ag2rightCalls });
+  const ag2rightOk = ag2rightCalls.some(([dc, dr]) => dc === 1 && dr === 0) && rightAfter.px === rightBefore.px + 1;
+  if (!ag2rightOk) newBehaviorPass = false;
+
+  // 下ゾーン: x を中央(index2)、y を index3(D-pad footer に重ならない、最下段の1つ上)へ。
+  // 右ゾーンタップで自機列が動いた後なので、掘り先はこの時点の G.px/G.py で計算し直す。
+  const downBefore = await page.evaluate(() => {
+    G.dug.add(G.px + "," + (G.py + 1));
+    G.spawned.add(G.px + "," + (G.py + 1));
+    window.__actCalls = [];
+    return { px: G.px, py: G.py };
+  });
+  await page.mouse.move(vp.width * 0.5, vp.height * 0.7);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const downAfter = await page.evaluate(() => ({ px: G.px, py: G.py }));
+  const ag2downCalls = await page.evaluate(() => window.__actCalls.slice());
+  out("AG2 下ゾーンタップ(x=0.5W, y=0.7H)", { downBefore, downAfter, calls: ag2downCalls });
+  const ag2downOk = ag2downCalls.some(([dc, dr]) => dc === 0 && dr === 1) && downAfter.py === downBefore.py + 1;
+  if (!ag2downOk) newBehaviorPass = false;
+
+  // ---- AG3 判断C: はしご無しでは落ち戻る(AF1 既出の再確認)+ はしご設置後は登れて留まる。 ----
+  const ag3Setup = await page.evaluate(() => {
+    G.monsters = [];
+    for (let r = 2; r <= CONST.DEPTH_ROWS - 2; r++) {
+      for (let c = 0; c < CONST.GRID_COLS - 1; c++) {
+        const above = tileAt(c, r - 1);
+        if (above === TILE.NONE || above === TILE.SURFACE || above === TILE.GIRL) continue;
+        if (G.girls.some((g) => g.col === c && g.row === r)) continue;
+        G.dug.add(c + "," + r);
+        G.spawned.add(c + "," + (r - 1));
+        moveTo(c, r, true, true);
+        return { found: true, c, r };
+      }
+    }
+    return { found: false };
+  });
+  out("AG3 setup(真上固体セル)", ag3Setup);
+  if (!ag3Setup.found) newBehaviorPass = false;
+  await camXSettle();
+
+  // 真上を掘り抜く(はしご0のまま)。
+  let ag3dug = null;
+  for (let i = 0; i < 4; i++) {
+    const t = await actTapX(0, -1);
+    await page.waitForTimeout(40);
+    ag3dug = await page.evaluate(([c, r]) => ({ dug: G.dug.has(c + "," + (r - 1)), px: G.px, py: G.py }), [ag3Setup.c, ag3Setup.r]);
+    if (ag3dug.dug) break;
+  }
+  // はしご無しで次タップ→落ち戻る(AF1 と同じ確認、本ゲート内でも独立に踏む)。
+  const ag3climbNoLadder = await actTapX(0, -1);
+  await page.waitForTimeout(40);
+  const ag3afterNoLadder = await page.evaluate(() => ({ px: G.px, py: G.py }));
+  out("AG3 はしご無し次タップ", { ag3dug, ag3climbNoLadder, ag3afterNoLadder });
+  if (ag3afterNoLadder.py !== ag3Setup.r) newBehaviorPass = false;
+
+  // はしご設置(state 注入、verify-mineroad-dig8.mjs と同じ手段)→次タップで登れて留まる。
+  await page.evaluate(([c, r]) => { G.placedLadders.add(c + "," + (r - 1)); }, [ag3Setup.c, ag3Setup.r]);
+  const ag3climbLadder = await actTapX(0, -1);
+  await page.waitForTimeout(40);
+  const ag3afterLadder = await page.evaluate(() => ({ px: G.px, py: G.py }));
+  // さらに 1 手待って(別方向へは動かさず)重力で戻っていないことも確認(留まり続ける=一過性の
+  // 1 手だけの猶予ではないことの証拠)。
+  await page.waitForTimeout(300);
+  const ag3stay = await page.evaluate(() => ({ px: G.px, py: G.py }));
+  out("AG3 はしご設置後の次タップ+滞留確認", { ag3climbLadder, ag3afterLadder, ag3stay });
+  if (!(ag3climbLadder.onScene && ag3afterLadder.py === ag3Setup.r - 1 && ag3stay.py === ag3Setup.r - 1))
+    newBehaviorPass = false;
+
+  // ---- AG4 判断E: モンスタースプライト 6 種の実読込 + 実描画(fallback でない)。 ----
+  const spriteReady6 = await page.evaluate(() => {
+    const keys = ["bat", "slime", "slime_half", "snake", "worm", "spider"];
+    const r = {};
+    let all = true;
+    for (const k of keys) {
+      const img = SPRITES[k];
+      const ready = !!(img && img.complete && img.naturalWidth > 0);
+      r[k] = ready;
+      if (!ready) all = false;
+    }
+    return { r, all };
+  });
+  out("AG4 モンスタースプライト6種 complete&naturalWidth", spriteReady6);
+  if (!spriteReady6.all) newBehaviorPass = false;
+
+  // 自機の隣に未埋没モンスター(SPIDER)を直接配置し、isVisible(fog 開示)を満たしてから描画
+  // させ、fallback の単色円(#3a6b78 = rgb(58,107,120))でなくスプライトのテクスチャが
+  // 乗っていることをピクセル分散で確認する(gate K の soil テクスチャ確認と同じ手法)。
+  // 隣接マスが常に空間とは限らない(固体の可能性がある)ため、G.dug で確実に開けてから置く
+  // (player-origin state 注入のみ、世界生成レイヤー非介入。AF/afPlace と同型)。
+  const ag4place = await page.evaluate(() => {
+    const c = G.px + 1, r = G.py;
+    G.dug.add(c + "," + r);
+    G.spawned.add(c + "," + r);
+    if (!isSpace(c, r)) return { placed: false, c, r };
+    const meta = MONSTER.SPIDER;
+    G.monsters.push({
+      key: "SPIDER", col: c, row: r, hp: meta.hp, kind: "space", buried: false, bt: 0,
+      sp: meta.sp, sleeping: false, tk: 0, rc: 0, spawnCol: c, spawnRow: r, dir: 0,
+    });
+    revealAround();
+    return { placed: true, c, r, isVisible: isVisible(c, r) };
+  });
+  out("AG4 SPIDER 配置", ag4place);
+  if (!ag4place.placed || !ag4place.isVisible) newBehaviorPass = false;
+  let ag4texture = { sampled: false, reason: "placed=false のためスキップ" };
+  if (ag4place.placed) {
+    await page.evaluate(async () => {
+      const raf = () => new Promise((res) => requestAnimationFrame(res));
+      for (let i = 0; i < 3; i++) await raf();
+    });
+    ag4texture = await page.evaluate(([c, r]) => {
+      const cv = document.getElementById("scene");
+      const dpr = cv.width / cv.getBoundingClientRect().width;
+      const cx = window.__camX || 0, cy = window.__camY || 0;
+      const x = Math.round(((c - cx) * tile) * dpr);
+      const y = Math.round(((r - cy) * tile) * dpr);
+      const w = Math.round(tile * dpr), h = w;
+      if (x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > cv.width || y + h > cv.height) return { sampled: false, reason: "off-canvas", x, y, w, h };
+      const d = cv.getContext("2d").getImageData(x, y, w, h).data;
+      let sum = 0, n = 0;
+      const rs = [];
+      for (let i = 0; i < d.length; i += 4) { if (d[i + 3] < 10) continue; rs.push(d[i]); sum += d[i]; n++; }
+      if (n === 0) return { sampled: true, n: 0, variance: 0 };
+      const mean = sum / n;
+      let varc = 0;
+      for (const v of rs) varc += (v - mean) * (v - mean);
+      varc /= n;
+      return { sampled: true, n, variance: +varc.toFixed(1) };
+    }, [ag4place.c, ag4place.r]);
+  }
+  // 正直な限界: fallback(円+頭文字)も文字グリフ分の分散を持つため、この分散だけでは
+  // 「実スプライトかfallbackか」を厳密には判別できない(実測でも fallback 時に variance=2329
+  // と高く出ることを確認済み)。判別の主担保はあくまで上の spriteReady6(complete/naturalWidth)。
+  // このチェックは「そのセルに何か(単色矩形でない)実描画が起きている」ことの補助確認に留める。
+  out("AG4 モンスターセルのピクセル分散(補助確認。fallback でも文字グリフ分の分散が出るため主担保にしない)", ag4texture);
+  if (!ag4texture.sampled) newBehaviorPass = false;
+
+  // ---- AG5 可視性解消: fog を強制解除しても camX 窓の外の個体は描画されない。 ----
+  // 窓内(自機近傍、既に AG4 で配置済みの SPIDER)は描画される一方、窓の外(自機から 30 列先)に
+  // 同条件(未埋没・isVisible 強制)の個体を置いても描画されないことを対で示す(発端の
+  // 「全部見える」の直接対策=camera windowing がモンスター描画にも効いている証拠)。
+  const ag5setup = await page.evaluate(() => {
+    const px = G.px, py = G.py;
+    const farCol = Math.min(CONST.GRID_COLS - 1, px + 30);
+    // 自然地形は大半が固体(掘らないと空間にならない)なので、AF/afPlace と同型に G.dug で
+    // 確実に開けてから置く(player-origin state 注入のみ、世界生成レイヤー非介入)。
+    G.dug.add(farCol + "," + py);
+    G.spawned.add(farCol + "," + py);
+    if (!isSpace(farCol, py)) return { ok: false };
+    const meta = MONSTER.SLIME;
+    G.monsters.push({
+      key: "SLIME", col: farCol, row: py, hp: meta.hp, kind: "space", buried: false, bt: 0,
+      sp: meta.sp, sleeping: false, tk: 0, rc: 0, spawnCol: farCol, spawnRow: py, dir: 0,
+    });
+    G.seen.add(farCol + "," + py); // fog を強制解除(isVisible=true)。窓外であることだけを条件にする。
+    const camXNow = window.__camX || 0;
+    const mxFar = (farCol - camXNow) * tile;
+    return { ok: true, px, py, farCol, isVisible: isVisible(farCol, py), camXNow, tile, W, mxFar, insideWindow: mxFar >= -tile && mxFar <= W };
+  });
+  out("AG5 setup(窓外 SLIME を fog 強制解除で配置)", ag5setup);
+  if (!ag5setup.ok || !ag5setup.isVisible || ag5setup.insideWindow) newBehaviorPass = false; // 窓外である前提が崩れていたら検証不能。
+  await page.evaluate(async () => {
+    const raf = () => new Promise((res) => requestAnimationFrame(res));
+    for (let i = 0; i < 3; i++) await raf();
+  });
+  // 窓外個体の計算上の画面位置(mxFar)が canvas 幅の外(=描画してもピクセルに現れない)ことを
+  // 実際の canvas 全体スクリーンショットのピクセル分散でも裏取りする(computed 座標だけに
+  // 依存しない: canvas 全域を見て、窓外個体特有の色が一切出ていないことを確認)。
+  const ag5screenshot = await page.evaluate(() => {
+    const cv = document.getElementById("scene");
+    const d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+    // SLIME のスプライトは緑系(元 fallback 円も寒色 #3a6b78 系)。canvas 全体を走査して、
+    // 強い緑(g > r+20 かつ g > b+20)のピクセルが「窓内の SPIDER 分」を超えて広範囲に
+        // 出ていないかを大まかに数える(誤検出耐性のため閾値は緩め、0 件を要求しない)。
+    let greenish = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 1] > d[i] + 20 && d[i + 1] > d[i + 2] + 20) greenish++;
+    }
+    return { canvasW: cv.width, canvasH: cv.height, greenishPx: greenish };
+  });
+  out("AG5 canvas 全域スクリーンショット(参考、窓外個体が canvas 外なら幾何的に描画不能)", ag5screenshot);
+  // 一次的な合否判定は幾何(mxFar が canvas 幅の外)。canvas は自身の描画範囲外へは物理的に
+  // 描けない(2D canvas の仕様)ため、insideWindow=false の時点で「描画され得ない」が確定する。
+
+  const ag_pe = errors.filter((e) => !e.includes("net::ERR_") && !e.includes("favicon"));
+  out("pageerror", ag_pe);
+  if (ag_pe.length > 0) newBehaviorPass = false;
+  out("PASS(AG: v0.20.0 新規挙動4点+可視性解消)", newBehaviorPass);
+  await ctx.close();
+}
+
+// ============================================================================
 // 総合
 // ============================================================================
 await browser.close();
 
 console.log("\n== 総合 ==");
-out("(A) コア遷移 + VERSION v0.19.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
-out("(J) アセット配信 14 本(200 + Content-Type) / 旧 mp3 404", assetPass);
+out("(A) コア遷移 + VERSION v0.20.0 + ダンジョン選択 + 5人配置 + HUD 0/5", corePass);
+out("(J) アセット配信 20 本(200 + Content-Type) / 旧 mp3 404", assetPass);
 out("(K) スプライト実読込/broken なし/miner 64x64 差し替え/描画", spritePass);
 out("(L) mute トグル / BGM=theme.ogg / SFX clone 連打 pageerror 0 / clear SFX", audioPass);
 out("(B/C/D) 二段ゲージ/撤退/1人救出(HUD 1/5,dive継続)/重力/探索率/決定論[内部関数]", mechPass);
@@ -3933,7 +4300,8 @@ out("(AA) v0.12.0 仲間同行(救出ストック→地表で同行→潜行で 
 out("(AB) v0.12.0 セーブ/永続(fail→retry 永続 state 復元/ランごとリセット/surfaceReturn 保存/クリア消去/決定論/非介入)", savePass);
 out("(AD) v0.13.1 はしご設置/回収/上掘り", ladderPass);
 out("(AE) v0.14.0 アイテム拡充 + アンテナ保険(タブ/クラフト5レシピ/設置/透視条件/保険 画面操作)", itemsPass);
-out("(AF) v0.15.0 掘削 8 方向(斜めタップ/はしご無し上掘り/階段登り/遠隔タップ無反応)", dig8Pass);
+out("(AF) v0.15.0 掘削 8 方向(斜めタップ/はしご無し上掘り/階段登り/画面5等分ゾーン中央は無反応)", dig8Pass);
+out("(AG) v0.20.0 新規挙動4点(広域camX追従/5等分ゾーン実移動/はしごクライム/モンスタースプライト)+可視性解消", newBehaviorPass);
 out("(E) 十字キー/タップ掘り", dpadPass);
 out("(E2) 短高 viewport", shortVpPass);
 out("(F) 既存 6 作 回帰", regressionPass);
@@ -3947,7 +4315,7 @@ if (overflowFails.length) {
 const allPass =
   corePass && assetPass && spritePass && audioPass &&
   mechPass && girlFollowPass && staticRescuePass && dungeonPass && clearGatePass && multiGirlPass &&
-  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && savePass && ladderPass && itemsPass && dig8Pass && dpadPass && shortVpPass && regressionPass &&
+  v040Pass && uiPolishPass && monsterPass && hazardPass && caveinPass && merchantPass && growthPass && companionPass && savePass && ladderPass && itemsPass && dig8Pass && newBehaviorPass && dpadPass && shortVpPass && regressionPass &&
   e2ePass && failOverflowPass && determinismPass &&
   overflowFails.length === 0;
 console.log(`\nRESULT: ${allPass ? "ALL PASS" : "FAIL"}`);

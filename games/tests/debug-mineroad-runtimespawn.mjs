@@ -18,6 +18,16 @@
 //     → 初回ダイブ後に camY 安定を待つ(waitCamStable)。以降は 1 手ごとの camY 変化は小さいため
 //     毎回の再取得 + 短い待機で足りる。
 //
+// v0.20.0 追随(2026-07-20、playtester 実測で原因を訂正): 引き継ぎ時点の仮説「camY lerp 収束前に
+// タップするとずれる」をまず実機 probe で再検証したところ、実際に観測された 90 件の onScene
+// 飛び越えは収束タイミングとは無関係で、全件が「camY が maxCam(=DEPTH_ROWS+1-floor(H/tile)、
+// 実測 44)で頭打ちになった深度(実測 py=75 付近)で、次に掘る 1 マス下のタップ座標が恒久的に
+// #dpad(#btn-up/down/left/right)footer 帯へ重なる」という別原因だった(camX は startDive で
+// 即時合流済みのため無関係。座標自体は正しく計算できているが、その座標に #dpad が乗っていて
+// canvas がヒットしない=camY 収束待ちを増やしても直らない)。実ユーザーもこの帯では #dpad の
+// 対応ボタンに切り替えて操作するはずであり(tests/ ルールが認める正規の代替入力経路)、
+// screenAct() に同じフォールバックを実装して解消した(詳細は screenAct 直前のコメント)。
+//
 // screen-tap 規律の適用範囲(lead へ明記): タイトルは裏庭のみ解放(corePass で確認済み)のため
 // dungeonId=6 は画面選択で到達不能。ダンジョン選択自体は setup として G.dungeonId 直接注入 +
 // startDive() で行う(selfcheck 前例踏襲、規律違反ではない)。**行動ループ(掘削・移動)は画面座標
@@ -78,8 +88,13 @@ out("camY 初回収束", camAfterInit);
 async function tileCenter(page, col, row) {
   return page.evaluate(([col, row]) => {
     const t = tile;
-    const cam = window.__camY || 0;
-    return { x: col * t + t / 2, y: (row - cam) * t + t / 2 };
+    const camYNow = window.__camY || 0;
+    // v0.20.0 判断A: 横カメラ camX 導入により、80 列マップ(pointer 検証の主対象)では
+    // x = col*t だけでは画面座標とずれる(旧コメント「camX 相当の水平カメラ項は無い/不要」は
+    // v0.19.0 時点の tile=W/GRID_COLS 前提。判断A で tile=W/VIEW_COLS + camX 追従へ変わったため
+    // 実測でずれを確認=window.__camX を通す)。
+    const camXNow = window.__camX || 0;
+    return { x: (col - camXNow) * t + t / 2, y: (row - camYNow) * t + t / 2 };
   }, [col, row]);
 }
 async function isSceneAt(page, x, y) {
@@ -89,18 +104,54 @@ async function isSceneAt(page, x, y) {
   }, [x, y]);
 }
 
+// v0.20.0 追随: 実測の結果、90 件の onScene 飛び越えは「camY lerp 収束待ち不足」ではなく、広域
+// マップ(80 行)を深く掘り進むと camY が maxCam(=DEPTH_ROWS+1-floor(H/tile)、実測 44)で頭打ちに
+// なり、そこから先は「次に掘るセル」の画面 y 座標が固定されたまま #dpad(#btn-up/down/left/right)
+// の footer 帯へ恒久的に重なる、という別原因だった(実機 probe で再現・特定済み。camX は初期化時
+// 即時合流(app.js startDive)のため今回のケースでは無関係で収束待ちループの追加では直らない)。
+// 実プレイでもこの帯に落ちたら実ユーザーは十字キー(#dpad、canvas 外 DOM、tests/ 既存ルールで
+// 画面座標タップと併用可の正規入力経路)に切り替えるので、同じ切り替えをここでも行う
+// (内部 state を直接操作しない=依然として実ユーザー操作範囲内)。
+const DPAD_BTN = { "0,-1": "#btn-up", "0,1": "#btn-down", "-1,0": "#btn-left", "1,0": "#btn-right" };
+let dpadFallbackCount = 0;
+async function tapButton(page, sel) {
+  const box = await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }, sel);
+  if (!box) return false;
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.down();
+  await page.mouse.up();
+  return true;
+}
+
 // 画面座標タップで隣接 (dc,dr) を 1 手。onScene(overlay 飛び越え検出)と、action が実際に成立した
 // 証拠(px/py 変化 or digProgress 変化 or spawnRollCount 増加)を返す(空振りを黙って見逃さない)。
+// canvas タップが #dpad footer に恒久的に隠れているケース(上記コメント)のみ、対応する
+// #btn-* への実タップへ切り替える(dpadFallbackCount で使用回数を記録し、最終報告で明示する)。
 async function screenAct(page, dc, dr) {
   const before = await page.evaluate(() => ({
     px: G.px, py: G.py, spawnRollCount: G.spawnRollCount || 0,
   }));
   const pt = await tileCenter(page, before.px + dc, before.py + dr);
-  const onScene = await isSceneAt(page, pt.x, pt.y);
-  if (!onScene) return { onScene, acted: false, before, after: before };
-  await page.mouse.move(pt.x, pt.y);
-  await page.mouse.down();
-  await page.mouse.up();
+  let onScene = await isSceneAt(page, pt.x, pt.y);
+  let usedDpad = false;
+  if (!onScene) {
+    const btnSel = DPAD_BTN[`${dc},${dr}`];
+    if (btnSel && (await tapButton(page, btnSel))) {
+      usedDpad = true;
+      dpadFallbackCount++;
+    } else {
+      return { onScene, acted: false, before, after: before };
+    }
+  } else {
+    await page.mouse.move(pt.x, pt.y);
+    await page.mouse.down();
+    await page.mouse.up();
+  }
   await page.waitForTimeout(45);
   // 二段ゲージは本スクリプトのスコープ外(既存 gate B が担保済み)。ランタイムスポーン固有の
   // 観測(長め走行での発火/AI/埋没/despawn)を止めないよう、毎手後に満タンへ固定する。
@@ -109,7 +160,10 @@ async function screenAct(page, dc, dr) {
     px: G.px, py: G.py, spawnRollCount: G.spawnRollCount || 0,
   }));
   const acted = after.px !== before.px || after.py !== before.py || after.spawnRollCount !== before.spawnRollCount;
-  return { onScene, acted, before, after };
+  // onScene は「overlay 飛び越え(canvas 以外の想定外要素が最前面)」の検出専用に戻す値。#dpad は
+  // overlay ではなく tests/ ルールが認める正規の代替入力経路なので、フォールバックが成立した
+  // ケースは「飛び越え」として数えない(usedDpad で別途正直に記録する)。
+  return { onScene: onScene || usedDpad, usedDpad, acted, before, after };
 }
 
 // ============================================================================
@@ -162,7 +216,8 @@ const afterDig = await page.evaluate(() => ({
   spawnRollCount: G.spawnRollCount || 0,
 }));
 out("下方向 " + DIG_STEPS + " 手 実行後", afterDig);
-out("onScene 飛び越え検出(0 であるべき)", onSceneFails);
+out("onScene 飛び越え検出(0 であるべき。#dpad フォールバック成立分は含まない)", onSceneFails);
+out("#dpad フォールバック使用回数(canvas タップが #dpad footer に隠れた深度で発生。正規入力経路)", dpadFallbackCount);
 out("空振り(onScene だが px/py/spawnRollCount 無変化)件数", actFails);
 out("人口推移サンプル(20手おき)", popHistory);
 out("runtime 個体が初めて確認できた step(-1=未検出)", firstRuntimeAt);

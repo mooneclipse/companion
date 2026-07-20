@@ -15,13 +15,15 @@
 // 入力規律(tests/ ルール): 全入力は page.mouse の画面座標タップ + タップ直前に elementFromPoint で
 // 最前面 = #scene(canvas) を assert(canvas への直接 dispatch なし = overlay 飛び越え PASS の穴を塞ぐ)。
 //
-// state 注入は 4 点のみ(すべてシナリオノイズ除去 or 補助検証。世界生成レイヤー tileType/oreAt/
-// girlPositions/hazardAt/avalanche には非介入):
+// state 注入は 5 点(すべてシナリオノイズ除去 or 補助検証、または v0.20.0 追随。世界生成レイヤー
+// tileType/oreAt/girlPositions/hazardAt/avalanche には非介入):
 //   ①ダイブ開始時 G.monsters = [](空間スポーン敵の戦闘ノイズ除去。verify-dig8 ①と同じ)
 //   ②G.pick 昇格 WOOD→STONE(経路 HARD 2 マスの通過。プレイヤー進行度 state。verify-dig8 ②)
 //   ③G.spawned.add("8,12","9,12")(埋没スポーン抑止 2 マス。verify-dig8 ③)
 //   ④【マグマ補助検証】G.fluid へ (8,10)/(8,11) {k:MAGMA,d:8} を直接注入→検証後 delete。
 //     裏庭は magmaFrac=0 でマグマへ実タップ到達不能のため、親指示どおり G 直接操作の補助検証と明記。
+//   ⑤v0.20.0 追随: climbUp ヘルパーが 0,-1 タップ毎に目的セルへ G.placedLadders を transient
+//     注入→撤去(判断C でクライムが廃止されたため。詳細は climbUp 定義のコメント参照)。
 //
 // 検証項目(親指示):
 //   V1 遷移: タイトル→裏庭ダイブ開始→HUD 表示
@@ -122,11 +124,16 @@ async function startDive(page) {
 
 // 自機隣接オフセット(dc,dr)のタイル中心へ実マウスタップ。canvas rect + 実 camY から画面座標を算出。
 async function tapTileOffset(page, dc, dr) {
+  // v0.20.0 フレーク対策: タップ座標算出→クリック着弾の間にカメラ lerp が動くと着弾タイルが
+  // ずれる。旧仕様は「隣接圏外タップ=無視」で無害だったが、ゾーン入力導入で「別方向の行動」に
+  // 化けて run 間分岐する(V8 実測)。毎タップ前にカメラ収束を待って座標を確定させる。
+  await camSettle(page);
   const p = await page.evaluate(([dc, dr]) => {
     const r = document.getElementById("scene").getBoundingClientRect();
     const cam = window.__camY || 0;
+    const camx = window.__camX || 0;
     return {
-      x: r.left + (G.px + dc) * tile + tile / 2,
+      x: r.left + (G.px + dc - camx) * tile + tile / 2, // camX: 裏庭 0 で不変、広域で堅牢。
       y: r.top + (G.py + dr - cam) * tile + tile / 2,
     };
   }, [dc, dr]);
@@ -136,6 +143,22 @@ async function tapTileOffset(page, dc, dr) {
   await page.mouse.up();
   await page.waitForTimeout(120);
   return { front, x: +p.x.toFixed(1), y: +p.y.toFixed(1) };
+}
+
+// v0.20.0 追随(判断C): 真上への意図的クライム(noGravity)が廃止され、はしごマスのみ重力無効に
+// なった。旧「0,-1 タップ = そのままクライム」は水中(浮力)セルへの移動には元々不要(fluidAt が
+// 重力を止める)だが、乾いた(非流体)セルへの移動には登った先が即座に落ち戻ってしまう。
+// このシナリオの経路は水没/退避/離脱を行き来する縦一直線なので、タップ直前だけ目的セルへ
+// はしごを 1 個 transient に注入し、タップ直後に即撤去する(残すと次の下方向タップで
+// 「そのマスはもう重力が効かない」まま固定されてしまい、T10 の浮力落下停止テスト等の後続
+// 物理前提を壊す=verify-mineroad-dig8.mjs で実際に踏んだ落とし穴と同型)。水中セルへの移動は
+// 元来はしご不要だが、注入しても fluidAt の早期 return が先に効くため無害(一律で通す)。
+async function climbUp(page) {
+  const target = await page.evaluate(() => ({ c: G.px, r: G.py - 1 }));
+  await page.evaluate(([c, r]) => { G.placedLadders.add(c + "," + r); }, [target.c, target.r]);
+  const t = await tapTileOffset(page, 0, -1);
+  await page.evaluate(([c, r]) => { G.placedLadders.delete(c + "," + r); }, [target.c, target.r]);
+  return t;
 }
 
 // state スナップショット(HUD テキストと内部値の両方 + 流体 region)。
@@ -228,7 +251,7 @@ async function runScenario(recording) {
     const el = document.getElementById("ov-version");
     return el ? el.textContent : "";
   });
-  ck("V1 タイトルに v0.16.0 表示", ver.includes("v0.16.0"), ver);
+  ck("V1 タイトルに v0.20.0 表示(機械追随)", ver.includes("v0.20.0"), ver);
   const dive = await startDive(page);
   ck("V1 ダンジョン選択タップ(最前面)→dive 遷移", dive.ok && dive.t.front, dive);
   // 注入①: 空間スポーン敵を除去 / ②: pick=STONE(経路 HARD 2 マス) / ③: 埋没スポーン抑止 2 マス。
@@ -286,7 +309,7 @@ async function runScenario(recording) {
     s2.region === "8,12:1:8|8,13:1:1" && s2.px === 8 && s2.py === 13 && s2.breath === 2 && s2.hp === 30, s2);
 
   // ---- T3: クライムで (8,12) へ。増密 d=2 + 残り息数字の描画(白青ピクセル) ----
-  t = await tapTileOffset(page, 0, -1);
+  t = await climbUp(page);
   ck("T3 クライムタップ 最前面=scene", t.front, t);
   const s3 = await rec("t3-densify");
   ck("T3 V3 合流増密 d=2(毎ターン+1) + breath=3 + HP30",
@@ -304,7 +327,7 @@ async function runScenario(recording) {
     wpix.b > wpix.r + 25 && wpix.b > preDig.b + 25, { pre: preDig, post: wpix });
 
   // ---- T5 / V4: 5 ターン目まで無傷 + SP のみ減(台帳: 100-12-5=83) ----
-  t = await tapTileOffset(page, 0, -1);
+  t = await climbUp(page);
   ck("T5 クライムタップ 最前面=scene", t.front, t);
   const s5 = await rec("t5-grace");
   ck("T5 V4 水中 5 ターン(SWIM Lv0)は HP 無傷 + SP のみ 1/ターン減(83)",
@@ -324,7 +347,7 @@ async function runScenario(recording) {
   ck("T6 V4 息切れヒント表示(cueDrown)", hint6.includes("息が切れた"), hint6);
 
   // ---- T7: 2 ターン目の直撃 -4 + 残り息 0 の警告色(赤系ピクセル) ----
-  t = await tapTileOffset(page, 0, -1);
+  t = await climbUp(page);
   ck("T7 クライムタップ 最前面=scene", t.front, t);
   const s7 = await rec("t7-drown2");
   ck("T7 V4 毎ターン -4 継続(26→22)", s7.breath === 7 && s7.hp === 22 && s7.py === 12, s7);
@@ -332,7 +355,7 @@ async function runScenario(recording) {
   ck("T7 V7 息切れ中は残り息 0 が警告赤(#ff7b6a 系)で描画", head7.warnRed, head7);
 
   // ---- T8 / V4+V7: 水から出る→息継ぎ(breath 0)+ダメージ停止+数字消滅 ----
-  t = await tapTileOffset(page, 0, -1);
+  t = await climbUp(page);
   ck("T8 離水クライムタップ 最前面=scene", t.front, t);
   const s8 = await rec("t8-breathe");
   ck("T8 V4 水から出ると息継ぎ(breath=0)+HP 減少停止(22 のまま)",
@@ -341,7 +364,7 @@ async function runScenario(recording) {
   ck("T8 V7 離水で残り息数字が消える(白青/警告赤ピクセル無し)", !head8.whiteBlue && !head8.warnRed, head8);
 
   // ---- T9: さらに上がる(満水 cap d=8 到達を確認) ----
-  t = await tapTileOffset(page, 0, -1);
+  t = await climbUp(page);
   ck("T9 クライムタップ 最前面=scene", t.front, t);
   const s9 = await rec("t9-cap");
   ck("T9 V3 下セル満水 cap d=8(それ以上増えない)", s9.py === 10 && s9.region === "8,12:1:8|8,13:1:8", s9);
@@ -373,7 +396,7 @@ async function runScenario(recording) {
 
   // ---- 離水して (8,9) まで上がる(マグマ補助検証の足場) ----
   for (const [i, er] of [[1, 11], [2, 10], [3, 9]]) {
-    t = await tapTileOffset(page, 0, -1);
+    t = await climbUp(page);
     if (!t.front) ck(`退避クライム#${i} 最前面=scene`, false, t);
     const s = await snap(page);
     if (s.py !== er) ck(`退避クライム (8,${er}) 到達`, false, { py: s.py });
@@ -406,11 +429,11 @@ async function runScenario(recording) {
   const mpix = await cellPixel(page, 8, 10);
   ck("T17 V6 マグマセルの画面ピクセルが赤系(r>b+25)", mpix.r > mpix.b + 25, mpix);
   // T18-T19: 脱出クライム(通過 1 ターン -6)→空中で停止。
-  t = await tapTileOffset(page, 0, -1);
+  t = await climbUp(page);
   ck("T18 脱出クライムタップ 最前面=scene", t.front, t);
   const s18 = await rec("t18-magma3");
   ck("T18 V6 3 ターン目 -6(10→4)", s18.py === 10 && s18.hp === 4, s18);
-  t = await tapTileOffset(page, 0, -1);
+  t = await climbUp(page);
   ck("T19 離脱クライムタップ 最前面=scene", t.front, t);
   const s19 = await rec("t19-exit");
   ck("T19 V6 マグマ外へ出るとダメージ停止(HP4 維持)", s19.py === 9 && s19.hp === 4 && s19.screen === "dive", s19);
@@ -425,7 +448,7 @@ async function runScenario(recording) {
 
   // ---- 地表帰還: (8,9)→クライム 9 回→row0 = surfaceReturn(全回復 + 息リセット) ----
   for (let i = 0; i < 9; i++) {
-    t = await tapTileOffset(page, 0, -1);
+    t = await climbUp(page);
     if (!t.front) ck(`帰還クライム#${i + 1} 最前面=scene`, false, t);
   }
   await camSettle(page);

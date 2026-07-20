@@ -64,7 +64,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 await page.goto(`http://127.0.0.1:${PORT}/mineroad/`, { waitUntil: "networkidle" });
 
 const ver = await page.evaluate(() => (typeof VERSION !== "undefined" ? VERSION : null));
-check("VERSION = v0.19.0", ver === "v0.19.0", { ver });
+check("VERSION = v0.20.0", ver === "v0.20.0", { ver });
 
 // ============================================================================
 // 1. 30% ゲートの統計的検証 + 決定論再現。
