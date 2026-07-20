@@ -519,7 +519,7 @@ const G = {
   antennaItems: 0, // 未設置の所持アンテナ数(設置で消費)。
   placedAntennas: null, // Set("col,row") 設置済みアンテナ位置。fail を跨いで残す(startDive ではクリアしない)。
   // ---- v0.5.0 モンスター系(ランごと初期化。fail/再挑戦でリセット = 既存スコープ境界踏襲) ----
-  monsters: null, // [{key,col,row,hp,kind}, ...] 出現中のモンスター。kind: "space"/"bury"。
+  monsters: null, // [{key,col,row,hp,kind}, ...] 出現中のモンスター。kind: "space"/"bury"/"runtime"/"runtime-bury"(v0.19.0 ランタイム湧き)。
   spawned: null, // Set("col,row") 既に空間/埋没スポーンを解決したマス(二重スポーン防止)。
   exp: 0, // 撃破で蓄積する EXP(育成未実装のため表示のみ)。
   kills: 0, // 撃破数(参考表示)。
