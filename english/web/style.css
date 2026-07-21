@@ -166,6 +166,8 @@ main.done{display:flex;flex-direction:column;min-height:100vh;padding:0 24px}
 .player-frame video{width:100%;height:100%;object-fit:contain}
 .sub-line{padding:14px 24px 0}
 .sub-line-text{min-height:2.8em;font-family:var(--jp);font-size:15.5px;line-height:1.4;color:var(--ink);text-align:center;white-space:pre-line}
+.sub-line-ja{padding-top:6px}
+.sub-line-ja .sub-line-text{min-height:2.2em;font-size:14px;color:var(--muted)}
 .player-body{padding:18px 24px}
 .player-title{margin:2px 0 14px;font-size:17px;font-weight:700}
 .scrub .progress{background:#e0dfda}

@@ -68,6 +68,18 @@ def media_url(path_str):
     return "/media/" + rel.replace(os.sep, "/")
 
 
+def _ja_sub_url(episode_id):
+    """日本語字幕 (ingest.py `_download_ja_subtitle` が best-effort 取得する手動 ja 字幕、
+    `media/subs/raw/<episode_id>.ja.vtt`) が実在すれば配信 URL を返す。episodes テーブルに
+    ja 字幕パス専用の列は持たず (英語字幕の sub_path のようなクリーニング工程が ja 側には無い
+    ため列を増やす理由が薄い)、episode_id = video_id の命名規則からリクエスト時に存在確認する。
+    18 話中 5 話は元動画に手動 ja 字幕が無く、ここで None を返してフロント側のトグルを隠す。"""
+    p = os.path.join(ROOT, "media", "subs", "raw", episode_id + ".ja.vtt")
+    if not os.path.isfile(p):
+        return None
+    return media_url(os.path.relpath(p, ROOT))
+
+
 def _safe_join(root_real, url_path):
     rel = url_path.lstrip("/")
     if rel == "":
@@ -429,6 +441,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(200, {
             "video_url": media_url(row["video_path"]),
             "sub_url": media_url(row["sub_path"]) if row["sub_path"] else None,
+            "ja_sub_url": _ja_sub_url(episode_id),
             "position_s": row["position_s"] or 0,
             "title": row["title"],
             "duration_s": row["duration_s"],

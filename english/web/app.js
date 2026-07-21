@@ -675,7 +675,7 @@ async function renderPlayer(id) {
   let ep;
   try { ep = await getJSON(`/api/episodes/${encodeURIComponent(id)}`); }
   catch (e) { renderError(app, e); return; }
-  // /api/episodes/<id> のレスポンスに id は含まれない (video_url/sub_url/position_s/title/duration_s のみ)。
+  // /api/episodes/<id> のレスポンスに id は含まれない (video_url/sub_url/ja_sub_url/position_s/title/duration_s のみ)。
   // watch/comprehension の送信にはルートパラメータの id を使う。
 
   app.replaceChildren();
@@ -692,15 +692,19 @@ async function renderPlayer(id) {
   video.playsInline = true;
   video.controls = false;
   video.preload = "metadata";
-  let trackEl = null;
-  if (ep.sub_url) {
-    trackEl = document.createElement("track");
-    trackEl.kind = "subtitles";
-    trackEl.src = ep.sub_url;
-    trackEl.srclang = "en";
-    trackEl.default = false;
-    video.append(trackEl);
-  }
+  // 字幕トラック: 英語 (清掃済み) + 日本語 (raw、ja_sub_url が null の話は無し)。
+  // それぞれ独立の <track> + 専用行 + トグルを持つ (英日どちらか片方だけ ON も可)。
+  const makeTrack = (src, lang) => {
+    const t = document.createElement("track");
+    t.kind = "subtitles";
+    t.src = src;
+    t.srclang = lang;
+    t.default = false;
+    video.append(t);
+    return t;
+  };
+  let trackEl = ep.sub_url ? makeTrack(ep.sub_url, "en") : null;
+  let trackJaEl = ep.ja_sub_url ? makeTrack(ep.ja_sub_url, "ja") : null;
   frame.append(video);
   wrap.append(frame);
 
@@ -713,6 +717,14 @@ async function renderPlayer(id) {
     subLine.append(subLineText);
     subLine.style.display = "none"; // 既定 OFF
     wrap.append(subLine);
+  }
+  let subLineJa = null, subLineTextJa = null;
+  if (trackJaEl) {
+    subLineJa = el("div", "sub-line sub-line-ja");
+    subLineTextJa = el("p", "sub-line-text");
+    subLineJa.append(subLineTextJa);
+    subLineJa.style.display = "none"; // 既定 OFF
+    wrap.append(subLineJa);
   }
 
   const body = el("div", "player-body");
@@ -765,19 +777,39 @@ async function renderPlayer(id) {
     });
     subrow.append(subBtn);
   }
+  let subsJaOn = false;
+  if (trackJaEl) {
+    const subJaBtn = el("button", "toggle off", "字幕 JA · オフ");
+    subJaBtn.addEventListener("click", () => {
+      subsJaOn = !subsJaOn;
+      subLineJa.style.display = subsJaOn ? "block" : "none";
+      subJaBtn.textContent = subsJaOn ? "字幕 JA · オン" : "字幕 JA · オフ";
+      subJaBtn.classList.toggle("off", !subsJaOn);
+    });
+    subrow.append(subJaBtn);
+  }
   body.append(subrow);
   wrap.append(body);
   app.append(wrap);
 
+  // hidden でも cuechange は発火する (発火しないのは disabled のときだけ)。
+  // 標準描画 (showing) には一切しない — 描画は自前の subLineText/subLineTextJa で行う。
   if (trackEl) {
-    // hidden でも cuechange は発火する (発火しないのは disabled のときだけ)。
-    // 標準描画 (showing) には一切しない — 描画は自前の subLineText で行う。
     trackEl.track.mode = "hidden";
     trackEl.track.addEventListener("cuechange", () => {
       const cues = trackEl.track.activeCues;
       const lines = [];
       for (let i = 0; i < cues.length; i++) lines.push(cues[i].text);
       subLineText.textContent = lines.join("\n");
+    });
+  }
+  if (trackJaEl) {
+    trackJaEl.track.mode = "hidden";
+    trackJaEl.track.addEventListener("cuechange", () => {
+      const cues = trackJaEl.track.activeCues;
+      const lines = [];
+      for (let i = 0; i < cues.length; i++) lines.push(cues[i].text);
+      subLineTextJa.textContent = lines.join("\n");
     });
   }
 

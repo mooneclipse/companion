@@ -120,6 +120,7 @@ def run(root):
     os.makedirs(os.path.join(media, "episodes"))
     os.makedirs(os.path.join(media, "clips"))
     os.makedirs(os.path.join(media, "subs"))
+    os.makedirs(os.path.join(media, "subs", "raw"))
     with open(os.path.join(web, "index.html"), "w") as f:
         f.write("<!doctype html><title>english test</title>")
     with open(os.path.join(web, "app.js"), "w") as f:
@@ -150,6 +151,16 @@ def run(root):
         "VALUES ('ep1', 200, 250, NULL, NULL, ?)",
         (now,),
     )
+    # ep2: 日本語字幕 (media/subs/raw/<id>.ja.vtt) ありのケース。ja_sub_url の存在チェックが
+    # ファイルの実在確認 (episodes テーブルに ja 専用列を持たない) であることをここで検証する。
+    conn.execute(
+        "INSERT INTO episodes (id, series_id, title, source_url, duration_s, video_path, sub_path, "
+        "sub_kind, sort_key, ingested_at) VALUES "
+        "('ep2','tadc','Ep2','http://example/ep2',200,?,?,'manual','002',?)",
+        ("media/episodes/ep1.mp4", "media/subs/ep1.vtt", now),
+    )
+    with open(os.path.join(media, "subs", "raw", "ep2.ja.vtt"), "w") as f:
+        f.write("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nテスト\n")
     clips = [
         # translation あり (ja 手動字幕からの抽出を想定) / c2,c3,c4 は translation NULL
         # (ja 字幕なしエピソードのクリップは NULL に縮退する契約、§2)
@@ -433,6 +444,11 @@ def _run_checks(base, root, db_path):
     check("episode 200", status == 200, status)
     check("episode video_url", ep["video_url"] == "/media/episodes/ep1.mp4", ep)
     check("episode sub_url", ep["sub_url"] == "/media/subs/ep1.vtt", ep)
+    check("episode ja_sub_url is null (raw ja vtt 未取得)", ep["ja_sub_url"] is None, ep)
+
+    status, _, body = http("GET", base, "/api/episodes/ep2")
+    ep2 = json.loads(body)
+    check("episode ep2 ja_sub_url", ep2["ja_sub_url"] == "/media/subs/raw/ep2.ja.vtt", ep2)
 
     status, _, _ = http("GET", base, "/api/episodes/nope")
     check("episode 404 for unknown id", status == 404, status)
