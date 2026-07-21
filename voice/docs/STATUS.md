@@ -1,6 +1,6 @@
 # companion-voice 開発台帳（Phase 3-2: TTS (VOICEVOX)、技術基盤完成で畳み・bot 統合 Phase 4 移送）
 
-最終更新: 2026-06-12 (voice bot 統合 **完了** — bot/ 側実装 + say.sh 追記化 + speaker 11 切替 [.env は未作成と判明し user が新規作成] + restart + V-S1/V-S2 実弾 pass。完了基準 3 階層すべて達成、以後 bot.py 大改変の様子見観察)
+最終更新: 2026-07-21 (話者記載の化石訂正 = #125 派生の文書整理。claude code hook 音の renbot.wav 生成で voice-design.md v2.0 の四国めたん id=2 を誤流用する事故が起き、現用話者 (全系統 玄野武宏 id=11、2026-06-12 確定) と旧記載の混在を解消 — 本台帳の構成サマリのキャラ行訂正 + TODO 4 の残作業 (speaker 2→11 切替・実弾) を完了マーク (実施済みだった)、voice-design.md に正誤ヘッダ、voice-questions.md に歴史的文書注記。commit `17304ca`) / 2026-06-12 (voice bot 統合 **完了** — bot/ 側実装 + say.sh 追記化 + speaker 11 切替 [.env は未作成と判明し user が新規作成] + restart + V-S1/V-S2 実弾 pass。完了基準 3 階層すべて達成、以後 bot.py 大改変の様子見観察)
 
 ## 2026-06-12 persona 軸 2 確定の反映: speaker = 玄野武宏 + 発話レイテンシ設計判断
 
