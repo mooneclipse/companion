@@ -1,5 +1,7 @@
 # voice/ (Phase 3-2) ユーザー判断待ち事項
 
+> **⚠️ 歴史的文書 (2026-07-21 注記)**: 本文の確定事項はその後の判断で複数上書きされている — キャラは**玄野武宏 id=11 に変更済み** (2026-06-12 persona 軸 2、四国めたんは撤回)、駆動も dashboard 先行から bot 駆動先行 (voice-design.md v2.0) に転換済み。**ここから現行仕様を読み取らない**。現在地の正は `voice/docs/STATUS.md`。
+
 team `companion-voice-design` 議論で残った user 判断項目をまとめる。明日 user 起床後に上から順に確認 → lead が plan v1.0 統合 + plan_approval_request → team cleanup → Phase 3-2 着手承認、の流れ。
 
 最終 user 確定済 (本セッション中):

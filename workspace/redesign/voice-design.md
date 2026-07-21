@@ -1,5 +1,9 @@
 # voice-design.md — Phase 3-2 (TTS / voice/) 確定設計 v2.0
 
+> **⚠️ 正誤 (2026-07-21、チケット #125 の誤流用事故を受けて明記)**
+> - **話者は 2026-06-12 の persona 軸 2 確定で玄野武宏 (speaker_id=11) に変更済み** (`voice/.env` の `VOICE_DEFAULT_SPEAKER=11` 切替・実弾 pass 済み、正は `persona/docs/STATUS.md` 軸 2 / `voice/docs/STATUS.md` 2026-06-12 entry)。本文の**四国めたん (speaker_id=2) 記載はすべて 2026-05 技術検証時の仮置き**で、現用箇所はない。本文は歴史的設計記録として無修正で残す — **speaker_id を本文から流用しない**
+> - claude code の hook 通知音 (`~/.claude/sounds/`、事前生成 wav) は本設計の**対象外・別系統** (話者は同じ玄野武宏 id=11 だが生成方式が違う)。hook 音の正は memory `hook-voice-speakers` を参照
+
 companion プロジェクト Phase 3-2 (PROJECT.md L143-188) の `~/companion/voice/` サブプロジェクト確定設計。team `companion-voice-design` v1.0/v1.0.1/v1.0.2 (11 ラウンド議論) + **v2.0 仕切り直し議論 (2026-05-18〜19、Round 1〜3、T-1 sprint #2 V-13 fail を契機とする bot 駆動先行への設計転換)** + user 最終承認で確定。
 
 ## 0. 概要 (v2.0)
