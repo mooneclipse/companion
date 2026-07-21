@@ -300,9 +300,10 @@ OWNER が Telegram モバイルで:
 
 1. `#chat` topic で `@companion_renbot こんにちは` を送信 → bot 応答確認
 2. `#research` topic で `@companion_renbot 検索テスト` を送信 → bot 応答 + session が `#research` 用に分かれていること確認
-3. `/quota` slash command で予算情報表示確認
-4. `/status` slash command で稼働情報表示確認
-5. `/reset` slash command で `#research` の session 破棄確認
+3. `/status` slash command で稼働情報表示確認
+4. `/reset` slash command で `#research` の session 破棄確認
+
+（`/quota` slash command は 2026-07-21 削除済み。当時の smoke test 項目だったが現行コードには存在しない）
 
 ledger.jsonl と sessions/topics/ にファイルが正しく作られていることを PC 側で確認:
 
