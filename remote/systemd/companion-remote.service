@@ -12,7 +12,9 @@ EnvironmentFile=-%h/companion/remote/.env
 #  描画も audio も持たず DISPLAY 不要 = say.sh paplay 経路専用だったため。STATUS.md Done 参照)
 ExecStart=%h/companion/remote/server/app.py
 # 常駐 HTTP サーバなのでクラッシュ時は再起動(stateless、回復に state 引きは不要)。
-Restart=on-failure
+# always: 外部からの SIGTERM は systemd では正常終了扱いで on-failure では復帰しない
+# (2026-07-21 pkill 巻き込み停止)。意図停止 (systemctl stop) は always でも再起動されない。
+Restart=always
 RestartSec=3
 
 [Install]

@@ -6,7 +6,9 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/companion/english
 ExecStart=%h/companion/english/server/app.py
-Restart=on-failure
+# always: 外部からの SIGTERM は systemd では正常終了扱いで on-failure では復帰しない
+# (2026-07-21 pkill 巻き込み停止)。意図停止 (systemctl stop) は always でも再起動されない。
+Restart=always
 RestartSec=3
 # tailnet 露出は tailscale serve 前段のみ。本プロセスは loopback 限定。
 # photos の unit と同方針 (rootless user サービスで有効化できる mount 名前空間系のみ)。
