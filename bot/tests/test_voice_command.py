@@ -1,4 +1,4 @@
-"""Unit tests for voice_command.py (/say 実体)。
+"""Unit tests for voice_command.py (自発発話の声実体)。
 
 cmd_say の engine orchestration は fake バイナリで検証する:
 - systemctl: PATH 先頭に fake を置いて呼び出しを log に記録
@@ -9,7 +9,6 @@ Run from bot/ with: venv/bin/python -m unittest discover -s tests -v
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import stat
 import sys
@@ -44,26 +43,6 @@ class FormatSayResultTest(unittest.TestCase):
         out = voice_command._format_say_result(42)
         self.assertIn("UNKNOWN", out)
         self.assertIn("exit 42", out)
-
-
-class AppendLedgerTest(unittest.TestCase):
-
-    def test_appends_schema_line(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "voice_ledger.jsonl"
-            orig = voice_command.VOICE_LEDGER_PATH
-            voice_command.VOICE_LEDGER_PATH = path
-            try:
-                voice_command.append_ledger("おはよう、今日もいい天気だから散歩しよう", 0, 12345)
-            finally:
-                voice_command.VOICE_LEDGER_PATH = orig
-            lines = path.read_text(encoding="utf-8").strip().splitlines()
-            self.assertEqual(len(lines), 1)
-            entry = json.loads(lines[0])
-            self.assertEqual(entry["rc"], 0)
-            self.assertEqual(entry["duration_ms"], 12345)
-            self.assertEqual(len(entry["text_prefix"]), 20)
-            self.assertIn("ts", entry)
 
 
 class CmdSayTest(unittest.TestCase):

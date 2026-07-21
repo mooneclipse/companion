@@ -1,11 +1,9 @@
 """`/status` 末尾に表示する voice 集計 (voice-design v2.0 §1.5 (4))。
 
-集計元 2 系統 (§1.6):
-- ``voice/.state/last-result-YYYY-MM-DD`` (今日 + 昨日): say.sh が CLI 直接
-  invoke も含めて全 invoke で書く。OK/FAIL 行は ISO8601 timestamp 付き
-  (`@ <ts>` 形式、say.sh B3-1)、padding skipped 行は timestamp なしのため
-  ファイル単位 (今日 + 昨日 ≈ 直近 24h) で数える。
-- ``sessions/voice_ledger.jsonl``: bot 経由 /say のみ。最終発話の表示元。
+集計元: ``voice/.state/last-result-YYYY-MM-DD`` (今日 + 昨日)。say.sh が CLI
+直接 invoke も含めて全 invoke で書く。OK/FAIL 行は ISO8601 timestamp 付き
+(`@ <ts>` 形式、say.sh B3-1)、padding skipped 行は timestamp なしのため
+ファイル単位 (今日 + 昨日 ≈ 直近 24h) で数える。
 
 表示は読み取り専用の集計で、判定・分岐には使わない (エラー分類は表面化専用、
 CLAUDE.md 原則)。
@@ -18,7 +16,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import quota
-from voice_command import VOICE_LEDGER_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -76,15 +73,4 @@ def format_voice_summary(now: datetime | None = None) -> str:
     else:
         fail_part = "FAIL 0"
     summary = f"voice (直近24h): OK {ok} / {fail_part} / padding skipped {padding_skipped}"
-
-    last = None
-    for entry in reversed(quota.read_ledger(VOICE_LEDGER_PATH)):
-        if "text_prefix" in entry:
-            last = entry
-            break
-    if last is not None:
-        summary += (
-            f"\nlast /say: 「{last.get('text_prefix', '')}」"
-            f" rc={last.get('rc')} @ {last.get('ts', '?')}"
-        )
     return summary

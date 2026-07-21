@@ -216,10 +216,9 @@ VAULT_BRANCH = "develop"
 VAULT_REMOTE = "origin"
 
 # osekkai (#110) の意図ストア CLI。bot.py からは他プロジェクト (osekkai/) の
-# スクリプトなので import せず subprocess で叩く (/tweet の git 直叩き・
-# _fetch_official_usage の claude 直叩きと同型の境界越え方式)。stdlib のみの
-# スクリプト (osekkai/scripts/intent_store.py 冒頭 docstring 参照) なので
-# bot 自身の venv python (sys.executable) で足りる。
+# スクリプトなので import せず subprocess で叩く (/tweet の git 直叩きと同型の
+# 境界越え方式)。stdlib のみのスクリプト (osekkai/scripts/intent_store.py
+# 冒頭 docstring 参照) なので bot 自身の venv python (sys.executable) で足りる。
 OSEKKAI_INTENT_STORE = Path.home() / "companion" / "osekkai" / "scripts" / "intent_store.py"
 # push subprocess の hang 上限。BatchMode=yes で対話プロンプトは即 fail するが、
 # 通信 stall 等の保険として timeout を併設する。
@@ -1786,46 +1785,6 @@ def cmd_reset(chat_id: int, thread_id: int | None) -> str:
     return "[reset] 現 topic に session は存在しませんでした (no-op)。"
 
 
-def cmd_quota() -> str:
-    summary = budget_guard.summary(datetime.now(quota.JST))
-    return quota.format_summary(summary)
-
-
-async def _fetch_official_usage() -> str | None:
-    """Run ``claude -p "/usage"`` and return the raw text output, or None on failure.
-
-    num_turns 0 / $0 の軽量リクエスト。parse せず全文転記する (文言マッチ分岐をしない)。
-    """
-    env = os.environ.copy()
-    for key in ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
-                "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ID"):
-        env.pop(key, None)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            CLAUDE_BIN, "-p",
-            cwd=CLAUDE_CWD,
-            env=env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except Exception:
-        return None
-    try:
-        stdout_b, _ = await asyncio.wait_for(
-            proc.communicate(input=b"/usage"),
-            timeout=15,
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return None
-    if proc.returncode != 0:
-        return None
-    text = stdout_b.decode("utf-8", errors="replace").strip()
-    return text if text else None
-
-
 def _normalize_play_url(url: str) -> str | None:
     if any(ch.isspace() or ord(ch) < 0x20 for ch in url):
         return None
@@ -2561,7 +2520,7 @@ async def _osekkai_intent_store_run(*args: str) -> tuple[int, str, str]:
 
     (rc, stdout, stderr) を返す。spawn 自体の失敗・timeout は rc=-1 + stderr に
     メッセージを詰めて返す (呼び出し側は rc!=0 を一様に「失敗」として扱えばよい、
-    例外は投げない = best-effort)。timeout は _fetch_official_usage と同型
+    例外は投げない = best-effort)。timeout は subprocess 直叩き系の codebase 慣習
     (flock(LOCK_EX) を持つ CLI なので通信 stall の保険として設定、単一ユーザー・
     短時間ホールドで実害はほぼ無いが codebase 慣習に揃える)。"""
     try:
@@ -3255,25 +3214,6 @@ async def slash_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await send_text(context.bot, chat_id, thread_id, output, reply_to=msg.message_id if msg else None)
 
 
-async def slash_quota(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update):
-        return
-    msg = update.effective_message
-    chat_id = update.effective_chat.id
-    thread_id = msg.message_thread_id if msg else None
-    output = cmd_quota()
-    usage_text = await _fetch_official_usage()
-    if usage_text:
-        output += (
-            "\n\n[公式利用率 (アカウント全体 — bot 以外の手元セッション含む)]\n"
-            + usage_text
-        )
-    else:
-        output += "\n\n公式利用率: 取得失敗"
-    logger.info("cmd=/quota send len=%d", len(output))
-    await send_text(context.bot, chat_id, thread_id, output, reply_to=msg.message_id if msg else None)
-
-
 async def slash_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
@@ -3304,47 +3244,6 @@ async def slash_play(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     output = await cmd_play(url)
     # URL は OWNER 限定経路のため log に残してよい。allowlist 拒否時の原因切り分けに使う。
     logger.info("cmd=/play url=%r send len=%d", url, len(output))
-    await send_text(
-        context.bot, chat_id, thread_id, output,
-        reply_to=msg.message_id if msg else None,
-    )
-
-
-async def slash_say(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update):
-        return
-    msg = update.effective_message
-    chat_id = update.effective_chat.id
-    thread_id = msg.message_thread_id if msg else None
-    # `/say おはよう 今日もよろしく` → args を空白 join で 1 文に戻す
-    text = " ".join(context.args or []).strip()
-    if not text:
-        await send_text(
-            context.bot, chat_id, thread_id,
-            "[say] 読み上げるテキストを指定してください。例: /say おはよう",
-            reply_to=msg.message_id if msg else None,
-        )
-        return
-    if len(text) > voice_command.MAX_SAY_TEXT:
-        # silent truncate しない (M-8、沈黙でなく報告原則)
-        await send_text(
-            context.bot, chat_id, thread_id,
-            f"[say] テキストが長すぎます ({len(text)}/{voice_command.MAX_SAY_TEXT} 字)。"
-            f"{voice_command.MAX_SAY_TEXT} 字以内にしてください。",
-            reply_to=msg.message_id if msg else None,
-        )
-        return
-    # cold start 11-17s + 合成を typing indicator で吸収 (案 W-silent の
-    # Telegram 読み替え、中間メッセージは追加しない)
-    started = time.monotonic()
-    async with _typing_action(context.bot, chat_id, thread_id):
-        rc, output = await voice_command.cmd_say(text)
-    duration_ms = int((time.monotonic() - started) * 1000)
-    try:
-        voice_command.append_ledger(text, rc, duration_ms)
-    except OSError:
-        logger.exception("voice ledger append failed")
-    logger.info("cmd=/say len=%d rc=%d duration_ms=%d", len(text), rc, duration_ms)
     await send_text(
         context.bot, chat_id, thread_id, output,
         reply_to=msg.message_id if msg else None,
@@ -3966,12 +3865,12 @@ def _dispatch_proactive_voice(app: Application, text: str) -> str:
 
     「生成と再生の分離」(persona 軸 4 / voice STATUS 2026-06-12): 自発発話は返事を
     期待しない一方通行なので、合成・再生を await せず別 task に投げて proactive
-    worker をブロックしない。土管は /say と同じ voice_command.cmd_say (engine 都度
-    起動 → 合成 → stop、_say_lock で /say と直列化済み)。
+    worker をブロックしない。土管は voice_command.cmd_say (engine 都度起動 →
+    合成 → stop、`_say_lock` で同時発火を直列化)。
     """
     if not PROACTIVE_VOICE_ENABLED:
         return "disabled"
-    # cmd_say は長さチェックを持たない (MAX_SAY_TEXT は /say ハンドラ側の責務)。
+    # cmd_say は長さチェックを持たない (呼び出し側であるここで長さを確認する)。
     # 自発発話は 1〜2 文 = 通常 ≤ 100 字だが保証はないので、超過時は音声だけ落とす
     # (silent truncate しない = M-8。Telegram 本文はそのまま残る)。判定は長さ 1 回で確定。
     if len(text) > voice_command.MAX_SAY_TEXT:
@@ -3991,9 +3890,8 @@ def _dispatch_proactive_voice(app: Application, text: str) -> str:
 async def _proactive_voice_worker(text: str) -> None:
     """裏で合成 → 再生 (cmd_say 流用)。失敗は logger のみ (proactive 本体は道連れにしない)。
 
-    voice_ledger には書かない。voice_ledger は /say = ユーザー実需の集計元 (Phase 4
-    常駐化 trigger) であり、自動の自発発話を混ぜると実需を水増しするため。声の rc は
-    logger に、発火有無は proactive_ledger の voice フィールドに残す (集計の置き場所を分離)。
+    声の rc は logger に、発火有無は proactive_ledger の voice フィールドに残す
+    (集計の置き場所を分離)。
     """
     started = time.monotonic()
     try:
@@ -4144,10 +4042,8 @@ async def post_init(application: Application) -> None:
     # slash command scope を NOTIFY_CHAT_ID に限定 (§4.4)
     commands = [
         BotCommand("reset", "現 topic の claude セッションを破棄"),
-        BotCommand("quota", "bot 経由 prompt の予算 / 集計を表示"),
         BotCommand("status", "bot 稼働状況 / current session を表示"),
         BotCommand("play", "YouTube URL をこの PC のブラウザで開く"),
-        BotCommand("say", "テキストを TV で読み上げ (VOICEVOX、最大 100 字)"),
         BotCommand("tweet", "ツイート/ポストを vault に保存"),
         BotCommand("vault_push", "vault の commit 済変更を GitHub に push"),
         BotCommand("snooze", "自発発話を指定日数止める (例: /snooze 3、解除は /snooze 0)"),
@@ -4285,10 +4181,8 @@ def build_application() -> Application:
     # edited_message を物理的に取りこぼす (§4.5 / N-T7、W-6)。
     message_filter = filters.UpdateType.MESSAGE & ~filters.UpdateType.EDITED_MESSAGE
     app.add_handler(CommandHandler("reset", slash_reset, filters=message_filter))
-    app.add_handler(CommandHandler("quota", slash_quota, filters=message_filter))
     app.add_handler(CommandHandler("status", slash_status, filters=message_filter))
     app.add_handler(CommandHandler("play", slash_play, filters=message_filter))
-    app.add_handler(CommandHandler("say", slash_say, filters=message_filter))
     app.add_handler(CommandHandler("tweet", slash_tweet, filters=message_filter))
     app.add_handler(CommandHandler("vault_push", slash_vault_push, filters=message_filter))
     app.add_handler(CommandHandler("snooze", slash_snooze, filters=message_filter))

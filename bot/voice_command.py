@@ -1,7 +1,9 @@
-"""`/say` コマンド実体: VOICEVOX engine の on-demand 起動 + say.sh 実行。
+"""自発発話 (proactive voice) の声実体: VOICEVOX engine の on-demand 起動 + say.sh 実行。
 
 仕様: ~/companion/workspace/redesign/voice-design.md v2.0 §1.3 / §1.4 / §1.8
-(Discord slash command 前提の設計を Telegram CommandHandler に読み替え)。
+(Discord slash command 前提の設計を Telegram CommandHandler に読み替え。当初の
+呼び出し口だった `/say` コマンドは 2026-07-21 削除、現用の呼び出し元は自発発話
+(bot.py `_proactive_voice_worker`) のみ)。
 
 責務分担:
 - say.sh (voice/ 側、検証済み・無変更) = 合成 + 発話 + last-result 書き込み。
@@ -18,10 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
 from pathlib import Path
-
-import quota
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +37,6 @@ SAY_TIMEOUT_S = 90.0
 _CTL_TIMEOUT_S = 15.0
 _READY_TIMEOUT_S = 40.0
 
-# append-only ledger (quota.py パターン継承、Phase 4 trigger / /status 集計元)。
-# 設計図 (§1.6) は bot/ 直下表記だが、runtime データは sessions/ 配下に置く
-# 既存慣習 (ledger.jsonl) に揃えた。
-VOICE_LEDGER_PATH = Path(__file__).resolve().parent / "sessions" / "voice_ledger.jsonl"
-
 _REASONS = {
     1: "ENGINE_UNREACHABLE",
     2: "ARGS_INVALID",
@@ -51,7 +45,7 @@ _REASONS = {
     5: "AUDIO_PLAYBACK_FAILED",
 }
 
-# engine start/stop が say.sh 内 flock の外に出たため、bot 層の同時 /say で
+# engine start/stop が say.sh 内 flock の外に出たため、bot 層の同時呼び出しで
 # 「先行の finally stop が後発の合成中 engine を落とす」競合を直列化で消す。
 _say_lock = asyncio.Lock()
 
@@ -85,7 +79,7 @@ async def cmd_say(text: str) -> tuple[int, str]:
 
     engine は呼び出しごとに start → 合成 → stop (on-demand、§1.3)。
     stop は finally で無条件 (CLI 手動デバッグで engine を立てている最中に
-    /say が来ると落とす点は許容、個人利用で併用は稀)。
+    呼び出しが来ると落とす点は許容、個人利用で併用は稀)。
     """
     async with _say_lock:
         await _run_quiet(
@@ -113,16 +107,3 @@ async def cmd_say(text: str) -> tuple[int, str]:
             await _run_quiet(
                 ["systemctl", "--user", "stop", ENGINE_UNIT], _CTL_TIMEOUT_S
             )
-
-
-def append_ledger(text: str, rc: int, duration_ms: int) -> None:
-    """1 invoke 1 行 (§1.6 schema: ts / text_prefix / rc / duration_ms)。"""
-    quota.append_ledger(
-        {
-            "ts": datetime.now(quota.JST).isoformat(timespec="seconds"),
-            "text_prefix": text[:20],
-            "rc": rc,
-            "duration_ms": duration_ms,
-        },
-        VOICE_LEDGER_PATH,
-    )
