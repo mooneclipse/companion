@@ -181,3 +181,87 @@ def record_usage_if_exists(chat_id: int, thread_id: int | None) -> bool:
         return False
     record_usage(meta)
     return True
+
+
+# ---------------------------------------------------------------------------
+# pending proactive context (チケット #126)
+# ---------------------------------------------------------------------------
+#
+# ephemeral session で #chat へ投稿する proactive 経路 (investigate / ticket /
+# remind) は、会話 session の transcript に自分の発話を残さない。そのため OWNER
+# がその発話に返信しても、resume した会話 session は「自分がさっき何を言ったか」
+# を知らず、発話前の話題への発言として解釈してしまう (2026-07-21 実障害)。
+# ここは投稿した一言の「未読」控えを topic ごとに 1 ファイルで持ち、次の OWNER
+# 発話の prompt に前置きして消費する (即時のセッション注入は claude 起動が 1 回
+# 余計に要るため不採用)。
+
+_PENDING_DIR = Path(__file__).resolve().parent / "sessions" / "pending"
+# 未読のまま溜まったときの上限。古い発話から捨てる (会話の前置きに載せて意味が
+# あるのは直近数件だけ)。
+_PENDING_MAX_ENTRIES = 3
+# 1 発話の保存上限 (投稿本文は Telegram 向けの短文だが、prompt 前置きの肥大を
+# 状態側で bound する)。
+_PENDING_MAX_TEXT = 500
+
+
+def _pending_path_for(chat_id: int, thread_id: int | None) -> Path:
+    return _PENDING_DIR / f"{topic_key(chat_id, thread_id)}.json"
+
+
+def append_pending_context(chat_id: int, thread_id: int | None, text: str) -> None:
+    """proactive の ephemeral 発話 1 件を topic の未読控えに追記する。
+
+    呼び出し側は #chat への送信が確定した後に呼ぶ (送っていない発話を控えに
+    入れない)。失敗 (OSError) は呼び出し側で warning に留め、送信本体を道連れに
+    しない。
+    """
+    path = _pending_path_for(chat_id, thread_id)
+    entries: list[dict] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        loaded = data.get("entries")
+        if isinstance(loaded, list):
+            entries = loaded
+    except (FileNotFoundError, json.JSONDecodeError):
+        # 壊れた控えは捨てて作り直す (補助情報であり、復旧リトライは作らない)
+        entries = []
+    entries.append({"at": _to_iso(_now()), "text": text[:_PENDING_MAX_TEXT]})
+    entries = entries[-_PENDING_MAX_ENTRIES:]
+    _PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(_PENDING_DIR), prefix=".tmp-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"entries": entries}, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def pop_pending_context(chat_id: int, thread_id: int | None) -> list[dict]:
+    """topic の未読控えを読み出して消費 (ファイル削除) する。無ければ []。
+
+    read + delete を 1 回で確定する。読み出し後の claude 起動が失敗した場合に
+    控えを書き戻す再試行 state は作らない (会話成立の補助情報であり、失われても
+    次の発話で会話は続く。エラーループ防止の 1 回確定原則)。
+    """
+    path = _pending_path_for(chat_id, thread_id)
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return []
+    except json.JSONDecodeError:
+        data = {}
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return []
+    return [e for e in entries if isinstance(e, dict) and e.get("text")]

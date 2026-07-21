@@ -150,5 +150,63 @@ class RecordUsageIfExistsTest(SessionsCase):
         self.assertEqual(loaded.session_id, meta.session_id)
 
 
+class PendingContextTest(SessionsCase):
+    """append/pop_pending_context (チケット #126、ephemeral 自発発話の未読控え)。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._orig_pending = sessions._PENDING_DIR
+        sessions._PENDING_DIR = Path(self._tmp.name) / "pending"
+
+    def tearDown(self) -> None:
+        sessions._PENDING_DIR = self._orig_pending
+        super().tearDown()
+
+    def test_pop_without_append_returns_empty(self) -> None:
+        self.assertEqual(sessions.pop_pending_context(-1001234567890, 3), [])
+
+    def test_append_then_pop_round_trip(self) -> None:
+        sessions.append_pending_context(-1001234567890, 3, "そういえばRoute53の件")
+        entries = sessions.pop_pending_context(-1001234567890, 3)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["text"], "そういえばRoute53の件")
+        self.assertIn("at", entries[0])
+
+    def test_pop_consumes_entries(self) -> None:
+        # read + delete を 1 回で確定 (2 回目は空)
+        sessions.append_pending_context(-1001234567890, 3, "a")
+        self.assertEqual(len(sessions.pop_pending_context(-1001234567890, 3)), 1)
+        self.assertEqual(sessions.pop_pending_context(-1001234567890, 3), [])
+
+    def test_entries_capped_at_max_keeping_newest(self) -> None:
+        for i in range(sessions._PENDING_MAX_ENTRIES + 2):
+            sessions.append_pending_context(-1001234567890, 3, f"msg{i}")
+        entries = sessions.pop_pending_context(-1001234567890, 3)
+        self.assertEqual(len(entries), sessions._PENDING_MAX_ENTRIES)
+        self.assertEqual(entries[-1]["text"], f"msg{sessions._PENDING_MAX_ENTRIES + 1}")
+
+    def test_text_capped_at_max_length(self) -> None:
+        sessions.append_pending_context(-1001234567890, 3, "x" * 1000)
+        entries = sessions.pop_pending_context(-1001234567890, 3)
+        self.assertEqual(len(entries[0]["text"]), sessions._PENDING_MAX_TEXT)
+
+    def test_topics_are_isolated(self) -> None:
+        sessions.append_pending_context(-1001234567890, 3, "chat側")
+        self.assertEqual(sessions.pop_pending_context(-1001234567890, 4), [])
+        self.assertEqual(len(sessions.pop_pending_context(-1001234567890, 3)), 1)
+
+    def test_corrupt_file_is_discarded(self) -> None:
+        # 壊れた控えは補助情報なので捨てて空扱い (復旧リトライを作らない)
+        sessions._PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        path = sessions._pending_path_for(-1001234567890, 3)
+        path.write_text("not json", encoding="utf-8")
+        self.assertEqual(sessions.pop_pending_context(-1001234567890, 3), [])
+        self.assertFalse(path.exists())
+        path.write_text("not json", encoding="utf-8")
+        sessions.append_pending_context(-1001234567890, 3, "recovered")
+        entries = sessions.pop_pending_context(-1001234567890, 3)
+        self.assertEqual([e["text"] for e in entries], ["recovered"])
+
+
 if __name__ == "__main__":
     unittest.main()

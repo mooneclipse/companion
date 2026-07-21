@@ -1462,6 +1462,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
             self.bot.sessions._SESSIONS_DIR,
+            self.bot.sessions._PENDING_DIR,
         )
         self.bot.PROACTIVE_LEDGER_PATH = d / "proactive_ledger.jsonl"
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
@@ -1473,6 +1474,8 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_REMIND_ENABLED = False
         # #chat session の last_prompt_at 更新を tmp に隔離 (本番 sessions/ を汚さない)。
         self.bot.sessions._SESSIONS_DIR = d / "topics"
+        # ephemeral 発話の未読控え (チケット #126) も tmp に隔離。
+        self.bot.sessions._PENDING_DIR = d / "pending"
 
     def tearDown(self) -> None:
         (
@@ -1484,6 +1487,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
             self.bot.sessions._SESSIONS_DIR,
+            self.bot.sessions._PENDING_DIR,
         ) = self._orig
         self._tmp.cleanup()
 
@@ -1899,6 +1903,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
             self.bot.sessions._SESSIONS_DIR,
+            self.bot.sessions._PENDING_DIR,
         )
         self.bot.PROACTIVE_LEDGER_PATH = d / "proactive_ledger.jsonl"
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
@@ -1910,6 +1915,8 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_TICKET_ENABLED = True
         self.bot.PROACTIVE_REMIND_ENABLED = False
         self.bot.sessions._SESSIONS_DIR = d / "topics"
+        # ephemeral 発話の未読控え (チケット #126) も tmp に隔離。
+        self.bot.sessions._PENDING_DIR = d / "pending"
 
     def tearDown(self) -> None:
         (
@@ -1921,6 +1928,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
             self.bot.sessions._SESSIONS_DIR,
+            self.bot.sessions._PENDING_DIR,
         ) = self._orig
         self._tmp.cleanup()
 
@@ -2332,6 +2340,118 @@ class BuildTicketPromptTest(unittest.TestCase):
         self.assertIn("でっち上げ", prompt)
 
 
+class ProactivePromptStyleTest(unittest.TestCase):
+    """remind / ticket 報告文面の様式指示 (チケット #126: 圧縮報告の抑止)。
+
+    実障害: 2026-07-21 remind が話題名 (Route53) を一言も言わず内部結論だけを投稿 /
+    2026-07-20 ticket が「起票しない」判断の説明文をそのまま #chat に投稿。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_remind_requires_topic_name_in_body(self) -> None:
+        prompt = self.bot.build_remind_prompt("topic")
+        self.assertIn("話題名) を一言の中に必ず入れる", prompt)
+        self.assertIn("話題名のない結論だけを送らない", prompt)
+
+    def test_ticket_keeps_not_filing_reason_out_of_body(self) -> None:
+        prompt = self.bot.build_ticket_prompt("topic")
+        self.assertIn("理由や経緯も本文には書かない", prompt)
+        self.assertIn("その判断メモは [[thought: ...]] の行にだけ残す", prompt)
+
+
+class QuotedReplyTextTest(unittest.TestCase):
+    """quoted_reply_text (チケット #126: Telegram 返信引用の抽出)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    @staticmethod
+    def _msg(reply, thread_id=3):
+        from types import SimpleNamespace
+        return SimpleNamespace(reply_to_message=reply, message_thread_id=thread_id)
+
+    @staticmethod
+    def _reply(message_id, text=None, caption=None):
+        from types import SimpleNamespace
+        return SimpleNamespace(message_id=message_id, text=text, caption=caption)
+
+    def test_no_reply_returns_none(self) -> None:
+        self.assertIsNone(self.bot.quoted_reply_text(self._msg(None)))
+
+    def test_forum_topic_root_auto_reply_ignored(self) -> None:
+        # forum topic 内の通常メッセージは topic 作成 service message への reply が
+        # 自動で付く (message_id == message_thread_id)。意図した引用ではない。
+        msg = self._msg(self._reply(3, text="topic name"), thread_id=3)
+        self.assertIsNone(self.bot.quoted_reply_text(msg))
+
+    def test_real_reply_returns_text(self) -> None:
+        msg = self._msg(self._reply(99, text="そういえばRoute53の件"), thread_id=3)
+        self.assertEqual(self.bot.quoted_reply_text(msg), "そういえばRoute53の件")
+
+    def test_caption_fallback_for_media_reply(self) -> None:
+        msg = self._msg(self._reply(99, caption="写真の説明"), thread_id=3)
+        self.assertEqual(self.bot.quoted_reply_text(msg), "写真の説明")
+
+    def test_bodyless_reply_returns_none(self) -> None:
+        msg = self._msg(self._reply(99), thread_id=3)
+        self.assertIsNone(self.bot.quoted_reply_text(msg))
+
+    def test_general_topic_reply_returned(self) -> None:
+        # General topic (thread_id=None) には自動 reply の除外条件が無い。
+        msg = self._msg(self._reply(99, text="quote"), thread_id=None)
+        self.assertEqual(self.bot.quoted_reply_text(msg), "quote")
+
+
+class ComposeChatPromptTest(unittest.TestCase):
+    """compose_chat_prompt (チケット #126: 会話 session が知らない文脈の前置き)。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_no_context_returns_text_unchanged(self) -> None:
+        self.assertEqual(self.bot.compose_chat_prompt("こんにちは"), "こんにちは")
+        self.assertEqual(self.bot.compose_chat_prompt("こんにちは", [], None), "こんにちは")
+
+    def test_pending_prepended_with_jst_stamp(self) -> None:
+        pending = [{"at": "2026-07-21T00:02:09+00:00", "text": "既に07-12に続編ノート作ってた"}]
+        out = self.bot.compose_chat_prompt("なんの話？", pending)
+        self.assertIn("内部メモ", out)
+        self.assertIn("09:02", out)  # UTC 00:02 → JST 09:02
+        self.assertIn("既に07-12に続編ノート作ってた", out)
+        self.assertTrue(out.endswith("なんの話？"))
+
+    def test_pending_without_timestamp_has_no_stamp(self) -> None:
+        out = self.bot.compose_chat_prompt("返信", [{"text": "一言"}])
+        self.assertIn("- 「一言」", out)
+
+    def test_pending_with_invalid_timestamp_does_not_crash(self) -> None:
+        # 壊れた at は stamp を省くだけ (応答本体を落とさない、code-reviewer 指摘)
+        out = self.bot.compose_chat_prompt("返信", [{"at": "not-a-date", "text": "一言"}])
+        self.assertIn("- 「一言」", out)
+
+    def test_quoted_prepended(self) -> None:
+        out = self.bot.compose_chat_prompt("それいいね", quoted="Stream Deck の話")
+        self.assertIn("この発言への返信として送られた", out)
+        self.assertIn("Stream Deck の話", out)
+        self.assertTrue(out.endswith("それいいね"))
+
+    def test_quoted_truncated_at_max(self) -> None:
+        out = self.bot.compose_chat_prompt("ok", quoted="q" * 500)
+        self.assertIn("q" * self.bot._QUOTED_REPLY_MAX + "…", out)
+        self.assertNotIn("q" * (self.bot._QUOTED_REPLY_MAX + 1), out)
+
+    def test_pending_then_quoted_then_text_order(self) -> None:
+        pending = [{"at": "2026-07-21T00:02:09+00:00", "text": "自発の一言"}]
+        out = self.bot.compose_chat_prompt("本文", pending, "引用元")
+        self.assertLess(out.index("自発の一言"), out.index("引用元"))
+        self.assertLess(out.index("引用元"), out.index("本文"))
+
+
 class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
     """自律ループ「振り返る」分岐 (persona 軸 4 拡張 (5) = リマインド) の配線。
 
@@ -2361,6 +2481,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
             self.bot.sessions._SESSIONS_DIR,
+            self.bot.sessions._PENDING_DIR,
         )
         self.bot.PROACTIVE_LEDGER_PATH = d / "proactive_ledger.jsonl"
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
@@ -2372,6 +2493,8 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_TICKET_ENABLED = False
         self.bot.PROACTIVE_REMIND_ENABLED = True
         self.bot.sessions._SESSIONS_DIR = d / "topics"
+        # ephemeral 発話の未読控え (チケット #126) も tmp に隔離。
+        self.bot.sessions._PENDING_DIR = d / "pending"
 
     def tearDown(self) -> None:
         (
@@ -2383,6 +2506,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
             self.bot.sessions._SESSIONS_DIR,
+            self.bot.sessions._PENDING_DIR,
         ) = self._orig
         self._tmp.cleanup()
 
@@ -2461,6 +2585,14 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         # state があるときの touch は test_sessions.py RecordUsageIfExistsTest で担保。
         meta = self.bot.sessions.load(self.bot.NOTIFY_CHAT_ID, self.bot.BOT_THREAD_ID_CHAT)
         self.assertIsNone(meta)
+        # 送った一言が未読控えに残る (チケット #126: ephemeral 発話は会話 session に
+        # 載らないため、次の OWNER 発話の prompt 前置きで補う)。
+        pending = self.bot.sessions.pop_pending_context(
+            self.bot.NOTIFY_CHAT_ID, self.bot.BOT_THREAD_ID_CHAT
+        )
+        self.assertEqual(
+            [e["text"] for e in pending], ["そういえばディスク管理どうなった?"]
+        )
 
     async def test_researched_thread_still_signals_remind(self) -> None:
         # 調べたきり放置 (researched) thread こそ「あれどうなった?」の振り返り対象。

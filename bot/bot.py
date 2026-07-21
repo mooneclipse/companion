@@ -494,7 +494,9 @@ PROACTIVE_TICKET_PROMPT = (
     "(3) 起票したら、出力の `#番号` を読んで #chat 用に 1〜3 行で報告する。\n"
     "    「○○やっといたらと思って #番号 起票しといた」式のさらっとした事後報告にする。\n"
     "    actionable なタスクが無く起票しなかった場合は、何も報告せず空のまま終える"
-    " (無理に話題を作らない)。前置き・自己説明・チケット一覧の貼り付けはしない。\n"
+    " (無理に話題を作らない)。「起票しない」と決めた理由や経緯も本文には書かない"
+    " (その判断メモは [[thought: ...]] の行にだけ残す)。"
+    "前置き・自己説明・チケット一覧の貼り付けはしない。\n"
     + PROACTIVE_THOUGHT_INSTRUCTION
 )
 
@@ -523,6 +525,8 @@ PROACTIVE_REMIND_PROMPT = (
     "    - OWNER (🙋) のチケットは操作しないのはもちろん、自分 (🤖) のチケットにも触らない。\n"
     "(2) 上の話題や自分のチケットを踏まえて、#chat に振り返りの一言を 1〜3 行で投げる。\n"
     "    「そういえば先週の○○どうなった?」式のさらっとした一言にする。\n"
+    "    - 何の話題の振り返りかが分かる言葉 (話題名) を一言の中に必ず入れる"
+    " (相手はあなたが今何を調べ直していたか知らない。話題名のない結論だけを送らない)。\n"
     "    - 返事を催促したり「ねえ」と引き止めたりしない (相手の手が空いてなければ流せる軽さ)。\n"
     "    - 振り返る実体が無ければ、何も報告せず空のまま終える (無理に話題を作らない)。\n"
     "    前置き・自己説明・チケット一覧やノート全文の貼り付けはしない。報告本文だけを返す。\n"
@@ -2731,6 +2735,70 @@ async def cmd_backlog(args: list[str]) -> str:
     return BACKLOG_USAGE
 
 
+# Telegram 返信引用の prompt 前置きに載せる上限 (チケット #126)。引用元は同一
+# topic 内の既出メッセージなので全文は不要、指し先が分かる頭だけで足りる。
+_QUOTED_REPLY_MAX = 400
+
+
+def quoted_reply_text(msg) -> str | None:
+    """Telegram の返信機能で引用された元メッセージ本文を返す (引用でなければ None)。
+
+    forum supergroup では topic 内の通常メッセージにも reply_to_message として
+    topic 作成 service message が自動で付く (message_id == message_thread_id)。
+    それは OWNER の意図した引用ではないので除外する。本文が無い引用 (画像のみ等)
+    は caption を拾い、それも無ければ None (チケット #126)。
+    """
+    reply = getattr(msg, "reply_to_message", None)
+    if reply is None:
+        return None
+    thread_id = msg.message_thread_id
+    if thread_id is not None and reply.message_id == thread_id:
+        return None
+    return reply.text or reply.caption or None
+
+
+def compose_chat_prompt(
+    text: str,
+    pending: list[dict] | None = None,
+    quoted: str | None = None,
+) -> str:
+    """OWNER の生メッセージに、会話 session が知らない文脈を前置きする (チケット #126)。
+
+    pending は sessions.pop_pending_context の戻り (ephemeral 自発発話の未読控え)。
+    investigate / ticket / remind は使い捨て session で #chat に投稿するため、会話
+    session は「自分がさっき何を言ったか」を知らず、返信を発話前の話題への発言と
+    解釈してしまう (2026-07-21 実障害、自分の発話を否定する回答まで観測)。
+    quoted は Telegram 返信引用の元本文 (quoted_reply_text の戻り)。どちらも
+    無ければ text をそのまま返す (既存挙動不変)。Pure function → unit-testable。
+    """
+    parts: list[str] = []
+    if pending:
+        lines = []
+        for e in pending:
+            at = e.get("at")
+            stamp = ""
+            if isinstance(at, str) and at:
+                # 壊れた控えは捨てる方針 (sessions.pop_pending_context) と揃える:
+                # 時刻が読めない entry でも stamp を省くだけで応答本体を落とさない。
+                try:
+                    stamp = datetime.fromisoformat(at).astimezone(quota.JST).strftime("%H:%M") + " "
+                except ValueError:
+                    stamp = ""
+            lines.append(f"- {stamp}「{e.get('text')}」")
+        parts.append(
+            "(内部メモ: あなたは少し前、自分からこの topic に次の一言を投稿している。"
+            "この会話履歴には残っていないが相手には見えているので、"
+            "次のメッセージはこれを読んだ上での返信かもしれない)\n" + "\n".join(lines)
+        )
+    if quoted:
+        q = quoted if len(quoted) <= _QUOTED_REPLY_MAX else quoted[:_QUOTED_REPLY_MAX] + "…"
+        parts.append(f"(次のメッセージは、この発言への返信として送られた: 「{q}」)")
+    if not parts:
+        return text
+    parts.append(text)
+    return "\n".join(parts)
+
+
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
@@ -2782,6 +2850,16 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             context.bot, chat_id, thread_id, output, reply_to=msg.message_id,
         )
         return
+
+    # 会話 session が知らない文脈の前置き (チケット #126): ephemeral 自発発話の
+    # 未読控え (pop = 1 回で消費確定) + Telegram 返信引用。読めない控えは補助情報
+    # なので warning に留めて本体を続行する。
+    try:
+        pending = sessions.pop_pending_context(chat_id, thread_id)
+    except OSError as e:
+        logger.warning("pending context read failed: %s", e)
+        pending = []
+    prompt = compose_chat_prompt(prompt, pending, quoted_reply_text(msg))
 
     try:
         async with _typing_action(context.bot, chat_id, thread_id):
@@ -3737,6 +3815,13 @@ async def _run_proactive_investigate(
     # 参照。暴走防止は record_investigate の interval 消費が下支え)。
     if not sessions.record_usage_if_exists(chat_id, thread_id):
         logger.info("investigate touch skip: no #chat session state")
+    # 投稿した一言を未読控えに残す (チケット #126): ephemeral 発話は会話 session の
+    # transcript に載らないため、次の OWNER 発話の prompt 前置き (compose_chat_prompt)
+    # で補う。控えの書き込み失敗は送信済みの本体を道連れにしない。
+    try:
+        sessions.append_pending_context(chat_id, thread_id, output)
+    except OSError as e:
+        logger.warning("investigate pending context record failed: %s", e)
     voice_state = _dispatch_proactive_voice(app, output)
     logger.info(
         "investigate sent len=%d topic=%s voice=%s", len(output), topic, voice_state
@@ -3795,6 +3880,11 @@ async def _run_proactive_ticket(
     # 参照。暴走防止は record_ticket の interval 消費が下支え)。
     if not sessions.record_usage_if_exists(chat_id, thread_id):
         logger.info("ticket touch skip: no #chat session state")
+    # 投稿した一言を未読控えに残す (チケット #126、investigate と同様)。
+    try:
+        sessions.append_pending_context(chat_id, thread_id, output)
+    except OSError as e:
+        logger.warning("ticket pending context record failed: %s", e)
     voice_state = _dispatch_proactive_voice(app, output)
     logger.info(
         "ticket sent len=%d signal=%s voice=%s", len(output), signal, voice_state
@@ -3855,6 +3945,11 @@ async def _run_proactive_remind(
     # 参照。暴走防止は record_remind の interval 消費が下支え)。
     if not sessions.record_usage_if_exists(chat_id, thread_id):
         logger.info("remind touch skip: no #chat session state")
+    # 投稿した一言を未読控えに残す (チケット #126、investigate と同様)。
+    try:
+        sessions.append_pending_context(chat_id, thread_id, output)
+    except OSError as e:
+        logger.warning("remind pending context record failed: %s", e)
     voice_state = _dispatch_proactive_voice(app, output)
     logger.info(
         "remind sent len=%d signal=%s voice=%s", len(output), signal, voice_state
