@@ -286,6 +286,126 @@ details[open] > .vault-folder::before{content:"▾";}
    --acc(#d8392a) の 12% 淡色地、文字色は本文 --ink 維持 */
 mark{background:rgba(216,57,42,.12);color:var(--ink);padding:0 1px;}
 
+/* --- 小説閲覧(F-mimicry, read-only) ---
+   一覧(検索・フォルダ/更新順切替・folder-group・item 行)は vault と視覚言語を揃える
+   (utility なリスト表示は流用しない方針、各機能で独立 class を持つ既存慣習=yt-*/todo-*/
+   thought-* に倣い mimicry-* を独立定義)。本文だけが分岐点: s1/s2/s3 話数(prose)は
+   明朝系の読書向けタイポグラフィ、それ以外の設定・プロット種・レビュー等(ref)は
+   アプリ全体と同じ実用トーン(ゴシック、INDEX.md の表もここで読む)。 */
+#mimicry-search{margin-bottom:4px;}
+.mimicry-sort-bar{display:flex;gap:6px;margin:12px 16px 0;padding:0;}
+.mimicry-sort-btn{flex:1;padding:6px 0;border:1px solid var(--line);border-radius:6px;
+  background:var(--paper);color:var(--grey-6);font-size:12px;font-weight:700;
+  font-family:inherit;cursor:pointer;letter-spacing:.04em;}
+.mimicry-sort-btn.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+.mimicry-item-date{font-size:10px;font-weight:700;color:var(--grey-4);
+  font-variant-numeric:tabular-nums;letter-spacing:.02em;white-space:nowrap;}
+.mimicry-folder{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--grey-6);
+  font-weight:800;margin:18px 0 6px;padding:14px 0 8px;border-top:1px solid var(--line);
+  cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;}
+.mimicry-folder::-webkit-details-marker{display:none;}
+.mimicry-folder::before{content:"▸";color:var(--grey-4);font-size:9px;flex:0 0 auto;}
+details[open] > .mimicry-folder::before{content:"▾";}
+.mimicry-folder-group:first-child > .mimicry-folder{margin-top:0;padding-top:0;border-top:none;}
+.mimicry-folder-count{color:var(--grey-4);font-weight:700;font-variant-numeric:tabular-nums;
+  margin-left:auto;}
+.mimicry-item{display:block;width:100%;text-align:left;background:var(--paper);border:none;
+  border-top:1px solid var(--line);padding:13px 0;font-size:15px;font-weight:700;color:var(--ink);
+  letter-spacing:.005em;cursor:pointer;font-family:inherit;word-break:break-word;}
+.mimicry-item:active{color:var(--acc);}
+.mimicry-result{display:flex;flex-direction:column;gap:4px;}
+.mimicry-result-name{font-size:15px;font-weight:800;}
+.mimicry-result-snip{font-size:12px;font-weight:400;color:var(--grey-4);line-height:1.5;}
+
+/* 本文ヘッダ共通: フォルダ内訳(小、ctitle トーン) */
+.mimicry-doc-path{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--grey-4);
+  font-weight:800;margin-bottom:8px;word-break:break-word;}
+
+/* 話数キッカー(S{season}・第{episode}話 + 進行状況バッジ)。既存 kicker/badge の語彙を踏襲 */
+.mimicry-kicker{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-bottom:8px;}
+.mimicry-kicker .ep{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--acc);}
+.mimicry-kicker .status{font-size:9px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+  border:1px solid var(--hair);color:var(--grey-6);padding:3px 7px;}
+.mimicry-kicker .status.done{border-color:var(--ink);color:var(--ink);}
+.mimicry-kicker .status.draft{border-color:var(--acc);color:var(--acc);}
+
+/* タイトル: 話数本文は明朝の大見出し、それ以外(ref)はアプリ標準のゴシック h1 と揃える */
+.mimicry-doc-title{font-family:"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho",
+  "Source Han Serif JP",serif;font-size:26px;font-weight:700;line-height:1.4;
+  letter-spacing:.04em;margin-bottom:10px;word-break:break-word;}
+.mimicry-doc-title.mimicry-doc-title-ref{font-family:inherit;font-size:21px;font-weight:800;
+  letter-spacing:.005em;line-height:1.25;}
+
+.mimicry-setting{font-size:12.5px;color:var(--grey-6);letter-spacing:.03em;margin-bottom:4px;}
+.mimicry-characters{font-size:11.5px;color:var(--grey-4);letter-spacing:.02em;}
+.mimicry-divider{border:none;border-top:1px solid var(--line);margin:18px 0 24px;}
+
+/* ref(設定/プロット種/レビュー等)の frontmatter 汎用行。vault-fm と同じ体裁を独立定義 */
+.mimicry-fm{display:flex;flex-wrap:wrap;gap:8px 14px;margin:4px 0 16px;padding-bottom:14px;
+  border-bottom:1px solid var(--line);}
+.mimicry-fm .fm-row{font-size:12px;color:var(--grey-4);letter-spacing:.01em;}
+.mimicry-fm .fm-row b{color:var(--grey-6);font-weight:800;text-transform:uppercase;
+  font-size:10px;letter-spacing:.1em;margin-right:4px;}
+
+/* --- ref(設定・プロット種・レビュー等)本文: アプリ標準のゴシック、vault-doc と同じ実用トーン。
+   INDEX.md の表もここで読むため table は密度優先(display:block + overflow-x)。 --- */
+.mimicry-doc-ref{font-size:15px;line-height:1.75;letter-spacing:.01em;color:var(--ink);
+  word-break:break-word;}
+.mimicry-doc-ref h1,.mimicry-doc-ref h2,.mimicry-doc-ref h3{font-weight:800;line-height:1.3;
+  margin:24px 0 10px;letter-spacing:.01em;}
+.mimicry-doc-ref h1{font-size:22px;}.mimicry-doc-ref h2{font-size:19px;}.mimicry-doc-ref h3{font-size:16px;}
+.mimicry-doc-ref p{margin:12px 0;}
+.mimicry-doc-ref ul,.mimicry-doc-ref ol{margin:12px 0;padding-left:1.4em;}
+.mimicry-doc-ref li{margin:5px 0;}
+.mimicry-doc-ref code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+  background:var(--line);padding:2px 5px;border-radius:3px;}
+.mimicry-doc-ref pre{background:var(--line);padding:14px;overflow-x:auto;border-radius:4px;margin:14px 0;}
+.mimicry-doc-ref pre code{background:none;padding:0;font-size:13px;line-height:1.6;}
+.mimicry-doc-ref blockquote{border-left:3px solid var(--acc);padding-left:14px;margin:14px 0;
+  color:var(--grey-4);}
+.mimicry-doc-ref table{border-collapse:collapse;margin:14px 0;font-size:13px;display:block;
+  overflow-x:auto;}
+.mimicry-doc-ref th,.mimicry-doc-ref td{border:1px solid var(--hair);padding:6px 10px;text-align:left;}
+.mimicry-doc-ref img{max-width:100%;height:auto;}
+.mimicry-doc-ref hr{border:none;border-top:1px solid var(--line);margin:24px 0;}
+.mimicry-doc-ref li.task-list-item{list-style:none;}
+.mimicry-doc-ref li.task-list-item input[type=checkbox]{pointer-events:none;accent-color:var(--acc);
+  margin-right:8px;vertical-align:-2px;}
+
+/* --- prose(s1/s2/s3 話数本文): 読書向けタイポグラフィ。明朝スタック + ゆったり行間 +
+   和文組版の1字下げ(台詞は除く、mimicryRenderMarkdown の .dial 付与)。CSP により外部
+   フォントは読み込めないため、端末に入っている明朝(Android は Noto Sans CJK へ字形代替
+   されることが多い)へのグレースフルデグレード前提。 --- */
+.mimicry-doc-prose{font-family:"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho",
+  "Source Han Serif JP",serif;font-size:17px;line-height:2.05;letter-spacing:.03em;
+  color:var(--ink);word-break:break-word;}
+.mimicry-doc-prose p{margin:0 0 1.55em;text-indent:1em;}
+.mimicry-doc-prose p.dial{text-indent:0;}
+.mimicry-doc-prose h1,.mimicry-doc-prose h2,.mimicry-doc-prose h3{font-weight:800;line-height:1.4;
+  margin:32px 0 14px;letter-spacing:.03em;}
+.mimicry-doc-prose h1{font-size:19px;}.mimicry-doc-prose h2{font-size:17px;}.mimicry-doc-prose h3{font-size:16px;}
+.mimicry-doc-prose ul,.mimicry-doc-prose ol{margin:16px 0;padding-left:1.6em;}
+.mimicry-doc-prose li{margin:6px 0;}
+.mimicry-doc-prose blockquote{border-left:3px solid var(--acc);padding-left:16px;margin:20px 0;
+  color:var(--grey-6);}
+.mimicry-doc-prose code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+  background:var(--line);padding:2px 5px;border-radius:3px;}
+.mimicry-doc-prose pre{background:var(--line);padding:14px;overflow-x:auto;border-radius:4px;
+  margin:16px 0;font-family:ui-monospace,monospace;}
+/* 場面転換の区切り線。fleuron(❧)で本の組版らしい静かな余白の切れ目にする */
+.mimicry-doc-prose hr{border:none;text-align:center;margin:40px 0;letter-spacing:.01em;}
+.mimicry-doc-prose hr::before{content:"❧";color:var(--grey-4);font-size:15px;}
+.mimicry-doc-prose img{max-width:100%;height:auto;}
+
+/* リンク(本文内 .md 相対リンク解決分)・画像取得失敗フォールバック(prose/ref 共通) */
+.mimicry-doc-prose a,.mimicry-doc-ref a{color:var(--acc);text-decoration:underline;}
+.mimicry-doc-prose a.mimicry-link,.mimicry-doc-ref a.mimicry-link{text-decoration:none;
+  border-bottom:1px dashed var(--acc);}
+.mimicry-img-fallback{display:inline-block;font-size:12px;font-weight:700;color:var(--acc);
+  text-decoration:none;border:1px solid var(--line);background:var(--paper);padding:9px 12px;
+  margin:4px 0;letter-spacing:.03em;word-break:break-all;}
+
 /* --- YT巡回 視聴フィードバック(F-ytcheck) ---
    月ナビ + 集計レポート(折りたたみ pre) + チャンネル別一覧。行は 視聴チェック(左) +
    タイトル/score(中) + ○×(右)。記入済みの印は --acc、未記入はヘアライン枠で控えめに。 */

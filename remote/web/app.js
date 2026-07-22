@@ -35,7 +35,7 @@ function showApp() {
 
 // ===== 画面ナビゲーション(section.active 切替。mock の show/open_/home 方式) =====
 // ホーム(タイルランチャー)⇄ 各機能詳細。詳細は左上「‹ 戻る」でホームへ。
-const SCREENS = ["home", "video", "todo", "games", "os", "vault", "thoughts", "ytcheck", "ytchannels"];
+const SCREENS = ["home", "video", "todo", "games", "os", "vault", "mimicry", "thoughts", "ytcheck", "ytchannels"];
 
 function showScreen(id) {
   for (const s of SCREENS) {
@@ -50,6 +50,7 @@ function openScreen(id) {
   if (id === "todo") { refreshTodo(); if (!$("todo-history-list").hidden) refreshHistory(); }
   if (id === "os") refreshGlance();
   if (id === "vault") openVault();
+  if (id === "mimicry") openMimicry();
   if (id === "thoughts") refreshThoughts();
   if (id === "ytcheck") refreshYtcheck();
   if (id === "ytchannels") refreshYtChannels();
@@ -1553,6 +1554,450 @@ function initVault() {
   });
 }
 
+// ===== 小説閲覧（F-mimicry、read-only） =====
+// 出先から ~/around-mimicry(小説ワークスペース)を閲覧する。一覧(フォルダ別/更新順切替 +
+// 検索)は vault と同型だが、項目名(一覧・検索結果・本文タイトル)はファイル名幹ではなく
+// サーバ(mimicry.py)が本文先頭の `# 見出し` から抽出した表示名(ファイル名の `sN-` prefix
+// が "s1-宛先" のように二重表示されるのを避けるため)。本文ビューは s1/s2/s3(話数本文)
+// だけ読書向けタイポグラフィ(mimicry-doc-prose)で描画し、それ以外の設定・プロット種・
+// レビュー等(mimicry-doc-ref)は vault と同じ実用トーンで描画する(mimicryIsProse)。
+// around-mimicry に wikilink の実例は無い(2026-07-22 grep 確認)ため未対応。ただし
+// INDEX.md や _world/ 配下は互いを相対 markdown リンク([文体と描写.md](文体と描写.md))で
+// 参照するため、.md 相対リンクだけは同ビューア内ジャンプに解決する(mimicryResolveRelative)。
+let mimicryLoaded = false;        // 一覧を一度取得したか(再入で再フェッチしない)
+let mimicrySearchTimer = null;    // 検索 debounce
+let mimicrySortMode = localStorage.getItem("mimicry_sort") || "folder";
+let mimicryListData = null;
+let mimicryIndex = null;          // path(小文字, 拡張子有無両方)->実 path の解決辞書(list 取得時に構築)
+
+// s1/s2/s3(CLAUDE.md命名規則: `sN/sN-{slug}.md`)配下だけを「話数本文」= 読書向け
+// タイポグラフィの対象とする。それ以外(_world/_inbox/_reviews/_templates/root docs 等)は
+// 設定・メモ・レビューといった作業文書で、INDEX.md のような表を含むこともあるため
+// vault と同じ実用トーンのまま描画する。
+function mimicryIsProse(path) {
+  return /^s\d+\//.test(path);
+}
+
+// frontmatter(先頭 --- ... --- ブロック)を本文から分離。{meta: [[k,v]...], body}(vault と同型)。
+function mimicrySplitFrontmatter(md) {
+  const m = md.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!m) return { meta: [], body: md };
+  const meta = [];
+  m[1].split("\n").forEach((line) => {
+    const i = line.indexOf(":");
+    if (i > 0) meta.push([line.slice(0, i).trim(), line.slice(i + 1).trim()]);
+  });
+  return { meta, body: md.slice(m[0].length) };
+}
+
+// `[a, b, c]` 形式の frontmatter 値(characters/themes)を配列へ。それ以外はそのまま返す。
+function mimicryParseListValue(v) {
+  if (v.startsWith("[") && v.endsWith("]")) {
+    return v.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return v;
+}
+
+// 本文冒頭の `# 見出し` をタイトルとして分離する(サーバ mimicry.py の抽出規則と同じ:
+// frontmatter 除去後の最初の見出し)。ヘッダに大きく出すのと二重表示させないよう、
+// 見つかった見出し行は本文から取り除く。無ければ {title: null, rest: body}(呼び出し側で
+// ファイル名幹にフォールバック)。
+function mimicrySplitTitle(body) {
+  const m = body.match(/^#\s+(.+)$/m);
+  if (!m) return { title: null, rest: body };
+  const before = body.slice(0, m.index);
+  const after = body.slice(m.index + m[0].length).replace(/^\n+/, "\n");
+  return { title: m[1].trim(), rest: before + after };
+}
+
+// 本文ヘッダ(タイトル+メタ)を描画。s1/s2/s3 の話数本文(season/episode 両方 frontmatter に
+// ある)は話数キッカー(S{season}・第{episode}話 + status バッジ)+ 季節設定 + 登場人物を
+// 組む。それ以外は key: value の汎用行(vault-fm と同じ体裁、mimicry-fm)。
+function mimicryRenderDocHead(meta, title, stem, isProse) {
+  const head = $("mimicry-doc-head");
+  head.textContent = "";
+  const map = {};
+  meta.forEach(([k, v]) => { map[k] = v; });
+  const displayTitle = title || stem;
+
+  if (isProse && map.season && map.episode) {
+    const kicker = document.createElement("div");
+    kicker.className = "mimicry-kicker";
+    const ep = document.createElement("span");
+    ep.className = "ep";
+    ep.textContent = "S" + map.season + " · 第" + map.episode + "話";
+    kicker.appendChild(ep);
+    if (map.status) {
+      const st = document.createElement("span");
+      st.className = "status" + (map.status === "done" ? " done" : map.status === "draft" ? " draft" : "");
+      st.textContent = map.status;
+      kicker.appendChild(st);
+    }
+    head.appendChild(kicker);
+
+    const h = document.createElement("div");
+    h.className = "mimicry-doc-title";
+    h.textContent = displayTitle;
+    head.appendChild(h);
+
+    if (map.season_setting) {
+      const setting = document.createElement("div");
+      setting.className = "mimicry-setting";
+      setting.textContent = map.season_setting;
+      head.appendChild(setting);
+    }
+    const chars = map.characters ? mimicryParseListValue(map.characters) : null;
+    if (chars && chars.length) {
+      const c = document.createElement("div");
+      c.className = "mimicry-characters";
+      c.textContent = chars.join(" ・ ");
+      head.appendChild(c);
+    }
+    const hr = document.createElement("hr");
+    hr.className = "mimicry-divider";
+    head.appendChild(hr);
+  } else {
+    const h = document.createElement("div");
+    h.className = "mimicry-doc-title mimicry-doc-title-ref";
+    h.textContent = displayTitle;
+    head.appendChild(h);
+    if (meta.length) {
+      const box = document.createElement("div");
+      box.className = "mimicry-fm";
+      meta.forEach(([k, v]) => {
+        const row = document.createElement("span");
+        row.className = "fm-row";
+        const key = document.createElement("b");
+        key.textContent = k;
+        row.appendChild(key);
+        row.appendChild(document.createTextNode(" " + v));
+        box.appendChild(row);
+      });
+      head.appendChild(box);
+    }
+  }
+}
+
+// 一覧ビュー / 本文ビューのサブビュー切替(vault と同型)。
+function mimicryShowList() {
+  $("mimicry-list-view").hidden = false;
+  $("mimicry-doc-view").hidden = true;
+}
+function mimicryShowDoc() {
+  $("mimicry-list-view").hidden = true;
+  $("mimicry-doc-view").hidden = false;
+  window.scrollTo(0, 0);
+}
+
+const mimicryOpenFolders = new Set();
+
+function mimicryRenderList(data) {
+  const root = $("mimicry-list");
+  root.textContent = "";
+  $("tile-mimicry-sub").textContent = (data.count || 0) + " 件";
+  if (!data.folders || !data.folders.length) {
+    $("mimicry-list-msg").textContent = "ファイルがありません";
+    return;
+  }
+  $("mimicry-list-msg").hidden = true;
+  data.folders.forEach((grp) => {
+    const det = document.createElement("details");
+    det.className = "mimicry-folder-group";
+    det.open = mimicryOpenFolders.has(grp.folder);
+    const sum = document.createElement("summary");
+    sum.className = "mimicry-folder";
+    sum.textContent = grp.folder === "" ? "（ルート）" : grp.folder;
+    const cnt = document.createElement("span");
+    cnt.className = "mimicry-folder-count";
+    cnt.textContent = String(grp.notes.length);
+    sum.appendChild(cnt);
+    det.appendChild(sum);
+    det.addEventListener("toggle", () => {
+      if (det.open) mimicryOpenFolders.add(grp.folder);
+      else mimicryOpenFolders.delete(grp.folder);
+    });
+    grp.notes.forEach((n) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "mimicry-item";
+      item.textContent = n.name;
+      item.addEventListener("click", () => mimicryNavDoc(n.path));
+      det.appendChild(item);
+    });
+    root.appendChild(det);
+  });
+}
+
+function mimicryRenderRecent(data) {
+  const root = $("mimicry-list");
+  root.textContent = "";
+  $("tile-mimicry-sub").textContent = (data.count || 0) + " 件";
+  if (!data.folders || !data.folders.length) {
+    $("mimicry-list-msg").textContent = "ファイルがありません";
+    return;
+  }
+  $("mimicry-list-msg").hidden = true;
+  const all = [];
+  data.folders.forEach((grp) => grp.notes.forEach((n) => all.push(n)));
+  all.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+  all.forEach((n) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "mimicry-item mimicry-result";
+    const name = document.createElement("span");
+    name.className = "mimicry-result-name";
+    name.textContent = n.name;
+    item.appendChild(name);
+    if (n.mtime) {
+      const dt = document.createElement("span");
+      dt.className = "mimicry-item-date";
+      dt.textContent = fmtDateTime(n.mtime);
+      item.appendChild(dt);
+    }
+    item.addEventListener("click", () => mimicryNavDoc(n.path));
+    root.appendChild(item);
+  });
+}
+
+// text 中のクエリ一致箇所(大文字小文字無視、全出現)を <mark> で強調しつつ el へ流し込む。
+function mimicryAppendHighlighted(el, text, query) {
+  const q = query.toLowerCase();
+  if (!q) { el.textContent = text; return; }
+  const lower = text.toLowerCase();
+  let i = 0;
+  for (let hit = lower.indexOf(q); hit >= 0; hit = lower.indexOf(q, i)) {
+    if (hit > i) el.appendChild(document.createTextNode(text.slice(i, hit)));
+    const mark = document.createElement("mark");
+    mark.textContent = text.slice(hit, hit + q.length);
+    el.appendChild(mark);
+    i = hit + q.length;
+  }
+  if (i < text.length) el.appendChild(document.createTextNode(text.slice(i)));
+}
+
+function mimicryRenderSearch(data) {
+  const root = $("mimicry-list");
+  root.textContent = "";
+  const msg = $("mimicry-list-msg");
+  msg.hidden = false;
+  if (!data.results || !data.results.length) {
+    msg.textContent = '「' + data.query + "」に一致なし";
+    return;
+  }
+  msg.textContent = data.count + " 件ヒット";
+  const query = data.query || "";
+  data.results.forEach((r) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "mimicry-item mimicry-result";
+    const name = document.createElement("span");
+    name.className = "mimicry-result-name";
+    mimicryAppendHighlighted(name, r.name, query);
+    item.appendChild(name);
+    if (r.snippet) {
+      const sn = document.createElement("span");
+      sn.className = "mimicry-result-snip";
+      mimicryAppendHighlighted(sn, r.snippet, query);
+      item.appendChild(sn);
+    }
+    item.addEventListener("click", () => mimicryNavDoc(r.path));
+    root.appendChild(item);
+  });
+}
+
+async function mimicryLoadList() {
+  if (!getToken()) return;
+  $("mimicry-list-msg").hidden = false;
+  $("mimicry-list-msg").textContent = "読み込み中…";
+  try {
+    const r = await api("/api/mimicry/list");
+    if (!r.ok) { $("mimicry-list-msg").textContent = "一覧の取得に失敗しました"; return; }
+    const data = await r.json();
+    mimicryListData = data;
+    mimicryApplySort();
+    mimicryBuildIndex(data);
+    mimicryLoaded = true;
+  } catch (e) {
+    if (e.message !== "unauthorized") $("mimicry-list-msg").textContent = "通信エラー";
+  }
+}
+
+function mimicryApplySort() {
+  if (!mimicryListData) return;
+  if (mimicrySortMode === "recent") mimicryRenderRecent(mimicryListData);
+  else mimicryRenderList(mimicryListData);
+  $("mimicry-sort-folder").classList.toggle("active", mimicrySortMode !== "recent");
+  $("mimicry-sort-recent").classList.toggle("active", mimicrySortMode === "recent");
+}
+
+async function mimicrySearch(q) {
+  if (!q) { if (mimicryListData) mimicryApplySort(); return; }
+  try {
+    const r = await api("/api/mimicry/search?q=" + encodeURIComponent(q));
+    if (!r.ok) return;
+    mimicryRenderSearch(await r.json());
+  } catch (e) { /* unauthorized は api() が処理 */ }
+}
+
+// 本文を開く(履歴を1つ積む)。一覧/検索/本文内リンクからの遷移はすべてここを通す。
+// popstate からの復元は履歴を積まず mimicryOpenDoc を直接呼ぶ(二重 push を避ける)。
+function mimicryNavDoc(path) {
+  history.pushState({ screen: "mimicry", mimicryView: "doc", path }, "");
+  mimicryOpenDoc(path);
+}
+
+async function mimicryOpenDoc(path) {
+  mimicryShowDoc();
+  const slash = path.lastIndexOf("/");
+  const dir = slash >= 0 ? path.slice(0, slash) : "";
+  const stem = (slash >= 0 ? path.slice(slash + 1) : path).replace(/\.md$/, "");
+  $("mimicry-doc-path").textContent = dir;
+  $("mimicry-doc-path").hidden = !dir;
+  $("mimicry-doc-head").textContent = "";
+  const doc = $("mimicry-doc");
+  doc.textContent = "";
+  doc.className = mimicryIsProse(path) ? "mimicry-doc-prose" : "mimicry-doc-ref";
+  $("mimicry-doc-msg").textContent = "読み込み中…";
+  try {
+    const r = await api("/api/mimicry/get?path=" + encodeURIComponent(path));
+    if (!r.ok) {
+      $("mimicry-doc-msg").textContent = r.status === 404 ? "ファイルが見つかりません" : "読み込めません";
+      return;
+    }
+    const data = await r.json();
+    $("mimicry-doc-msg").textContent = "";
+    const split = mimicrySplitFrontmatter(data.content);
+    const titled = mimicrySplitTitle(split.body);
+    await mimicryEnsureIndex();  // 本文内 .md 相対リンクの解決に使う(list 未取得でも本文を開けるように)
+    mimicryRenderDocHead(split.meta, titled.title, stem, mimicryIsProse(path));
+    mimicryRenderMarkdown(titled.rest, dir);
+  } catch (e) {
+    if (e.message !== "unauthorized") $("mimicry-doc-msg").textContent = "通信エラー";
+  }
+}
+
+// currentDir を起点に相対 href(`./x.md` `../y/z.md` 等)を around-mimicry ルートからの
+// 正規化済み相対パスへ解決する(`..` によるルート上抜けは stack.pop() が空で無視されるだけ
+// で、実際のファイル境界検証はサーバ側 notestore が持つ。ここは表示リンクの解決のみ)。
+function mimicryResolveRelative(currentDir, href) {
+  let target = href.split(/[?#]/)[0];
+  try { target = decodeURIComponent(target); } catch (e) { /* 不正なエンコードはそのまま扱う */ }
+  const parts = (currentDir ? currentDir.split("/") : []).concat(target.split("/"));
+  const stack = [];
+  parts.forEach((p) => {
+    if (p === "" || p === ".") return;
+    if (p === "..") stack.pop();
+    else stack.push(p);
+  });
+  return stack.join("/");
+}
+
+// markdown → サニタイズ済み HTML を本文要素へ。innerHTML はここだけ(vault-doc と同じ唯一の
+// 例外の mimicry 版。DOMPurify 通過後のみ)。
+function mimicryRenderMarkdown(body, currentDir) {
+  const html = marked.parse(body, { gfm: true, breaks: true });
+  const clean = DOMPurify.sanitize(html, {
+    FORBID_TAGS: ["style", "form", "textarea", "button"],
+    FORBID_ATTR: ["style", "onerror", "onload"],
+  });
+  const doc = $("mimicry-doc");
+  doc.innerHTML = clean;  // XSS 対策: 直前で DOMPurify.sanitize 済み
+  doc.querySelectorAll("input").forEach((input) => {
+    if (input.type !== "checkbox") { input.remove(); return; }
+    input.disabled = true;
+    const li = input.closest("li");
+    if (li) li.classList.add("task-list-item");
+  });
+  // 話数本文(prose)のみ: 台詞行(「『"'―で始まる段落)は和文組版の慣例で字下げしない。
+  // 地の文の段落だけ CSS 側(.mimicry-doc-prose p)で 1 字下げする。
+  if (doc.classList.contains("mimicry-doc-prose")) {
+    const DIAL_START = /^[「『"'―—]/;
+    doc.querySelectorAll(":scope > p").forEach((p) => {
+      const text = p.textContent || "";
+      if (DIAL_START.test(text)) p.classList.add("dial");
+    });
+  }
+  // リンク: 外部 http(s) は別タブ。.md 相対リンクは一覧の index で解決できれば同ビューア内
+  // ジャンプ(INDEX.md や _world/ 配下が相互参照する導線)、解決できなければ無効化。
+  // それ以外の相対リンクも無効化(vault と同じ「相対リンクは無効」既定)。
+  doc.querySelectorAll("a").forEach((a) => {
+    const href = a.getAttribute("href") || "";
+    if (/^https?:\/\//i.test(href)) {
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      return;
+    }
+    if (/\.md(?:[?#]|$)/i.test(href)) {
+      const resolved = mimicryResolveRelative(currentDir, href).toLowerCase();
+      const target = mimicryIndex && mimicryIndex[resolved];
+      if (target) {
+        a.classList.add("mimicry-link");
+        a.addEventListener("click", (e) => { e.preventDefault(); mimicryNavDoc(target); });
+        return;
+      }
+    }
+    a.addEventListener("click", (e) => e.preventDefault());
+  });
+  // 外部画像のロード失敗をリンク化(vault と同じ救済、around-mimicry に実例は無いが安全側)。
+  doc.querySelectorAll("img").forEach((img) => {
+    img.addEventListener("error", () => {
+      const src = img.getAttribute("src") || "";
+      if (!/^https?:\/\//i.test(src)) { img.remove(); return; }
+      let host = "リンク";
+      try { host = new URL(src).hostname; } catch (e) { /* 不正 URL は汎用表記 */ }
+      const a = document.createElement("a");
+      a.href = src;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "mimicry-img-fallback";
+      a.textContent = "▶ " + host + " で開く";
+      img.replaceWith(a);
+    }, { once: true });
+  });
+}
+
+// wikilink 相当の索引: path(小文字, 拡張子有無両方)-> 実 path(list 取得時に構築)。
+// mimicryRenderMarkdown の .md 相対リンク解決に使う。
+function mimicryBuildIndex(data) {
+  mimicryIndex = {};
+  (data.folders || []).forEach((g) => g.notes.forEach((n) => {
+    mimicryIndex[n.path.toLowerCase()] = n.path;
+    mimicryIndex[n.path.toLowerCase().replace(/\.md$/, "")] = n.path;
+  }));
+}
+async function mimicryEnsureIndex() {
+  if (mimicryIndex) return;
+  try {
+    const r = await api("/api/mimicry/list");
+    if (r.ok) mimicryBuildIndex(await r.json());
+  } catch (e) { /* noop */ }
+}
+
+// 詳細画面を開いた時のエントリ(openScreen から)。一覧未取得なら取得、本文表示中なら一覧へ戻す。
+function openMimicry() {
+  mimicryShowList();
+  if (!mimicryLoaded) mimicryLoadList();
+}
+
+function initMimicry() {
+  const search = $("mimicry-search");
+  search.addEventListener("input", () => {
+    clearTimeout(mimicrySearchTimer);
+    const q = search.value.trim();
+    mimicrySearchTimer = setTimeout(() => mimicrySearch(q), 250);
+  });
+  $("mimicry-sort-folder").addEventListener("click", () => {
+    mimicrySortMode = "folder";
+    localStorage.setItem("mimicry_sort", "folder");
+    mimicryApplySort();
+  });
+  $("mimicry-sort-recent").addEventListener("click", () => {
+    mimicrySortMode = "recent";
+    localStorage.setItem("mimicry_sort", "recent");
+    mimicryApplySort();
+  });
+}
+
 // ===== 思考ログ（read-only タイムライン） =====
 // bot の私的観察を最新が上の時系列で「そっと読む」だけ。新着バッジ / 未読 / push は
 // 一切持たない(軸4拡張 機構1 = 読まれない前提の領域)。本文はサーバ無加工で来たものを
@@ -2166,6 +2611,9 @@ function initNav() {
       // vault は list/doc の2サブビュー。doc state は path を持つので本文を再描画、無ければ一覧。
       if (state.vaultView === "doc" && state.path) vaultOpenDoc(state.path);
       else vaultShowList();
+    } else if (s === "mimicry") {
+      if (state.mimicryView === "doc" && state.path) mimicryOpenDoc(state.path);
+      else mimicryShowList();
     } else if (s === "os") {
       refreshGlance();
     } else if (s === "thoughts") {
@@ -2201,6 +2649,7 @@ function init() {
   initGames();
   initTodo();
   initVault();
+  initMimicry();
   initYtcheck();
 
   if (getToken()) showApp(); else showTokenSetup();

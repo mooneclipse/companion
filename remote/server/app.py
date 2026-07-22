@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 
 import auth
 import dlqueue
+import mimicry
 import nowplaying
 import playlist
 import screensaver
@@ -388,6 +389,29 @@ def api_vault_search(handler):
     return 200, vault.search(_query(handler).get("q", ""))
 
 
+def api_mimicry_list(handler):
+    """GET /api/mimicry/list — around-mimicry 配下の全 .md をフォルダ別に列挙(read-only)。Bearer 必須。"""
+    return 200, mimicry.list_notes()
+
+
+def api_mimicry_get(handler):
+    """GET /api/mimicry/get?path=<相対パス> — 指定 .md の生 markdown。Bearer 必須。
+
+    path 検証は mimicry.get_note が notestore(realpath+commonpath)で1回確定
+    (traversal/範囲外/非.md を弾く)。VaultError と同じ写像(api_vault_get 参照)。
+    """
+    path = _query(handler).get("path", "")
+    try:
+        return 200, mimicry.get_note(path)
+    except mimicry.MimicryError as e:
+        return (404, {"error": "not found"}) if str(e) == "not found" else (403, {"error": "forbidden"})
+
+
+def api_mimicry_search(handler):
+    """GET /api/mimicry/search?q=<語> — 全 .md 横断の単純部分一致検索。Bearer 必須。"""
+    return 200, mimicry.search(_query(handler).get("q", ""))
+
+
 def api_thoughts(handler):
     """GET /api/thoughts — bot の私的思考ログを最新が上の時系列で返す(read-only)。Bearer 必須。
 
@@ -632,6 +656,12 @@ ROUTES = {
     ("GET", "/api/vault/get"): (api_vault_get, True),
     ("GET", "/api/vault/search"): (api_vault_search, True),
     ("GET", "/api/vault/image"): (api_vault_image, True),
+    # F-mimicry(出先からの ~/around-mimicry 小説ワークスペース read-only 閲覧)。
+    # 全て GET / Bearer 必須。書き込み endpoint なし。埋め込みローカル画像は本文中に
+    # 実例が無い(2026-07-22 時点 grep 確認)ため image endpoint は作らない。
+    ("GET", "/api/mimicry/list"): (api_mimicry_list, True),
+    ("GET", "/api/mimicry/get"): (api_mimicry_get, True),
+    ("GET", "/api/mimicry/search"): (api_mimicry_search, True),
     # 思考ログ(bot の私的観察を read-only で時系列閲覧)。GET / Bearer 必須。書き込み endpoint なし。
     ("GET", "/api/thoughts"): (api_thoughts, True),
     # F-ytcheck(#65 案 B): 月次集計 read + viewing への視聴チェック/○× 記入 write。全て Bearer 必須。

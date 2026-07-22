@@ -59,7 +59,7 @@
         <div class="np-time"><span id="nowbar-time"></span></div>
       </button>
 
-      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">10</span></div>
+      <div class="seclab"><span>Functions</span><span class="idx" id="tile-count">11</span></div>
 
       <!-- タイルグリッド(2列)。
            将来機能拡張: この .grid 内に <button class="tile" data-open="xxx"> を 1 枚足し、
@@ -116,6 +116,13 @@
         <button class="tile" type="button" data-open="ytcheck">
           <span class="t-mark">✓ 10</span><span class="t-name">YT巡回</span>
           <span class="t-sub">視聴チェック・集計</span>
+        </button>
+        <!-- F-mimicry: ~/around-mimicry(小説ワークスペース)の read-only 閲覧。vault タイルと同型
+             (一覧はフォルダ別/更新順、検索あり)。本文は s1/s2/s3 の話数だけ読書向けタイポグラフィで
+             描画する(それ以外の設定・メモ類は vault と同じ実用トーンで描画、mimicryIsProse 参照)。 -->
+        <button class="tile" type="button" data-open="mimicry">
+          <span class="t-mark">❧ 11</span><span class="t-name">小説</span>
+          <span class="t-sub" id="tile-mimicry-sub">around-mimicry 閲覧</span>
         </button>
       </div>
     </section>
@@ -309,6 +316,49 @@
                  ここへ流す唯一の innerHTML 例外(app.js のコメント参照)。 -->
             <div id="vault-doc" class="vault-doc"></div>
             <p id="vault-doc-msg" class="result" role="status"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MIMICRY（~/around-mimicry 小説ワークスペース閲覧、read-only） ============ -->
+    <!-- vault と同型: 一覧(フォルダ別/更新順切替 + 検索)→ タップで本文。表示名はサーバ側で
+         本文先頭見出しから抽出済み(ファイル名の sN- prefix が二重表示にならないよう mimicry.py
+         側で解決、vault のようなファイル名幹そのままではない)。本文ビューは2種類:
+         s1/s2/s3(話数本文)は読書向けタイポグラフィ(mimicry-doc-prose)、それ以外の設定・
+         プロット種・レビュー等(mimicry-doc-ref)は vault と同じ実用トーンで描画する。 -->
+    <section id="mimicry" class="screen">
+      <div class="dhead">
+        <button class="back" type="button" data-home>‹ 戻る</button>
+        <span class="dtitle">11 / Mimicry</span>
+      </div>
+      <div class="body">
+        <div class="kicker">around-mimicry（閲覧専用）</div>
+        <h1 class="h1">小説</h1>
+
+        <!-- 一覧ビュー: 検索 + フォルダ別リスト -->
+        <div id="mimicry-list-view">
+          <div class="card">
+            <label class="fld" for="mimicry-search">検索</label>
+            <input type="search" id="mimicry-search" maxlength="200" placeholder="タイトル・本文を検索">
+            <p id="mimicry-list-msg" class="note">読み込み中…</p>
+          </div>
+          <div class="mimicry-sort-bar">
+            <button type="button" class="mimicry-sort-btn active" id="mimicry-sort-folder">フォルダ</button>
+            <button type="button" class="mimicry-sort-btn" id="mimicry-sort-recent">更新順</button>
+          </div>
+          <div class="card">
+            <div id="mimicry-list"></div>
+          </div>
+        </div>
+
+        <!-- 本文ビュー: markdown 描画(クライアント側 marked+DOMPurify)。prose/ref でコンテナ class 切替 -->
+        <div id="mimicry-doc-view" hidden>
+          <div class="card">
+            <div class="mimicry-doc-path" id="mimicry-doc-path" hidden></div>
+            <div id="mimicry-doc-head"></div>
+            <div id="mimicry-doc" class="mimicry-doc-ref"></div>
+            <p id="mimicry-doc-msg" class="result" role="status"></p>
           </div>
         </div>
       </div>
