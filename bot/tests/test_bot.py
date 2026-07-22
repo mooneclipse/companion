@@ -3083,6 +3083,25 @@ class SelfRecognitionBlockTest(unittest.TestCase):
         self.assertIn("数行で返す", sp)
 
 
+class NoRawActivityRecitationRuleTest(unittest.TestCase):
+    """深掘りされて話題が尽きたとき、機械的な活動記録をそのまま読み上げない指示が
+    PERSONA_SYSTEM_PROMPT に載ること。
+
+    実障害 (2026-07-22): 自発発話の「ほかに気になる話題は?」への深掘りに対し、
+    proactive prompt に渡した機械観察 (ytcheck 推薦本数・ディクテーション回数等) を
+    そのまま報告口調で読み上げていた。全経路共通の PERSONA 層に一本化する。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_instruction_present(self) -> None:
+        sp = self.bot.PERSONA_SYSTEM_PROMPT
+        self.assertIn("そのまま読み上げたり報告したりしない", sp)
+        self.assertIn("正直に手持ちが無いことを伝えてよい", sp)
+
+
 class SyndicationTokenTest(unittest.TestCase):
     """`_syndication_token` の固定値検証 (react-tweet 互換、実機検証済の 2 ID)。"""
 
