@@ -188,6 +188,48 @@ class ActiveThreadsTest(unittest.TestCase):
     def test_empty_index(self) -> None:
         self.assertEqual(interests.active_threads({"threads": []}, _now(), limit=3), [])
 
+    def test_researched_deprioritized_even_if_more_recent(self) -> None:
+        # researched (調べ終えた過去) は last_touched が新しくても非 researched より後ろ。
+        base = _now()
+        threads = [
+            {
+                "topic": "old-researched", "state": "researched",
+                "last_touched": (base - timedelta(hours=1)).isoformat(),
+            },
+            {
+                "topic": "older-active", "state": "active",
+                "last_touched": (base - timedelta(days=5)).isoformat(),
+            },
+        ]
+        out = interests.active_threads({"threads": threads}, base, limit=2)
+        self.assertEqual([t["topic"] for t in out], ["older-active", "old-researched"])
+
+    def test_researched_order_preserved_within_group(self) -> None:
+        # 各グループ内では last_touched 降順が保たれる (stable sort の 2 段構成)。
+        base = _now()
+        threads = [
+            {
+                "topic": "r-old", "state": "researched",
+                "last_touched": (base - timedelta(days=2)).isoformat(),
+            },
+            {
+                "topic": "a-old", "state": "active",
+                "last_touched": (base - timedelta(days=2)).isoformat(),
+            },
+            {
+                "topic": "r-fresh", "state": "researched",
+                "last_touched": base.isoformat(),
+            },
+            {
+                "topic": "a-fresh", "state": "active",
+                "last_touched": (base - timedelta(hours=1)).isoformat(),
+            },
+        ]
+        out = interests.active_threads({"threads": threads}, base, limit=4)
+        self.assertEqual(
+            [t["topic"] for t in out], ["a-fresh", "a-old", "r-fresh", "r-old"]
+        )
+
 
 class ActivityScoreTest(unittest.TestCase):
     def test_empty_index_is_zero(self) -> None:

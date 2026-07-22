@@ -648,6 +648,33 @@ class SplitNextSelfHoursTest(unittest.TestCase):
         prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
         self.assertNotIn("最近あなたが気にしてること", prompt)
 
+    def test_interest_topics_phrasing_allows_sakki_when_recent(self) -> None:
+        # 2026-07-21/22 実障害: 固定例文『さっき』が silence_hours と無関係にコピー
+        # されていた。数時間以内の空きなら『さっき』は許容してよい。
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation", "silence_hours": 2},
+            interest_topics=["topic-a"],
+        )
+        self.assertIn("さっき", prompt)
+        self.assertIn("自然", prompt)
+
+    def test_interest_topics_phrasing_avoids_sakki_when_stale(self) -> None:
+        # 半日以上空いていれば『さっき』ではなく『前に』『そういえば』寄りにする。
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation", "silence_hours": 19},
+            interest_topics=["topic-a"],
+        )
+        self.assertIn("約 19 時間経っているので", prompt)
+        self.assertIn("『前に』『そういえば』寄り", prompt)
+
+    def test_interest_topics_phrasing_avoids_sakki_when_silence_unknown(self) -> None:
+        # silence_hours が無い/不正なら経過時間不明として『さっき』断定を避ける。
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation"},
+            interest_topics=["topic-a"],
+        )
+        self.assertIn("経過時間が分からない", prompt)
+
     def test_interest_topics_empty_list_omitted(self) -> None:
         prompt = self.bot.build_proactive_prompt(
             {"seed_kind": "recent_conversation"}, interest_topics=[]

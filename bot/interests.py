@@ -135,13 +135,23 @@ def decay(data: dict, now: datetime, ttl_days: float) -> dict:
 
 
 def active_threads(data: dict, now: datetime, limit: int) -> list:
-    """最近触れた上位 limit 本を last_touched 降順で返す (滲ませ用、純関数)。
+    """最近触れた上位 limit 本を返す (滲ませ用、純関数)。
 
     now は将来の活性度連動 (機構 2) のため受けるが、今は順序付けのみに使う
     (現時点では未使用引数。decay 済み data を渡す前提なので now で再フィルタしない)。
+
+    ``state == "researched"`` (調べ終えた過去) は非 researched より後ろに回す。
+    sort が stable なことを利用し、先に last_touched 降順で並べてから
+    state 昇順 (False < True で非 researched が先) を安定ソートする 2 段構成
+    (各グループ内の降順は保たれる)。これは滲ませ (自発発話の話題選び) 専用の
+    優先順位調整で、should_investigate/should_ticket/should_remind の signal 選定
+    には影響しない (それらは data を直接読み、この関数を経由しない)。調べ終えた
+    話題が interval 更新のたびに last_touched を更新して枠を占有し、新しい話題が
+    滲ませ候補に入らなくなる問題への対応。
     """
     threads = [t for t in data.get("threads", []) if isinstance(t, dict)]
     threads.sort(key=lambda t: t.get("last_touched") or "", reverse=True)
+    threads.sort(key=lambda t: t.get("state") == "researched")
     return threads[:max(0, limit)]
 
 

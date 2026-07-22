@@ -965,23 +965,54 @@ def build_proactive_prompt(
             f"今は JST で約 {now.hour} 時頃 ({_jst_time_band(now.hour)})。"
             "この時間帯に合う一言にする (経過時間ではなく今の時刻を基準に)。"
         )
+    # silence_hours は非負 int のときだけ有効 (bool は int の subclass なので除外)。
+    # 数値でない / 欠落時は None のまま以降 (関心 state の言い回し分岐含む) に流す
+    # (展開しないだけ、フォールバック分岐は作らない)。関心 state ブロックより先に
+    # 確定させるのは、「さっき」の言い回しが経過時間と矛盾しない (以下参照) ように
+    # 同じ値を両ブロックで 1 回引いて揃えるため。
+    raw_silence_hours = payload.get("silence_hours")
+    silence_hours: int | None = None
+    if (
+        isinstance(raw_silence_hours, int)
+        and not isinstance(raw_silence_hours, bool)
+        and raw_silence_hours >= 0
+    ):
+        silence_hours = raw_silence_hours
     # 関心 state を滲ませる (機構 1 の私的版): 全部に触れず「1 つだけ軽く」。
     # str のみ展開し、空は省く (非文字列は展開しないだけ、フォールバック分岐は作らない)。
+    #
+    # 言い回しは silence_hours (直前の空き時間) と矛盾しないものに限定する。
+    # 以前は『さっき○○のこと考えてたんだけど』という固定例文を渡していたため、
+    # 10 時間以上空いていても LLM がそのままコピーして「さっき」を連発する事故が
+    # 実際に発生した (2026-07-21/22、OWNER 指摘済み)。固定の言い回し例ではなく
+    # 判断基準 (時間感覚との整合) を渡す形に直す。
     if interest_topics:
         topics = [t for t in interest_topics if isinstance(t, str) and t]
         if topics:
+            if silence_hours is not None and silence_hours <= 3:
+                phrasing_hint = (
+                    "数時間以内の空きなので『さっき○○のこと考えてたんだけど』くらいの"
+                    "言い方でも自然。"
+                )
+            elif silence_hours is not None:
+                phrasing_hint = (
+                    f"前回の会話から約 {silence_hours} 時間経っているので、"
+                    "『さっき』ではなく『前に』『そういえば』寄りの言い方にする。"
+                )
+            else:
+                phrasing_hint = (
+                    "経過時間が分からないので『さっき』のような直近を断定する"
+                    "言い方は避ける。"
+                )
             parts.append(
                 "最近あなたが気にしてること (過去に自分から触れた話題のヒント): "
                 + " / ".join(topics) + "。"
-                "話すなら『さっき○○のこと考えてたんだけど』くらいに 1 つだけ軽く滲ませてよい "
-                "(全部に触れない、無理に出さない)。"
+                "話すなら 1 つだけ軽く滲ませてよい (全部に触れない、無理に出さない)。"
+                + phrasing_hint +
                 "これは自分用のメモであって読まれる前提のものではないので、"
                 "全文を並べたり「メモにこう書いた」式の演技はしない。"
             )
-    # silence_hours は非負 int のときだけ展開する (bool は int の subclass なので除外)。
-    # 数値でない / 欠落時は黙って省略 (展開しないだけ、フォールバック分岐は作らない)。
-    silence_hours = payload.get("silence_hours")
-    if isinstance(silence_hours, int) and not isinstance(silence_hours, bool) and silence_hours >= 0:
+    if silence_hours is not None:
         parts.append(f"最後の会話から約 {silence_hours} 時間経っている。")
     # 今朝の朝報 (天気) を「既に知っている前提」で滲ませる (チケット #36)。
     # morning_weather / morning_hint は script 側が当日 (JST) の朝報 JSON

@@ -9,3 +9,4 @@ paths:
 - **純関数 + 副作用分離**: 判定 / decay / touch は純関数（unit-test 対象）、副作用は `save_interests` / `append_thought` の atomic / append のみ。条件分岐や場当たりリトライを積まない。
 - **実活動由来のみ**: topic / source は実際の活動（会話 / 照会）からのみ。bot が新しい関心 / 感情 / 趣味を捏造しない（このモジュールは記録専用）。
 - decay は呼び出し側で先にかけて渡す前提（TTL で完全に消えたスレッドは振り返らない。TTL 内の「decay しかけ」が oldest として拾われる）。
+- `active_threads`（滲ませ用）は `state == "researched"` を非 researched より後ろに回す（調べ終えた話題が interval 更新で `last_touched` を更新し続け、新しい話題を枠から押し出すのを防ぐ）。`should_investigate`/`should_ticket`/`should_remind` の signal 選定はこの優先順位に影響されない（data を直接読む別経路）。
