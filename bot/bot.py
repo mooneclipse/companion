@@ -58,6 +58,7 @@ from telegram.ext import (
 import interests
 import quota
 import sessions
+import style_notes
 import voice_command
 import voice_status
 from claude_runner import ClaudeOptions, ClaudeRunner, ErrorKind
@@ -328,6 +329,10 @@ PROACTIVE_STATE_FILE = Path.home() / "companion" / "maintenance" / ".state" / "p
 # 私的思考ログ。vault には置かない (vault は notes/ 限定 + OWNER の知識空間)。
 INTERESTS_INDEX_PATH = Path(__file__).resolve().parent / "sessions" / "companion_interests.json"
 THOUGHTS_LOG_PATH = Path(__file__).resolve().parent / "sessions" / "companion_thoughts.jsonl"
+
+# 口調フィードバック state (改善案 #2、bot/docs/STATUS.md 2026-07-22 着手前設計メモ)。
+# 他の bot 自身 state と同居 (sessions/ 配下、.gitignore 済み、非 commit)。
+STYLE_NOTES_PATH = Path(__file__).resolve().parent / "sessions" / "companion_style_notes.json"
 
 # ペルソナ system prompt (軸 1「対等な相方」)。persona/docs/STATUS.md 軸 1 確定内容を
 # 自己完結した形で持たせ、run_claude が組む全 ClaudeOptions に --append-system-prompt
@@ -934,6 +939,7 @@ def build_proactive_prompt(
     interest_topics: list[str] | None = None,
     now: datetime | None = None,
     self_schedule: bool | None = None,
+    style_notes_list: list[str] | None = None,
 ) -> str:
     """Compose the claude prompt for a proactive utterance from persona + seed.
 
@@ -941,6 +947,12 @@ def build_proactive_prompt(
     interest_topics は呼び出し側 (build_interest_context) が関心 index から読んだ
     「最近気にしてるスレッドの topic」リスト。純関数に保つため file IO は呼び出し側で
     済ませ、ここには bounded な文字列リストだけを渡す。
+
+    style_notes_list は style_notes.note_rules の戻り (改善案 #2)。read-back のみ
+    (「これを守れ」というデータ) で、marker を出させる emit-instruction はここには
+    置かない — この talk 分岐は marker を剥がさないため、指示を渡すと marker が
+    Telegram 本文にそのまま漏れる (compose_chat_prompt の scope と対称、
+    bot/docs/STATUS.md 2026-07-22 着手前設計メモ参照)。
     now は呼び出し側が確定した現在時刻 (JST aware datetime)。これを渡すことで
     「今が何時か」を prompt に明示注入し、LLM が時間帯を推測 (= 夜固定の例文に
     引っ張られる) のを根から断つ。now を渡さない呼び出し (一部 unit-test) では
@@ -969,6 +981,15 @@ def build_proactive_prompt(
             f"今は JST で約 {now.hour} 時頃 ({_jst_time_band(now.hour)})。"
             "この時間帯に合う一言にする (経過時間ではなく今の時刻を基準に)。"
         )
+    # 口調フィードバック read-back (改善案 #2)。str のみ展開し、空は省く
+    # (非文字列は展開しないだけ、フォールバック分岐は作らない)。
+    if style_notes_list is not None:
+        style_rules = [r for r in style_notes_list if isinstance(r, str) and r]
+        if style_rules:
+            parts.append(
+                "(口調について、以前 OWNER から指摘されて直そうとしていること: "
+                + " / ".join(style_rules) + "。話し方でそれとなく守る)"
+            )
     # silence_hours は非負 int のときだけ有効 (bool は int の subclass なので除外)。
     # 数値でない / 欠落時は None のまま以降 (関心 state の言い回し分岐含む) に流す
     # (展開しないだけ、フォールバック分岐は作らない)。関心 state ブロックより先に
@@ -1142,6 +1163,34 @@ def split_thought(output: str) -> tuple[str, str | None]:
         if not line:
             continue
         m = _THOUGHT_RE.match(line)
+        if not m:
+            return output, None
+        return "\n".join(lines[:i]).rstrip(), m.group(1)
+    return output, None
+
+
+# 口調フィードバック marker (改善案 #2)。#92/#93 と対称に、出力の最終非空行のみを見る
+# (全文走査しない、判定は 1 回で確定)。IGNORECASE は同理由 (大文字揺れの本文漏れ防止)。
+# capture は先頭非空白必須 (\S.*?) = 空白のみの [[style-note: ]] を誤認しない。
+# on_message の既定 #chat 分岐でのみ剥がす (他経路には emit-instruction を渡さない、
+# bot/docs/STATUS.md 2026-07-22 着手前設計メモの scope 限定)。
+_STYLE_NOTE_RE = re.compile(r"^\[\[style-note:\s*(\S.*?)\s*\]\]$", re.IGNORECASE)
+
+
+def split_style_note(output: str) -> tuple[str, str | None]:
+    """claude 出力から口調フィードバック marker 行を分離する。Pure function → unit-testable。
+
+    最終非空行が ``[[style-note: <rule>]]`` 形式ならその行を取り除いた本文と
+    rule 文字列を返す。marker が無い / 最終非空行以外にある / 形式不一致なら
+    (出力そのまま, None)。state (style_notes.add_note) への反映は呼び出し側の責務
+    (ここは分離のみ)。
+    """
+    lines = output.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i].strip()
+        if not line:
+            continue
+        m = _STYLE_NOTE_RE.match(line)
         if not m:
             return output, None
         return "\n".join(lines[:i]).rstrip(), m.group(1)
@@ -2755,6 +2804,7 @@ def compose_chat_prompt(
     text: str,
     pending: list[dict] | None = None,
     quoted: str | None = None,
+    style_notes_list: list[str] | None = None,
 ) -> str:
     """OWNER の生メッセージに、会話 session が知らない文脈を前置きする (チケット #126)。
 
@@ -2762,8 +2812,15 @@ def compose_chat_prompt(
     investigate / ticket / remind は使い捨て session で #chat に投稿するため、会話
     session は「自分がさっき何を言ったか」を知らず、返信を発話前の話題への発言と
     解釈してしまう (2026-07-21 実障害、自分の発話を否定する回答まで観測)。
-    quoted は Telegram 返信引用の元本文 (quoted_reply_text の戻り)。どちらも
-    無ければ text をそのまま返す (既存挙動不変)。Pure function → unit-testable。
+    quoted は Telegram 返信引用の元本文 (quoted_reply_text の戻り)。
+
+    style_notes_list は style_notes.note_rules の戻り (改善案 #2)。呼び出し側
+    (on_message の既定 #chat 分岐) が明示的に渡したときだけ read-back + marker
+    emit-instruction を追加する (None なら何もしない、既存挙動不変)。他の呼び出し
+    (osekkai/proactive talk 等) はこの引数を渡さないため marker 剥がしと指示の
+    scope が一致する (bot/docs/STATUS.md 2026-07-22 着手前設計メモ参照)。
+
+    いずれも無ければ text をそのまま返す (既存挙動不変)。Pure function → unit-testable。
     """
     parts: list[str] = []
     if pending:
@@ -2787,6 +2844,20 @@ def compose_chat_prompt(
     if quoted:
         q = quoted if len(quoted) <= _QUOTED_REPLY_MAX else quoted[:_QUOTED_REPLY_MAX] + "…"
         parts.append(f"(次のメッセージは、この発言への返信として送られた: 「{q}」)")
+    if style_notes_list is not None:
+        rules = [r for r in style_notes_list if isinstance(r, str) and r]
+        if rules:
+            parts.append(
+                "(口調について、以前 OWNER から指摘されて直そうとしていること: "
+                + " / ".join(rules) + "。話し方でそれとなく守る、読み上げたり"
+                "言い訳したりしない)"
+            )
+        parts.append(
+            "(もし今回の OWNER の発話が、あなたの話し方の癖 (言い回し・口癖等) を"
+            "新しく名指しで訂正するものなら、本文とは別の最終行に "
+            "[[style-note: 短い日本語のルール文]] の形で 1 行だけ足す。"
+            "それ以外の返信には絶対に付けない。この行は内部連絡でユーザーには届かない)"
+        )
     if not parts:
         return text
     parts.append(text)
@@ -2853,7 +2924,19 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except OSError as e:
         logger.warning("pending context read failed: %s", e)
         pending = []
-    prompt = compose_chat_prompt(prompt, pending, quoted_reply_text(msg))
+    # 口調フィードバック read-back (改善案 #2)。この既定 #chat 分岐でのみ
+    # style_notes_list を渡す = marker を剥がすのもこの分岐だけ (scope 一致)。
+    # 読み込み失敗は補助情報の欠落に留め、空リストで本体を続行する。
+    try:
+        style_notes_rules = style_notes.note_rules(
+            style_notes.load_style_notes(STYLE_NOTES_PATH)
+        )
+    except OSError as e:
+        logger.warning("style notes read failed: %s", e)
+        style_notes_rules = []
+    prompt = compose_chat_prompt(
+        prompt, pending, quoted_reply_text(msg), style_notes_rules,
+    )
 
     try:
         async with _typing_action(context.bot, chat_id, thread_id):
@@ -2866,6 +2949,19 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             reply_to=msg.message_id,
         )
         return
+
+    # 口調フィードバック marker 剥がし (改善案 #2)。OWNER が話し方の癖を新しく
+    # 訂正したときだけ claude が申告する (compose_chat_prompt の instruction 参照)。
+    # 保存失敗は本体の返信を道連れにしない (record_proactive_interest と同思想)。
+    output, style_note = split_style_note(output)
+    if style_note:
+        try:
+            data = style_notes.load_style_notes(STYLE_NOTES_PATH)
+            data = style_notes.add_note(data, style_note, datetime.now(quota.JST))
+            style_notes.save_style_notes(STYLE_NOTES_PATH, data)
+            logger.info("style note added: %s", style_note)
+        except OSError as e:
+            logger.warning("style note save failed: %s", e)
 
     logger.info("send len=%d", len(output))
     await send_text(
@@ -3638,7 +3734,14 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     # prompt 構築時に読む関心 index は「前回までに溜まった分」(今回の種の touch は
     # 送信後)。今喋る内容は過去の関心から滲ませ、今の種は新たな接触として後で記録する。
     interest_topics = build_interest_context(now)
-    prompt = build_proactive_prompt(payload, interest_topics=interest_topics, now=now)
+    # 口調フィードバック read-back (改善案 #2)。talk 分岐は marker を剥がさないため
+    # emit-instruction は渡さない (build_proactive_prompt の style_notes_list docstring
+    # 参照)、既存ルールを守らせる read-back のみ。
+    style_notes_rules = style_notes.note_rules(style_notes.load_style_notes(STYLE_NOTES_PATH))
+    prompt = build_proactive_prompt(
+        payload, interest_topics=interest_topics, now=now,
+        style_notes_list=style_notes_rules,
+    )
     # run_claude は guard を通り、#chat の session を resume して claude を起動する。
     output = await run_claude(prompt, chat_id, thread_id)
     # 次回発話タイミングの自己申告 (チケット #92)。marker 剥がしは toggle 非依存で

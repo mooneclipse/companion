@@ -688,6 +688,34 @@ class SplitNextSelfHoursTest(unittest.TestCase):
         )
         self.assertNotIn("最近あなたが気にしてること", prompt)
 
+    def test_style_notes_read_back_present_when_given(self) -> None:
+        # 改善案 #2: read-back のみ (marker を出させる emit-instruction は無い —
+        # talk 分岐は marker を剥がさないため、Telegram 本文への漏れを防ぐ)。
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation"},
+            style_notes_list=["「さっき」を多用しない"],
+        )
+        self.assertIn("以前 OWNER から指摘されて", prompt)
+        self.assertIn("「さっき」を多用しない", prompt)
+        self.assertNotIn("[[style-note:", prompt)
+
+    def test_style_notes_omitted_when_absent(self) -> None:
+        prompt = self.bot.build_proactive_prompt({"seed_kind": "recent_conversation"})
+        self.assertNotIn("以前 OWNER から指摘されて", prompt)
+        self.assertNotIn("[[style-note:", prompt)
+
+    def test_style_notes_empty_list_omitted(self) -> None:
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation"}, style_notes_list=[]
+        )
+        self.assertNotIn("以前 OWNER から指摘されて", prompt)
+
+    def test_style_notes_non_string_filtered(self) -> None:
+        prompt = self.bot.build_proactive_prompt(
+            {"seed_kind": "recent_conversation"}, style_notes_list=[123, None, ""]
+        )
+        self.assertNotIn("以前 OWNER から指摘されて", prompt)
+
     def test_current_time_injected_when_now_given(self) -> None:
         # 現在時刻 (JST) を渡すと「今が何時か」が prompt に乗り、時間帯ラベルも付く
         # (LLM 側の時間帯推測 = 夜固定の例文への引っ張られを根から断つ)。
@@ -803,6 +831,53 @@ class SplitThoughtTest(unittest.TestCase):
         body, thought = self.bot.split_thought("")
         self.assertEqual(body, "")
         self.assertIsNone(thought)
+
+
+class SplitStyleNoteTest(unittest.TestCase):
+    """口調フィードバック marker 行の分離 (改善案 #2)。#92/#93 と対称、最終非空行のみ。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def test_marker_on_last_line_is_split(self) -> None:
+        body, rule = self.bot.split_style_note(
+            "了解、直すね。\n[[style-note: 「さっき」を多用しない]]"
+        )
+        self.assertEqual(body, "了解、直すね。")
+        self.assertEqual(rule, "「さっき」を多用しない")
+
+    def test_marker_with_trailing_blank_lines(self) -> None:
+        body, rule = self.bot.split_style_note("了解。\n[[style-note: 敬語を使わない]]\n\n")
+        self.assertEqual(body, "了解。")
+        self.assertEqual(rule, "敬語を使わない")
+
+    def test_no_marker_returns_output_unchanged(self) -> None:
+        body, rule = self.bot.split_style_note("ただの返信。")
+        self.assertEqual(body, "ただの返信。")
+        self.assertIsNone(rule)
+
+    def test_marker_not_on_last_line_is_ignored(self) -> None:
+        text = "[[style-note: 途中に紛れた]]\n本文が後に続く。"
+        body, rule = self.bot.split_style_note(text)
+        self.assertEqual(body, text)
+        self.assertIsNone(rule)
+
+    def test_case_insensitive_marker(self) -> None:
+        body, rule = self.bot.split_style_note("了解。\n[[Style-Note: なるほど]]")
+        self.assertEqual(body, "了解。")
+        self.assertEqual(rule, "なるほど")
+
+    def test_malformed_or_empty_marker_is_ignored(self) -> None:
+        for bad in ("[[style-note:]]", "[[style-note: ]]", "[[style-note なるほど]]"):
+            body, rule = self.bot.split_style_note(f"了解。\n{bad}")
+            self.assertEqual(body, f"了解。\n{bad}", msg=f"bad={bad!r}")
+            self.assertIsNone(rule, msg=f"bad={bad!r}")
+
+    def test_empty_output(self) -> None:
+        body, rule = self.bot.split_style_note("")
+        self.assertEqual(body, "")
+        self.assertIsNone(rule)
 
 
 class SplitInvestigateMarkersTest(unittest.TestCase):
@@ -1115,6 +1190,7 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -1123,6 +1199,7 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
         self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
         self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+        self.bot.STYLE_NOTES_PATH = d / "companion_style_notes.json"
         # この class は talk パス (滲ませ + seeding) を検証する。investigate / ticket /
         # remind 分岐は別 class で検証するため、ここでは全て off にして talk パスを isolate
         # する (default on だと active thread 仕込みで動く側へ分岐してしまう)。
@@ -1136,6 +1213,7 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -1273,6 +1351,43 @@ class ProactiveInterestWiringTest(unittest.IsolatedAsyncioTestCase):
         topics = {t["topic"] for t in index["threads"]}
         self.assertIn("2026-06-10_prior", topics)
         self.assertIn("2026-06-19_today", topics)
+
+    async def test_style_notes_read_back_into_talk_prompt(self) -> None:
+        # 改善案 #2: on_message 側で保存された口調ルールが、talk 分岐 (別セッション)
+        # の prompt にも read-back として乗ること。emit-instruction は乗らない
+        # (talk 分岐は marker を剥がさないため)。
+        from datetime import datetime
+        from unittest import mock
+
+        now = datetime(2026, 6, 19, 12, 0, 0, tzinfo=self.bot.quota.JST)
+        seeded = self.bot.style_notes.add_note(
+            {"notes": []}, "「さっき」を多用しない", now,
+        )
+        self.bot.style_notes.save_style_notes(self.bot.STYLE_NOTES_PATH, seeded)
+
+        captured = {}
+
+        async def _fake_run_claude(prompt, chat_id, thread_id):
+            captured["prompt"] = prompt
+            return "ちょっと一息どう"
+
+        app = mock.MagicMock()
+        app.bot_data = {}
+        with mock.patch.object(self.bot, "datetime") as dt, \
+             mock.patch.object(self.bot.budget_guard, "allow", return_value=True), \
+             mock.patch.object(self.bot.budget_guard, "summary",
+                               return_value=mock.MagicMock(guard_kind="none")), \
+             mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude), \
+             mock.patch.object(self.bot, "send_text", new=mock.AsyncMock()), \
+             mock.patch.object(self.bot, "_dispatch_proactive_voice", return_value="disabled"):
+            dt.now.return_value = now
+            await self.bot._run_proactive(
+                app, {"kind": "proactive", "seed_kind": "recent_conversation"},
+            )
+
+        self.assertIn("以前 OWNER から指摘されて", captured["prompt"])
+        self.assertIn("「さっき」を多用しない", captured["prompt"])
+        self.assertNotIn("[[style-note:", captured["prompt"])
 
 
 class _ProactiveTalkHarnessBase(unittest.IsolatedAsyncioTestCase):
@@ -2477,6 +2592,33 @@ class ComposeChatPromptTest(unittest.TestCase):
         out = self.bot.compose_chat_prompt("本文", pending, "引用元")
         self.assertLess(out.index("自発の一言"), out.index("引用元"))
         self.assertLess(out.index("引用元"), out.index("本文"))
+
+    def test_style_notes_none_adds_nothing(self) -> None:
+        # 改善案 #2: style_notes_list を渡さない既存呼び出しは挙動不変。
+        self.assertEqual(self.bot.compose_chat_prompt("こんにちは"), "こんにちは")
+
+    def test_style_notes_empty_list_still_adds_emit_instruction(self) -> None:
+        # 空リストでも明示的に渡された (not None) なら emit-instruction は乗る
+        # (初回の訂正も拾えるように、read-back の有無に関わらず instruction は常に付く)。
+        out = self.bot.compose_chat_prompt("こんにちは", style_notes_list=[])
+        self.assertIn("[[style-note:", out)
+        self.assertNotIn("以前 OWNER から指摘されて", out)
+        self.assertTrue(out.endswith("こんにちは"))
+
+    def test_style_notes_present_adds_read_back_and_instruction(self) -> None:
+        out = self.bot.compose_chat_prompt(
+            "こんにちは", style_notes_list=["「さっき」を多用しない"]
+        )
+        self.assertIn("以前 OWNER から指摘されて", out)
+        self.assertIn("「さっき」を多用しない", out)
+        self.assertIn("[[style-note:", out)
+
+    def test_style_notes_non_string_filtered(self) -> None:
+        out = self.bot.compose_chat_prompt(
+            "こんにちは", style_notes_list=[123, None, ""]
+        )
+        self.assertNotIn("以前 OWNER から指摘されて", out)
+        self.assertIn("[[style-note:", out)
 
 
 class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
@@ -4298,6 +4440,113 @@ class OnMessageOsekkaiSilenceTest(unittest.IsolatedAsyncioTestCase):
             context.bot.send_message.assert_awaited_once()
         finally:
             self.bot.BOT_THREAD_ID_OSEKKAI = orig_thread_id
+
+
+class OnMessageStyleNoteTest(unittest.IsolatedAsyncioTestCase):
+    """改善案 #2: on_message の既定 #chat 分岐が style-note marker を剥がして
+    state に保存し、Telegram には剥がした本文だけを送ること。次回呼び出しでは
+    保存済みルールが read-back として prompt に載ること。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bot = _import_bot_with_stub_env()
+
+    def _make_update(self, text: str):
+        from datetime import datetime, timezone
+
+        from telegram import Chat, Message, Update, User
+        user = User(id=self.bot.OWNER_ID, is_bot=False, first_name="x")
+        chat = Chat(id=self.bot.NOTIFY_CHAT_ID, type="supergroup")
+        msg = Message(
+            message_id=1,
+            date=datetime.now(timezone.utc),
+            chat=chat,
+            from_user=user,
+            text=text,
+            message_thread_id=None,
+        )
+        return Update(update_id=1, message=msg)
+
+    def _make_context(self):
+        from unittest import mock
+        context = mock.MagicMock()
+        context.bot = mock.MagicMock()
+        context.bot.send_chat_action = mock.AsyncMock()
+        context.bot.send_message = mock.AsyncMock()
+        return context
+
+    async def test_marker_stripped_from_reply_and_saved_to_state(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            style_path = Path(tmp) / "companion_style_notes.json"
+
+            async def _fake_run_claude(prompt, chat_id, thread_id):
+                return "了解、直すね。\n[[style-note: 「さっき」を多用しない]]"
+
+            with mock.patch.object(self.bot, "STYLE_NOTES_PATH", style_path), \
+                 mock.patch.object(
+                     self.bot.sessions, "pop_pending_context", return_value=[]
+                 ), \
+                 mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude):
+                context = self._make_context()
+                await self.bot.on_message(self._make_update("口調について指摘"), context)
+
+            sent_text = context.bot.send_message.call_args.kwargs["text"]
+            self.assertEqual(sent_text, "了解、直すね。")
+            self.assertNotIn("[[style-note:", sent_text)
+
+            saved = self.bot.style_notes.load_style_notes(style_path)
+            self.assertEqual(
+                self.bot.style_notes.note_rules(saved), ["「さっき」を多用しない"]
+            )
+
+    async def test_no_marker_leaves_state_untouched(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            style_path = Path(tmp) / "companion_style_notes.json"
+
+            async def _fake_run_claude(prompt, chat_id, thread_id):
+                return "ただの返信。"
+
+            with mock.patch.object(self.bot, "STYLE_NOTES_PATH", style_path), \
+                 mock.patch.object(
+                     self.bot.sessions, "pop_pending_context", return_value=[]
+                 ), \
+                 mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude):
+                context = self._make_context()
+                await self.bot.on_message(self._make_update("こんにちは"), context)
+
+            self.assertFalse(style_path.exists())
+
+    async def test_existing_notes_are_read_back_into_prompt(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            style_path = Path(tmp) / "companion_style_notes.json"
+            data = self.bot.style_notes.add_note(
+                {"notes": []}, "「さっき」を多用しない",
+                self.bot.datetime.now(self.bot.quota.JST),
+            )
+            self.bot.style_notes.save_style_notes(style_path, data)
+
+            captured = {}
+
+            async def _fake_run_claude(prompt, chat_id, thread_id):
+                captured["prompt"] = prompt
+                return "了解。"
+
+            with mock.patch.object(self.bot, "STYLE_NOTES_PATH", style_path), \
+                 mock.patch.object(
+                     self.bot.sessions, "pop_pending_context", return_value=[]
+                 ), \
+                 mock.patch.object(self.bot, "run_claude", side_effect=_fake_run_claude):
+                context = self._make_context()
+                await self.bot.on_message(self._make_update("なんか話して"), context)
+
+            self.assertIn("以前 OWNER から指摘されて", captured["prompt"])
+            self.assertIn("「さっき」を多用しない", captured["prompt"])
 
 
 class ShouldSendClaudeOutputTest(unittest.TestCase):
