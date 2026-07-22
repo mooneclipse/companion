@@ -1415,6 +1415,7 @@ class _ProactiveTalkHarnessBase(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -1423,6 +1424,10 @@ class _ProactiveTalkHarnessBase(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
         self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
         self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+        # 改善案 #2: 実運用の sessions/companion_style_notes.json を読みに行かない
+        # よう隔離する (talk 分岐が style_notes.load_style_notes(STYLE_NOTES_PATH) を
+        # 呼ぶため、退避を忘れると本番 state の有無でテストが不安定になる)。
+        self.bot.STYLE_NOTES_PATH = d / "companion_style_notes.json"
         self.bot.PROACTIVE_INVESTIGATE_ENABLED = False
         self.bot.PROACTIVE_TICKET_ENABLED = False
         self.bot.PROACTIVE_REMIND_ENABLED = False
@@ -1433,6 +1438,7 @@ class _ProactiveTalkHarnessBase(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -1578,6 +1584,48 @@ class ProactiveTalkSentinelTest(_ProactiveTalkHarnessBase):
         self.assertEqual(rec["reason"], "ok")
 
 
+class ProactiveTalkLeakedStyleNoteTest(_ProactiveTalkHarnessBase):
+    """talk 分岐が [[style-note: ...]] を常に剥がし、Telegram に生 marker を流さないこと。
+
+    #chat session は on_message の既定分岐と共有 (同一 topic_key で --resume) される
+    ため、on_message で出た [[style-note: ...]] が会話履歴に残り、talk 側の出力が
+    --resume 履歴の自己強化でこの marker を再生成しうる。talk 分岐は emit-instruction
+    を出していない (build_proactive_prompt は read-back のみ) ので、ここで出る
+    style-note は定義上すべて自己強化由来の偽陽性であり、値は破棄しつつ marker だけ
+    剥がして送信本文をきれいに保つ (#92 の [[next]] 常時剥がしと同じ不変条件、
+    advisor 指摘で発覚した穴の回帰テスト)。"""
+
+    async def test_leaked_marker_is_stripped_from_sent_text(self) -> None:
+        send, rec, _now = await self._run_talk(
+            "今日は涼しいね。\n[[style-note: 「さっき」を多用しない]]"
+        )
+        send.assert_awaited_once()
+        sent_text = send.call_args.args[3]
+        self.assertEqual(sent_text, "今日は涼しいね。")
+        self.assertNotIn("[[style-note:", sent_text)
+        self.assertTrue(rec["sent"])
+
+    async def test_leaked_marker_value_is_not_persisted(self) -> None:
+        await self._run_talk("了解。\n[[style-note: 敬語を使わない]]")
+        # talk 分岐に state 書き込みは無い (定義上 discard) — style_notes state
+        # ファイル自体が作られていないことで裏取りする。
+        self.assertFalse(self.bot.STYLE_NOTES_PATH.exists())
+
+    async def test_marker_order_with_next_hours_both_stripped(self) -> None:
+        # next-hours marker が最終行、style-note がその手前という順序でも
+        # 両方剥がれる (marker 出現順は不定なので順序依存にしない、
+        # PROACTIVE_SELF_SCHEDULE_ENABLED は既定 True なのでここでは変更しない)。
+        send, rec, _now = await self._run_talk(
+            "今日は涼しいね。\n[[style-note: 「さっき」を多用しない]]\n[[next: 8h]]"
+        )
+        send.assert_awaited_once()
+        sent_text = send.call_args.args[3]
+        self.assertEqual(sent_text, "今日は涼しいね。")
+        self.assertNotIn("[[style-note:", sent_text)
+        self.assertNotIn("[[next:", sent_text)
+        self.assertEqual(rec["next_self_hours"], 8.0)
+
+
 class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
     """自律ループ「動く」分岐 (persona 軸 4 拡張 (3) = notes 自己調査) の配線。
 
@@ -1600,6 +1648,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -1610,6 +1659,9 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
         self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
         self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+        # falls_through_to_talk 系テストが talk 分岐に到達するため、改善案 #2 の
+        # 本番 sessions/companion_style_notes.json を読みに行かない隔離が要る。
+        self.bot.STYLE_NOTES_PATH = d / "companion_style_notes.json"
         self.bot.PROACTIVE_INVESTIGATE_ENABLED = True
         # ticket / remind 分岐はこのクラスでは isolate (investigate / talk の検証のため off)。
         self.bot.PROACTIVE_TICKET_ENABLED = False
@@ -1625,6 +1677,7 @@ class ProactiveInvestigateTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -2041,6 +2094,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -2051,6 +2105,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
         self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
         self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+        self.bot.STYLE_NOTES_PATH = d / "companion_style_notes.json"
         # ticket 分岐を検証するクラス。investigate / remind は off にして固定優先順を
         # 切り分け (investigate の優先確認をするテストでだけ局所的に True へ戻す)。
         self.bot.PROACTIVE_INVESTIGATE_ENABLED = False
@@ -2066,6 +2121,7 @@ class ProactiveTicketTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -2646,6 +2702,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,
@@ -2656,6 +2713,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
         self.bot.PROACTIVE_STATE_FILE = d / "proactive"
         self.bot.INTERESTS_INDEX_PATH = d / "companion_interests.json"
         self.bot.THOUGHTS_LOG_PATH = d / "companion_thoughts.jsonl"
+        self.bot.STYLE_NOTES_PATH = d / "companion_style_notes.json"
         # remind 分岐を検証するクラス。investigate / ticket は off にして固定優先順を
         # 切り分け (上位優先の確認をするテストでだけ局所的に True へ戻す)。
         self.bot.PROACTIVE_INVESTIGATE_ENABLED = False
@@ -2671,6 +2729,7 @@ class ProactiveRemindTest(unittest.IsolatedAsyncioTestCase):
             self.bot.PROACTIVE_STATE_FILE,
             self.bot.INTERESTS_INDEX_PATH,
             self.bot.THOUGHTS_LOG_PATH,
+            self.bot.STYLE_NOTES_PATH,
             self.bot.PROACTIVE_INVESTIGATE_ENABLED,
             self.bot.PROACTIVE_TICKET_ENABLED,
             self.bot.PROACTIVE_REMIND_ENABLED,

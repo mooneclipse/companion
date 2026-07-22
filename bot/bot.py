@@ -3750,9 +3750,32 @@ async def _run_proactive(app: Application, payload: dict) -> None:
     # 先に分離する = 本文なし + 申告のみの回 (「今は黙るが次はこの頃」) も成立し、
     # そのまま既存 empty_output skip に落ちる。書き込み失敗は本体を道連れにしない
     # (次回は script 側が従来の確率パスへ倒れるだけ = 安全側)。
+    # marker 剥がしは toggle 非依存で常に行う (--resume 履歴の自己強化で off 後も
+    # marker が出る回に生 marker を Telegram へ流さない、チケット #92)。
+    #
+    # 改善案 #2 (口調フィードバック) 追加時の注意: この talk 分岐は #chat session を
+    # on_message の既定分岐と共有する (同一 topic_key で --resume) ため、on_message で
+    # 出た [[style-note: ...]] が会話履歴に残り、talk 側の出力が --resume 履歴の
+    # 自己強化でこの marker を再生成しうる。talk 分岐は emit-instruction を出して
+    # いない (build_proactive_prompt は read-back のみ) ので、ここで出る style-note は
+    # 定義上すべて自己強化由来の偽陽性 = OWNER の実訂正ではない。値は保存せず破棄し、
+    # 生 marker だけを Telegram へ流さないよう剥がす。2 marker (next-hours/style-note)
+    # の出現順は不定なので、どちらのみ剥がしても次に残った marker が最終行に出てくる
+    # 可能性を潰すため、変化が無くなるまで交互に試す (最大 4 回、無限ループ化しない)。
     next_self_hours = None
-    if output:
-        output, next_self_hours = split_next_self_hours(output)
+    for _ in range(4):
+        stripped_any = False
+        if output:
+            output, hours = split_next_self_hours(output)
+            if hours is not None:
+                next_self_hours = hours
+                stripped_any = True
+        if output:
+            output, leaked_style_note = split_style_note(output)
+            if leaked_style_note is not None:
+                stripped_any = True
+        if not stripped_any:
+            break
     if PROACTIVE_SELF_SCHEDULE_ENABLED and next_self_hours is not None:
         next_self_hours = min(
             max(next_self_hours, PROACTIVE_SELF_SCHEDULE_MIN_HOURS),
