@@ -181,7 +181,14 @@ user 側で BotFather による bot 作成 + supergroup `my group` + Topics (Gen
 
 ## In progress
 
-（なし）
+- **口調フィードバックの永続化 (改善案 #2、着手前設計メモ 2026-07-22)**: OWNER から bot 自身の話し方の癖 (「さっき」多用等) を訂正されても、その場のセッションでの謝罪 (「直す」) は state 化されず、次回発火 (別 subprocess / 別セッション) で同じ癖が再発する問題 (2026-07-21/22 実障害、`さっき` の固定例文自体は別途改善案 #1 で修正済み。ここは**任意の**将来の口調訂正が永続しない、より一般的な構造の話)。
+  - **設計方針 (advisor 相談で確定)**: 「read-back (既存ルールを守らせるデータ)」と「emit-instruction (新しい訂正をマーカーで申告させる指示)」を明確に分離する。
+    - read-back は **PERSONA_SYSTEM_PROMPT (全経路共通の system prompt 定数) には入れない**。理由: このプロジェクトのテストスイート (`tests/test_bot.py` 内 `SelfRecognitionBlockTest`/`ForegroundDemotionRuleTest`/`OsekkaiSystemPromptTest`/`RunClaudeOverrideTest` 等 10+ 箇所) が `PERSONA_SYSTEM_PROMPT`/`OSEKKAI_SYSTEM_PROMPT` を**静的文字列定数**として `assertIn`/`startswith`/完全一致で検証しており、これを動的関数化すると広範囲な test 書き換えが必要になる。加えて `run_claude` の `system_prompt` override は「osekkai (#110) 専用の唯一の意図的例外」と明記済み (bot.py:719-723 コメント) で、これを崩さない。
+    - 代わりに read-back / emit-instruction は既存の `[[next]]`/`[[thought]]`/`[[interest]]` marker 群と同じ層 = **per-call の prompt 本文 (system prompt ではない)** に載せる。`build_proactive_prompt` (talk 分岐) と `compose_chat_prompt` (on_message 既定 #chat 分岐) の両方に任意引数として style-notes を渡し、そこで文字列展開する (`interest_topics` と同じ「bounded な文字列リストを純関数へ渡す」パターン踏襲)。
+    - **emit-instruction (`[[style-note: ...]]` を出させる指示) は on_message の既定 #chat 分岐にだけ持たせる**。理由: マーカーを剥がすのはこの経路だけであり、他経路 (osekkai / proactive talk / investigate / ticket / remind) に同じ指示を持たせると「マーカーを出してよいと指示されるのに剥がされない」経路が生まれ、`[[next]]`/`[[thought]] ` 系で既に警戒している「marker が Telegram 本文にそのまま漏れる」事故を新規に開けてしまう (IGNORECASE 対応の理由そのもの)。osekkai 等で拾いたくなったら、そのときにその経路へ個別に split を足す。
+  - **state**: `sessions/companion_style_notes.json` (gitignore 対象、`companion_interests.json` と同じ atomic write パターン)。上限 5 件、同一ルールは touch のみ (last_touched 更新)。
+  - **blast radius への配慮**: 誤った/過度に一般化されたルールが載ると全プロンプトに悪影響する (例: 「さっきを使うな」が「時間に触れるな」に過般化される等)。OWNER が中身を見て直接編集・削除できる導線として、このファイルパスをここに明記しておく: `~/companion/bot/sessions/companion_style_notes.json` を直接編集すれば内容を訂正・削除できる (専用コマンドは作らない、tickets.py 同様の直接ファイル編集で足りる規模)。
+  - 実装未着手 (この段落は着手前の判断根拠の記録)。
 
 ## Review pending
 
